@@ -1,5 +1,4 @@
 mod actor;
-mod cli_path;
 mod connection;
 mod events;
 mod handoff;
@@ -18,9 +17,10 @@ mod warm_pool;
 
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod replaced_sessions_tests;
 
 use crate::app_event::AppEventPublisher;
-use cli_path::resolve_agent_cli_path;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
@@ -37,7 +37,6 @@ use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissi
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
-use ora_contracts::{AgentRef as ContractAgentRef, EmptyErrorParams, PublicError};
 use ora_contracts::{
     AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest,
     CancelSessionPromptResponse, DeleteSessionResponse, LoadSessionEvent, LoadSessionRequest,
@@ -47,9 +46,10 @@ use ora_contracts::{
     SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
     WarmSessionTarget,
 };
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
-    AgentRef, AuditFields, HistoryState, Session, SessionId, SessionStatus, SessionTitle,
+    AgentRef, AuditFields, HistoryState, PluginId, Session, SessionId, SessionStatus, SessionTitle,
     WorkspaceId,
 };
 use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history};
@@ -83,6 +83,55 @@ pub(crate) enum WarmOwner {
     WorkflowNode { run_id: String, node_id: String },
 }
 
+/// Repairs live sessions after the agent process behind them was replaced.
+///
+/// Effect coordination restarts an Agent plugin's process so it re-reads a materialized surface,
+/// which silently invalidates every provider-side session that process was holding. Implementations
+/// detach those sessions so the next interaction re-establishes them through the ordinary load path
+/// rather than prompting against an id the fresh process cannot resolve.
+///
+/// The Effect worker depends on this capability rather than on the whole agent runtime, so a
+/// reconcile stays exercisable without one.
+pub(crate) trait ReplacedAgentSessions: Send + Sync + 'static {
+    /// Detaches every live session served by the plugin whose agent process was replaced.
+    ///
+    /// Takes the package address deliberately, rather than the `AgentRef` a Session is bound to. A
+    /// plugin carries both identities and Effect only ever holds this one; accepting the other
+    /// would let a caller pass an address where an agent name belongs, which compiles, reads
+    /// correctly, and silently matches no session at all.
+    fn detach_sessions_for_replaced_plugin(&self, plugin_id: &PluginId);
+}
+
+impl ReplacedAgentSessions for AgentRuntimeManager {
+    /// One agent's connection is shared by every Workspace, so replacing that process invalidates
+    /// sessions well beyond the Workspace whose surface was reconciled. The command is broadcast
+    /// and each actor decides whether it is bound to this agent, because the registry is keyed by
+    /// Ora session and carries no agent index. Delivery is best effort: an actor that already
+    /// ended cannot be holding a stale channel either.
+    fn detach_sessions_for_replaced_plugin(&self, plugin_id: &PluginId) {
+        let Some(agent) = self.inner.connections.agent_for_plugin(plugin_id) else {
+            // Only an agent-contributing package can have had sessions to lose, so a package that
+            // resolves to no agent identity is not a failure — but it is worth saying, because the
+            // alternative reading is that the translation itself broke.
+            ora_debug!(
+                plugin_id = %plugin_id,
+                "replaced plugin contributes no agent identity; no session to detach",
+            );
+            return;
+        };
+        let Ok(actors) = self.inner.actors.read() else {
+            // A poisoned registry means an actor panicked; whatever it held is not trustworthy,
+            // and the next interaction rebuilds the session from durable state regardless.
+            return;
+        };
+        for handle in actors.values() {
+            let _ = handle.commands.send(RuntimeCommand::AgentProcessReplaced {
+                agent: agent.clone(),
+            });
+        }
+    }
+}
+
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeManager {
@@ -102,9 +151,6 @@ struct ManagerInner {
     clock: SystemClock,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
-    // Stored so resolve_session_locator can hand the dashboard resolver the user
-    // home directory under which each agent CLI writes its trace artifacts.
-    home_directory: PathBuf,
     relative_path_base: PathBuf,
 }
 
@@ -114,6 +160,14 @@ struct RuntimeActorHandle {
 }
 
 pub(super) enum RuntimeCommand {
+    /// The agent's process was replaced, so every provider-side session it held is gone.
+    ///
+    /// Broadcast rather than addressed, because the actor registry is keyed by Ora session and one
+    /// agent's connection is shared by every Workspace; each actor decides whether it is bound to
+    /// the replaced agent.
+    AgentProcessReplaced {
+        agent: AgentRef,
+    },
     Load {
         operation_id: u64,
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
@@ -149,24 +203,6 @@ pub(super) enum RuntimeCommand {
     TitleUpdate {
         update: Box<SessionUpdate>,
     },
-}
-
-/// Backend-only resolution of one Ora session to its private agent identifier and worktree cwd.
-///
-/// This is the surface the Desktop dashboard uses to resolve an Ora session id into a
-/// concrete trace file path. It carries the agent session identifier, which is deliberately
-/// omitted from the frontend-facing `ContractSession`; it never crosses the Tauri/Web boundary
-/// and is consumed only by Desktop backend code that writes the dashboard locator file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionLocator {
-    /// The private provider-side session identifier owned by the agent.
-    pub agent_session_id: String,
-    /// The persisted agent selection, in the frontend-facing wire form Desktop already uses.
-    pub agent_ref: ContractAgentRef,
-    /// The authoritative worktree working directory resolved from the session's task.
-    pub cwd: PathBuf,
-    /// The user home directory, the root under which each agent writes its trace artifacts.
-    pub home_directory: PathBuf,
 }
 
 struct RuntimeActor {
@@ -232,7 +268,7 @@ impl AgentRuntimeManager {
         } = setup;
         reconcile_running_sessions(&pool, clock)?;
         let connections =
-            ConnectionSupervisors::start(plugin_host, pool.clone(), home_directory.clone(), clock);
+            ConnectionSupervisors::start(plugin_host, pool.clone(), home_directory, clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
                 pool,
@@ -246,7 +282,6 @@ impl AgentRuntimeManager {
                 clock,
                 scheduler,
                 app_events,
-                home_directory,
                 relative_path_base,
             }),
         })
@@ -295,14 +330,6 @@ impl AgentRuntimeManager {
     /// restart.
     pub(crate) fn sync_plugin_agents(&self) {
         self.inner.connections.sync_plugin_agents();
-    }
-
-    /// Retries one agent's connection at once because something just made it usable.
-    ///
-    /// Enabling a plugin is the case this exists for: its supervisor has been failing to attach a
-    /// disabled plugin and would otherwise sit out the rest of its backoff before noticing.
-    pub(crate) fn wake_agent(&self, agent_ref: &AgentRef) {
-        self.inner.connections.wake_agent(agent_ref);
     }
 
     /// Reports the models one agent advertises before any session exists.
@@ -1028,25 +1055,6 @@ impl AgentRuntimeManager {
             })
             .map_err(runtime_unavailable_with)?;
         response.await.map_err(runtime_unavailable_with)?
-    }
-
-    /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
-    ///
-    /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
-    /// Desktop dashboard command consumes it to locate the agent-written trace file and writes
-    /// only a resolved file path into the locator it hands the embedded dashboard.
-    pub fn resolve_session_locator(
-        &self,
-        session_id: &str,
-    ) -> Result<SessionLocator, BackendError> {
-        let session = self.find_session(session_id)?;
-        let cwd = self.workspace_cwd(&session.workspace_id)?;
-        Ok(SessionLocator {
-            agent_session_id: session.agent_session_id.clone(),
-            agent_ref: session.agent_ref.into(),
-            cwd,
-            home_directory: self.inner.home_directory.clone(),
-        })
     }
 
     /// Loads one non-deleted Ora session from durable storage.

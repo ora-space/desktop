@@ -66,6 +66,12 @@ export function createContractsClient(
     workspace: {
       list: (request, options) =>
         executeOperation("listWorkspaces", request, transport, options),
+      getDiff: (request, options) =>
+        executeOperation("getWorkspaceDiff", request, transport, options),
+      commitChanges: (request, options) =>
+        executeOperation("commitWorkspaceChanges", request, transport, options),
+      pushBranch: (request, options) =>
+        executeOperation("pushWorkspaceBranch", request, transport, options),
     },
     task: {
       create: (request, options) =>
@@ -80,12 +86,6 @@ export function createContractsClient(
         executeOperation("updateTask", request, transport, options),
       delete: (request, options) =>
         executeOperation("deleteTask", request, transport, options),
-      getDiff: (request, options) =>
-        executeOperation("getTaskDiff", request, transport, options),
-      commitChanges: (request, options) =>
-        executeOperation("commitTaskChanges", request, transport, options),
-      pushBranch: (request, options) =>
-        executeOperation("pushTaskBranch", request, transport, options),
     },
     session: {
       warm: (request, options) =>
@@ -186,6 +186,9 @@ export function createContractsClient(
           transport,
           options,
         ),
+      updateSource: (request, options) =>
+        executeOperation("updateMarketplaceSource", request, transport, options),
+
       listInstalled: (request, options) =>
         executeOperation("listInstalledPlugins", request, transport, options),
       getConfiguration: (request, options) =>
@@ -206,10 +209,6 @@ export function createContractsClient(
         ),
       scan: (request, options) =>
         executeOperation("scanPlugins", request, transport, options),
-      enable: (request, options) =>
-        executeOperation("enablePlugin", request, transport, options),
-      disable: (request, options) =>
-        executeOperation("disablePlugin", request, transport, options),
       activate: (request, options) =>
         executeOperation("activatePlugin", request, transport, options),
       stop: (request, options) =>
@@ -220,6 +219,12 @@ export function createContractsClient(
         executeOperation("installPlugin", request, transport, options),
       import: (request, options) =>
         executeOperation("importPlugin", request, transport, options),
+    },
+    proxy: {
+      get: (request, options) =>
+        executeOperation("getProxySettings", request, transport, options),
+      set: (request, options) =>
+        executeOperation("setProxySettings", request, transport, options),
     },
     fileSystem: {
       listWorkspaceDirectory: (request, options) =>

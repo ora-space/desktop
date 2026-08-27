@@ -281,7 +281,7 @@ mod tests {
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
     };
-    use ora_domain::AgentCli;
+    use ora_domain::AgentRef;
     use ora_history::{HistoryIntegrity, HistoryLine, HistoryRecord, SessionHistory, SessionMeta};
     use pretty_assertions::assert_eq;
 
@@ -345,7 +345,7 @@ mod tests {
                 schema_version: 1,
                 session_id: "session-1".to_string(),
                 workspace_id: "workspace-1".to_string(),
-                agent_ref: AgentCli::Nga.agent_ref(),
+                agent_ref: AgentRef::parse("ora-space.nga").expect("agent identity"),
                 agent_session_id: "provider-1".to_string(),
                 cwd: std::path::PathBuf::from("."),
             }),

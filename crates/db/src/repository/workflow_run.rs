@@ -191,21 +191,33 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                 else {
                     return Ok(DeleteWorkflowRunResult::NotFound);
                 };
+                // `Pending` is both "created, not started" and a HITL pause. Only the
+                // latter is active: it has non-terminal node rows. Treating every
+                // Pending run as live blocked deleting a run the user created but
+                // never executed.
                 let active = transaction.query_row(
                     "SELECT EXISTS(
-                        SELECT 1 FROM workflow_runs WHERE id = ?1 AND run_status IN (0, 1) AND is_deleted = 0
+                        SELECT 1 FROM workflow_runs
+                        WHERE id = ?1 AND run_status = ?2 AND is_deleted = 0
                     ) OR EXISTS(
-                        SELECT 1 FROM workflow_node_runs WHERE run_id = ?1 AND status IN (0, 1) AND is_deleted = 0
+                        SELECT 1 FROM workflow_node_runs
+                        WHERE run_id = ?1 AND status IN (?3, ?4) AND is_deleted = 0
                     ) OR EXISTS(
                         SELECT 1
                         FROM sessions s
                         JOIN workflow_node_runs n ON n.session_id = s.id
                         WHERE n.run_id = ?1
                           AND n.is_deleted = 0
-                          AND s.status = ?2
+                          AND s.status = ?5
                           AND s.is_deleted = 0
                     )",
-                    params![run_id.as_ref(), SessionStatus::Running.database_value()],
+                    params![
+                        run_id.as_ref(),
+                        WorkflowRunStatus::Running.database_value(),
+                        WorkflowNodeStatus::Pending.database_value(),
+                        WorkflowNodeStatus::Running.database_value(),
+                        SessionStatus::Running.database_value(),
+                    ],
                     |row| row.get::<_, i64>(0),
                 )? != 0;
                 if active {

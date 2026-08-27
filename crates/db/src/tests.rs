@@ -60,7 +60,7 @@ fn bootstraps_the_current_workspace_schema() {
             "effect_surfaces",
             "git_cleanup_jobs",
             "migrations",
-            "plugin_state",
+            "plugin_marketplace_source",
             "projects",
             "sessions",
             "skills",

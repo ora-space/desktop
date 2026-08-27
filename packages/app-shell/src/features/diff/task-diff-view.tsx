@@ -19,7 +19,7 @@ import {
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
-import type { TaskDiffScope } from "@ora/contracts";
+import type { WorkspaceDiffScope } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,7 +51,7 @@ import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
 import { queryKeys } from "../../state/hooks/query-keys";
-import { useTaskDiff } from "../../state/hooks/use-task-diff";
+import { useWorkspaceDiff } from "../../state/hooks/use-workspace-diff";
 import {
   buildCollapsedDiffSegments,
   findNewSideLineTarget,
@@ -76,7 +76,13 @@ const FILE_TREE_MIN_WIDTH = 180;
 const FILE_TREE_COLLAPSE_THRESHOLD = FILE_TREE_MIN_WIDTH / 2;
 
 interface TaskDiffViewProps {
-  taskId: string;
+  workspaceId: string;
+  /**
+   * Whether this workspace has a recorded baseline commit (an isolated task
+   * worktree does; a project's main checkout does not). Gates the `Branch`/
+   * `Committed` scopes, which compare against that baseline.
+   */
+  hasBaseline: boolean;
   viewType: TaskDiffViewType;
   fileTreeOpen: boolean;
   fileRequest?: TaskDiffFileRequest;
@@ -97,7 +103,8 @@ export interface TaskDiffFileRequest {
 
 /** Renders a task worktree patch. */
 export function TaskDiffView({
-  taskId,
+  workspaceId,
+  hasBaseline,
   viewType,
   fileTreeOpen,
   fileRequest,
@@ -109,12 +116,14 @@ export function TaskDiffView({
   const { i18n, t } = useTranslation();
   const client = useContractsClient();
   const queryClient = useQueryClient();
-  const [scope, setScope] = useState<TaskDiffScope>("branch");
+  const [scope, setScope] = useState<WorkspaceDiffScope>(
+    hasBaseline ? "branch" : "unstaged",
+  );
   const [gitActionsOpen, setGitActionsOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [pushOpen, setPushOpen] = useState(false);
   const [gitNotice, setGitNotice] = useState<string | null>(null);
-  const diffQuery = useTaskDiff(taskId, scope);
+  const diffQuery = useWorkspaceDiff(workspaceId, scope);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [appliedFileRequestId, setAppliedFileRequestId] = useState<
     number | null
@@ -383,19 +392,21 @@ export function TaskDiffView({
 
   const commitChanges = useMutation({
     mutationFn: (message: string) =>
-      client.task.commitChanges({ taskId, message }),
+      client.workspace.commitChanges({ workspaceId, message }),
     onSuccess: async (response) => {
       setGitActionsOpen(false);
       setCommitMessage("");
       setGitNotice(t("diff.commitSucceeded", { summary: response.summary }));
-      setScope("committed");
+      // A baseline-less workspace has no fixed "committed" comparison to show;
+      // its remaining uncommitted changes are still the most useful view.
+      setScope(hasBaseline ? "committed" : "unstaged");
       await queryClient.invalidateQueries({
-        queryKey: queryKeys.taskDiffs(taskId),
+        queryKey: queryKeys.workspaceDiffs(workspaceId),
       });
     },
   });
   const pushBranch = useMutation({
-    mutationFn: () => client.task.pushBranch({ taskId }),
+    mutationFn: () => client.workspace.pushBranch({ workspaceId }),
     onSuccess: (response) => {
       setPushOpen(false);
       setGitNotice(
@@ -499,7 +510,7 @@ export function TaskDiffView({
             value={scope}
             onValueChange={(value) => {
               if (value === null) return;
-              setScope(value as TaskDiffScope);
+              setScope(value as WorkspaceDiffScope);
             }}
           >
             <SelectTrigger
@@ -512,14 +523,18 @@ export function TaskDiffView({
               </span>
             </SelectTrigger>
             <SelectContent align="start">
-              <SelectItem value="branch">{t("diff.scopeBranch")}</SelectItem>
+              {hasBaseline && (
+                <SelectItem value="branch">{t("diff.scopeBranch")}</SelectItem>
+              )}
               <SelectItem value="unstaged">
                 {t("diff.scopeUnstaged")}
               </SelectItem>
               <SelectItem value="staged">{t("diff.scopeStaged")}</SelectItem>
-              <SelectItem value="committed">
-                {t("diff.scopeCommitted")}
-              </SelectItem>
+              {hasBaseline && (
+                <SelectItem value="committed">
+                  {t("diff.scopeCommitted")}
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
           <span className="h-4 w-px bg-border/70" aria-hidden="true" />

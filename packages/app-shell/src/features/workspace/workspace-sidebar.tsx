@@ -9,15 +9,18 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   Button,
+  cn,
   Input,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@ora/ui";
 import {
+  IconArrowLeft,
   IconLayoutSidebarLeftCollapse,
   IconMessageCirclePlus,
   IconPlus,
+  IconRoute,
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
@@ -52,6 +55,8 @@ import { OraMark } from "../../components/ora-mark";
 import { DragRegion } from "../../components/drag-region";
 import { useStableGroupBy } from "../../lib/use-stable-group-by";
 import { ProjectTreeNode } from "./workspace-project-tree-node";
+import { WorkflowEditorList } from "../workflow-editor/workflow-editor-list";
+import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 
 const EMPTY_TASKS: Task[] = [];
 const EMPTY_SESSIONS: Session[] = [];
@@ -259,6 +264,11 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setDialog = useUiStore((s) => s.setDialog);
+  const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
+  const setWorkflowEditorOpen = useUiStore((s) => s.setWorkflowEditorOpen);
+  const leaveWorkflowEditor = useWorkflowEditorStore(
+    (state) => state.actions?.leave,
+  );
 
   // Subscribe to structured search data only while filtering. Equality ignores
   // attachment and timestamp churn that cannot change a title match.
@@ -371,10 +381,15 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   }, [projects, setDialog, tasks]);
 
   // Match desktop IDE conventions while preventing the browser's new-window shortcut.
+  // Editor mode overlays the current chat without changing selection; creating a
+  // draft here would leave the user on a new chat after Back.
   useEffect(() => {
     const handleNewChatShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (useUiStore.getState().workflowEditorOpen) {
+          return;
+        }
         startNewChat();
       }
     };
@@ -387,12 +402,38 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
       {/* Width is owned by the enclosing ResizablePanel, so the aside just fills it. */}
       <aside className="flex size-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
         <header className="flex h-14 items-center gap-2 px-3">
-          <DragRegion>
-            <OraMark size="default" />
-            <span className="text-[15px] font-semibold tracking-[-0.01em]">
-              Ora
-            </span>
-          </DragRegion>
+          {workflowEditorOpen ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={leaveWorkflowEditor === undefined}
+                onClick={() => {
+                  // Only the editor's registered leave flushes the draft. A store-only
+                  // close would drop unsaved canvas edits.
+                  if (leaveWorkflowEditor !== undefined) {
+                    void leaveWorkflowEditor();
+                  }
+                }}
+                aria-label={t("sidebar.back")}
+              >
+                <IconArrowLeft />
+              </Button>
+              <DragRegion>
+                <span className="text-[15px] font-semibold tracking-[-0.01em]">
+                  {t("sidebar.workflows")}
+                </span>
+              </DragRegion>
+            </>
+          ) : (
+            <DragRegion>
+              <OraMark size="default" />
+              <span className="text-[15px] font-semibold tracking-[-0.01em]">
+                Ora
+              </span>
+            </DragRegion>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -410,92 +451,109 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           </Tooltip>
         </header>
 
-        <div className="flex flex-col gap-1 px-2 pb-3">
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-9 w-full justify-start gap-2 px-2 text-[13px] font-medium"
-            onClick={startNewChat}
-          >
-            <IconMessageCirclePlus className="size-4 text-muted-foreground" />
-            {t("chat.new")}
-          </Button>
-          <div className="relative min-w-0">
-            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("sidebar.search")}
-              className="h-9 border-transparent bg-sidebar-accent/60 px-8 text-[13px] shadow-none hover:bg-sidebar-accent focus-visible:bg-background"
-            />
-            {query && (
+        {workflowEditorOpen ? (
+          <WorkflowEditorList />
+        ) : (
+          <>
+            <div className="flex flex-col gap-1 px-2 pb-3">
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-sm"
-                className="absolute right-1 top-1/2 -translate-y-1/2"
-                aria-label={t("sidebar.clearSearch")}
-                onClick={() => setQuery("")}
+                className="h-9 w-full justify-start gap-2 px-2 text-[13px] font-medium"
+                onClick={startNewChat}
               >
-                <IconX />
+                <IconMessageCirclePlus className="size-4 text-muted-foreground" />
+                {t("chat.new")}
               </Button>
-            )}
-          </div>
-        </div>
-
-        <nav
-          className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
-          aria-label={t("sidebar.navigation")}
-        >
-          <div className="flex h-8 items-center pl-2 pr-1 text-xs font-medium text-muted-foreground">
-            <span>{t("sidebar.projects")}</span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2 px-2 text-[13px] font-medium"
+                onClick={() => setWorkflowEditorOpen(true)}
+              >
+                <IconRoute className="size-4 text-muted-foreground" />
+                {t("sidebar.workflows")}
+              </Button>
+              <div className="relative min-w-0">
+                <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={t("sidebar.search")}
+                  className="h-9 border-transparent bg-sidebar-accent/60 px-8 text-[13px] shadow-none hover:bg-sidebar-accent focus-visible:bg-background"
+                />
+                {query && (
                   <Button
+                    type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="ml-auto"
-                    onClick={() => setDialog({ kind: "project" })}
-                    aria-label={t("sidebar.newProject")}
-                  />
-                }
-              >
-                <IconPlus />
-              </TooltipTrigger>
-              <TooltipContent>{t("sidebar.newProject")}</TooltipContent>
-            </Tooltip>
-          </div>
-          {loading && (
-            <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
-              {t("sidebar.loading")}
-            </p>
-          )}
-          {!loading && visibleProjects.length === 0 && (
-            <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
-              {t("sidebar.empty")}
-            </p>
-          )}
-          {visibleProjects.map((project) => (
-            <ProjectTreeNode
-              key={project.id}
-              project={project}
-              mainWorkspaceId={mainWorkspaceByProjectId.get(project.id) ?? null}
-              tasks={tasksByProjectId.get(project.id) ?? EMPTY_TASKS}
-              sessionsByWorkspaceId={sessionsByWorkspaceId}
-              directSessions={
-                directSessionsByProjectId.get(project.id) ?? EMPTY_SESSIONS
-              }
-              directDrafts={
-                directDraftsByProjectId.get(project.id) ?? EMPTY_DRAFTS
-              }
-              worktreeDraftsByTaskId={worktreeDraftsByTaskId}
-              forceExpanded={Boolean(needle)}
-            />
-          ))}
-        </nav>
+                    className="absolute right-1 top-1/2 -translate-y-1/2"
+                    aria-label={t("sidebar.clearSearch")}
+                    onClick={() => setQuery("")}
+                  >
+                    <IconX />
+                  </Button>
+                )}
+              </div>
+            </div>
 
-        {error && (
+            <nav
+              className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
+              aria-label={t("sidebar.navigation")}
+            >
+              <div className="flex h-8 items-center pl-2 pr-1 text-xs font-medium text-muted-foreground">
+                <span>{t("sidebar.projects")}</span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="ml-auto"
+                        onClick={() => setDialog({ kind: "project" })}
+                        aria-label={t("sidebar.newProject")}
+                      />
+                    }
+                  >
+                    <IconPlus />
+                  </TooltipTrigger>
+                  <TooltipContent>{t("sidebar.newProject")}</TooltipContent>
+                </Tooltip>
+              </div>
+              {loading && (
+                <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
+                  {t("sidebar.loading")}
+                </p>
+              )}
+              {!loading && visibleProjects.length === 0 && (
+                <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
+                  {t("sidebar.empty")}
+                </p>
+              )}
+              {visibleProjects.map((project) => (
+                <ProjectTreeNode
+                  key={project.id}
+                  project={project}
+                  mainWorkspaceId={
+                    mainWorkspaceByProjectId.get(project.id) ?? null
+                  }
+                  tasks={tasksByProjectId.get(project.id) ?? EMPTY_TASKS}
+                  sessionsByWorkspaceId={sessionsByWorkspaceId}
+                  directSessions={
+                    directSessionsByProjectId.get(project.id) ?? EMPTY_SESSIONS
+                  }
+                  directDrafts={
+                    directDraftsByProjectId.get(project.id) ?? EMPTY_DRAFTS
+                  }
+                  worktreeDraftsByTaskId={worktreeDraftsByTaskId}
+                  forceExpanded={Boolean(needle)}
+                />
+              ))}
+            </nav>
+          </>
+        )}
+
+        {error && !workflowEditorOpen && (
           <p
             data-selectable
             className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
@@ -503,7 +561,12 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
             {localizeContractError(error, t)}
           </p>
         )}
-        <div className="p-2">
+        <div
+          className={cn(
+            "p-2",
+            workflowEditorOpen && "border-t border-sidebar-border",
+          )}
+        >
           <UserProfile
             user={user}
             onOpenSettings={() => setSettingsOpen(true)}

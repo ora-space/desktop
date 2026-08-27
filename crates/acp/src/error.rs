@@ -9,8 +9,6 @@ pub enum AcpError {
     Io(#[from] std::io::Error),
     #[error("ACP frame is invalid: {0}")]
     InvalidFrame(String),
-    #[error("ACP frame exceeds 8 MiB")]
-    FrameTooLarge,
     #[error("ACP returned an operation error: {0}")]
     RequestFailed(String),
     #[error("ACP response payload is invalid: {0}")]

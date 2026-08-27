@@ -10,7 +10,6 @@ import type {
   WorkflowNodeConversationItem,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
-import { AppI18nProvider } from "../../i18n/i18n";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -129,19 +128,18 @@ describe("RunTheaterActCard conversation", () => {
       prompt: "Review the current branch.",
       interactive: false,
     };
+    const wrapper = createSessionWrapper();
     const renderCard = (interactive: boolean) => (
-      <AppI18nProvider>
-        <RunTheaterActCard
-          data={{
-            ...NODE_DATA,
-            agentConfig: { ...automaticAgent, interactive },
-          }}
-          state={{ status: "succeeded" }}
-          live={false}
-        />
-      </AppI18nProvider>
+      <RunTheaterActCard
+        data={{
+          ...NODE_DATA,
+          agentConfig: { ...automaticAgent, interactive },
+        }}
+        state={{ status: "succeeded" }}
+        live={false}
+      />
     );
-    const view = render(renderCard(false));
+    const view = render(renderCard(false), { wrapper });
 
     const automaticMark = screen.getByRole("img", {
       name: "自动执行节点",
@@ -170,32 +168,31 @@ describe("RunTheaterActCard conversation", () => {
     const user = userEvent.setup();
     const longPrompt = "梳理现状、约束、风险与可选路径。".repeat(8);
     render(
-      <AppI18nProvider>
-        <RunTheaterActCard
-          data={{
-            kind: "agent",
-            title: "探索",
-            description: "只读探索",
-            agentConfig: {
-              schemaVersion: 3,
-              executor: {
-                agentCli: "ora-space.opencode",
-                modelId: "deepseek/deepseek-v4-flash",
-              },
-              roleId: "researcher",
-              skills: [],
-              mcps: [],
-              prompt: longPrompt,
+      <RunTheaterActCard
+        data={{
+          kind: "agent",
+          title: "探索",
+          description: "只读探索",
+          agentConfig: {
+            schemaVersion: 3,
+            executor: {
+              agentCli: "ora-space.opencode",
+              modelId: "deepseek/deepseek-v4-flash",
             },
-          }}
-          state={{ status: "succeeded" }}
-          live={false}
-        />
-      </AppI18nProvider>,
+            roleId: "researcher",
+            skills: [],
+            mcps: [],
+            prompt: longPrompt,
+          },
+        }}
+        state={{ status: "succeeded" }}
+        live={false}
+      />,
+      { wrapper: createSessionWrapper() },
     );
 
     expect(
-      screen.getByText("OpenCode · deepseek/deepseek-v4-flash"),
+      await screen.findByText("OpenCode · deepseek/deepseek-v4-flash"),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看完整指令" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent(longPrompt);

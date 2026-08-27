@@ -42,7 +42,7 @@ function renderRequestedDiff(fileRequest?: {
   line?: number;
 }) {
   const client = createMockClient(createMockClientState());
-  client.task.getDiff = async () => ({
+  client.workspace.getDiff = async () => ({
     baseCommitId: "base",
     headCommitId: "head",
     patch: MULTI_FILE_PATCH,
@@ -62,7 +62,8 @@ function renderRequestedDiff(fileRequest?: {
     );
   return render(
     <TaskDiffView
-      taskId="task-1"
+      workspaceId="task-1"
+      hasBaseline
       viewType="unified"
       fileTreeOpen
       fileRequest={{
@@ -249,7 +250,7 @@ describe("TaskDiffView file requests", () => {
       "",
     ].join("\n");
     const client = createMockClient(createMockClientState());
-    client.task.getDiff = async () => ({
+    client.workspace.getDiff = async () => ({
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -269,7 +270,8 @@ describe("TaskDiffView file requests", () => {
       );
     const { container } = render(
       <TaskDiffView
-        taskId="task-1"
+        workspaceId="task-1"
+        hasBaseline
         viewType="unified"
         fileTreeOpen
         fileRequest={{ path: "src/main.rs", requestId: 1, line: 2 }}
@@ -323,7 +325,7 @@ describe("TaskDiffView collapsed context", () => {
       ...Array.from({ length: 10 }, (_, index) => ` line ${index + 11}`),
       "",
     ].join("\n");
-    client.task.getDiff = async () => ({
+    client.workspace.getDiff = async () => ({
       baseCommitId: "base",
       headCommitId: "head",
       patch: longContextPatch,
@@ -344,7 +346,8 @@ describe("TaskDiffView collapsed context", () => {
 
     render(
       <TaskDiffView
-        taskId="task-1"
+        workspaceId="task-1"
+        hasBaseline
         viewType="unified"
         fileTreeOpen={false}
         onFileTreeOpenChange={() => undefined}

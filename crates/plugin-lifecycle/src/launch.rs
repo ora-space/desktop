@@ -10,9 +10,8 @@ use crate::ports::{
     PluginRuntimeFailure, PluginRuntimeLauncher, PluginStatusPublisher,
 };
 use crate::registration::validate_registration;
-use crate::state::{EnabledRuntime, ManagedPluginState};
+use crate::state::ManagedPluginState;
 use crate::{PluginLifecycleInner, PluginNotificationSink};
-use ora_application::{Clock, PluginStateRepository};
 use ora_domain::PluginId;
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
 use ora_plugin_runtime::PluginNotification;
@@ -29,29 +28,13 @@ use tokio::time::timeout;
 const NOTIFICATION_CLOSE_GRACE: Duration = Duration::from_secs(1);
 
 /// Completes one launch attempt without allowing stale work to overwrite a newer transition.
-pub(crate) async fn complete_launch<
-    Repository,
-    LifecycleClock,
-    RuntimeLauncher,
-    StatusPublisher,
-    NotificationSink,
->(
-    inner: Arc<
-        PluginLifecycleInner<
-            Repository,
-            LifecycleClock,
-            RuntimeLauncher,
-            StatusPublisher,
-            NotificationSink,
-        >,
-    >,
+pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, NotificationSink>(
+    inner: Arc<PluginLifecycleInner<RuntimeLauncher, StatusPublisher, NotificationSink>>,
     plugin_id: PluginId,
     plugin: DiscoveredPlugin,
     attempt: u64,
     _operation: OwnedMutexGuard<()>,
 ) where
-    Repository: PluginStateRepository + Send + Sync + 'static,
-    LifecycleClock: Clock + Send + Sync + 'static,
     RuntimeLauncher: PluginRuntimeLauncher,
     StatusPublisher: PluginStatusPublisher,
     NotificationSink: PluginNotificationSink,
@@ -115,17 +98,17 @@ pub(crate) async fn complete_launch<
         let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
         let owns_attempt = matches!(
             state.managed(&plugin_id),
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Starting {
+            Some(ManagedPluginState::Starting {
                 attempt: current,
-            })) if *current == attempt
+            }) if *current == attempt
         );
         if owns_attempt {
             state.set_managed(
                 &plugin_id,
-                ManagedPluginState::Enabled(EnabledRuntime::Running {
+                ManagedPluginState::Running {
                     attempt,
                     runtime: runtime.clone(),
-                }),
+                },
             );
         }
         owns_attempt
@@ -154,22 +137,8 @@ pub(crate) async fn complete_launch<
 }
 
 /// Forwards plugin notifications to the sink and reports a reader that died under a live process.
-async fn pump_notifications<
-    Repository,
-    LifecycleClock,
-    RuntimeLauncher,
-    StatusPublisher,
-    NotificationSink,
->(
-    inner: Arc<
-        PluginLifecycleInner<
-            Repository,
-            LifecycleClock,
-            RuntimeLauncher,
-            StatusPublisher,
-            NotificationSink,
-        >,
-    >,
+async fn pump_notifications<RuntimeLauncher, StatusPublisher, NotificationSink>(
+    inner: Arc<PluginLifecycleInner<RuntimeLauncher, StatusPublisher, NotificationSink>>,
     plugin_id: PluginId,
     attempt: u64,
     runtime: RuntimeLauncher::Runtime,
@@ -203,22 +172,8 @@ async fn pump_notifications<
 }
 
 /// Records an intentional runtime exit only when its attempt still owns the running state.
-pub(crate) fn transition_to_stopped<
-    Repository,
-    LifecycleClock,
-    RuntimeLauncher,
-    StatusPublisher,
-    NotificationSink,
->(
-    inner: Arc<
-        PluginLifecycleInner<
-            Repository,
-            LifecycleClock,
-            RuntimeLauncher,
-            StatusPublisher,
-            NotificationSink,
-        >,
-    >,
+pub(crate) fn transition_to_stopped<RuntimeLauncher, StatusPublisher, NotificationSink>(
+    inner: Arc<PluginLifecycleInner<RuntimeLauncher, StatusPublisher, NotificationSink>>,
     plugin_id: PluginId,
     attempt: u64,
 ) where
@@ -229,16 +184,13 @@ pub(crate) fn transition_to_stopped<
         let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
         let owns_attempt = matches!(
             state.managed(&plugin_id),
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
+            Some(ManagedPluginState::Running {
                 attempt: current,
                 ..
-            })) if *current == attempt
+            }) if *current == attempt
         );
         if owns_attempt {
-            state.set_managed(
-                &plugin_id,
-                ManagedPluginState::Enabled(EnabledRuntime::Stopped),
-            );
+            state.set_managed(&plugin_id, ManagedPluginState::Stopped);
         }
         owns_attempt
     };
@@ -248,22 +200,8 @@ pub(crate) fn transition_to_stopped<
 }
 
 /// Records a launch or runtime failure only when its attempt still owns the running state.
-pub(crate) fn transition_to_failed<
-    Repository,
-    LifecycleClock,
-    RuntimeLauncher,
-    StatusPublisher,
-    NotificationSink,
->(
-    inner: Arc<
-        PluginLifecycleInner<
-            Repository,
-            LifecycleClock,
-            RuntimeLauncher,
-            StatusPublisher,
-            NotificationSink,
-        >,
-    >,
+pub(crate) fn transition_to_failed<RuntimeLauncher, StatusPublisher, NotificationSink>(
+    inner: Arc<PluginLifecycleInner<RuntimeLauncher, StatusPublisher, NotificationSink>>,
     plugin_id: PluginId,
     attempt: u64,
     failure: PluginRuntimeFailure,
@@ -275,19 +213,19 @@ pub(crate) fn transition_to_failed<
         let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
         let owns_attempt = matches!(
             state.managed(&plugin_id),
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Starting {
+            Some(ManagedPluginState::Starting {
                 attempt: current,
-            })) | Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
+            }) | Some(ManagedPluginState::Running {
                 attempt: current,
                 ..
-            })) if *current == attempt
+            }) if *current == attempt
         );
         if owns_attempt {
             state.set_managed(
                 &plugin_id,
-                ManagedPluginState::Enabled(EnabledRuntime::Failed {
+                ManagedPluginState::Failed {
                     reason: failure.reason().to_string(),
-                }),
+                },
             );
         }
         owns_attempt

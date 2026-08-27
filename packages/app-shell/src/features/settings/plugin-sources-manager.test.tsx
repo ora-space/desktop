@@ -36,6 +36,7 @@ it("renders configured marketplace sources", async () => {
   state.marketplaceSources.push({
     url: "https://github.com/ora-space/marketplace",
     branch: "main",
+    useProxy: false,
   });
   const client = createMockClient(state);
 
@@ -64,6 +65,7 @@ it("adds a marketplace source through the backend", async () => {
       {
         url: "https://github.com/example/marketplace",
         branch: "main",
+        useProxy: false,
       },
     ]),
   );
@@ -74,6 +76,7 @@ it("removes a marketplace source through the backend", async () => {
   state.marketplaceSources.push({
     url: "https://github.com/ora-space/marketplace",
     branch: "main",
+    useProxy: false,
   });
   const client = createMockClient(state);
   const deleteSource = vi.spyOn(client.plugin, "deleteSource");

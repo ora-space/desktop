@@ -147,6 +147,7 @@ const taskContext = {
   kind: "task" as const,
   taskId: "task-1",
   projectId: "project-1",
+  workspaceId: "workspace-1",
 };
 
 beforeEach(() => {
@@ -196,7 +197,12 @@ function RerenderHarness() {
         rerender {tick}
       </button>
       <WorkspaceReviewLayout
-        context={{ kind: "task", taskId: "task-1", projectId: "project-1" }}
+        context={{
+          kind: "task",
+          taskId: "task-1",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+        }}
       >
         <main>Workspace</main>
       </WorkspaceReviewLayout>

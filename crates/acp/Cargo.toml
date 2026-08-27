@@ -12,15 +12,13 @@ workspace = true
 
 [dependencies]
 agent-client-protocol-schema = { workspace = true }
-futures-util = { workspace = true }
 ora-logging = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
-tokio-util = { workspace = true, features = ["codec"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

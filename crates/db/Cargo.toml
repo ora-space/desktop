@@ -16,6 +16,7 @@ ora-domain = { workspace = true }
 ora-effect = { workspace = true }
 ora-logging = { workspace = true }
 ora-skill-package = { workspace = true }
+ora-user-config = { workspace = true }
 r2d2 = { workspace = true }
 rusqlite = { workspace = true, features = ["bundled"] }
 serde_json = { workspace = true }

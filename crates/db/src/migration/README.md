@@ -1,21 +1,23 @@
 # Database Migration Module
 
-This module owns Ora's linear, reversible SQLite schema history and reconciles a database to an explicit target prefix. Its public interface is the validated catalog plus `reconcile_database`; SQL snapshot comparison and suffix rebuilding remain internal.
+This module owns Ora's linear, reversible SQLite schema history and reconciles a database to an explicit target prefix. Its public interface is the validated catalog plus `reconcile_database`; SQL snapshot comparison and suffix rebuilding remain internal. Concrete schema definitions live in the private [`schema`](schema/) module, which is the single migration registry consumed by the catalog.
 
 ## Catalog invariants
 
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains six dependency-ordered modules: workspace core, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, application configuration, and Workspace Effect state.
+- The default catalog contains six dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, and durable plugin marketplace source configuration.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
 - Applied rows record `version`, `up_sql`, `down_sql`, and an injected `executed_at` timestamp.
-- Migration `0006` is the Effect v2 model: stable Sources, immutable Revisions and explicit Heads;
+- Migration `0005` is the Effect v2 model: stable Sources, immutable Revisions and explicit Heads;
   normalized Workspace Desired items; Surface and Consumer declarations/status; Managed ownership;
   current Conditions; durable reconcile/propagation requests; mutation Operations and recovery
   Artifacts; and append-only Audit events.
+- Migration `0006` stores plugin marketplace source configuration in SQLite: the duplicate-free
+  URL, tracked branch, per-source `use_proxy` policy, and stable precedence position.
 - A reconcile request carries its own scheduling state: `pending`, `claimed`, `blocked`, or
   `retry_scheduled`, plus the lease that proves who currently owns the surface and the
   `request_token` that fences that owner's writes. Only one worker can hold a surface, an expired
@@ -25,8 +27,8 @@ This module owns Ora's linear, reversible SQLite schema history and reconciles a
   Source by default: publishing a new local or plugin Skill adds it to all existing Workspaces, and
   the Workspace insert trigger selects all active Skill Heads for a newly created Workspace.
 - Local Skill Sources use namespace `local`. Plugin Skill Sources use the owning plugin's canonical
-  `<plugin_namespace>/<plugin_identifier>` identity. Plugin enabled state is deliberately outside
-  the Effect selection policy.
+  `<plugin_namespace>/<plugin_identifier>` identity. Installed plugin Sources are always available;
+  Workspace selection remains independent of whether a plugin process is currently running.
 
 ## Reconciliation
 
@@ -40,6 +42,6 @@ An applied version absent from the catalog is an error. Reconciliation is otherw
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 
-Rolling back `0006` removes only Workspace Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, Git lifecycle, and plugin schemas intact.
+Rolling back `0005` removes only Workspace Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).

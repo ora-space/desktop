@@ -1,26 +1,25 @@
-use ora_application::{DeveloperMode, RepositoryError, UserConfigRepository};
-use ora_logging::LogLevel;
+use ora_application::RepositoryError;
+use ora_user_config::UserConfigRepository;
 use rusqlite::{OptionalExtension, params};
 
 use crate::repository::RepositoryPool;
 
-const DEVELOPER_MODE_KEY: &str = "developer_mode";
-const LOG_LEVEL_KEY: &str = "log_level";
-
-/// Persists the supported shared user preferences in SQLite's `user_config` table.
+/// Adapts SQLite user_config rows to the generic key/value persistence seam.
 #[derive(Clone, Debug)]
 pub struct SqliteUserConfigRepository {
     pool: RepositoryPool,
 }
 
 impl SqliteUserConfigRepository {
-    /// Builds a typed user-configuration repository from the shared pool.
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
     }
+}
 
-    /// Loads one raw preference without materializing a default database row.
-    fn load_value(&self, key: &'static str) -> Result<Option<String>, RepositoryError> {
+impl UserConfigRepository for SqliteUserConfigRepository {
+    type Error = RepositoryError;
+
+    fn get_value(&self, key: &str) -> Result<Option<String>, Self::Error> {
         self.pool
             .with_connection(|connection| {
                 connection
@@ -32,11 +31,10 @@ impl SqliteUserConfigRepository {
                     .optional()
                     .map_err(crate::DatabaseError::from)
             })
-            .map_err(user_config_repository_error_from_database)
+            .map_err(repository_error_from_database)
     }
 
-    /// Upserts one key so writes cannot modify unrelated preference rows.
-    fn save_value(&self, key: &'static str, value: &str) -> Result<(), RepositoryError> {
+    fn set_value(&self, key: &str, value: &str) -> Result<(), Self::Error> {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
@@ -46,94 +44,51 @@ impl SqliteUserConfigRepository {
                 )?;
                 Ok(())
             })
-            .map_err(user_config_repository_error_from_database)
+            .map_err(repository_error_from_database)
+    }
+
+    fn delete_value(&self, key: &str) -> Result<(), Self::Error> {
+        self.pool
+            .with_connection(|connection| {
+                connection.execute("DELETE FROM user_config WHERE key = ?1", params![key])?;
+                Ok(())
+            })
+            .map_err(repository_error_from_database)
     }
 }
 
-impl UserConfigRepository for SqliteUserConfigRepository {
-    /// Loads the canonical developer-mode text or returns the disabled default.
-    fn load_developer_mode(&self) -> Result<DeveloperMode, RepositoryError> {
-        match self.load_value(DEVELOPER_MODE_KEY)?.as_deref() {
-            None | Some("false") => Ok(DeveloperMode::Disabled),
-            Some("true") => Ok(DeveloperMode::Enabled),
-            Some(_) => Err(corrupt_value_error(DEVELOPER_MODE_KEY)),
-        }
-    }
-
-    /// Stores the canonical lower-case developer-mode text.
-    fn save_developer_mode(&self, mode: DeveloperMode) -> Result<(), RepositoryError> {
-        let value = match mode {
-            DeveloperMode::Enabled => "true",
-            DeveloperMode::Disabled => "false",
-        };
-        self.save_value(DEVELOPER_MODE_KEY, value)
-    }
-
-    /// Loads the canonical log level or returns the info default.
-    fn load_preferred_log_level(&self) -> Result<LogLevel, RepositoryError> {
-        match self.load_value(LOG_LEVEL_KEY)?.as_deref() {
-            None => Ok(LogLevel::Info),
-            Some("trace") => Ok(LogLevel::Trace),
-            Some("debug") => Ok(LogLevel::Debug),
-            Some("info") => Ok(LogLevel::Info),
-            Some("warn") => Ok(LogLevel::Warn),
-            Some("error") => Ok(LogLevel::Error),
-            Some(_) => Err(corrupt_value_error(LOG_LEVEL_KEY)),
-        }
-    }
-
-    /// Stores the canonical lower-case log-level text.
-    fn save_preferred_log_level(&self, level: LogLevel) -> Result<(), RepositoryError> {
-        self.save_value(LOG_LEVEL_KEY, level.as_str())
-    }
-}
-
-/// Converts shared database failures into the application-owned repository boundary.
-fn user_config_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+fn repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)
-}
-
-/// Builds a value-corruption error without exposing arbitrary stored text.
-fn corrupt_value_error(key: &'static str) -> RepositoryError {
-    user_config_repository_error_from_database(crate::DatabaseError::CorruptUserConfigValue { key })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DEVELOPER_MODE_KEY, LOG_LEVEL_KEY, SqliteUserConfigRepository};
-    use ora_application::{DeveloperMode, UserConfigRepository};
-    use ora_logging::LogLevel;
+    use ora_application::{NetworkProxySettings, UserConfigService};
+    use ora_user_config::UserConfigRepository;
     use pretty_assertions::assert_eq;
-    use rusqlite::{Connection, params};
+    use rusqlite::Connection;
     use tempfile::TempDir;
 
+    use super::SqliteUserConfigRepository;
     use crate::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
 
-    /// Creates a migrated repository and retains its temporary database directory.
     fn repository() -> (TempDir, SqliteUserConfigRepository) {
         let temporary = TempDir::new().expect("create user-config temp directory");
         let database_path = temporary.path().join("ora.sqlite3");
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
-                &DatabaseLocation::path(&database_path),
-                &default_migration_catalog().expect("build migration catalog"),
+                &DatabaseLocation::path(database_path),
+                &default_migration_catalog().unwrap(),
             )
-            .expect("bootstrap user-config database");
+            .expect("bootstrap user-config repository");
         (temporary, SqliteUserConfigRepository::new(pool))
     }
 
-    /// Verifies missing rows remain implicit while typed reads expose documented defaults.
     #[test]
-    fn loads_defaults_without_materializing_rows() {
+    fn missing_key_does_not_materialize_a_row() {
         let (temporary, repository) = repository();
+        assert_eq!(repository.get_value("missing").unwrap(), None);
 
-        assert_eq!(
-            (
-                repository.load_developer_mode().unwrap(),
-                repository.load_preferred_log_level().unwrap(),
-            ),
-            (DeveloperMode::Disabled, LogLevel::Info)
-        );
         let connection = Connection::open(temporary.path().join("ora.sqlite3")).unwrap();
         let row_count = connection
             .query_row("SELECT COUNT(*) FROM user_config", [], |row| {
@@ -143,79 +98,56 @@ mod tests {
         assert_eq!(row_count, 0);
     }
 
-    /// Verifies typed upserts use canonical text and preserve unrelated rows.
     #[test]
-    fn upserts_canonical_values_without_replacing_other_preferences() {
-        let (temporary, repository) = repository();
-
-        repository
-            .save_developer_mode(DeveloperMode::Enabled)
-            .unwrap();
-        repository
-            .save_preferred_log_level(LogLevel::Trace)
-            .unwrap();
-        repository
-            .save_developer_mode(DeveloperMode::Disabled)
-            .unwrap();
+    fn upserts_only_the_requested_key() {
+        let (_temporary, repository) = repository();
+        repository.set_value("first", "one").unwrap();
+        repository.set_value("second", "two").unwrap();
+        repository.set_value("first", "updated").unwrap();
 
         assert_eq!(
-            (
-                repository.load_developer_mode().unwrap(),
-                repository.load_preferred_log_level().unwrap(),
-            ),
-            (DeveloperMode::Disabled, LogLevel::Trace)
+            repository.get_value("first").unwrap().as_deref(),
+            Some("updated")
         );
-        let connection = Connection::open(temporary.path().join("ora.sqlite3")).unwrap();
-        let stored = [DEVELOPER_MODE_KEY, LOG_LEVEL_KEY].map(|key| {
-            connection
-                .query_row(
-                    "SELECT value FROM user_config WHERE key = ?1",
-                    params![key],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap()
-        });
-        assert_eq!(stored, ["false".to_string(), "trace".to_string()]);
+        assert_eq!(
+            repository.get_value("second").unwrap().as_deref(),
+            Some("two")
+        );
     }
 
-    /// Verifies malformed supported rows are reported rather than silently reset.
     #[test]
-    fn rejects_malformed_typed_values() {
-        let (temporary, repository) = repository();
-        let connection = Connection::open(temporary.path().join("ora.sqlite3")).unwrap();
-        connection
-            .execute(
-                "INSERT INTO user_config (key, value) VALUES (?1, ?2), (?3, ?4)",
-                params![DEVELOPER_MODE_KEY, "yes", LOG_LEVEL_KEY, "verbose"],
-            )
-            .unwrap();
+    fn deletes_only_the_requested_key() {
+        let (_temporary, repository) = repository();
+        repository.set_value("first", "one").unwrap();
+        repository.set_value("second", "two").unwrap();
 
-        assert_eq!(
-            repository.load_developer_mode().unwrap_err().to_string(),
-            "repository operation failed"
-        );
-        assert_eq!(
-            repository
-                .load_preferred_log_level()
-                .unwrap_err()
-                .to_string(),
-            "repository operation failed"
-        );
+        repository.delete_value("first").unwrap();
 
-        for non_canonical_value in [" DEBUG ", "Warn"] {
-            connection
-                .execute(
-                    "UPDATE user_config SET value = ?1 WHERE key = ?2",
-                    params![non_canonical_value, LOG_LEVEL_KEY],
-                )
-                .unwrap();
-            assert_eq!(
-                repository
-                    .load_preferred_log_level()
-                    .unwrap_err()
-                    .to_string(),
-                "repository operation failed"
-            );
-        }
+        assert_eq!(repository.get_value("first").unwrap(), None);
+        assert_eq!(
+            repository.get_value("second").unwrap().as_deref(),
+            Some("two")
+        );
+    }
+
+    #[test]
+    fn round_trips_network_proxy_settings_through_the_generic_store() {
+        let (_temporary, repository) = repository();
+        let service = UserConfigService::new(repository);
+        let settings = NetworkProxySettings {
+            host: "proxy.example.com".to_owned(),
+            port: 8080,
+            username: Some("ora".to_owned()),
+            password: Some("secret".to_owned()),
+        };
+
+        assert_eq!(service.network_proxy_settings().unwrap(), None);
+        assert_eq!(
+            service
+                .set_network_proxy_settings(settings.clone())
+                .unwrap(),
+            settings
+        );
+        assert_eq!(service.network_proxy_settings().unwrap(), Some(settings));
     }
 }

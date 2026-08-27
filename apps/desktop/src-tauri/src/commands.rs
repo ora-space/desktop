@@ -1,5 +1,4 @@
-use crate::config::validate_worktree_root;
-use crate::error::{CommandError, desktop_config_backend_error};
+use crate::error::CommandError;
 use crate::state::DesktopState;
 use crate::stream_forwarding::{forward_contract_stream, forward_workspace_watch};
 use crate::workspace_files::{WorkspaceFileApi, workspace_file_backend_error};
@@ -277,25 +276,25 @@ pub async fn delete_task(
         .map_err(CommandError::from)
 }
 backend_command!(
-    get_task_diff,
-    GetTaskDiffRequest,
-    GetTaskDiffResponse,
-    get_task_diff,
-    "Reads one task diff through the shared Backend."
+    get_workspace_diff,
+    GetWorkspaceDiffRequest,
+    GetWorkspaceDiffResponse,
+    get_workspace_diff,
+    "Reads one workspace diff through the shared Backend."
 );
 backend_command!(
-    commit_task_changes,
-    CommitTaskChangesRequest,
-    CommitTaskChangesResponse,
-    commit_task_changes,
-    "Commits one task worktree through the shared Backend."
+    commit_workspace_changes,
+    CommitWorkspaceChangesRequest,
+    CommitWorkspaceChangesResponse,
+    commit_workspace_changes,
+    "Commits one workspace checkout through the shared Backend."
 );
 backend_command!(
-    push_task_branch,
-    PushTaskBranchRequest,
-    PushTaskBranchResponse,
-    push_task_branch,
-    "Pushes one task worktree branch through the shared Backend."
+    push_workspace_branch,
+    PushWorkspaceBranchRequest,
+    PushWorkspaceBranchResponse,
+    push_workspace_branch,
+    "Pushes one workspace checkout's branch through the shared Backend."
 );
 
 // =============================================================================
@@ -1083,6 +1082,13 @@ backend_command!(
     delete_marketplace_source,
     "Removes one marketplace source repository."
 );
+backend_command!(
+    update_marketplace_source,
+    UpdateMarketplaceSourceRequest,
+    UpdateMarketplaceSourceResponse,
+    update_marketplace_source,
+    "Updates one marketplace source's proxy policy."
+);
 async_backend_command!(
     scan_plugins,
     ScanPluginsRequest,
@@ -1091,32 +1097,18 @@ async_backend_command!(
     "Explicitly scans and reconciles installed plugins."
 );
 async_backend_command!(
-    enable_plugin,
-    EnablePluginRequest,
-    EnablePluginResponse,
-    enable_plugin,
-    "Persists plugin eligibility without activating it."
-);
-async_backend_command!(
-    disable_plugin,
-    DisablePluginRequest,
-    DisablePluginResponse,
-    disable_plugin,
-    "Stops and disables one installed plugin."
-);
-async_backend_command!(
     activate_plugin,
     ActivatePluginRequest,
     ActivatePluginResponse,
     activate_plugin,
-    "Activates one enabled plugin."
+    "Activates one installed plugin."
 );
 async_backend_command!(
     stop_plugin,
     StopPluginRequest,
     StopPluginResponse,
     stop_plugin,
-    "Stops one plugin without changing eligibility."
+    "Stops one plugin process."
 );
 async_backend_command!(
     uninstall_plugin,
@@ -1137,7 +1129,7 @@ async_backend_command!(
     ImportPluginRequest,
     ImportPluginResponse,
     import_plugin,
-    "Imports one local .orax release archive, then enables the imported plugin."
+    "Imports one local .orax release archive; the installed plugin is immediately available."
 );
 
 // =============================================================================
@@ -1364,15 +1356,15 @@ pub async fn complete_workflow_node(
 // desktop
 // =============================================================================
 
-/// Carries the empty request used to read Desktop runtime configuration consistently.
+/// Carries the empty request used to read the active worktree root.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetDesktopConfigRequest {}
+pub struct GetWorktreeRootRequest {}
 
-/// Returns the current non-sensitive Desktop runtime configuration.
+/// Returns the active worktree creation root.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetDesktopConfigResponse {
+pub struct GetWorktreeRootResponse {
     pub worktree_root: String,
 }
 
@@ -1483,93 +1475,52 @@ fn resolve_workspace_cwd_backend(
         })
 }
 
-/// Reads the current Desktop worktree configuration without touching the Web API surface.
+/// Reads the active worktree root through Backend's SQLite-backed configuration.
 #[tauri::command]
-pub async fn get_desktop_config(
+pub async fn get_worktree_root(
     state: State<'_, DesktopState>,
-    request: GetDesktopConfigRequest,
-) -> Result<GetDesktopConfigResponse, CommandError> {
-    let _ = request;
-    let lifecycle = RequestLifecycle::start("get_desktop_config", &UuidRequestIdGenerator);
-    let result = state
-        .config
-        .snapshot()
-        .map_err(desktop_config_backend_error)
-        .map(|config| GetDesktopConfigResponse {
-            worktree_root: config.worktree_root().to_string_lossy().into_owned(),
-        });
-    match result {
-        Ok(response) => {
-            lifecycle.complete_success();
-            Ok(response)
-        }
-        Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
-    }
+    request: GetWorktreeRootRequest,
+) -> Result<GetWorktreeRootResponse, CommandError> {
+    run_backend(
+        "get_worktree_root",
+        state.backend.clone(),
+        request,
+        get_worktree_root_backend,
+    )
+    .await
 }
 
-/// Persists a new creation root and updates Backend configuration without interrupting in-flight work.
+fn get_worktree_root_backend(
+    backend: &Backend,
+    _request: GetWorktreeRootRequest,
+) -> Result<GetWorktreeRootResponse, BackendError> {
+    backend.worktree_root().map(|root| GetWorktreeRootResponse {
+        worktree_root: root.to_string_lossy().into_owned(),
+    })
+}
+
+/// Persists a new creation root without interrupting in-flight task creation.
 #[tauri::command]
 pub async fn set_worktree_root(
     state: State<'_, DesktopState>,
     request: SetWorktreeRootRequest,
 ) -> Result<SetWorktreeRootResponse, CommandError> {
-    let backend = state.backend.clone();
-    let config_store = state.config.clone();
-    let lifecycle = RequestLifecycle::start("set_worktree_root", &UuidRequestIdGenerator);
-    let request_span =
-        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
-    let blocking_span = request_span.clone();
-    let secondary_lifecycle = lifecycle.clone();
-    let result = match tauri::async_runtime::spawn_blocking(move || {
-        blocking_span.in_scope(|| {
-            let previous = config_store
-                .snapshot()
-                .map_err(desktop_config_backend_error)?;
-            let worktree_root = PathBuf::from(request.worktree_root);
+    run_backend(
+        "set_worktree_root",
+        state.backend.clone(),
+        request,
+        set_worktree_root_backend,
+    )
+    .await
+}
 
-            validate_worktree_root(&worktree_root).map_err(desktop_config_backend_error)?;
-            backend.set_worktree_root(worktree_root.clone())?;
-            if let Err(error) = config_store.set_worktree_root(worktree_root.clone()) {
-                if let Err(rollback_error) =
-                    backend.set_worktree_root(previous.worktree_root().to_path_buf())
-                {
-                    let report = ora_logging::ErrorReport::from_error(&rollback_error);
-                    ora_logging::ora_error!(
-                        operation = "set_worktree_root.rollback",
-                        request_id = %secondary_lifecycle.request_id(),
-                        outcome = "secondary_failure",
-                        error.code = rollback_error.public_error().code(),
-                        error.message = report.message(),
-                        error.chain = report.chain(),
-                        error.chain_depth = report.chain_depth(),
-                        "secondary cleanup failed"
-                    );
-                }
-                return Err(desktop_config_backend_error(error));
-            }
-
-            Ok(SetWorktreeRootResponse {
-                worktree_root: worktree_root.to_string_lossy().into_owned(),
-            })
-        })
+fn set_worktree_root_backend(
+    backend: &Backend,
+    request: SetWorktreeRootRequest,
+) -> Result<SetWorktreeRootResponse, BackendError> {
+    let worktree_root = PathBuf::from(request.worktree_root);
+    backend.set_worktree_root(worktree_root.clone())?;
+    Ok(SetWorktreeRootResponse {
+        worktree_root: worktree_root.to_string_lossy().into_owned(),
     })
-    .await
-    {
-        Ok(result) => result,
-        Err(source) => Err(BackendError::internal(
-            "Desktop command execution failed",
-            source,
-        )),
-    };
-    async move {
-        match result {
-            Ok(response) => {
-                lifecycle.complete_success();
-                Ok(response)
-            }
-            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
-        }
-    }
-    .instrument(request_span)
-    .await
 }

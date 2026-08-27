@@ -47,25 +47,4 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "GetTaskWorkspaceRequest",
         response_type: "GetTaskWorkspaceResponse",
     },
-    FrontendEndpoint {
-        operation_name: "getTaskDiff",
-        namespace: NAMESPACE,
-        member_name: "getDiff",
-        request_type: "GetTaskDiffRequest",
-        response_type: "GetTaskDiffResponse",
-    },
-    FrontendEndpoint {
-        operation_name: "commitTaskChanges",
-        namespace: NAMESPACE,
-        member_name: "commitChanges",
-        request_type: "CommitTaskChangesRequest",
-        response_type: "CommitTaskChangesResponse",
-    },
-    FrontendEndpoint {
-        operation_name: "pushTaskBranch",
-        namespace: NAMESPACE,
-        member_name: "pushBranch",
-        request_type: "PushTaskBranchRequest",
-        response_type: "PushTaskBranchResponse",
-    },
 ];

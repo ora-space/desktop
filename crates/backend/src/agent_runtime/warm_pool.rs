@@ -648,11 +648,16 @@ mod tests {
         SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     };
     use ora_contracts::WarmSessionTarget;
-    use ora_domain::{AgentCli, SessionId};
+    use ora_domain::{AgentRef, SessionId};
     use pretty_assertions::assert_eq;
     use std::path::{Path, PathBuf};
 
     const GENERATION: u64 = 1;
+
+    /// Names one installed agent package these fixtures bind their warm sessions to.
+    fn test_agent_ref() -> AgentRef {
+        AgentRef::parse("ora-space.nga").expect("agent identity")
+    }
 
     /// Builds a key for one workspace-scoped warm-session owner.
     fn key(workspace_id: &str, owner_name: &str) -> WarmKey {
@@ -668,7 +673,7 @@ mod tests {
             target: WarmSessionTarget::Workspace {
                 workspace_id: workspace_id.to_string(),
             },
-            agent_ref: AgentCli::Nga.agent_ref(),
+            agent_ref: test_agent_ref(),
             owner,
         }
     }
@@ -782,7 +787,7 @@ mod tests {
                     replay: vec![],
                 }),
                 Some(ReleasedSession {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                     generation: GENERATION,
                 }),
@@ -797,7 +802,7 @@ mod tests {
         let key = key("task-1", "client-1");
         let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
 
-        pool.invalidate_generation(&AgentCli::Nga.agent_ref(), GENERATION + 1);
+        pool.invalidate_generation(&test_agent_ref(), GENERATION + 1);
         let (decision, released) = pool.lookup(&key, Path::new("/repo"), GENERATION + 1, 5, || {
             SessionId::new("unused")
         });
@@ -828,7 +833,7 @@ mod tests {
             Some(model_options("smart")),
         );
 
-        pool.invalidate_generation(&AgentCli::Nga.agent_ref(), GENERATION + 1);
+        pool.invalidate_generation(&test_agent_ref(), GENERATION + 1);
         let (decision, _) = pool.lookup(&key, Path::new("/repo"), GENERATION + 1, 5, || {
             SessionId::new("unused")
         });
@@ -849,7 +854,7 @@ mod tests {
         let mut pool = WarmPool::default();
         let key = key("task-1", "client-1");
         let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
-        pool.invalidate_generation(&AgentCli::Nga.agent_ref(), GENERATION + 1);
+        pool.invalidate_generation(&test_agent_ref(), GENERATION + 1);
 
         assert_eq!(
             pool.config_target(&session_id, 5),
@@ -872,7 +877,7 @@ mod tests {
             (
                 vec![],
                 Some(ConfigTarget::Live {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                 }),
             )
@@ -896,7 +901,7 @@ mod tests {
         assert_eq!(
             pool.evict(),
             vec![ReleasedSession {
-                agent_ref: AgentCli::Nga.agent_ref(),
+                agent_ref: test_agent_ref(),
                 agent_session_id: "agent-session-0".to_string(),
                 generation: GENERATION,
             }]
@@ -924,7 +929,7 @@ mod tests {
         assert_eq!(
             pool.evict(),
             vec![ReleasedSession {
-                agent_ref: AgentCli::Nga.agent_ref(),
+                agent_ref: test_agent_ref(),
                 agent_session_id: "agent-session-1".to_string(),
                 generation: GENERATION,
             }]
@@ -966,7 +971,7 @@ mod tests {
             ),
             (
                 Some(RebuildPlan {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     cwd: PathBuf::from("/repo"),
                     replay: vec![],
                 }),
@@ -1054,12 +1059,12 @@ mod tests {
             (
                 vec![
                     ReleasedSession {
-                        agent_ref: AgentCli::Nga.agent_ref(),
+                        agent_ref: test_agent_ref(),
                         agent_session_id: "agent-session-1".to_string(),
                         generation: GENERATION,
                     },
                     ReleasedSession {
-                        agent_ref: AgentCli::Nga.agent_ref(),
+                        agent_ref: test_agent_ref(),
                         agent_session_id: "agent-session-2".to_string(),
                         generation: GENERATION,
                     },
@@ -1089,7 +1094,7 @@ mod tests {
             (
                 vec![],
                 Some(ConfigTarget::Live {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                 }),
             )
@@ -1114,7 +1119,7 @@ mod tests {
             (
                 Reservation::Held(AttachedWarm {
                     session_id,
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo"),
                     available_commands: vec![],
@@ -1167,7 +1172,7 @@ mod tests {
             (
                 ClaimDecision::Held(AttachedWarm {
                     session_id,
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo"),
                     available_commands: vec![],
@@ -1222,7 +1227,7 @@ mod tests {
             SessionConfigOptionValue::value_id("smart"),
             Some(model_options("smart")),
         );
-        pool.invalidate_generation(&AgentCli::Nga.agent_ref(), GENERATION + 1);
+        pool.invalidate_generation(&test_agent_ref(), GENERATION + 1);
 
         let (decision, _) =
             pool.lookup_and_reserve(&key, Path::new("/repo"), GENERATION + 1, 5, || {
@@ -1266,7 +1271,7 @@ mod tests {
             (
                 Install::Refused,
                 Some(ConfigTarget::Live {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                 }),
             )
@@ -1299,7 +1304,7 @@ mod tests {
             (
                 Install::Refused,
                 Some(ConfigTarget::Live {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                 }),
             )
@@ -1326,7 +1331,7 @@ mod tests {
                 Reservation::NeedsRebuild,
                 Reservation::Held(AttachedWarm {
                     session_id,
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo/old"),
                     available_commands: vec![],
@@ -1380,7 +1385,7 @@ mod tests {
             pool.reserve_for_attach(&session_id, Path::new("/repo")),
             Reservation::Held(AttachedWarm {
                 session_id,
-                agent_ref: AgentCli::Nga.agent_ref(),
+                agent_ref: test_agent_ref(),
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],
@@ -1401,7 +1406,7 @@ mod tests {
             SessionConfigOptionValue::value_id("smart"),
             None,
         );
-        pool.invalidate_generation(&AgentCli::Nga.agent_ref(), GENERATION + 1);
+        pool.invalidate_generation(&test_agent_ref(), GENERATION + 1);
 
         assert_eq!(
             (
@@ -1411,7 +1416,7 @@ mod tests {
             (
                 Reservation::NeedsRebuild,
                 Some(RebuildPlan {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     cwd: PathBuf::from("/repo"),
                     replay: vec![("model".into(), SessionConfigOptionValue::value_id("smart"),)],
                 }),
@@ -1446,7 +1451,7 @@ mod tests {
             ),
             (
                 Install::Accepted(Some(ReleasedSession {
-                    agent_ref: AgentCli::Nga.agent_ref(),
+                    agent_ref: test_agent_ref(),
                     agent_session_id: "agent-session-1".to_string(),
                     generation: GENERATION,
                 })),

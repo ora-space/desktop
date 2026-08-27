@@ -57,7 +57,6 @@ import {
   localizeSkillImportStatus,
 } from "../../i18n/skill-import-reason";
 import { useAgents } from "../../state/hooks/use-agents";
-import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { useSkills } from "../../state/hooks/use-skills";
 import {
   useCreateAgent,
@@ -205,7 +204,6 @@ function PluginSourceBadge({ pluginId }: { pluginId: string }) {
 export function SkillsSettings() {
   const { t } = useTranslation();
   const skillsQuery = useSkills();
-  const installedPluginsQuery = useInstalledPlugins();
   const createSkill = useCreateSkill();
   const updateSkill = useUpdateSkill();
   const deleteSkill = useDeleteSkill();
@@ -216,15 +214,6 @@ export function SkillsSettings() {
   const [recoverTarget, setRecoverTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const skills = skillsQuery.data ?? EMPTY_SKILLS;
-  const disabledPluginIds = useMemo(
-    () =>
-      new Set(
-        (installedPluginsQuery.data ?? [])
-          .filter((plugin) => !plugin.enabled)
-          .map((plugin) => plugin.id),
-      ),
-    [installedPluginsQuery.data],
-  );
   const unavailableCount = skills.filter(
     (skill) => skill.availability === "unavailable",
   ).length;
@@ -296,15 +285,9 @@ export function SkillsSettings() {
           if (!("source" in item) || item.source.kind !== "plugin") {
             return undefined;
           }
-          const disabled = disabledPluginIds.has(item.source.pluginId);
           return (
             <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
               <PluginSourceBadge pluginId={item.source.pluginId} />
-              {disabled && (
-                <Badge variant="outline" className="text-muted-foreground">
-                  {t("settings.skills.pluginDisabled")}
-                </Badge>
-              )}
             </div>
           );
         }}

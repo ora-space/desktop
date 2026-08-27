@@ -85,11 +85,8 @@ pub trait SurfacePluginGateway: Clone + Send + Sync + 'static {
     type Connection: SurfaceConnection;
 
     /// Returns the surface an installed plugin contributes (`None` when it is not installed or
-    /// contributes none, such as an agent), enabled or not.
+    /// contributes none, such as an agent).
     fn surface_definition(&self, plugin_id: &PluginId) -> Option<SurfaceDefinition>;
-
-    /// Reports whether the plugin is installed and enabled.
-    fn plugin_enabled(&self, plugin_id: &PluginId) -> bool;
 
     /// Creates and returns `<data-dir>/plugins/data/<namespace>/<name>`.
     fn data_directory(&self, plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure>;
@@ -114,10 +111,6 @@ impl SurfacePluginGateway for Arc<PluginGateway> {
     fn surface_definition(&self, plugin_id: &PluginId) -> Option<SurfaceDefinition> {
         PluginGateway::installed_plugin(self, plugin_id)
             .and_then(|plugin| SurfaceDefinition::from_installed(&plugin))
-    }
-
-    fn plugin_enabled(&self, plugin_id: &PluginId) -> bool {
-        PluginGateway::plugin_enabled(self, plugin_id)
     }
 
     fn data_directory(&self, plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure> {

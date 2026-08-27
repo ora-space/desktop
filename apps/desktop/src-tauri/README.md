@@ -31,7 +31,7 @@ and regenerate on every build.
 
 Desktop installs provisional logging from `ORA_LOG_LEVEL` or `info` before Backend migration, then resolves the runtime-ready level from the shared SQLite `user_config.log_level` preference when no environment override exists. It retains the logging writer guard for the process lifetime and shares a cancellation-safe runtime settings manager through Tauri state.
 
-The shared developer preferences are exposed through `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. These commands enter a request-correlated span before reading, persisting, reloading, or compensating; SQLite ownership remains in Backend rather than this crate. Desktop `config.json` does not store either preference.
+The shared developer preferences are exposed through `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. The Desktop-only worktree setting uses `get_worktree_root` and `set_worktree_root`. These commands enter a request-correlated span before reading or persisting; SQLite ownership remains in Backend rather than this crate. A startup-only compatibility step moves a valid legacy `config.json` worktree root into SQLite and removes the file.
 
 ## Plugin surfaces
 

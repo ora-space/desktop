@@ -11,6 +11,8 @@ known instead of constraining the prototype around a speculative repository API.
 Workflow graph snapshots extend `ReactFlowJsonObject<Node<TData>, Edge>` so
 nodes, connections, and viewport use React Flow's native persistence shape.
 Nodes use `@xyflow/react`'s `Node<TData>` directly and connections use `Edge`.
+Editor annotations use a separate `annotations` collection so they can share
+React Flow geometry and selection behavior without becoming executable steps.
 Executable fields (`instruction`, `model`, `tool`, and `condition`) live in the
 official `Node.data` extension point. There is no parallel workflow node, edge,
 or position DTO and no adapter layer.
@@ -36,7 +38,7 @@ choices rendered by the inspector, plus the node-type catalog and configuration-
 
 Imported definitions are validated before entering session state. React Flow's
 `isNode` and `isEdge` guards validate its element boundaries; business
-validation additionally enforces unique element IDs, valid edge endpoints,
+validation additionally enforces unique node, edge, and annotation IDs, valid edge endpoints,
 registered workflow edge and handle types, finite positions and viewport values,
 unique directed connections, exactly one Start node, and the required node-data
 shape.

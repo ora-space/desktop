@@ -49,8 +49,8 @@ import { RolesSettings, SkillsSettings } from "./atoms-settings";
 import { PluginsSettings } from "./plugins-settings";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { SettingsHeading } from "./settings-heading";
-import { WorkflowSettings } from "./workflow-settings";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
+import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -72,7 +72,7 @@ type SettingsCategory =
   | "roles"
   | "skills"
   | "plugins"
-  | "workflow"
+  | "proxy"
   | "permissions"
   | "privacy"
   | "developer";
@@ -133,7 +133,7 @@ export function SettingsDialog() {
     { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
-    { id: "workflow", icon: IconRoute, label: t("settings.nav.workflow") },
+    { id: "proxy", icon: IconRoute, label: t("settings.nav.proxy") },
     {
       id: "permissions",
       icon: IconShieldCheck,
@@ -158,39 +158,15 @@ export function SettingsDialog() {
       >
         <DialogContent
           showCloseButton
-          className={cn(
-            "max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none",
-            category === "workflow"
-              ? // Keep clear of the frameless titlebar controls so the app close
-                // button stays reachable beside this near-fullscreen editor.
-                "h-[calc(100dvh-6rem)] w-[calc(100vw-3rem)]"
-              : "h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))]",
-          )}
+          className="h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none"
         >
           <DialogHeader className="sr-only">
             <DialogTitle>{t("common.settings")}</DialogTitle>
             <DialogDescription>{t("settings.description")}</DialogDescription>
           </DialogHeader>
-          <div
-            className={cn(
-              "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1",
-              category === "workflow"
-                ? "sm:grid-cols-[144px_minmax(0,1fr)]"
-                : "sm:grid-cols-[210px_minmax(0,1fr)]",
-            )}
-          >
-            <aside
-              className={cn(
-                "border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r",
-                category === "workflow" && "sm:px-2 sm:py-3",
-              )}
-            >
-              <div
-                className={cn(
-                  "hidden h-11 items-center gap-2 px-2 sm:flex",
-                  category === "workflow" && "px-1.5",
-                )}
-              >
+          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1 sm:grid-cols-[210px_minmax(0,1fr)]">
+            <aside className="border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r">
+              <div className="hidden h-11 items-center gap-2 px-2 sm:flex">
                 <div className="flex size-7 items-center justify-center rounded-md bg-foreground text-background">
                   <IconAdjustments className="size-4" />
                 </div>
@@ -216,10 +192,7 @@ export function SettingsDialog() {
                           });
                       }}
                       className={cn(
-                        "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                        category === "workflow"
-                          ? "sm:w-full sm:px-2"
-                          : "sm:w-full",
+                        "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring sm:w-full",
                         category === item.id
                           ? "bg-background text-foreground shadow-sm ring-1 ring-border"
                           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
@@ -231,60 +204,50 @@ export function SettingsDialog() {
                   );
                 })}
               </nav>
-              <p
-                className={cn(
-                  "mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block",
-                  category === "workflow" && "sm:hidden",
-                )}
-              >
+              <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">
                 {t("settings.productName")}
                 <br />
                 {t("settings.prototypeLabel")}
               </p>
             </aside>
 
-            {category === "workflow" ? (
-              <div className="min-h-0 min-w-0 overflow-hidden">
-                <WorkflowSettings />
+            <ScrollArea className="min-h-0">
+              <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
+                {category === "appearance" && (
+                  <AppearanceSettings
+                    settings={settings}
+                    onUpdate={updateSettings}
+                  />
+                )}
+                {category === "roles" && <RolesSettings />}
+                {category === "skills" && <SkillsSettings />}
+                {category === "plugins" && (
+                  <PluginsSettings
+                    onNavigationGuardChange={registerPluginConfigurationGuard}
+                  />
+                )}
+                {category === "proxy" && <ProxySettings />}
+                {category === "permissions" && (
+                  <PermissionSettings
+                    settings={settings}
+                    onUpdate={updateSettings}
+                  />
+                )}
+                {category === "privacy" && (
+                  <PrivacySettings
+                    settings={settings}
+                    onUpdate={updateSettings}
+                    onClearHistory={clearConversations}
+                  />
+                )}
+                {category === "developer" && (
+                  <DeveloperSettings
+                    developerMode={developerMode}
+                    developerModeEnabled={developerModeEnabled}
+                  />
+                )}
               </div>
-            ) : (
-              <ScrollArea className="min-h-0">
-                <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
-                  {category === "appearance" && (
-                    <AppearanceSettings
-                      settings={settings}
-                      onUpdate={updateSettings}
-                    />
-                  )}
-                  {category === "roles" && <RolesSettings />}
-                  {category === "skills" && <SkillsSettings />}
-                  {category === "plugins" && (
-                    <PluginsSettings
-                      onNavigationGuardChange={registerPluginConfigurationGuard}
-                    />
-                  )}
-                  {category === "permissions" && (
-                    <PermissionSettings
-                      settings={settings}
-                      onUpdate={updateSettings}
-                    />
-                  )}
-                  {category === "privacy" && (
-                    <PrivacySettings
-                      settings={settings}
-                      onUpdate={updateSettings}
-                      onClearHistory={clearConversations}
-                    />
-                  )}
-                  {category === "developer" && (
-                    <DeveloperSettings
-                      developerMode={developerMode}
-                      developerModeEnabled={developerModeEnabled}
-                    />
-                  )}
-                </div>
-              </ScrollArea>
-            )}
+            </ScrollArea>
           </div>
         </DialogContent>
       </Dialog>

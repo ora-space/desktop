@@ -96,7 +96,7 @@ pub trait WorkflowRepository {
         workflow_id: &WorkflowId,
     ) -> Result<Option<WorkflowDetail>, RepositoryError>;
 
-    /// Lists visible workflows with their published version, ordered by creation time.
+    /// Lists visible workflows with their published version, newest created first.
     fn list_workflows(&self) -> Result<Vec<WorkflowSummary>, RepositoryError>;
 
     /// Replaces a visible workflow's editable name and returns the authoritative stored aggregate.

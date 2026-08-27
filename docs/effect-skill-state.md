@@ -36,7 +36,7 @@ previous fingerprint, finalizes when it matches the planned fingerprint, and ent
 
 ## Persistence and source propagation
 
-SQLite migration `0006` stores source revisions, Desired rows, surfaces, ledgers, status, consumer
+SQLite migration `0005` stores source revisions, Desired rows, surfaces, ledgers, status, consumer
 readiness, operations, and coalesced reconcile/propagation requests. Desired replacement and source
 delete/rename protection use immediate write transactions. Local Skill update commits its catalog
 row, exact digest/source revision, and propagation request together. The explicitly driven

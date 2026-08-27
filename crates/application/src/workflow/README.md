@@ -5,7 +5,7 @@ This module implements transport-independent CRUD and lifecycle use cases for wo
 ## Responsibilities and boundaries
 
 - Creation assigns `WorkflowId` and `WorkflowSnapshotId`, applies backend timestamps, validates the domain entity, and atomically persists the workflow together with its initial draft.
-- Get and list operations expose visible records only. Detail queries join the draft and published snapshot; list queries return lightweight summaries without graph data.
+- Get and list operations expose visible records only. Detail queries join the draft and published snapshot; list queries return lightweight summaries without graph data, newest created first.
 - Draft updates mutate the draft's graph in-place without creating a new snapshot row.
 - Publish copies the draft into an immutable snapshot and activates it in a single repository-managed transaction.
 - Rollback copies a historical snapshot's graph into the draft without changing the published pointer.

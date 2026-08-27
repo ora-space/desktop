@@ -122,6 +122,27 @@ describe("workflow demo", () => {
     );
   });
 
+  it("accepts editor annotations and rejects identifiers shared with executable nodes", () => {
+    const workflow = createMockWorkflow("en-US");
+    workflow.annotations = [
+      {
+        id: "annotation-1",
+        type: "annotation",
+        position: { x: 40, y: 60 },
+        width: 240,
+        height: 140,
+        data: { text: "Review this branch", theme: "yellow" },
+      },
+    ];
+
+    expect(parseDemoWorkflow(workflow)).toEqual(workflow);
+
+    workflow.annotations[0]!.id = workflow.nodes[0]!.id;
+    expect(() => parseDemoWorkflow(workflow)).toThrow(
+      "Invalid workflow definition",
+    );
+  });
+
   it("includes a seven-stage Agent lifecycle demo with explicit execution contracts", () => {
     const workflow = createMockWorkflows("en-US").find(
       (candidate) => candidate.id === "spec-change-lifecycle",

@@ -17,6 +17,14 @@ tasks:
   install:
     desc: Install all dependencies for the project
     cmds:
+      - |
+        {{if eq OS "windows"}}
+        if not exist specs git clone https://github.com/ora-space/specs specs
+        {{else}}
+        if [ ! -d specs ]; then
+          git clone https://github.com/ora-space/specs specs
+        fi
+        {{end}}
       - task: install:frontend
       - task: install:crates
       - task: build

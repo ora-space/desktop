@@ -225,15 +225,12 @@ impl<G: SurfacePluginGateway, R: Runtime> SurfaceService<G, R> {
             .ok_or(SurfaceError::InstanceNotFound(instance))
     }
 
-    /// Resolves the surface an installed, enabled plugin contributes.
+    /// Resolves the surface contributed by an installed plugin.
     fn definition(&self, plugin_id: &PluginId) -> Result<SurfaceDefinition, SurfaceError> {
         let definition = self
             .gateway
             .surface_definition(plugin_id)
             .ok_or_else(|| SurfaceError::PluginNotFound(plugin_id.clone()))?;
-        if !self.gateway.plugin_enabled(plugin_id) {
-            return Err(SurfaceError::PluginDisabled(plugin_id.clone()));
-        }
         Ok(definition)
     }
 

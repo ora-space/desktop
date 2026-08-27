@@ -117,7 +117,7 @@ fn runtime_builds_complete_task_diff() {
     let response = git
         .diff(DiffRequest {
             worktree: &worktree,
-            base_commit_id: &base_commit_id,
+            base_commit_id: Some(&base_commit_id),
             scope: gitlancer::git::diff::DiffScope::Branch,
         })
         .expect("build task diff");

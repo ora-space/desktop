@@ -226,12 +226,61 @@ mod tests {
     use agent_client_protocol_schema::v1::SessionNotification;
     use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use agent_client_protocol_schema::v1::{ToolCallUpdate, ToolCallUpdateFields};
-    use ora_acp::{AcpInboundEvent, AcpPeer, NdjsonTransport, PermissionRequest};
+    use ora_acp::{
+        AcpError, AcpInboundEvent, AcpPeer, AcpTransport, PermissionRequest, SessionResponse,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::sync::Arc;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex, split};
     use tokio::sync::mpsc;
+
+    /// Records what one connection wrote, standing in for the plugin transport these tests do not
+    /// need to exercise.
+    struct RecordingTransport {
+        sent: mpsc::UnboundedSender<Value>,
+    }
+
+    impl AcpTransport for RecordingTransport {
+        async fn send(&self, message: Value) -> Result<(), AcpError> {
+            let _ = self.sent.send(message);
+            Ok(())
+        }
+    }
+
+    /// Produces one genuine terminating response for `session_id`.
+    ///
+    /// Routing has to be asserted on a real `SessionResponse`, which only the ACP peer can mint:
+    /// it carries the correlation the peer established when the request went out, and no
+    /// constructor exposes that from here.
+    async fn session_response(session_id: &str) -> SessionResponse {
+        let (inbound, messages) = mpsc::unbounded_channel();
+        let (sent, mut outbound) = mpsc::unbounded_channel();
+        let mut peer = AcpPeer::spawn(messages, RecordingTransport { sent });
+        let session_id = SessionId::new(session_id);
+        let _pending = peer
+            .client
+            .start_session_request::<_, Value>(
+                session_id.clone(),
+                "session/prompt",
+                &json!({ "sessionId": session_id }),
+            )
+            .await
+            .expect("start session request");
+        let request = outbound.recv().await.expect("receive session request");
+        inbound
+            .send(Ok(json!({
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": { "stopReason": "end_turn" },
+            })))
+            .expect("queue session response");
+        match peer.next_event().await.expect("receive response event") {
+            AcpInboundEvent::SessionResponse(response) => response,
+            AcpInboundEvent::SessionUpdate(_)
+            | AcpInboundEvent::PermissionRequest(_)
+            | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
+        }
+    }
 
     /// Verifies central routing keeps concurrent session update streams isolated.
     #[tokio::test]
@@ -266,43 +315,7 @@ mod tests {
     /// Verifies a terminating response cannot overtake an update in the per-session FIFO.
     #[tokio::test]
     async fn preserves_update_then_response_order() {
-        let (ora_stream, agent_stream) = duplex(4096);
-        let (ora_reader, ora_writer) = split(ora_stream);
-        let (agent_reader, mut agent_writer) = split(agent_stream);
-        let mut agent_reader = BufReader::new(agent_reader);
-        let (transport, messages) = NdjsonTransport::spawn(ora_reader, ora_writer);
-        let mut peer = AcpPeer::spawn(messages, transport);
-        let session_id = SessionId::new("session-1");
-        let _pending = peer
-            .client
-            .start_session_request::<_, Value>(
-                session_id.clone(),
-                "session/prompt",
-                &json!({ "sessionId": session_id }),
-            )
-            .await
-            .expect("start session request");
-        let mut outbound = String::new();
-        agent_reader
-            .read_line(&mut outbound)
-            .await
-            .expect("read session request");
-        let outbound: Value = serde_json::from_str(outbound.trim()).expect("parse session request");
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": outbound["id"],
-            "result": { "stopReason": "end_turn" },
-        });
-        agent_writer
-            .write_all(format!("{response}\n").as_bytes())
-            .await
-            .expect("write session response");
-        let response = match peer.next_event().await.expect("receive response event") {
-            AcpInboundEvent::SessionResponse(response) => response,
-            AcpInboundEvent::SessionUpdate(_)
-            | AcpInboundEvent::PermissionRequest(_)
-            | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
-        };
+        let response = session_response("session-1").await;
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
@@ -441,43 +454,7 @@ mod tests {
     /// Active scheduling drains this queue before applying a terminal connection control.
     #[tokio::test]
     async fn keeps_queued_events_readable_after_connection_loss() {
-        let (ora_stream, agent_stream) = duplex(4096);
-        let (ora_reader, ora_writer) = split(ora_stream);
-        let (agent_reader, mut agent_writer) = split(agent_stream);
-        let mut agent_reader = BufReader::new(agent_reader);
-        let (transport, messages) = NdjsonTransport::spawn(ora_reader, ora_writer);
-        let mut peer = AcpPeer::spawn(messages, transport);
-        let session_id = SessionId::new("session-1");
-        let _pending = peer
-            .client
-            .start_session_request::<_, Value>(
-                session_id.clone(),
-                "session/prompt",
-                &json!({ "sessionId": session_id }),
-            )
-            .await
-            .expect("start session request");
-        let mut outbound = String::new();
-        agent_reader
-            .read_line(&mut outbound)
-            .await
-            .expect("read session request");
-        let outbound: Value = serde_json::from_str(outbound.trim()).expect("parse session request");
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": outbound["id"],
-            "result": { "stopReason": "end_turn" },
-        });
-        agent_writer
-            .write_all(format!("{response}\n").as_bytes())
-            .await
-            .expect("write session response");
-        let response = match peer.next_event().await.expect("receive response event") {
-            AcpInboundEvent::SessionResponse(response) => response,
-            AcpInboundEvent::SessionUpdate(_)
-            | AcpInboundEvent::PermissionRequest(_)
-            | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
-        };
+        let response = session_response("session-1").await;
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();

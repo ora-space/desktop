@@ -1,40 +1,39 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { WarmSessionTarget } from "@ora/contracts";
-import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import { findModelOption, selectableValues } from "@ora/chat";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
-import {
-  AGENT_CLI_LABELS,
-  AGENT_CLI_ORDER,
-} from "../../features/chat/model-catalog";
+import type { AgentEntry } from "../../features/chat/agent-catalog";
+import { useAvailableAgents } from "./use-available-agents";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { queryKeys } from "./query-keys";
 import { useProjects } from "./use-projects";
 import { useTasks } from "./use-tasks";
 import { useWorkspaces } from "./use-workspaces";
 
-/** Per-CLI discovery state so the inspector can show a spinner or retry per row. */
+/** Per-agent discovery state so the inspector can show a spinner or retry per row. */
 export interface WorkflowAgentCliStatus {
   isLoading: boolean;
   isError: boolean;
 }
 
-/** Discovered Agent CLI × model pairs for workflow node configuration. */
+/** Discovered agent × model pairs for workflow node configuration. */
 export interface WorkflowAgentModelsCatalog {
+  /** The agents this installation can offer, in the order the picker lists them. */
+  agents: AgentEntry[];
   agentModels: WorkflowAgentModel[];
-  /** Models grouped by CLI, mirroring the two-section picker in chat. */
-  modelsByCli: ReadonlyMap<KnownAgentCli, WorkflowAgentModel[]>;
-  /** Loading/error state for every configured CLI, keyed by CLI. */
-  cliStatus: Readonly<Record<KnownAgentCli, WorkflowAgentCliStatus>>;
+  /** Models grouped by agent, mirroring the two-section picker in chat. */
+  modelsByCli: ReadonlyMap<string, WorkflowAgentModel[]>;
+  /** Loading/error state for every offered agent, keyed by its identity. */
+  cliStatus: Readonly<Record<string, WorkflowAgentCliStatus>>;
   isLoading: boolean;
   isError: boolean;
   refetch: () => void;
 }
 
 /**
- * Discovers real models the same way chat does — by warming each Agent CLI —
+ * Discovers real models the same way chat does — by warming each agent —
  * and flattens them into the workflow inspector's single picker list.
  *
  * Warm requires a cwd-bearing target. Preference order matches chat surfaces,
@@ -43,6 +42,7 @@ export interface WorkflowAgentModelsCatalog {
  */
 export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   const client = useContractsClient();
+  const agents = useAvailableAgents();
   const selection = useWorkspaceSelectionStore((state) => state.selection);
   const projectsQuery = useProjects();
   const tasksQuery = useTasks();
@@ -59,13 +59,13 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     selection.taskId === null;
 
   const warmQueries = useQueries({
-    queries: AGENT_CLI_ORDER.map((agentCli) => ({
-      queryKey: queryKeys.warmSession(target, agentCli),
+    queries: agents.map((agent) => ({
+      queryKey: queryKeys.warmSession(target, agent.agentRef),
       enabled: target !== null,
       queryFn: () =>
         client.session.warm({
           target: target!,
-          agentRef: agentCli,
+          agentRef: agent.agentRef,
         }),
       staleTime: Infinity,
       gcTime: Infinity,
@@ -74,10 +74,10 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   });
 
   const agentModels = useMemo(() => {
-    // Derive from AGENT_CLI_ORDER, the same single list the chat picker renders,
-    // so a CLI added there is discovered here too without a second list to sync.
+    // Derive from the same offered-agent list the chat picker renders, so an agent
+    // installed while Ora runs is discovered here too without a second list to sync.
     const models: WorkflowAgentModel[] = [];
-    for (const [index, agentCli] of AGENT_CLI_ORDER.entries()) {
+    for (const [index, agent] of agents.entries()) {
       const options = warmQueries[index]?.data?.configOptions;
       if (options === undefined) {
         continue;
@@ -88,22 +88,21 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
       }
       for (const value of selectableValues(modelOption)) {
         models.push({
-          agentCli,
+          agentCli: agent.agentRef,
           modelId: value.value,
-          label: `${AGENT_CLI_LABELS[agentCli]} · ${value.name}`,
+          label: `${agent.label} · ${value.name}`,
         });
       }
     }
     return models;
-  }, [warmQueries]);
+  }, [agents, warmQueries]);
 
   const modelsByCli = useMemo(() => {
-    const byCli = new Map<KnownAgentCli, WorkflowAgentModel[]>();
+    const byCli = new Map<string, WorkflowAgentModel[]>();
     for (const model of agentModels) {
-      const cli = model.agentCli as KnownAgentCli;
-      const existing = byCli.get(cli);
+      const existing = byCli.get(model.agentCli);
       if (existing === undefined) {
-        byCli.set(cli, [model]);
+        byCli.set(model.agentCli, [model]);
       } else {
         existing.push(model);
       }
@@ -114,18 +113,18 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   const cliStatus = useMemo(
     () =>
       Object.fromEntries(
-        AGENT_CLI_ORDER.map((agentCli, index) => {
+        agents.map((agent, index) => {
           const query = warmQueries[index];
           return [
-            agentCli,
+            agent.agentRef,
             {
               isLoading: query?.isPending === true,
               isError: query?.isError === true,
             },
           ];
         }),
-      ) as Readonly<Record<KnownAgentCli, WorkflowAgentCliStatus>>,
-    [warmQueries],
+      ),
+    [agents, warmQueries],
   );
 
   const isLoading =
@@ -143,6 +142,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     agentModels.length === 0;
 
   return {
+    agents,
     agentModels,
     modelsByCli,
     cliStatus,

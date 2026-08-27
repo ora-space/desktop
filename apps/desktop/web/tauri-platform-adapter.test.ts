@@ -118,7 +118,7 @@ describe("TauriPlatformAdapter", () => {
     );
     await adapter.worktreeStorage.setRoot("/mnt/worktrees");
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "get_desktop_config", {
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "get_worktree_root", {
       request: {},
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "set_worktree_root", {

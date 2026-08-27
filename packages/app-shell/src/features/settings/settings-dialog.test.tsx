@@ -145,7 +145,6 @@ describe("SettingsDialog developer options", () => {
       license: null,
       kind: "agent",
       agentDisplayName: "weather",
-      enabled: false,
       logo: null,
       installationValidity: { validity: "valid" },
       configuration: { state: "available", completeness: "incomplete" },

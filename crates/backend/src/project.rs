@@ -1,4 +1,5 @@
 use crate::clock::SystemClock;
+use crate::effect_worker::EffectWorkerHandle;
 use std::path::PathBuf;
 
 use ora_application::{
@@ -42,16 +43,24 @@ pub(crate) struct ProjectApi {
     list_branches: ProjectBranchListHandler,
     update: UpdateProjectHandler<SqliteProjectRepository, SystemClock>,
     clock: SystemClock,
+    /// Wakes Effect convergence for the Workspace a new project brings with it.
+    effect_reconcile: EffectWorkerHandle,
 }
 
 impl ProjectApi {
     /// Builds project handlers from the shared repository pool.
-    pub(crate) fn new(pool: RepositoryPool, sessions_root: PathBuf, clock: SystemClock) -> Self {
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        sessions_root: PathBuf,
+        clock: SystemClock,
+        effect_reconcile: EffectWorkerHandle,
+    ) -> Self {
         let repository = SqliteProjectRepository::new(pool.clone());
 
         Self {
             pool: pool.clone(),
             sessions_root,
+            effect_reconcile,
             create: CreateProjectHandler::new(
                 repository.clone(),
                 UuidProjectIdGenerator::new(),
@@ -72,11 +81,18 @@ impl ProjectApi {
     }
 
     /// Executes project creation through the application handler.
+    ///
+    /// The new main Workspace needs the Effect surfaces every running consumer already declared,
+    /// and no declaration will fire again on its own. Waking here is a latency optimization only:
+    /// the worker converges the same Workspace within one scan interval regardless, so a wake lost
+    /// to a crash costs a scan interval rather than the materialization.
     pub(crate) fn create(
         &self,
         request: CreateProjectRequest,
     ) -> Result<CreateProjectResponse, ApplicationError> {
-        self.create.handle(request)
+        let response = self.create.handle(request)?;
+        self.effect_reconcile.notify();
+        Ok(response)
     }
 
     /// Executes one project lookup through the application handler.

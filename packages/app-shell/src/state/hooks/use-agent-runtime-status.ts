@@ -3,15 +3,15 @@ import type { AgentRuntimeStatus } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "./query-keys";
 
-/** Short-poll cadence used only while at least one CLI is still completing its ACP handshake. */
+/** Short-poll cadence used only while at least one agent is still completing its ACP handshake. */
 const STARTING_POLL_INTERVAL_MS = 1500;
 
 /**
  * Slow cadence used while some agent is merely missing, so one that appears is eventually noticed.
  *
  * An unavailable agent is expected configuration rather than a fault, and it can become usable
- * without anything telling this client: a CLI installed into `PATH`, or a plugin whose supervisor
- * is most of a backoff interval away from retrying it. Polling on is what lets it come back.
+ * without anything telling this client: a plugin the user enabled, or one whose supervisor is most
+ * of a backoff interval away from retrying it. Polling on is what lets it come back.
  */
 const UNAVAILABLE_POLL_INTERVAL_MS = 15_000;
 
@@ -31,11 +31,11 @@ function pollInterval(statuses: AgentRuntimeStatus[] | undefined) {
  * Loads the live per-agent detection status (ready/starting/unavailable/failing) that decides
  * which agents the pickers offer.
  *
- * The set is whatever this installation actually supervises: a built-in CLI is always supervised
- * and reports whether its executable was found, while a plugin-supplied agent is only supervised
- * while its package is installed and only reaches `ready` once the lifecycle agrees to start it.
- * That makes one answer cover "not installed on this machine", "package uninstalled", and
- * "package disabled" without the client having to model any of them separately.
+ * The set is whatever this installation actually supervises: an agent is supervised only while
+ * the package supplying it is installed, and only reaches `ready` once the lifecycle agrees to
+ * start it and its own agent process answered. That makes one answer cover "package uninstalled",
+ * "package disabled", and "the agent behind it is not installed on this machine" without the
+ * client having to model any of them separately.
  */
 export function useAgentRuntimeStatus() {
   const client = useContractsClient();

@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import type { ContractsClient, InstalledPlugin, Session } from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
 import { describe, expect, it } from "vitest";
@@ -27,9 +26,8 @@ type PluginRuntime =
   | { runtime: "running" }
   | { runtime: "failed"; failureReason: string };
 
-/** Builds one installed agent package whose eligibility the test controls. */
+/** Builds one installed agent package with the requested runtime state. */
 function agentPlugin(
-  enabled: boolean,
   runtime: PluginRuntime = { runtime: "running" },
 ): InstalledPlugin {
   return {
@@ -43,7 +41,6 @@ function agentPlugin(
     version: "0.1.0",
     kind: "agent",
     agentDisplayName: "Review Agent",
-    enabled,
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },
@@ -81,10 +78,6 @@ function renderBanner(plugins: InstalledPlugin[], bound: Session) {
   const state = createMockClientState();
   state.installedPlugins = plugins;
   const backend = createMockClient(state);
-  // The mock flips eligibility on the very objects it later hands back, which no
-  // IPC boundary would do: react-query would see one unchanged reference and
-  // skip the render that clears the banner. Copying restores the real contract
-  // that every response is fresh data.
   const client: ContractsClient = {
     ...backend,
     plugin: {
@@ -107,29 +100,9 @@ function renderBanner(plugins: InstalledPlugin[], bound: Session) {
       <SettleProbe />
     </Wrapper>,
   );
-  return state;
 }
 
 describe("SessionAgentBanner", () => {
-  it("warns and offers repair when the session's plugin is disabled", async () => {
-    const state = renderBanner(
-      [agentPlugin(false, { runtime: "stopped" })],
-      session("ora-space.reviewer"),
-    );
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveAttribute("data-agent-availability", "disabled");
-    expect(alert).toHaveTextContent("Code Reviewer");
-
-    await userEvent.click(within(alert).getByRole("button"));
-
-    expect(state.installedPlugins[0]?.enabled).toBe(true);
-    // The repaired plugin makes the agent servable again, so the warning clears
-    // itself once the invalidated query answers rather than waiting for the
-    // next navigation.
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  });
-
   it("reports an agent whose package is gone as uninstalled", async () => {
     renderBanner([], session("ora-space.reviewer"));
 
@@ -146,8 +119,8 @@ describe("SessionAgentBanner", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("stays silent while an enabled plugin is serving the session", async () => {
-    renderBanner([agentPlugin(true)], session("ora-space.reviewer"));
+  it("stays silent while an installed plugin is serving the session", async () => {
+    renderBanner([agentPlugin()], session("ora-space.reviewer"));
 
     await screen.findByTestId("availability-settled");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -156,7 +129,7 @@ describe("SessionAgentBanner", () => {
   it("surfaces the backend's reason when the plugin failed to start", async () => {
     renderBanner(
       [
-        agentPlugin(true, {
+        agentPlugin({
           runtime: "failed",
           failureReason: "deno exited with 1",
         }),

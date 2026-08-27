@@ -1,7 +1,6 @@
 mod commands;
-mod config;
-mod dashboard;
 mod error;
+mod legacy_config;
 mod open_external;
 mod open_location;
 mod settings_commands;
@@ -11,7 +10,6 @@ mod stream_forwarding;
 mod surface;
 mod workspace_files;
 
-use crate::config::DesktopConfigStore;
 use crate::error::DesktopBootstrapError;
 use crate::state::{BundledBinaryPaths, DesktopRuntimeGuard, DesktopState};
 use ora_backend::{Backend, BackendError, BackendPaths};
@@ -73,8 +71,6 @@ fn bootstrap_desktop(
         .path()
         .home_dir()
         .map_err(DesktopBootstrapError::AppDataDirectory)?;
-    let config = DesktopConfigStore::load_or_create(&app_data_directory, &home_directory)?;
-    let config_snapshot = config.snapshot()?;
     let resolved_timezone = read_system_timezone();
     let startup_override = read_desktop_log_level_override(|key| std::env::var(key).ok())?;
     let provisional_log_level = startup_override.unwrap_or(LogLevel::Info);
@@ -115,18 +111,20 @@ fn bootstrap_desktop(
         }
     };
     let ripgrep_path = binary_paths.ripgrep_path().to_path_buf();
+    let default_worktree_root = legacy_config::default_worktree_root(&home_directory);
     let backend = Backend::open(BackendPaths {
         database_path: app_data_directory.join("ora.sqlite3"),
         data_directory: home_directory.join(PLUGIN_HOME_DIRECTORY_NAME),
         deno_path: binary_paths.deno_path().to_path_buf(),
-        worktree_root: config_snapshot.worktree_root().to_path_buf(),
-        home_directory,
+        worktree_root: default_worktree_root,
+        home_directory: home_directory.clone(),
         relative_path_base: desktop_relative_path_base(&app_data_directory),
         sessions_root: app_data_directory.join("sessions"),
         skills_root: app_data_directory.join("atoms").join("skills"),
         ripgrep_path: ripgrep_path.clone(),
         timezone: resolved_timezone.timezone,
     })?;
+    legacy_config::migrate(&backend, &app_data_directory, &home_directory)?;
     let (configured_log_level, resolved_log_level) =
         tauri::async_runtime::block_on(load_desktop_log_level(&backend, startup_override))
             .map_err(DesktopBootstrapError::RuntimePreference)?;
@@ -151,11 +149,9 @@ fn bootstrap_desktop(
     Ok((
         DesktopState {
             backend,
-            config,
             runtime_log_level,
             workspace_files,
             binary_paths,
-            app_data_directory: app_data_directory.clone(),
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
             surfaces,
         },

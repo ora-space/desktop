@@ -192,7 +192,6 @@ pub struct InstalledPlugin {
     #[serde(flatten)]
     #[ts(flatten)]
     pub contribution: InstalledPluginContribution,
-    pub enabled: bool,
     /// Security-validated SVG source for the package icon, absent when the package ships none.
     ///
     /// The icon travels as inline source instead of a filesystem path because the webview cannot
@@ -285,6 +284,8 @@ pub struct MarketplaceSource {
     pub url: String,
     /// Short branch name tracked by the source.
     pub branch: String,
+    /// Whether Git fetches and plugin downloads for this source use the configured proxy.
+    pub use_proxy: bool,
 }
 
 /// Requests the configured marketplace source repositories.
@@ -308,6 +309,7 @@ pub struct ListMarketplaceSourcesResponse {
 pub struct AddMarketplaceSourceRequest {
     pub url: String,
     pub branch: String,
+    pub use_proxy: bool,
 }
 
 /// Returns the source list immediately after one source is persisted.
@@ -315,6 +317,23 @@ pub struct AddMarketplaceSourceRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct AddMarketplaceSourceResponse {
+    pub sources: Vec<MarketplaceSource>,
+}
+
+/// Requests changing only one marketplace source's proxy policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdateMarketplaceSourceRequest {
+    pub url: String,
+    pub use_proxy: bool,
+}
+
+/// Returns the source list immediately after one source's proxy policy is persisted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdateMarketplaceSourceResponse {
     pub sources: Vec<MarketplaceSource>,
 }
 
@@ -348,38 +367,6 @@ pub struct ListInstalledPluginsResponse {
     pub plugins: Vec<InstalledPlugin>,
 }
 
-/// Requests durable eligibility for one installed plugin without starting its process.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct EnablePluginRequest {
-    pub plugin_id: String,
-}
-
-/// Returns the enabled plugin snapshot observed after persistence succeeds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct EnablePluginResponse {
-    pub plugin: InstalledPlugin,
-}
-
-/// Requests persistent ineligibility for one installed plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct DisablePluginRequest {
-    pub plugin_id: String,
-}
-
-/// Returns the stopped and disabled plugin snapshot after persistence succeeds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct DisablePluginResponse {
-    pub plugin: InstalledPlugin,
-}
-
 /// Requests explicit filesystem discovery and state reconciliation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -394,7 +381,7 @@ pub struct ScanPluginsResponse {
     pub plugins: Vec<InstalledPlugin>,
 }
 
-/// Requests process activation for one enabled plugin.
+/// Requests process activation for one installed plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
@@ -410,7 +397,7 @@ pub struct ActivatePluginResponse {
     pub plugin: InstalledPlugin,
 }
 
-/// Requests process shutdown for one plugin without changing durable eligibility.
+/// Requests process shutdown while leaving the installed plugin available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
@@ -503,7 +490,7 @@ pub struct ImportPluginRequest {
     pub path: String,
 }
 
-/// Confirms the identifier imported after the archive is verified, extracted, and enabled.
+/// Confirms the identifier imported after the archive is verified and extracted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
@@ -606,14 +593,12 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListMarketplaceSourcesResponse::export(config)?;
     AddMarketplaceSourceRequest::export(config)?;
     AddMarketplaceSourceResponse::export(config)?;
+    UpdateMarketplaceSourceRequest::export(config)?;
+    UpdateMarketplaceSourceResponse::export(config)?;
     DeleteMarketplaceSourceRequest::export(config)?;
     DeleteMarketplaceSourceResponse::export(config)?;
     ListInstalledPluginsRequest::export(config)?;
     ListInstalledPluginsResponse::export(config)?;
-    EnablePluginRequest::export(config)?;
-    EnablePluginResponse::export(config)?;
-    DisablePluginRequest::export(config)?;
-    DisablePluginResponse::export(config)?;
     ScanPluginsRequest::export(config)?;
     ScanPluginsResponse::export(config)?;
     ActivatePluginRequest::export(config)?;
@@ -648,7 +633,8 @@ mod tests {
         ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
         ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, MarketplaceSource,
         PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
+        UpdateMarketplaceSourceResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -668,7 +654,6 @@ mod tests {
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Claude Code".to_string(),
             },
-            enabled: false,
             logo: Some("<svg/>".to_string()),
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -696,7 +681,6 @@ mod tests {
                     "license": "Apache-2.0",
                     "kind": "agent",
                     "agentDisplayName": "Claude Code",
-                    "enabled": false,
                     "logo": "<svg/>",
                     "installationValidity": { "validity": "valid" },
                     "configuration": { "state": "not_declared" },
@@ -720,7 +704,6 @@ mod tests {
             homepage: None,
             license: None,
             contribution,
-            enabled: true,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -785,7 +768,6 @@ mod tests {
             homepage: None,
             license: None,
             contribution: InstalledPluginContribution::Skill,
-            enabled: true,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -794,7 +776,7 @@ mod tests {
 
         let value = serde_json::to_value(&plugin).expect("Skill plugin serializes");
         assert_eq!(value.get("kind"), Some(&json!("skill")));
-        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(13));
         assert_eq!(
             serde_json::from_value::<InstalledPlugin>(value).expect("Skill plugin round-trips"),
             plugin
@@ -814,7 +796,6 @@ mod tests {
             homepage: None,
             license: None,
             contribution: InstalledPluginContribution::Mcp,
-            enabled: true,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -823,7 +804,7 @@ mod tests {
 
         let value = serde_json::to_value(&plugin).expect("MCP plugin serializes");
         assert_eq!(value.get("kind"), Some(&json!("mcp")));
-        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(13));
         assert_eq!(
             serde_json::from_value::<InstalledPlugin>(value).expect("MCP plugin round-trips"),
             plugin
@@ -908,6 +889,7 @@ mod tests {
         let source = || MarketplaceSource {
             url: "https://github.com/example/marketplace".to_string(),
             branch: "main".to_string(),
+            use_proxy: false,
         };
         assert_eq!(
             serde_json::to_value(ListMarketplaceSourcesRequest {}).unwrap(),
@@ -921,7 +903,8 @@ mod tests {
             json!({
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
-                    "branch": "main"
+                    "branch": "main",
+                    "useProxy": false
                 }]
             })
         );
@@ -929,11 +912,13 @@ mod tests {
             serde_json::to_value(AddMarketplaceSourceRequest {
                 url: "https://github.com/example/marketplace".to_string(),
                 branch: "main".to_string(),
+                use_proxy: false,
             })
             .unwrap(),
             json!({
                 "url": "https://github.com/example/marketplace",
-                "branch": "main"
+                "branch": "main",
+                "useProxy": false
             })
         );
         assert_eq!(
@@ -944,9 +929,28 @@ mod tests {
             json!({
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
-                    "branch": "main"
+                    "branch": "main",
+                    "useProxy": false
                 }]
             })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateMarketplaceSourceRequest {
+                url: "https://github.com/example/marketplace".to_string(),
+                use_proxy: true,
+            })
+            .unwrap(),
+            json!({
+                "url": "https://github.com/example/marketplace",
+                "useProxy": true
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateMarketplaceSourceResponse {
+                sources: Vec::new(),
+            })
+            .unwrap(),
+            json!({ "sources": [] })
         );
         assert_eq!(
             serde_json::to_value(DeleteMarketplaceSourceRequest {
@@ -1019,7 +1023,6 @@ mod tests {
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
             },
-            enabled: true,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -1039,7 +1042,6 @@ mod tests {
                 "license": null,
                 "kind": "agent",
                 "agentDisplayName": "Example",
-                "enabled": true,
                 "logo": null,
                 "installationValidity": { "validity": "valid" },
                 "configuration": { "state": "not_declared" },
@@ -1063,7 +1065,6 @@ mod tests {
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
             },
-            enabled: true,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
             configuration: PluginConfigurationSummary::NotDeclared,
@@ -1085,7 +1086,6 @@ mod tests {
                 "license": null,
                 "kind": "agent",
                 "agentDisplayName": "Example",
-                "enabled": true,
                 "logo": null,
                 "installationValidity": { "validity": "valid" },
                 "configuration": { "state": "not_declared" },

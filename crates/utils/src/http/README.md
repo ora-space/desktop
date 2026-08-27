@@ -23,7 +23,7 @@ Generic, domain-free download capability used by crates that fetch release artif
 ## Non-responsibilities
 
 - Choosing a concrete transport: only `http` is shipped by default; the network backend is opt-in.
-- TLS handling, redirect-target validation, resume, and digital-signature verification.
+- TLS handling, redirect-target validation, resume, and digital-signature verification. The reqwest backend does, however, trust the operating system native certificate store (in addition to the bundled webpki roots) so it works behind corporate MITM proxies whose root CA is installed in the OS trust store, matching the behavior of a browser or `git` on the same machine.
 - Concurrency budgeting across parallel installs; that is the orchestrator`s job.
 
 ## Key invariants

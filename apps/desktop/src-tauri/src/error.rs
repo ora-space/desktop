@@ -1,10 +1,7 @@
-use crate::config::DesktopConfigError;
+use crate::legacy_config::LegacyConfigError;
 use crate::state::BinaryResolutionError;
-use ora_backend::{
-    BackendBootstrapError, BackendError, ErrorClassification, RequestLifecycle,
-    UuidRequestIdGenerator,
-};
-use ora_contracts::{ContractError, EmptyErrorParams, PublicError};
+use ora_backend::{BackendBootstrapError, BackendError, RequestLifecycle, UuidRequestIdGenerator};
+use ora_contracts::ContractError;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -14,8 +11,8 @@ pub enum DesktopBootstrapError {
     #[error("failed to resolve the system application data directory")]
     AppDataDirectory(#[source] tauri::Error),
     #[error(transparent)]
-    Config(#[from] DesktopConfigError),
-    #[error("invalid ORA_LOG_LEVEL value `{value}`")]
+    LegacyConfig(#[from] LegacyConfigError),
+    #[error("invalid ORA_LOG_LEVEL value {value}")]
     InvalidLogLevel { value: String },
     #[error(transparent)]
     Logging(#[from] ora_logging::LoggingInitError),
@@ -52,46 +49,4 @@ impl From<BackendError> for CommandError {
     fn from(error: BackendError) -> Self {
         Self::from_backend(error)
     }
-}
-
-impl From<DesktopConfigError> for CommandError {
-    fn from(error: DesktopConfigError) -> Self {
-        Self::from_backend(desktop_config_backend_error(error))
-    }
-}
-
-pub(crate) fn desktop_config_backend_error(error: DesktopConfigError) -> BackendError {
-    let (classification, public_error, context) = match &error {
-        DesktopConfigError::WorktreeRootNotAbsolute { .. } => (
-            ErrorClassification::InvalidRequest,
-            PublicError::WorktreeRootNotAbsolute(EmptyErrorParams {}),
-            "worktree root must be an absolute path",
-        ),
-        DesktopConfigError::WorktreeRootNotDirectory { .. } => (
-            ErrorClassification::InvalidRequest,
-            PublicError::WorktreeRootNotDirectory(EmptyErrorParams {}),
-            "worktree root must be an existing directory",
-        ),
-        // Dashboard endpoint validation failures are user-facing invalid request errors;
-        // there is no dedicated PublicError variant so they are folded into the generic
-        // InvalidRequest bucket with a context string that preserves the specifics.
-        DesktopConfigError::DashboardHostEmpty
-        | DesktopConfigError::DashboardHostNotLoopback
-        | DesktopConfigError::DashboardPortZero => (
-            ErrorClassification::InvalidRequest,
-            PublicError::InvalidRequest(EmptyErrorParams {}),
-            "dashboard endpoint must be a non-empty loopback host with a non-zero port",
-        ),
-        DesktopConfigError::Persist { .. }
-        | DesktopConfigError::StateUnavailable
-        | DesktopConfigError::DirectoryCreate { .. }
-        | DesktopConfigError::Read { .. }
-        | DesktopConfigError::Decode { .. }
-        | DesktopConfigError::UnsupportedVersion { .. } => (
-            ErrorClassification::Internal,
-            PublicError::InternalError(EmptyErrorParams {}),
-            "Desktop configuration is unavailable",
-        ),
-    };
-    BackendError::with_source(classification, public_error, context, error)
 }

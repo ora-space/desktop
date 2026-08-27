@@ -36,11 +36,10 @@ Numeric and text category columns are modeled as enums rather than raw codes, so
 
 - `SessionStatus`: `Running` (0), `Stopped` (1)
 - `WorktreeActivity`: `Inactive` (0), `Active` (1)
-- `AgentCli`: `Nga`, `CodeAgentCli`, `Claude`, `Codex`
 
 Encoding and decoding live at the boundary, not inside the models. Each enum exposes `database_value()` plus a `from_database_value()` that rejects unknown persisted values with a `DomainModelError` instead of constructing an invalid state. Domain enums are never derived from raw integers implicitly.
 
-`AgentCli` is persisted as namespaced text (`ora-space.nga`, `ora-space.codeagentcli`, `ora-space.claude`, `ora-space.codex`) so the stored value does not depend on enum declaration order. It covers built-in CLIs only: an agent supplied by a plugin, such as `ora-space.opencode`, is persisted the same way but never appears in this enum. It also exposes `executable_name()` for the process lookup performed by the backend agent runtime. `AgentCli::ALL` gives the runtime a stable iteration order over supported CLIs.
+An agent identity is not one of these closed enums: `AgentRef` is a validated newtype over a namespaced string (`ora-space.claude`, `acme.my-agent`), because every agent is supplied by an installed plugin and which ones exist is not knowable when Ora is built. `AgentRef::parse` rejects only a blank value; an identity the runtime does not recognize is an ordinary "not installed right now" state, not corrupt data — the same reasoning that keeps `from_database_value()` strict for the true closed enums does not apply here.
 
 ## Optionality and audit metadata
 

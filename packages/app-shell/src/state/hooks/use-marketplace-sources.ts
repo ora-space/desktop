@@ -19,8 +19,15 @@ export function useAddMarketplaceSource() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ url, branch }: { url: string; branch: string }) =>
-      client.plugin.addSource({ url, branch }),
+    mutationFn: ({
+      url,
+      branch,
+      useProxy,
+    }: {
+      url: string;
+      branch: string;
+      useProxy: boolean;
+    }) => client.plugin.addSource({ url, branch, useProxy }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
   });
@@ -36,6 +43,20 @@ export function useDeleteMarketplaceSource() {
   return useMutation({
     mutationFn: ({ url }: { url: string }) =>
       client.plugin.deleteSource({ url }),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
+  });
+}
+
+/**
+ * Changes only one marketplace source's proxy policy and refreshes the list.
+ */
+export function useUpdateMarketplaceSource() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ url, useProxy }: { url: string; useProxy: boolean }) =>
+      client.plugin.updateSource({ url, useProxy }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
   });

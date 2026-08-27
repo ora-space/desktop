@@ -16,15 +16,7 @@ import {
   IconTestPipe,
   IconTicket,
 } from "@tabler/icons-react";
-import type { KnownAgentCli } from "../chat/model-catalog";
-import { OpenAiLogo } from "../chat/provider-logos";
-import {
-  ClaudeMark,
-  CodeAgentCliMark,
-  NgaMark,
-  OpenCodeMark,
-  RtkMark,
-} from "./plugin-marks";
+import { RtkMark } from "./plugin-marks";
 
 /** A plugin's brand mark. Tabler icons and the hand-drawn marks both satisfy this. */
 export type PluginMark = ComponentType<{ className?: string }>;
@@ -54,132 +46,13 @@ export interface PluginEntry {
   summaryKey: string;
   /** Skill names surfaced in the detail pane; only the first three plugins ship more than one. */
   skills: string[];
-  /**
-   * When set, this entry is one of Ora's own application-scoped CLI runtimes. Its
-   * install state is derived from the live backend detection status (see
-   * `useAgentRuntimeStatus`) instead of the local install/uninstall toggle, and its
-   * card renders read-only.
-   */
-  detectionAgentCli?: KnownAgentCli;
 }
-
-/** Category shared by the coding-agent CLI plugins, kept separate so composer surfaces can exclude them. */
-export const AI_AGENT_CATEGORY_KEY = "settings.plugins.category.aiAgent";
 
 /**
  * The hard-coded plugin marketplace. No backend contract exposes plugins yet, so the
  * settings pane reads this catalog directly and keeps install state in component state.
  */
 export const PLUGIN_CATALOG: PluginEntry[] = [
-  {
-    id: "opencode",
-    name: "OpenCode",
-    publisher: "SST",
-    identifier: "sst.opencode",
-    version: "0.4.12",
-    updated: "2026-07-16",
-    size: "18.4 MB",
-    collection: "public",
-    featured: true,
-    categoryKey: AI_AGENT_CATEGORY_KEY,
-    capabilityKeys: [
-      "settings.plugins.capability.interactive",
-      "settings.plugins.capability.write",
-      "settings.plugins.capability.terminal",
-    ],
-    mark: OpenCodeMark,
-    tone: "text-neutral-900 dark:text-neutral-100",
-    summaryKey: "settings.plugins.catalog.opencode",
-    skills: ["OpenCode", "Terminal"],
-    detectionAgentCli: "ora-space.opencode",
-  },
-  {
-    id: "nga",
-    name: "NGA",
-    publisher: "Ora Labs",
-    identifier: "ora-space.nga",
-    version: "—",
-    updated: "—",
-    size: "—",
-    collection: "public",
-    featured: true,
-    categoryKey: AI_AGENT_CATEGORY_KEY,
-    capabilityKeys: [
-      "settings.plugins.capability.interactive",
-      "settings.plugins.capability.write",
-      "settings.plugins.capability.terminal",
-    ],
-    mark: NgaMark,
-    tone: "text-sky-600 dark:text-sky-400",
-    summaryKey: "settings.plugins.catalog.nga",
-    skills: ["NGA"],
-    detectionAgentCli: "ora-space.nga",
-  },
-  {
-    id: "codeagentcli",
-    name: "CodeAgentCLI",
-    publisher: "Ora Labs",
-    identifier: "ora-space.codeagentcli",
-    version: "—",
-    updated: "—",
-    size: "—",
-    collection: "public",
-    featured: true,
-    categoryKey: AI_AGENT_CATEGORY_KEY,
-    capabilityKeys: [
-      "settings.plugins.capability.interactive",
-      "settings.plugins.capability.write",
-      "settings.plugins.capability.terminal",
-    ],
-    mark: CodeAgentCliMark,
-    tone: "text-orange-600 dark:text-orange-400",
-    summaryKey: "settings.plugins.catalog.codeagentcli",
-    skills: ["CodeAgentCLI"],
-    detectionAgentCli: "ora-space.codeagentcli",
-  },
-  {
-    id: "claude",
-    name: "Claude Code",
-    publisher: "Anthropic",
-    identifier: "anthropic.claude-code",
-    version: "—",
-    updated: "—",
-    size: "—",
-    collection: "public",
-    featured: true,
-    categoryKey: AI_AGENT_CATEGORY_KEY,
-    capabilityKeys: [
-      "settings.plugins.capability.interactive",
-      "settings.plugins.capability.write",
-      "settings.plugins.capability.terminal",
-    ],
-    mark: ClaudeMark,
-    tone: "text-[#D97757]",
-    summaryKey: "settings.plugins.catalog.claude",
-    skills: ["Claude Code", "Subagents", "Skills"],
-    detectionAgentCli: "ora-space.claude",
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    publisher: "OpenAI",
-    identifier: "openai.codex",
-    version: "—",
-    updated: "—",
-    size: "—",
-    collection: "public",
-    featured: true,
-    categoryKey: AI_AGENT_CATEGORY_KEY,
-    capabilityKeys: [
-      "settings.plugins.capability.interactive",
-      "settings.plugins.capability.write",
-    ],
-    mark: OpenAiLogo,
-    tone: "text-emerald-600 dark:text-emerald-400",
-    summaryKey: "settings.plugins.catalog.codex",
-    skills: ["Codex", "Code Review"],
-    detectionAgentCli: "ora-space.codex",
-  },
   {
     id: "rtk",
     name: "RTK",

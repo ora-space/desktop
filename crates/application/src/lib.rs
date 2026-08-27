@@ -1,17 +1,16 @@
 mod agent_definition;
 mod effect;
 mod error;
-mod plugin;
 mod project;
 mod repository_error;
 mod session;
 mod skill;
 mod skill_import;
 mod task;
-mod task_diff;
 mod user_config;
 mod workflow;
 mod workflow_run;
+mod workspace_diff;
 mod worktree;
 
 pub use agent_definition::{
@@ -21,7 +20,6 @@ pub use agent_definition::{
 };
 pub use effect::{EffectApplicationError, WorkspaceEffectService};
 pub use error::ApplicationError;
-pub use plugin::PluginStateRepository;
 pub use project::{
     BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
     GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler, ProjectIdGenerator,
@@ -56,13 +54,7 @@ pub use task::{
     workspace_branch_prefix,
 };
 pub use task::{PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit};
-pub use task_diff::{
-    CommitTaskChangesHandler, CommitTaskGitRequest, GitTaskDiffReader, GitTaskGitWriter,
-    PushTaskBranchHandler, PushTaskGitRequest, ReadTaskDiffRequest, ReadTaskDiffScope,
-    TaskDiffReader, TaskDiffReaderError, TaskDiffSnapshot, TaskGitCommit, TaskGitPush,
-    TaskGitWriter, TaskGitWriterError,
-};
-pub use user_config::{DeveloperMode, UserConfigRepository, UserConfigService};
+pub use user_config::{DeveloperMode, NetworkProxySettings, UserConfigService};
 pub use workflow::{
     ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
     DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
@@ -85,5 +77,12 @@ pub use workflow_run::{
     WorkflowRunControlHandler, WorkflowRunCreateOutcome, WorkflowRunEngine,
     WorkflowRunEngineRepository, WorkflowRunIdGenerator, WorkflowRunPayload, WorkflowRunRepository,
     WorkflowRunWorkspaceInitializer, WorkflowValidationError, WorkspaceRepository,
+};
+pub use workspace_diff::{
+    CommitWorkspaceChangesHandler, CommitWorkspaceGitRequest, GitWorkspaceDiffReader,
+    GitWorkspaceGitWriter, PushWorkspaceBranchHandler, PushWorkspaceGitRequest,
+    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, WorkspaceDiffReader,
+    WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceGitCommit, WorkspaceGitPush,
+    WorkspaceGitWriter, WorkspaceGitWriterError,
 };
 pub use worktree::WorktreeRepository;

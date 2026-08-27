@@ -62,16 +62,10 @@ import {
   composerSendAdoptedSession,
 } from "../../state/session-drafts";
 import {
-  AI_AGENT_CATEGORY_KEY,
   PLUGIN_CATALOG,
   findPlugin,
   type PluginEntry,
 } from "../settings/plugin-catalog";
-
-/** Candidate plugins for the composer's "+" menu; the AI agent CLIs are chosen elsewhere. */
-const CANDIDATE_PLUGINS = PLUGIN_CATALOG.filter(
-  (plugin) => plugin.categoryKey !== AI_AGENT_CATEGORY_KEY,
-);
 /** Stable empty array so the store selector below doesn't return a fresh reference every render. */
 const EMPTY_PLUGIN_IDS: string[] = [];
 
@@ -160,7 +154,6 @@ export function Composer({
   const installedPluginIds = usePluginInstallStore(
     (state) => state.installedIds,
   );
-  const disabledPluginIds = usePluginInstallStore((state) => state.disabledIds);
   // Keyed by conversation, not by task: sibling sessions under one task each keep their own
   // applied plugins, and the composer instance is reused across session switches rather than
   // remounted, so this cannot live in component state. `dispatchSend` rekeys a pre-session
@@ -191,17 +184,16 @@ export function Composer({
         .filter((plugin): plugin is PluginEntry => plugin !== undefined),
     [selectedPluginIds],
   );
-  // Only plugins the user actually installed, hasn't disabled, and hasn't already applied
+  // Only plugins the user actually installed and hasn't already applied
   // show up in "+" — picking one removes it from the menu until it is removed below.
   const composerPlugins = useMemo(
     () =>
-      CANDIDATE_PLUGINS.filter(
+      PLUGIN_CATALOG.filter(
         (plugin) =>
           installedPluginIds.includes(plugin.id) &&
-          !disabledPluginIds.includes(plugin.id) &&
           !selectedPluginIds.includes(plugin.id),
       ),
-    [disabledPluginIds, installedPluginIds, selectedPluginIds],
+    [installedPluginIds, selectedPluginIds],
   );
   const [previewedAttachment, setPreviewedAttachment] =
     useState<ImageAttachment | null>(null);

@@ -1,14 +1,12 @@
-use crate::PluginLifecycleError;
-use ora_application::PluginStateRepository;
 use ora_contracts::{
     InstalledPlugin, InstalledPluginContribution, PluginConfigurationCompleteness,
     PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
 };
-use ora_domain::{PluginEnabledState, PluginId};
+use ora_domain::PluginId;
 use ora_plugin_config::{ConfigurationCompleteness, ConfigurationService, ConfigurationSummary};
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
 use ora_plugin_manager::{PluginConfigurationDeclarationValidity, PluginContribution};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use tokio::sync::watch;
 
 /// Observable copy of one plugin's managed state; `None` means the plugin is not installed.
@@ -111,62 +109,23 @@ impl<Runtime: Clone> LifecycleState<Runtime> {
     }
 }
 
-/// Makes the illegal combination of a disabled plugin with a live runtime unrepresentable.
+/// Represents the process-scoped runtime state of an installed plugin.
 #[derive(Clone)]
 pub(super) enum ManagedPluginState<Runtime> {
-    Disabled,
-    Enabled(EnabledRuntime<Runtime>),
-}
-
-/// Represents every process-scoped state available only to an enabled plugin.
-#[derive(Clone)]
-pub(super) enum EnabledRuntime<Runtime> {
     Stopped,
     Starting { attempt: u64 },
     Running { attempt: u64, runtime: Runtime },
     Failed { reason: String },
 }
 
-/// Removes orphan rows and builds stopped runtime state for every discovered package.
-pub(super) fn reconcile_persisted_state<Repository, Runtime>(
-    repository: &Repository,
+/// Builds the process-local default state for every discovered package.
+pub(super) fn initial_managed_state<Runtime>(
     installed: &[DiscoveredPlugin],
-) -> Result<BTreeMap<PluginId, ManagedPluginState<Runtime>>, PluginLifecycleError>
-where
-    Repository: PluginStateRepository,
-{
-    let installed_ids = installed
+) -> BTreeMap<PluginId, ManagedPluginState<Runtime>> {
+    installed
         .iter()
-        .map(|plugin| plugin.id.clone())
-        .collect::<BTreeSet<_>>();
-    let mut enabled_by_id = BTreeMap::new();
-    for state in repository
-        .list_plugin_states()
-        .map_err(PluginLifecycleError::Repository)?
-    {
-        if installed_ids.contains(&state.plugin_id) {
-            enabled_by_id.insert(state.plugin_id, state.enabled);
-        } else {
-            repository
-                .delete_plugin_state(&state.plugin_id)
-                .map_err(PluginLifecycleError::Repository)?;
-        }
-    }
-
-    Ok(installed_ids
-        .into_iter()
-        .map(|plugin_id| {
-            let managed = match enabled_by_id
-                .get(&plugin_id)
-                .copied()
-                .unwrap_or(PluginEnabledState::Disabled)
-            {
-                PluginEnabledState::Enabled => ManagedPluginState::Enabled(EnabledRuntime::Stopped),
-                PluginEnabledState::Disabled => ManagedPluginState::Disabled,
-            };
-            (plugin_id, managed)
-        })
-        .collect())
+        .map(|plugin| (plugin.id.clone(), ManagedPluginState::Stopped))
+        .collect()
 }
 
 /// Maps package identity plus the illegal-state-free internal lifecycle enum to contracts.
@@ -175,23 +134,13 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     managed: &ManagedPluginState<Runtime>,
     configuration: &ConfigurationService,
 ) -> InstalledPlugin {
-    let (enabled, runtime) = match managed {
-        ManagedPluginState::Disabled => (false, PluginRuntimeStatus::Stopped),
-        ManagedPluginState::Enabled(EnabledRuntime::Stopped) => {
-            (true, PluginRuntimeStatus::Stopped)
-        }
-        ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }) => {
-            (true, PluginRuntimeStatus::Starting)
-        }
-        ManagedPluginState::Enabled(EnabledRuntime::Running { .. }) => {
-            (true, PluginRuntimeStatus::Running)
-        }
-        ManagedPluginState::Enabled(EnabledRuntime::Failed { reason }) => (
-            true,
-            PluginRuntimeStatus::Failed {
-                failure_reason: reason.clone(),
-            },
-        ),
+    let runtime = match managed {
+        ManagedPluginState::Stopped => PluginRuntimeStatus::Stopped,
+        ManagedPluginState::Starting { .. } => PluginRuntimeStatus::Starting,
+        ManagedPluginState::Running { .. } => PluginRuntimeStatus::Running,
+        ManagedPluginState::Failed { reason } => PluginRuntimeStatus::Failed {
+            failure_reason: reason.clone(),
+        },
     };
 
     // Project the validated contribution onto the wire enum; the frontend only renders an entry,
@@ -254,7 +203,6 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         homepage: plugin.homepage.clone(),
         license: plugin.license.clone(),
         contribution,
-        enabled,
         logo: plugin.logo.clone(),
         installation_validity,
         configuration,

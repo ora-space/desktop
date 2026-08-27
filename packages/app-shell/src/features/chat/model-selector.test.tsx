@@ -268,7 +268,7 @@ describe("ModelSelector agent availability", () => {
     expect(within(picker()).queryByText("NGA")).toBeNull();
   });
 
-  it("waits for an enabled plugin to become ready before warming its models", async () => {
+  it("waits for an installed plugin to become ready before warming its models", async () => {
     const user = userEvent.setup();
     const { queryClient, state, warm } = renderModelSelector(
       reportOpenCode("unavailable"),

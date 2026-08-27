@@ -9,11 +9,13 @@
 | `Workflow`         | `workflows`          |
 | `WorkflowSnapshot` | `workflow_snapshots` |
 
-`Workflow` holds the stable identity (name, published snapshot pointer, audit fields) while `WorkflowSnapshot` owns the versioned React Flow graph. Read models (`WorkflowDetail`, `WorkflowSummary`, `WorkflowVersion`) keep graph data out of list responses.
+`Workflow` holds the stable identity (name, published snapshot pointer, audit fields) while `WorkflowSnapshot` owns the versioned React Flow graph. Read models (`WorkflowDetail`, `WorkflowSummary`, `WorkflowVersion`) keep graph data out of list responses. The library list is newest-created first so a just-created workflow is the first row.
 
 ## Draft, publish, and version lifecycle
 
 Every workflow has exactly one `draft` snapshot created atomically with the workflow itself. The draft is an editable workspace: `UpdateDraft` mutates its graph in-place without creating a new snapshot row.
+
+The settings library can duplicate a workflow by creating a new identity and draft from the source's current draft graph. A duplicate never carries published snapshots, the active published pointer, or workflow runs; it starts as an editable, unpublished workflow.
 
 Publishing copies the draft's graph into a new, immutable snapshot. `updated_at` on published snapshots is `NULL`, including after soft deletion — only draft editing changes that field. Publish always activates the new snapshot (sets `workflows.published_snapshot_id`), making it the version used by any future workflow execution.
 
@@ -82,7 +84,7 @@ The session history is the sole source of a node's complete conversation. `workf
 
 Get returns the run with its display name and node runs; list returns project-scoped summaries. Node-run history is read-only in this layer — the engine owns node-run writes and the state machine.
 
-Deletion refuses active runs and then soft-deletes the run, its node runs, and node-owned sessions. The selected Workspace is shared infrastructure and is never deleted with one run. Soft-deleted runs are invisible to queries and cannot be reactivated.
+Deletion refuses active runs — a `Running` run, a HITL pause with a non-terminal node run, or a `Running` session bound to one of the run's nodes — and then soft-deletes the run, its node runs, and node-owned sessions. A not-started `Pending` run (empty `current_nodes`, no node rows) can be discarded without cancelling. The selected Workspace is shared infrastructure and is never deleted with one run. Soft-deleted runs are invisible to queries and cannot be reactivated.
 
 ### Snapshot protection
 

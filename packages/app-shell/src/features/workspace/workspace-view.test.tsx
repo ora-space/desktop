@@ -10,6 +10,7 @@ import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -23,6 +24,7 @@ import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
+import { useUiStore } from "../../state/stores/ui-store";
 import { startSessionDraft } from "../../state/session-drafts";
 import { useAgentModelStore } from "../../state/stores/agent-model-store";
 import {
@@ -48,6 +50,7 @@ beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useDraftSessionsStore.getState().clear();
   useComposerInputStore.getState().reset();
+  useUiStore.setState({ workflowEditorOpen: false });
   // Outlives a render on purpose — remembering one CLI's models across chat
   // surfaces is the point of the store — so each test has to start from a CLI
   // nothing has handshaken, or an earlier test's list would answer for it.
@@ -111,6 +114,78 @@ describe("WorkspaceView", () => {
     await waitFor(() =>
       expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
     );
+  });
+
+  it("shows the Changes button for a selected task's review panel", async () => {
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Worktree task",
+      },
+    ];
+    const client = createMockClient(state);
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectTask("t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const toolbar = await screen.findByRole("group", {
+      name: /工作区审查面板|Workspace review panels/,
+    });
+    expect(
+      within(toolbar).getByRole("button", { name: /^变更$|^Changes$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Changes button for a selected project with no task open", async () => {
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const client = createMockClient(state);
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const toolbar = await screen.findByRole("group", {
+      name: /工作区审查面板|Workspace review panels/,
+    });
+    expect(
+      within(toolbar).getByRole("button", { name: /^变更$|^Changes$/ }),
+    ).toBeInTheDocument();
   });
 
   it("warns when loaded history contains records whose positions are unknown", async () => {
@@ -1555,6 +1630,40 @@ describe("WorkspaceView", () => {
 
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(state.sessions[0]?.historyState).toEqual({ type: "writable" });
+  });
+
+  it("renders the workflow editor in place of chat when the editor is open", async () => {
+    await act(() => appI18n.changeLanguage("zh-CN"));
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.setState({ workflowEditorOpen: true });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: /导出工作流|Export workflow/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/给 Ora 的消息|Message to Ora/),
+    ).not.toBeInTheDocument();
   });
 });
 

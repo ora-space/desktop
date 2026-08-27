@@ -5,9 +5,8 @@
 //! a handle that belonged to its predecessor.
 
 use crate::ports::{PluginCallError, PluginRuntime, PluginRuntimeLauncher, PluginStatusPublisher};
-use crate::state::{EnabledRuntime, ManagedPluginState};
+use crate::state::ManagedPluginState;
 use crate::{PluginLifecycle, PluginLifecycleError, PluginNotificationSink};
-use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::ActivatePluginRequest;
 use ora_domain::PluginId;
 use serde_json::Value;
@@ -32,8 +31,6 @@ pub struct PluginGenerationKey(pub u64);
 pub enum ConnectionError {
     #[error("plugin is not installed")]
     NotFound,
-    #[error("plugin is disabled")]
-    Disabled,
     #[error("plugin has no process")]
     NoProcess,
     #[error("plugin failed: {0}")]
@@ -86,11 +83,9 @@ impl<Runtime: PluginRuntime> PluginGenerationLease<Runtime> {
     }
 }
 
-impl<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
-    PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
+impl<RuntimeLauncher, StatusPublisher, NotificationSink>
+    PluginLifecycle<RuntimeLauncher, StatusPublisher, NotificationSink>
 where
-    Repository: PluginStateRepository + Send + Sync + 'static,
-    LifecycleClock: Clock + Send + Sync + 'static,
     RuntimeLauncher: PluginRuntimeLauncher,
     StatusPublisher: PluginStatusPublisher,
     NotificationSink: PluginNotificationSink,
@@ -103,23 +98,16 @@ where
         let state = self.read_state();
         match state.managed(plugin_id) {
             None => Err(ConnectionError::NotFound),
-            Some(ManagedPluginState::Disabled) => Err(ConnectionError::Disabled),
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped)) => {
-                Err(ConnectionError::NotRunning)
-            }
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })) => {
-                Err(ConnectionError::NotReady)
-            }
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { reason })) => {
+            Some(ManagedPluginState::Stopped) => Err(ConnectionError::NotRunning),
+            Some(ManagedPluginState::Starting { .. }) => Err(ConnectionError::NotReady),
+            Some(ManagedPluginState::Failed { reason }) => {
                 Err(ConnectionError::Failed(reason.clone()))
             }
-            Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
-                Ok(PluginGenerationLease {
-                    plugin_id: plugin_id.clone(),
-                    generation: PluginGenerationKey(*attempt),
-                    runtime: runtime.clone(),
-                })
-            }
+            Some(ManagedPluginState::Running { attempt, runtime }) => Ok(PluginGenerationLease {
+                plugin_id: plugin_id.clone(),
+                generation: PluginGenerationKey(*attempt),
+                runtime: runtime.clone(),
+            }),
         }
     }
 
@@ -150,17 +138,15 @@ where
             let snapshot = status.borrow_and_update().clone();
             match snapshot {
                 None => return Err(ConnectionError::NotFound),
-                Some(ManagedPluginState::Disabled) => return Err(ConnectionError::Disabled),
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
+                Some(ManagedPluginState::Running { attempt, runtime }) => {
                     return Ok(PluginGenerationLease {
                         plugin_id: plugin_id.clone(),
                         generation: PluginGenerationKey(attempt),
                         runtime,
                     });
                 }
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })) => {}
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
+                Some(ManagedPluginState::Starting { .. }) => {}
+                Some(ManagedPluginState::Stopped) | Some(ManagedPluginState::Failed { .. })
                     if !activated =>
                 {
                     activated = true;
@@ -173,9 +159,6 @@ where
                         // The activation already moved the watch to Starting (or found it
                         // running); re-read instead of waiting for a further change.
                         Ok(_) => continue,
-                        Err(PluginLifecycleError::PluginDisabled { .. }) => {
-                            return Err(ConnectionError::Disabled);
-                        }
                         Err(PluginLifecycleError::PluginNotFound { .. }) => {
                             return Err(ConnectionError::NotFound);
                         }
@@ -183,21 +166,22 @@ where
                             return Err(ConnectionError::NoProcess);
                         }
                         Err(PluginLifecycleError::InvalidConfigurationDeclaration { .. }) => {
-                            return Err(ConnectionError::Disabled);
+                            return Err(ConnectionError::Failed(
+                                "plugin configuration declaration is invalid".to_string(),
+                            ));
                         }
                         Err(
-                            error @ (PluginLifecycleError::Repository(_)
-                            | PluginLifecycleError::RuntimeStop { .. }
+                            error @ (PluginLifecycleError::RuntimeStop { .. }
                             | PluginLifecycleError::PackageRemoval { .. }
                             | PluginLifecycleError::UninstallStaging { .. }),
                         ) => return Err(ConnectionError::Failed(error.to_string())),
                     }
                 }
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { reason })) => {
+                Some(ManagedPluginState::Failed { reason }) => {
                     return Err(ConnectionError::Failed(reason));
                 }
                 // Stopped after our own activation means another operation stopped it first.
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped)) => {
+                Some(ManagedPluginState::Stopped) => {
                     return Err(ConnectionError::Failed(
                         "plugin stopped before it became ready".to_string(),
                     ));

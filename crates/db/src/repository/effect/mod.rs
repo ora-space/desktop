@@ -11,7 +11,7 @@ use ora_effect::{
     SurfaceLifecycle, SurfacePath, SurfaceStatus, WorkspaceEffect, WorkspaceEffectSpec,
 };
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -396,6 +396,25 @@ impl SqliteEffectRepository {
             }
             transaction.commit()?;
             Ok(())
+        })
+    }
+
+    /// Lists Workspaces that already own at least one active surface.
+    ///
+    /// Surface registration is otherwise driven by a consumer's declaration, which can only see
+    /// the Workspaces that existed when it ran. Convergence needs exactly this set to tell a
+    /// Workspace that was already offered a declaration apart from one that never was.
+    pub fn list_workspaces_with_active_surfaces(
+        &self,
+    ) -> Result<BTreeSet<WorkspaceId>, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT workspace_id FROM effect_surfaces WHERE lifecycle = 'active'",
+            )?;
+            let registered = statement
+                .query_map([], |row| Ok(WorkspaceId::new(row.get::<_, String>(0)?)))?
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            Ok(registered)
         })
     }
 

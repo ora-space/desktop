@@ -26,6 +26,7 @@ members = [
     "crates/surface",
     "crates/test-support",
     "crates/utils",
+    "crates/user-config",
     "xtask",
 ]
 default-members = [
@@ -53,6 +54,7 @@ default-members = [
     "crates/surface",
     "crates/test-support",
     "crates/utils",
+    "crates/user-config",
     "xtask",
 ]
 resolver = "2"
@@ -92,6 +94,7 @@ ora-skill-package = { path = "crates/skill-package" }
 ora-surface = { path = "crates/surface" }
 ora-test-support = { path = "crates/test-support" }
 ora-utils = { path = "crates/utils" }
+ora-user-config = { path = "crates/user-config" }
 
 # External
 agent-client-protocol-schema = "=1.6.0"
@@ -111,7 +114,7 @@ portable-pty = "0.9"
 pretty_assertions = "1"
 r2d2 = "0.8"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream"] }
 semver = "1"
 quick-xml = "0.41"
 sha2 = "0.10"

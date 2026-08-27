@@ -1,4 +1,3 @@
-use crate::config::DesktopConfigStore;
 use crate::surface::DesktopSurfaceService;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::{Backend, BackendPreferredLogLevelStore};
@@ -98,12 +97,9 @@ fn platform_binary_name(name: &str) -> String {
 #[derive(Clone)]
 pub struct DesktopState {
     pub backend: Backend,
-    pub config: DesktopConfigStore,
     pub runtime_log_level: DesktopRuntimeLogLevelManager,
     pub workspace_files: Arc<WorkspaceFileApi>,
     pub binary_paths: BundledBinaryPaths,
-    /// The Tauri application data directory, owner of the dashboard locator files.
-    pub app_data_directory: PathBuf,
     pub stream_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Plugin surface host: native webviews, download delivery, plugin process linkage.
     pub surfaces: Arc<DesktopSurfaceService>,

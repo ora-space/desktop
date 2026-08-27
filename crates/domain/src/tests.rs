@@ -1,8 +1,8 @@
 use crate::{
-    AgentCli, AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME,
-    DomainModelError, HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId,
-    STAGING_DIR_NAME, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId,
-    Worktree, WorktreeActivity, WorktreeBaseline,
+    AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME, DomainModelError,
+    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
+    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId, Worktree,
+    WorktreeActivity, WorktreeBaseline,
 };
 use pretty_assertions::assert_eq;
 
@@ -28,7 +28,7 @@ fn constructs_schema_backed_entities() {
     let session = Session::new(
         SessionId::new("session-1"),
         WorkspaceId::new("workspace-1"),
-        AgentCli::Nga.agent_ref(),
+        AgentRef::parse("ora-space.nga").unwrap(),
         "agent-session-1",
         SessionStatus::Running,
         audit_fields.clone(),
@@ -87,7 +87,7 @@ fn constructs_schema_backed_entities() {
         Session {
             id: SessionId::new("session-1"),
             workspace_id: WorkspaceId::new("workspace-1"),
-            agent_ref: AgentCli::Nga.agent_ref(),
+            agent_ref: AgentRef::parse("ora-space.nga").unwrap(),
             agent_session_id: "agent-session-1".to_string(),
             title: None,
             status: SessionStatus::Running,
@@ -208,21 +208,6 @@ fn rejects_dot_prefixed_skill_names() {
     }
 }
 
-/// Verifies built-in CLIs supply the reviewed namespaced identities persistence already stores.
-#[test]
-fn maps_agent_cli_identities() {
-    assert_eq!(
-        AgentCli::ALL.map(|agent_cli| agent_cli.agent_ref().to_string()),
-        [
-            "ora-space.nga",
-            "ora-space.codeagentcli",
-            "ora-space.claude",
-            "ora-space.codex",
-        ]
-        .map(str::to_string)
-    );
-}
-
 /// Verifies an agent reference accepts any installed provider id and rejects only blank text.
 ///
 /// An identity Ora does not recognize is a provider that is not installed right now, so parsing
@@ -240,21 +225,6 @@ fn parses_any_non_blank_agent_reference() {
     assert_eq!(
         AgentRef::parse("   "),
         Err(DomainModelError::InvalidAgentRef("   ".to_string()))
-    );
-}
-
-/// Verifies only Ora's own CLIs require the `acp` subcommand; the Claude/Codex
-/// adapter binaries speak ACP directly with no launch arguments.
-#[test]
-fn maps_agent_cli_launch_arguments() {
-    assert_eq!(
-        AgentCli::ALL.map(AgentCli::launch_arguments),
-        [
-            ["acp"].as_slice(),
-            ["acp"].as_slice(),
-            [].as_slice(),
-            [].as_slice(),
-        ]
     );
 }
 

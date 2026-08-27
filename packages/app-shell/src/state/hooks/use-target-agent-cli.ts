@@ -1,4 +1,3 @@
-import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import { useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { warmTargetKey } from "./use-warm-session";
@@ -36,12 +35,10 @@ interface AgentSelection {
  * A binding or preference is reported as written even when that agent can no
  * longer be reached. Agent availability is allowed to change while a surface is
  * open, and using the first available agent as a fallback would silently change
- * the user's selection when a plugin is enabled or disabled. A surface that has
+ * the user's selection when a plugin is installed or removed. A surface that has
  * never chosen an agent therefore resolves to `null` instead of inventing one.
  */
-export function useTargetAgentCli(
-  selection: AgentSelection,
-): KnownAgentCli | null {
+export function useTargetAgentCli(selection: AgentSelection): string | null {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
   const { data: sessions = [] } = useSessions();
   const targetKey = warmTargetKey(selection);
@@ -53,13 +50,9 @@ export function useTargetAgentCli(
   const pickedForTarget = usePendingAgentStore((state) =>
     targetKey === null ? undefined : state.selections[targetKey],
   );
-  // The wire carries any installed agent's identity as a plain string, but the picker this
-  // hook drives only labels the closed set it knows, so a bound session is assumed to name one
-  // of them. A binding onto an agent outside that set is still reported here — it is what the
-  // session actually runs on — and simply has no entry to render against.
   const boundAgentCli = sessions.find(
     (session) => session.id === selection.sessionId,
-  )?.agentRef as KnownAgentCli | undefined;
+  )?.agentRef;
   if (pendingSwitch !== undefined) return pendingSwitch;
   if (boundAgentCli !== undefined) return boundAgentCli;
   return pickedForTarget ?? defaultAgentCli;

@@ -41,6 +41,13 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "DeleteMarketplaceSourceResponse",
     },
     FrontendEndpoint {
+        operation_name: "updateMarketplaceSource",
+        namespace: NAMESPACE,
+        member_name: "updateSource",
+        request_type: "UpdateMarketplaceSourceRequest",
+        response_type: "UpdateMarketplaceSourceResponse",
+    },
+    FrontendEndpoint {
         operation_name: "listInstalledPlugins",
         namespace: NAMESPACE,
         member_name: "listInstalled",
@@ -74,20 +81,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "scan",
         request_type: "ScanPluginsRequest",
         response_type: "ScanPluginsResponse",
-    },
-    FrontendEndpoint {
-        operation_name: "enablePlugin",
-        namespace: NAMESPACE,
-        member_name: "enable",
-        request_type: "EnablePluginRequest",
-        response_type: "EnablePluginResponse",
-    },
-    FrontendEndpoint {
-        operation_name: "disablePlugin",
-        namespace: NAMESPACE,
-        member_name: "disable",
-        request_type: "DisablePluginRequest",
-        response_type: "DisablePluginResponse",
     },
     FrontendEndpoint {
         operation_name: "activatePlugin",

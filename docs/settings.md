@@ -4,7 +4,7 @@ Ora Desktop presents Settings through the App Shell and the Tauri-backed contrac
 
 ## Developer mode
 
-Settings always includes a Developer options category, whose page contains the developer-mode switch. Its authoritative value is the typed SQLite `user_config.developer_mode` preference; the frontend does not persist a second copy. A failed initial read leaves the switch disabled, keeps developer-only controls hidden on that page, and offers retry. A failed update retains the last backend response.
+Settings always includes a Developer options category, whose page contains the developer-mode switch. Its authoritative value is `user_config.developer_mode`, interpreted by the application layer over the generic SQLite key/value adapter; the frontend does not persist a second copy. A failed initial read leaves the switch disabled, keeps developer-only controls hidden on that page, and offers retry. A failed update retains the last backend response.
 
 Developer mode controls discoverability only. It does not grant permissions, change transport authorization, or make backend operations inaccessible when disabled.
 

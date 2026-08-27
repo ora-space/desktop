@@ -12,8 +12,6 @@ use thiserror::Error;
 pub enum SurfaceError {
     #[error("plugin {0} is not installed")]
     PluginNotFound(PluginId),
-    #[error("plugin {0} is disabled")]
-    PluginDisabled(PluginId),
     #[error("surface instance {} is not registered", .0.value())]
     InstanceNotFound(SurfaceInstanceId),
     #[error(transparent)]
@@ -46,10 +44,6 @@ impl From<SurfaceError> for CommandError {
             SurfaceError::PluginNotFound(_) => (
                 ErrorClassification::NotFound,
                 PublicError::PluginNotFound(EmptyErrorParams {}),
-            ),
-            SurfaceError::PluginDisabled(_) => (
-                ErrorClassification::InvalidRequest,
-                PublicError::PluginDisabled(EmptyErrorParams {}),
             ),
             SurfaceError::InstanceNotFound(_) => (
                 ErrorClassification::NotFound,

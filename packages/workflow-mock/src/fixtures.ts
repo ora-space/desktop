@@ -1,5 +1,6 @@
 import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
 import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
+import type { WorkflowAnnotationNode } from "./annotation-data";
 import {
   WORKFLOW_NODE_INITIAL_HANDLES,
   WORKFLOW_NODE_INITIAL_HEIGHT,
@@ -14,6 +15,8 @@ export interface DemoWorkflow extends ReactFlowJsonObject<
   name: string;
   description: string;
   updatedAt: string;
+  /** Editor-only notes are persisted beside, never inside, executable nodes. */
+  annotations?: WorkflowAnnotationNode[];
 }
 
 /** Builds a stable Agent execution contract for fixtures and future persisted definitions. */

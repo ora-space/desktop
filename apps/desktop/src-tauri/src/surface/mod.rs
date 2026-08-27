@@ -42,7 +42,7 @@ pub type DesktopSurfaceService = SurfaceService<Arc<PluginGateway>, tauri::Wry>;
 
 /// Connects the service to the process lifecycle and to the main window.
 ///
-/// Registering the closer makes disable/uninstall close surfaces before the plugin process
+/// Registering the closer makes stop/uninstall close surfaces before the plugin process
 /// stops; the main window destroy hook closes every surface so no orphan window outlives the
 /// frontend that controls it; the download action host lets automatic download dispositions run
 /// their host action (skill import) without a frontend round trip.

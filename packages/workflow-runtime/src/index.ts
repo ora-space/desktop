@@ -49,6 +49,7 @@ export {
   parseWorkflowGraph,
   serializeWorkflowGraph,
   workflowTimestampToIso,
+  type WorkflowGraphAnnotation,
   type WorkflowGraphEnvelope,
 } from "./graph-codec";
 export { projectNodeStatus, projectRunStatus } from "./run-projection";

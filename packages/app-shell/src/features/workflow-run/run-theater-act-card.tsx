@@ -7,6 +7,7 @@ import {
 import { Badge, Button, cn } from "@ora/ui";
 import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
+import { useAgentCatalog } from "../chat/agent-catalog";
 import {
   AgentExecutionModeMark,
   WorkflowNodeCardShell,
@@ -93,9 +94,10 @@ export function RunTheaterActCard({
   const { i18n, t } = useTranslation();
   const locale =
     i18n.resolvedLanguage === "en-US" ? ("en-US" as const) : ("zh-CN" as const);
+  const agentCatalog = useAgentCatalog();
   const kindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const tone = runStatusTone(state.status);
-  const detail = resolveTheaterActDetail(data);
+  const detail = resolveTheaterActDetail(data, agentCatalog);
   const instruction = resolveTheaterActInstruction(data);
   const compact = variant === "compact";
   const [uncontrolledConversationOpen, setUncontrolledConversationOpen] =

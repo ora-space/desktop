@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 base64 = { workspace = true }
-ora-application = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-logging = { workspace = true }
@@ -28,7 +27,6 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-ora-db = { workspace = true }
 ora-logging = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

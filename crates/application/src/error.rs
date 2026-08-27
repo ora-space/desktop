@@ -112,13 +112,13 @@ pub enum ApplicationError {
         #[from]
         source: TaskWorktreeProvisionerError,
     },
-    #[error("task diff operation failed")]
-    TaskDiff {
+    #[error("workspace diff operation failed")]
+    WorkspaceDiff {
         #[source]
         source: BoxRepositorySource,
     },
-    #[error("task diff commit message must not be blank")]
-    TaskDiffCommitMessageBlank,
+    #[error("workspace diff commit message must not be blank")]
+    WorkspaceDiffCommitMessageBlank,
     #[error("worktree not found for workspace: {workspace_id}")]
     WorktreeNotFound { workspace_id: String },
     #[error("worktree repository operation failed")]
@@ -304,9 +304,11 @@ impl ApplicationError {
         }
     }
 
-    /// Builds an internal task diff failure for an invariant that was violated below the handler.
-    pub(crate) fn task_diff_failure(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::TaskDiff {
+    /// Builds an internal workspace diff failure for an invariant that was violated below the handler.
+    pub(crate) fn workspace_diff_failure(
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::WorkspaceDiff {
             source: Box::new(error),
         }
     }
@@ -429,7 +431,7 @@ impl PartialEq for ApplicationError {
             | (ProjectBranchListing { .. }, ProjectBranchListing { .. })
             | (TaskRepository { .. }, TaskRepository { .. })
             | (TaskWorktreeProvisioner { .. }, TaskWorktreeProvisioner { .. })
-            | (TaskDiffCommitMessageBlank, TaskDiffCommitMessageBlank)
+            | (WorkspaceDiffCommitMessageBlank, WorkspaceDiffCommitMessageBlank)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
             | (SessionRepository { .. }, SessionRepository { .. })
             | (UserConfigRepository { .. }, UserConfigRepository { .. })
@@ -489,7 +491,7 @@ impl PartialEq for ApplicationError {
                 TaskBaseBranchNotFound { branch_name: left },
                 TaskBaseBranchNotFound { branch_name: right },
             ) => left == right,
-            (TaskDiff { .. }, TaskDiff { .. }) => true,
+            (WorkspaceDiff { .. }, WorkspaceDiff { .. }) => true,
             (
                 TaskWorkspaceIdExhausted { attempts: left },
                 TaskWorkspaceIdExhausted { attempts: right },

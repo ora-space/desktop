@@ -152,7 +152,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                      LEFT JOIN workflow_snapshots ws
                        ON ws.id = w.published_snapshot_id AND ws.is_deleted = 0
                      WHERE w.is_deleted = 0
-                     ORDER BY w.created_at ASC, w.id ASC",
+                     ORDER BY w.created_at DESC, w.id DESC",
                 )?;
                 let mut rows = statement.query([])?;
                 let mut workflows = Vec::new();

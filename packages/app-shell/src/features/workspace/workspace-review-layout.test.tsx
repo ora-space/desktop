@@ -24,6 +24,7 @@ const taskContext = {
   kind: "task" as const,
   taskId: "task-1",
   projectId: "project-1",
+  workspaceId: "workspace-1",
 };
 
 function renderLayout() {

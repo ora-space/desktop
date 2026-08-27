@@ -92,7 +92,7 @@ pub struct GetWorkflowResponse {
 
 // ── List ──
 
-/// Requests every visible workflow in stable storage order.
+/// Requests every visible workflow, newest created first.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow.ts")]

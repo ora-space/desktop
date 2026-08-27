@@ -8,7 +8,7 @@ use crate::writer::{HistoryWriter, remove_session_history};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
-use ora_domain::AgentCli;
+use ora_domain::AgentRef;
 use pretty_assertions::assert_eq;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -98,7 +98,7 @@ fn round_trips_appended_records_in_conversation_order() {
         schema_version: SCHEMA_VERSION,
         session_id: SESSION_ID.to_string(),
         workspace_id: "workspace-1".to_string(),
-        agent_ref: AgentCli::Nga.agent_ref(),
+        agent_ref: AgentRef::parse("ora-space.nga").expect("agent identity"),
         agent_session_id: "provider-1".to_string(),
         cwd: PathBuf::from("/repo"),
     });

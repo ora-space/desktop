@@ -25,6 +25,9 @@ that any other crate can consume without introducing dependency cycles.
 - `http-reqwest` (Cargo feature `http-reqwest`, implies `http`): the `reqwest`-backed
   `ReqwestDownloader` that streams remote HTTP(S) responses with timeouts, retries, progress,
   cancellation, and proxy resolution driven by explicit config and `*_PROXY`/`NO_PROXY` variables.
+  It trusts the operating system native certificate store (alongside the bundled webpki roots) so
+  downloads succeed behind corporate MITM proxies whose root CA is installed in the OS trust
+  store, and it preserves the full reqwest cause chain in network errors for diagnosability.
 - `html` (Cargo feature `validation`): conservative validation rejecting README text that embeds
   scriptable HTML (forbidden tags, `on*` event handlers, `javascript:`/`data:` URIs).
 - `svg` (Cargo feature `validation`): security validation for SVG icons — accepts well-formed

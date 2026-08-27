@@ -10,7 +10,7 @@
 use super::history::{RecordOutcome, SessionRecorder};
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
-use ora_domain::{AgentCli, HistoryState};
+use ora_domain::{AgentRef, HistoryState};
 use ora_history::{
     AgentSwitch, FixedHistoryClock, HistoryLine, HistoryRecord, binding_needs_handoff,
     read_session_history,
@@ -18,6 +18,11 @@ use ora_history::{
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use tempfile::TempDir;
+
+/// Builds one installed agent identity these histories record a binding against.
+fn agent_ref(package_name: &str) -> AgentRef {
+    AgentRef::parse(package_name).expect("agent identity")
+}
 use time::macros::datetime;
 
 const SESSION_ID: &str = "6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
@@ -53,8 +58,8 @@ fn switch_then_prompt(root: &Path, deliver: Delivery) {
     let mut recorder = recorder(root, 0, &HistoryState::Writable);
     assert_eq!(
         recorder.record_agent_switch(
-            AgentCli::Claude.agent_ref(),
-            AgentCli::Nga.agent_ref(),
+            agent_ref("ora-space.claude"),
+            agent_ref("ora-space.nga"),
             NEW_PROVIDER_SESSION_ID.to_string(),
         ),
         RecordOutcome::Continued,
@@ -113,8 +118,8 @@ fn a_settled_handoff_records_the_delivery_after_the_prompt_that_carried_it() {
                 RECORDED_AT,
                 0,
                 HistoryRecord::AgentSwitched(AgentSwitch {
-                    from: AgentCli::Claude.agent_ref(),
-                    to: AgentCli::Nga.agent_ref(),
+                    from: agent_ref("ora-space.claude"),
+                    to: agent_ref("ora-space.nga"),
                     agent_session_id: NEW_PROVIDER_SESSION_ID.to_string(),
                 }),
             ),
@@ -146,8 +151,8 @@ fn a_recorder_that_stopped_writing_records_no_delivery_it_cannot_prove() {
     let root = TempDir::new().expect("create history root");
     let mut writable = recorder(root.path(), 0, &HistoryState::Writable);
     writable.record_agent_switch(
-        AgentCli::Claude.agent_ref(),
-        AgentCli::Nga.agent_ref(),
+        agent_ref("ora-space.claude"),
+        agent_ref("ora-space.nga"),
         NEW_PROVIDER_SESSION_ID.to_string(),
     );
     let mut degraded = recorder(

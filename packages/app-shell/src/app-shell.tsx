@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  cn,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -22,11 +23,6 @@ import { SurfaceDownloadPrompt } from "./features/surface/surface-download-promp
 import { SurfaceDownloadToaster } from "./features/surface/surface-download-toaster";
 import { SurfaceEventBridge } from "./features/surface/surface-event-bridge";
 import { useEmbeddedSurfaceVisible } from "./features/surface/surface-occlusion";
-import { TraceDashboardPanel } from "./features/trace-dashboard/trace-dashboard-panel";
-import type {
-  DashboardCompareResolver,
-  DashboardResolver,
-} from "./features/trace-dashboard/types";
 import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
@@ -47,10 +43,6 @@ interface AppShellProps {
   user?: CurrentUser;
   /** Runtime adapter; hosts will inject the generated-contract adapter once available. */
   workflowRuntime?: WorkflowRuntime;
-  /** Desktop-injected resolver for the trace dashboard iframe URL; null when absent. */
-  resolveDashboardUrl?: DashboardResolver | null;
-  /** Desktop-injected resolver for the standalone token-comparison dashboard. */
-  resolveDashboardCompareUrl?: DashboardCompareResolver | null;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -65,8 +57,6 @@ export function AppShell({
   platform,
   user,
   workflowRuntime,
-  resolveDashboardUrl = null,
-  resolveDashboardCompareUrl = null,
 }: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
@@ -80,8 +70,6 @@ export function AppShell({
               chatStore={chatStore}
               platform={platform}
               user={user}
-              resolveDashboardUrl={resolveDashboardUrl}
-              resolveDashboardCompareUrl={resolveDashboardCompareUrl}
             />
           </WorkflowRuntimeProvider>
         </AppEventGate>
@@ -96,8 +84,6 @@ function AppShellContent({
   chatStore,
   platform,
   user: injectedUser,
-  resolveDashboardUrl,
-  resolveDashboardCompareUrl,
 }: AppShellProps) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
@@ -124,6 +110,33 @@ function AppShellContent({
     window.location.reload();
   };
 
+  // Collapse in place instead of swapping the tree: a ternary that remounts
+  // WorkspaceView would drop in-memory editor drafts and chat pending-send state.
+  // Skip work when the panel already matches the store so a user drag that
+  // writes the store cannot snap the pointer back to the default width.
+  useLayoutEffect(() => {
+    const panel = sidebarPanelRef.current;
+    if (panel === null) {
+      return;
+    }
+    try {
+      if (sidebarCollapsed) {
+        if (!panel.isCollapsed()) {
+          panel.collapse();
+        }
+        return;
+      }
+      if (panel.isCollapsed()) {
+        panel.expand();
+        if (panel.getSize().inPixels < MIN_SIDEBAR_WIDTH) {
+          panel.resize(DEFAULT_SIDEBAR_WIDTH);
+        }
+      }
+    } catch {
+      // The group registry can be missing in jsdom or during the first layout.
+    }
+  }, [sidebarCollapsed]);
+
   return (
     <ContractsClientContext.Provider value={client}>
       <ChatStoreContext.Provider value={chatStore}>
@@ -136,45 +149,56 @@ function AppShellContent({
               {t("common.skipToContent")}
             </a>
             <div className="flex h-dvh overflow-hidden bg-background text-foreground">
-              {sidebarCollapsed ? (
-                <WorkspaceView userName={user.name} />
-              ) : (
-                <ResizablePanelGroup orientation="horizontal">
-                  <ResizablePanel
-                    id="workspace-sidebar"
-                    panelRef={sidebarPanelRef}
-                    defaultSize={DEFAULT_SIDEBAR_WIDTH}
-                    minSize={MIN_SIDEBAR_WIDTH}
-                    maxSize={MAX_SIDEBAR_WIDTH}
-                    groupResizeBehavior="preserve-pixel-size"
+              <ResizablePanelGroup orientation="horizontal">
+                <ResizablePanel
+                  id="workspace-sidebar"
+                  panelRef={sidebarPanelRef}
+                  defaultSize={sidebarCollapsed ? 0 : DEFAULT_SIDEBAR_WIDTH}
+                  minSize={MIN_SIDEBAR_WIDTH}
+                  maxSize={MAX_SIDEBAR_WIDTH}
+                  collapsedSize={0}
+                  collapsible
+                  groupResizeBehavior="preserve-pixel-size"
+                  onResize={(size) => {
+                    const collapsed = size.inPixels < 1;
+                    const ui = useUiStore.getState();
+                    if (ui.sidebarCollapsed !== collapsed) {
+                      ui.setSidebarCollapsed(collapsed);
+                    }
+                  }}
+                >
+                  <div
+                    className="flex min-h-0 min-w-0 flex-1 flex-col"
+                    aria-hidden={sidebarCollapsed || undefined}
+                    inert={sidebarCollapsed || undefined}
                   >
                     <WorkspaceSidebar user={user} onSignOut={handleSignOut} />
-                  </ResizablePanel>
-                  <ResizableHandle
-                    withHandle
-                    aria-label={t("sidebar.resize")}
-                    title={t("sidebar.resize")}
-                    className="z-20 bg-sidebar-border transition-colors hover:bg-ring focus-visible:bg-ring"
-                    onDoubleClick={() =>
-                      sidebarPanelRef.current?.resize(DEFAULT_SIDEBAR_WIDTH)
-                    }
-                  />
-                  <ResizablePanel
-                    id="workspace-content"
-                    minSize={MIN_WORKSPACE_WIDTH}
-                  >
-                    <WorkspaceView userName={user.name} />
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-              )}
+                  </div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  aria-label={t("sidebar.resize")}
+                  title={t("sidebar.resize")}
+                  aria-hidden={sidebarCollapsed || undefined}
+                  className={cn(
+                    "z-20 bg-sidebar-border transition-colors hover:bg-ring focus-visible:bg-ring",
+                    sidebarCollapsed && "pointer-events-none invisible",
+                  )}
+                  onDoubleClick={() =>
+                    sidebarPanelRef.current?.resize(DEFAULT_SIDEBAR_WIDTH)
+                  }
+                />
+                <ResizablePanel
+                  id="workspace-content"
+                  minSize={MIN_WORKSPACE_WIDTH}
+                >
+                  <WorkspaceView userName={user.name} />
+                </ResizablePanel>
+              </ResizablePanelGroup>
               <SettingsDialog />
               <SurfaceEventBridge />
               <SurfaceDownloadToaster />
               <SurfaceDownloadPrompt />
-              <TraceDashboardPanel
-                resolveDashboardUrl={resolveDashboardUrl ?? null}
-                resolveDashboardCompareUrl={resolveDashboardCompareUrl ?? null}
-              />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />

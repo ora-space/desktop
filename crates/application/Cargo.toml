@@ -19,6 +19,7 @@ ora-effect = { workspace = true }
 ora-logging = { workspace = true }
 ora-skill-package = { workspace = true }
 ora-utils = { workspace = true }
+ora-user-config = { workspace = true }
 petgraph = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

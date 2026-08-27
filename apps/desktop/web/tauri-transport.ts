@@ -36,10 +36,17 @@ const tauriCommands = {
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
-  listWorkspaces: "list_workspaces",
   listProjectBranches: "list_project_branches",
   updateProject: "update_project",
   deleteProject: "delete_project",
+
+  // =============================================================================
+  // workspace
+  // =============================================================================
+  listWorkspaces: "list_workspaces",
+  getWorkspaceDiff: "get_workspace_diff",
+  commitWorkspaceChanges: "commit_workspace_changes",
+  pushWorkspaceBranch: "push_workspace_branch",
 
   // =============================================================================
   // task
@@ -50,9 +57,6 @@ const tauriCommands = {
   updateTask: "update_task",
   deleteTask: "delete_task",
   getTaskWorkspace: "get_task_workspace",
-  getTaskDiff: "get_task_diff",
-  commitTaskChanges: "commit_task_changes",
-  pushTaskBranch: "push_task_branch",
 
   // =============================================================================
   // fileSystem
@@ -121,13 +125,12 @@ const tauriCommands = {
   listMarketplaceSources: "list_marketplace_sources",
   addMarketplaceSource: "add_marketplace_source",
   deleteMarketplaceSource: "delete_marketplace_source",
+  updateMarketplaceSource: "update_marketplace_source",
   listInstalledPlugins: "list_installed_plugins",
   getPluginConfiguration: "get_plugin_configuration",
   savePluginConfiguration: "save_plugin_configuration",
   resetPluginConfiguration: "reset_plugin_configuration",
   scanPlugins: "scan_plugins",
-  enablePlugin: "enable_plugin",
-  disablePlugin: "disable_plugin",
   activatePlugin: "activate_plugin",
   stopPlugin: "stop_plugin",
   uninstallPlugin: "uninstall_plugin",
@@ -182,6 +185,12 @@ const tauriCommands = {
   // =============================================================================
   getRuntimeLogLevel: "get_runtime_log_level",
   setRuntimeLogLevel: "set_runtime_log_level",
+
+  // =============================================================================
+  // proxy
+  // =============================================================================
+  getProxySettings: "get_proxy_settings",
+  setProxySettings: "set_proxy_settings",
   completeWorkflowNode: "complete_workflow_node",
 } as const satisfies Record<SupportedTauriOperation, string>;
 

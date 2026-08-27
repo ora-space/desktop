@@ -16,13 +16,13 @@ Task workspace lookup and Spec review are part of that shared contract surface. 
 
 Developer preferences use four unary commands in a separate settings command module: `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. They use the same lifecycle and error projection as other Desktop commands; no HTTP endpoint is involved.
 
-Backend construction immediately attempts supervised `nga acp`, `codeagentcli acp`, `claude-agent-acp`, and `codex-acp` children in the user's home directory, plus one process per installed agent plugin. Plugin processes are started and stopped by the plugin lifecycle, which the agent runtime attaches to rather than spawning its own. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another CLI and `resume_session_history` recovers one whose history writes failed. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
+Backend construction immediately attempts one supervised connection per installed agent plugin; there is no other source of agents. Plugin processes are started and stopped by the plugin lifecycle, which the agent runtime attaches to rather than spawning its own. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another agent and `resume_session_history` recovers one whose history writes failed. Each agent retries independently; failures leave the Desktop shell and healthy agents available, while operations targeting an unavailable agent report `agent_runtime_unavailable`. Agent process discovery is owned entirely by each plugin — see [ACP Agent Runtime](agent-runtime.md).
 
 Plugins of kind `ui` contribute surfaces: remote web sites shown in isolated native webviews. Desktop hosts them in `apps/desktop/src-tauri/src/surface/` on top of the `ora-surface` registry, exposes the `surface_*` commands to the main webview, emits `surface://event`, writes surface downloads into `<data-dir>/plugins/data/<namespace>/<name>/downloads/`, starts the plugin process on demand, and stops it 30 s after its last surface closes. Plugin processes have no filesystem access of their own; they read their data directory back through the `ora/storage/*` host methods served by `ora-plugin-lifecycle`. Disabling, stopping, or uninstalling a plugin closes its surfaces first through the lifecycle's `SurfaceCloser`. See [Plugin Surfaces](surface.md).
 
 The Desktop App Shell waits for the `Ready` frame before mounting normal queries and watchers. The application stream is a multi-subscriber, best-effort session-title invalidation broadcast rather than a persisted event log.
 
-Beyond the shared contract surface, Desktop registers four platform-only commands: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`. `open_location` with target `explorer` reveals a file in the system file manager (`explorer.exe /select,` on Windows, `open -R` on macOS) so the default file association — often Cursor — is not launched. Existing directories still open as folder windows.
+Beyond the shared contract surface, Desktop registers four platform-only commands: `get_worktree_root`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`. `open_location` with target `explorer` reveals a file in the system file manager (`explorer.exe /select,` on Windows, `open -R` on macOS) so the default file association — often Cursor — is not launched. Existing directories still open as folder windows.
 
 ## Skill imports
 
@@ -42,15 +42,14 @@ The configured root is only a creation target. Existing worktree locations are r
 
 The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns all default runtime state:
 
-- User preferences: `app_data_dir/ora.sqlite3`, table `user_config`
 - SQLite: `app_data_dir/ora.sqlite3`
-- Configuration: `app_data_dir/config.json`
+- User configuration, including `worktree_root` and `network_proxy_settings`: `app_data_dir/ora.sqlite3`, table `user_config`
 - Logs: `app_data_dir/logs/ora.log`
 - Default new-worktree root: `~/.ora/worktrees`
 - Session history: `app_data_dir/sessions`
 - Skill packages root: `app_data_dir/atoms/skills`
 
-On first launch, Desktop creates the app data directory, `~/.ora/worktrees`, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
+On first launch, Desktop creates the app data directory and `~/.ora/worktrees`, then persists the selected worktree root in SQLite when initialization completes. Existing installations are migrated once: if `config.json` contains a valid version-1 `worktreeRoot`, that value is written to `user_config.worktree_root` and the legacy file is removed. An existing SQLite value takes precedence. Invalid legacy configuration is fatal and is kept intact for diagnosis.
 
 `ORA_DATA_DIR` controls Desktop's runtime data root. `task run:desktop` points it at the repo `.data` directory for local development. Relative project roots stored in that database are resolved against the data directory's parent (the repo root), not the Tauri process cwd — `tauri dev` starts in `apps/desktop/src-tauri`, which would otherwise miss paths such as `.data/rustun`. Without `ORA_DATA_DIR`, runtime data paths come from Tauri's `app_data_dir`; the first-run worktree root remains `~/.ora/worktrees`, and folder-picker selections are already absolute.
 

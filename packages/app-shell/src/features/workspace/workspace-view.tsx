@@ -6,10 +6,8 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
   IconBrandGit,
-  IconChartBar,
   IconFolder,
   IconGitBranch,
-  IconLayoutDashboard,
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
 } from "@tabler/icons-react";
@@ -60,11 +58,12 @@ import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
+import { WorkflowEditor } from "../workflow-editor/workflow-editor";
 import {
   WorkspaceReviewLayout,
   type WorkspaceReviewContext,
 } from "./workspace-review-layout";
-import { useTaskDiffLiveSync } from "../../state/hooks/use-task-diff-live-sync";
+import { useWorkspaceDiffLiveSync } from "../../state/hooks/use-workspace-diff-live-sync";
 
 interface WorkspaceViewProps {
   userName: string;
@@ -160,14 +159,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
+  const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
   // Resolved the same way the picker shows it, so the session warmed here is
   // the one the composer and model picker are actually pointing at — a stale
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
-  const openDashboardPanel = useUiStore((s) => s.openDashboardPanel);
-
   const chatStore = useChatStore();
-  useTaskDiffLiveSync(chatStore, sessions, tasks);
+  useWorkspaceDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
@@ -217,11 +215,20 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const reviewContext = useMemo<WorkspaceReviewContext>(
     () =>
       task !== undefined && project !== undefined
-        ? { kind: "task", taskId: task.id, projectId: project.id }
+        ? {
+            kind: "task",
+            taskId: task.id,
+            projectId: project.id,
+            workspaceId: task.workspaceId,
+          }
         : project !== undefined
-          ? { kind: "project", projectId: project.id }
+          ? {
+              kind: "project",
+              projectId: project.id,
+              workspaceId: selectedWorkspaceId,
+            }
           : { kind: "none" },
-    [project, task],
+    [project, task, selectedWorkspaceId],
   );
   const conversation = useStore(chatStore, (state) =>
     conversationSessionId === null
@@ -347,11 +354,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         // lifecycle snapshot after every finite prompt without polling idle sessions.
         await Promise.all([
           sessionsQuery.refetch(),
-          task === undefined
-            ? Promise.resolve()
-            : queryClient.invalidateQueries({
-                queryKey: queryKeys.taskDiffs(task.id),
-              }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.workspaceDiffs(session.workspaceId),
+          }),
         ]);
       }
       return;
@@ -535,11 +540,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       endDraftSend();
       await Promise.all([
         sessionsQuery.refetch(),
-        taskId === null
-          ? Promise.resolve()
-          : queryClient.invalidateQueries({
-              queryKey: queryKeys.taskDiffs(taskId),
-            }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.workspaceDiffs(workspaceId),
+        }),
       ]);
     }
   };
@@ -578,6 +581,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       () => undefined,
     );
   };
+
+  // Graph workflow definition editor owns the main pane while it is open.
+  if (workflowEditorOpen) {
+    return <WorkflowEditor />;
+  }
 
   // Graph workflow runs own a dedicated workspace branch (D2), not the chat layout.
   if (selection.workflowRunId !== null) {
@@ -655,24 +663,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           </DragRegion>
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
           <SurfaceLauncher />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => openDashboardPanel("trace")}
-            aria-label={t("dashboard.open")}
-            title={t("dashboard.open")}
-          >
-            <IconLayoutDashboard />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => openDashboardPanel("compare")}
-            aria-label={t("dashboard.openCompare")}
-            title={t("dashboard.openCompare")}
-          >
-            <IconChartBar />
-          </Button>
           <WindowControls />
         </div>
         <SessionAgentBanner session={session} />

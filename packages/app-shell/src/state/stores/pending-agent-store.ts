@@ -1,15 +1,14 @@
 import { create } from "zustand";
-import type { KnownAgentCli } from "../../features/chat/model-catalog";
 
 interface PendingAgentState {
   /** The agent chosen for one not-yet-started chat surface, keyed by its warm target. */
-  selections: Record<string, KnownAgentCli>;
+  selections: Record<string, string>;
   /** The agent a persisted session is set to move onto, keyed by that session's id. */
-  switches: Record<string, KnownAgentCli>;
+  switches: Record<string, string>;
   /** Records the agent chosen for one warm target, replacing any earlier pick for it. */
-  setPendingAgent: (targetKey: string, agentCli: KnownAgentCli) => void;
+  setPendingAgent: (targetKey: string, agentCli: string) => void;
   /** Records that a session should be rebound onto `agentCli` when it is next sent into. */
-  setPendingSwitch: (sessionId: string, agentCli: KnownAgentCli) => void;
+  setPendingSwitch: (sessionId: string, agentCli: string) => void;
   /** Drops a session's recorded move once it has been committed or abandoned. */
   clearPendingSwitch: (sessionId: string) => void;
 }
@@ -59,9 +58,7 @@ export const usePendingAgentStore = create<PendingAgentState>((set) => ({
  * *because a move is pending*". Only the latter warms a session for the incoming
  * CLI and commits the rebind on the next send.
  */
-export function usePendingSwitch(
-  sessionId: string | null,
-): KnownAgentCli | undefined {
+export function usePendingSwitch(sessionId: string | null): string | undefined {
   return usePendingAgentStore((state) =>
     sessionId === null ? undefined : state.switches[sessionId],
   );

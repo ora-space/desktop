@@ -22,7 +22,6 @@ describe("useInstalledPlugins", () => {
       version: "0.1.0",
       kind: "agent",
       agentDisplayName: "Reviewer",
-      enabled: false,
       logo: null,
       installationValidity: { validity: "valid" },
       configuration: { state: "not_declared" },

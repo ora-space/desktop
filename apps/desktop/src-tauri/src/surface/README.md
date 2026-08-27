@@ -7,7 +7,7 @@ machine, and this module executes the resulting effects.
 ## Responsibilities
 
 - `service.rs`: `SurfaceService<G, R>`, the composition root. Resolves the surface an installed
-  plugin contributes through the plugin gateway, refuses disabled plugins, downgrades `embedded`
+  plugin contributes through the plugin gateway, downgrades `embedded`
   to `windowed` when unsupported, drives `SurfaceRegistry` commands, exposes the download
   resolve/discard entry points, and implements the lifecycle's `SurfaceCloser` through
   `SurfaceCloserHandle`.

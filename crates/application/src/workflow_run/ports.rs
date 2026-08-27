@@ -89,8 +89,9 @@ pub trait WorkflowRunRepository {
 
     /// Soft-deletes one run, its node rows, and its node-owned sessions in a single transaction.
     ///
-    /// A run is active when it is `Running`, has a non-terminal node run, or its workspace has a
-    /// running session. Deleting a run never deletes its shared workspace or sessions.
+    /// A run is active when it is `Running`, has a non-terminal node run, or a `Running` session is
+    /// bound to one of its node runs. A not-started `Pending` run (empty `current_nodes`, no node
+    /// rows) is not active and can be discarded. Deleting a run never deletes its shared workspace.
     fn soft_delete_run(
         &self,
         run_id: &WorkflowRunId,

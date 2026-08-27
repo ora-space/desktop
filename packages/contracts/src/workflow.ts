@@ -101,7 +101,7 @@ export type ListVersionsRequest = { workflowId: string };
 export type ListVersionsResponse = { versions: Array<WorkflowVersion> };
 
 /**
- * Requests every visible workflow in stable storage order.
+ * Requests every visible workflow, newest created first.
  */
 export type ListWorkflowsRequest = Record<symbol, never>;
 

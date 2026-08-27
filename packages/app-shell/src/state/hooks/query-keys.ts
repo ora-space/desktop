@@ -1,4 +1,4 @@
-import type { TaskDiffScope, WarmSessionTarget } from "@ora/contracts";
+import type { WarmSessionTarget, WorkspaceDiffScope } from "@ora/contracts";
 
 /**
  * Centralised react-query cache keys for the app shell.
@@ -22,13 +22,14 @@ export const queryKeys = {
     ["plugin-configuration", pluginId] as const,
   developerMode: ["developer-mode"] as const,
   runtimeLogLevel: ["runtime-log-level"] as const,
+  proxySettings: ["proxy-settings"] as const,
   gitIdentity: ["gitIdentity"] as const,
-  /** Project → mounted graph workflow definitions (mock host). */
+  /** Project 鈫?mounted graph workflow definitions (mock host). */
   workflowMounts: (projectId: string) => ["workflowMounts", projectId] as const,
-  /** Definition → projects that already mount it. */
+  /** Definition 鈫?projects that already mount it. */
   workflowMountsByDefinition: (definitionId: string) =>
     ["workflowMountsByDefinition", definitionId] as const,
-  /** Project → GraphWorkflowRun list (mock run repo). */
+  /** Project 鈫?GraphWorkflowRun list (mock run repo). */
   workflowRuns: (projectId: string) => ["workflowRuns", projectId] as const,
   workflowRun: (runId: string) => ["workflowRun", runId] as const,
   /** Artifacts produced by one graph workflow run. */
@@ -37,9 +38,10 @@ export const queryKeys = {
   taskWorkspace: (taskId: string) => ["task-workspace", taskId] as const,
   workspaceCwd: (workspaceId: string) =>
     ["workspace-cwd", workspaceId] as const,
-  taskDiffs: (taskId: string) => ["task-diff", taskId] as const,
-  taskDiff: (taskId: string, scope: TaskDiffScope) =>
-    ["task-diff", taskId, scope] as const,
+  workspaceDiffs: (workspaceId: string) =>
+    ["workspace-diff", workspaceId] as const,
+  workspaceDiff: (workspaceId: string, scope: WorkspaceDiffScope) =>
+    ["workspace-diff", workspaceId, scope] as const,
   workspaceFiles: (taskId: string) => ["workspace-files", taskId] as const,
   workspaceDirectory: (taskId: string, path: string) =>
     ["workspace-files", taskId, "directory", path] as const,

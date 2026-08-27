@@ -8,19 +8,19 @@ Product UI for **graph workflow runs** executed inside project Workspaces
 
 Keep these stacks separate — shared chrome only where noted.
 
-1. **Settings React Flow editor** — definition authoring and publishing only.
-   Owns catalog / reconnect / delete and the library graph. It does not choose
-   execution location or create runs.
+1. **Workflow editor** — definition authoring and publishing only.
+   Owns catalog / reconnect / delete and the library graph (sidebar list +
+   canvas). It does not choose execution location or create runs.
 2. **OpenSpec stepper + `workflow-store`** — Spec-mode composer workflow.
    Must **not** write `GraphWorkflowRun` or share run state with Theater.
 3. **This module (`GraphWorkflowRun` Theater / Overview)** — a run bound to the
    Workspace selected from a project or Task row. Consumes `@ora/workflow-runtime` via React
    context; owns Theater / Overview / hooks only.
 
-|          | Settings RF                 | OpenSpec / `workflow-store` | `workflow-run`                  | `@ora/workflow-runtime`      |
-| -------- | --------------------------- | --------------------------- | ------------------------------- | ---------------------------- |
-| Owns     | Definition edit and publish | Spec stepper state          | Run creation + Theater context  | Ports, memory engine, events |
-| Must not | Drive live run Theater      | Mutate `GraphWorkflowRun`   | Reuse settings `WorkflowCanvas` | Own React / Theater          |
+|          | Workflow editor             | OpenSpec / `workflow-store` | `workflow-run`                 | `@ora/workflow-runtime`      |
+| -------- | --------------------------- | --------------------------- | ------------------------------ | ---------------------------- |
+| Owns     | Definition edit and publish | Spec stepper state          | Run creation + Theater context | Ports, memory engine, events |
+| Must not | Drive live run Theater      | Mutate `GraphWorkflowRun`   | Reuse editor `WorkflowCanvas`  | Own React / Theater          |
 
 ## Responsibilities
 
@@ -91,7 +91,7 @@ Keep these stacks separate — shared chrome only where noted.
   `TaskDiffView` from chat); the run review surface is scoped to its Workspace
   and does not infer ownership through a Task.
 - Does not implement session-scoped Diff for Theater stage mode yet.
-- Does not reuse settings `WorkflowCanvas` (no catalog / reconnect / delete).
+- Does not reuse editor `WorkflowCanvas` (no catalog / reconnect / delete).
 - Does not implement HITL timeout (always waits for submit; `HitlTimeoutPolicy`
   enum reserved for later).
 - Does not aggregate `partial_failed` statistics (UI copy placeholder only).

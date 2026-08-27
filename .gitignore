@@ -30,3 +30,4 @@ packages/contracts/.test-dist/
 *.tsbuildinfo
 
 /specs
+/memories

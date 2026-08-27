@@ -40,7 +40,7 @@ own instance.
 
 ## Opening a surface
 
-`surface_open` resolves the surface from the installed manifest (refusing disabled plugins),
+`surface_open` resolves the surface from the installed manifest,
 registers an `Opening` instance, creates the webview synchronously, completes the registry with
 `Opened`, and emits `opened`. The plugin process is not started by opening: a workbench page
 starts it on demand with its first bridge call, and a webview plugin has no process at all.
@@ -66,7 +66,7 @@ window. Workbench surfaces may open multiple instances.
 
 `SurfaceRecord` is `{ instance, pluginId, kind, title, target, state }` with `kind` in
 `workbench | webview` and `state` in `opening | open | migrating | closing | failed`. Errors use
-the shared command error contract: `plugin_not_found`, `plugin_disabled`, `resource_in_use`
+the shared command error contract: `plugin_not_found`, `resource_in_use`
 (busy instance), `invalid_request` (unknown instance, unsupported operation, unknown download or
 action), `internal_error`.
 
@@ -86,7 +86,7 @@ never open popups at all.
 
 Windowed instances listen for `CloseRequested` and turn it into a registry `Close`; the close is
 never blocked. Destroying the main window closes every surface. The lifecycle calls the
-registered `SurfaceCloser` before stopping, disabling, or uninstalling a plugin, so its surfaces
+registered `SurfaceCloser` before stopping or uninstalling a plugin, so its surfaces
 are closed first. When a plugin's last instance closes, a 30 s idle timer is armed; on expiry
 the instance count is re-checked before the process is stopped.
 

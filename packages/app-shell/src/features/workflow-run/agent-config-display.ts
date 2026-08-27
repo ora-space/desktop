@@ -2,21 +2,19 @@ import type {
   WorkflowAgentConfig,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
-import { AGENT_CLI_LABELS, type KnownAgentCli } from "../chat/model-catalog";
+import { agentLabel, type AgentEntry } from "../chat/agent-catalog";
 
-/** True when the executor CLI id is one of the known product Agent CLIs. */
-export function isKnownAgentCli(agentCli: string): agentCli is KnownAgentCli {
-  return agentCli in AGENT_CLI_LABELS;
-}
-
-/** Formats `CLI · modelId` with a human CLI label when the CLI is known. */
+/**
+ * Formats `agent · modelId`, naming the agent the way its package does.
+ *
+ * A run can outlive the package that supplied its agent, so an identity the catalog no longer
+ * carries falls back to the identity itself: that is what the run was actually executed on.
+ */
 export function formatAgentExecutorLabel(
   executor: WorkflowAgentConfig["executor"],
+  agents: readonly AgentEntry[],
 ): string {
-  const cliLabel = isKnownAgentCli(executor.agentCli)
-    ? AGENT_CLI_LABELS[executor.agentCli]
-    : executor.agentCli;
-  return `${cliLabel} · ${executor.modelId}`;
+  return `${agentLabel(agents, executor.agentCli)} · ${executor.modelId}`;
 }
 
 /**
@@ -25,6 +23,7 @@ export function formatAgentExecutorLabel(
  */
 export function resolveTheaterActDetail(
   data: WorkflowNodeData,
+  agents: readonly AgentEntry[],
 ): string | undefined {
   for (const candidate of [data.tool, data.condition]) {
     const trimmed = candidate?.trim();
@@ -33,7 +32,7 @@ export function resolveTheaterActDetail(
     }
   }
   if (data.agentConfig !== undefined) {
-    return formatAgentExecutorLabel(data.agentConfig.executor);
+    return formatAgentExecutorLabel(data.agentConfig.executor, agents);
   }
   return undefined;
 }

@@ -35,16 +35,6 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
       ? refreshAgent(plugin.name, scope)
       : Promise.resolve([]);
 
-  const enable = useMutation({
-    mutationFn: () => client.plugin.enable({ pluginId }),
-    onSuccess: ({ plugin }) => refreshPluginAgent(plugin, "models"),
-    onSettled: invalidate,
-  });
-  const disable = useMutation({
-    mutationFn: () => client.plugin.disable({ pluginId }),
-    onSuccess: ({ plugin }) => refreshPluginAgent(plugin, "availability"),
-    onSettled: invalidate,
-  });
   const activate = useMutation({
     mutationFn: () => client.plugin.activate({ pluginId }),
     onSuccess: ({ plugin }) => refreshPluginAgent(plugin, "models"),
@@ -73,5 +63,5 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
     onSettled: invalidate,
   });
 
-  return { enable, disable, activate, stop, uninstall };
+  return { activate, stop, uninstall };
 }

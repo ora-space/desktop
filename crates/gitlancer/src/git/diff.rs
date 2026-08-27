@@ -22,11 +22,14 @@ pub enum DiffScope {
     Committed,
 }
 
-/// Carries the fixed baseline, worktree, and comparison scope.
+/// Carries the worktree, comparison scope, and baseline, when the caller has one recorded.
+///
+/// `Unstaged` and `Staged` never read `base_commit_id`. `Branch` and `Committed` require it —
+/// the caller must not request those scopes without a recorded baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffRequest<'a> {
     pub worktree: &'a WorktreeHandle,
-    pub base_commit_id: &'a CommitId,
+    pub base_commit_id: Option<&'a CommitId>,
     pub scope: DiffScope,
 }
 
@@ -242,13 +245,23 @@ pub fn build_diff_command(request: &DiffRequest<'_>) -> GitCommand {
         FULL_FILE_CONTEXT_ARG,
     ];
     match request.scope {
-        DiffScope::Branch => args.push(request.base_commit_id.as_str()),
+        DiffScope::Branch => args.push(expect_baseline(request.base_commit_id).as_str()),
         DiffScope::Unstaged => {}
         DiffScope::Staged => args.extend(["--cached", "HEAD"]),
-        DiffScope::Committed => args.extend([request.base_commit_id.as_str(), "HEAD"]),
+        DiffScope::Committed => {
+            args.extend([expect_baseline(request.base_commit_id).as_str(), "HEAD"])
+        }
     }
     args.push("--");
     command(request.worktree, args)
+}
+
+/// Reads the baseline required by the `Branch`/`Committed` scopes.
+///
+/// Panics on `None`: the application layer must reject those scopes before a request without a
+/// recorded baseline ever reaches this command builder.
+fn expect_baseline(base_commit_id: Option<&CommitId>) -> &CommitId {
+    base_commit_id.expect("Branch/Committed diff scope requires a recorded baseline commit")
 }
 
 /// Lists ignored-aware untracked paths in a machine-readable representation.
@@ -384,7 +397,7 @@ mod tests {
         let base_commit_id = CommitId::new("base-commit");
         let command = build_diff_command(&DiffRequest {
             worktree: &worktree,
-            base_commit_id: &base_commit_id,
+            base_commit_id: Some(&base_commit_id),
             scope: DiffScope::Branch,
         });
 
@@ -403,6 +416,46 @@ mod tests {
                 "--",
             ]
         );
+    }
+
+    /// Verifies an unstaged diff never requires a baseline, since a workspace with no recorded
+    /// baseline (a project's main checkout) must still be able to request one.
+    #[test]
+    fn builds_unstaged_diff_command_without_a_baseline() {
+        let worktree = test_worktree();
+        let command = build_diff_command(&DiffRequest {
+            worktree: &worktree,
+            base_commit_id: None,
+            scope: DiffScope::Unstaged,
+        });
+
+        assert_eq!(
+            command.args,
+            vec![
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--unified=1000000",
+                "--",
+            ]
+        );
+    }
+
+    /// Verifies the `Branch` scope refuses to silently drop the comparison when no baseline was
+    /// supplied, rather than emitting a `git diff` command missing its comparison target.
+    #[test]
+    #[should_panic(expected = "requires a recorded baseline commit")]
+    fn panics_building_branch_diff_command_without_a_baseline() {
+        let worktree = test_worktree();
+        let _ = build_diff_command(&DiffRequest {
+            worktree: &worktree,
+            base_commit_id: None,
+            scope: DiffScope::Branch,
+        });
     }
 
     /// Verifies untracked files use Git's no-index renderer without clean or textconv filters.

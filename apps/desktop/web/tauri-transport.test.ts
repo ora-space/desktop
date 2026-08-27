@@ -153,7 +153,7 @@ describe("createTauriTransport", () => {
     });
   });
 
-  it("maps task diff reads to the shared desktop backend command", async () => {
+  it("maps workspace diff reads to the shared desktop backend command", async () => {
     const response = {
       baseCommitId: "base",
       headCommitId: "head",
@@ -161,15 +161,15 @@ describe("createTauriTransport", () => {
     };
     const invoke = vi.fn().mockResolvedValue(response);
     const transport = createTauriTransport(invoke);
-    const request = { taskId: "task-1", scope: "branch" as const };
+    const request = { workspaceId: "workspace-1", scope: "branch" as const };
 
     await expect(
       transport.send({
-        operationName: "getTaskDiff",
+        operationName: "getWorkspaceDiff",
         request,
       }),
     ).resolves.toEqual(response);
-    expect(invoke).toHaveBeenCalledWith("get_task_diff", { request });
+    expect(invoke).toHaveBeenCalledWith("get_workspace_diff", { request });
   });
 
   it.each([

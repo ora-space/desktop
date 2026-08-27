@@ -1,10 +1,5 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import {
-  AGENT_CLI_LABELS,
-  type KnownAgentCli,
-} from "../../features/chat/model-catalog";
-
 export type ThemeMode = "system" | "light" | "dark";
 export type InterfaceDensity = "comfortable" | "compact";
 export type ApprovalPolicy = "always" | "risky" | "trusted";
@@ -13,7 +8,14 @@ export type HistoryRetention = "30-days" | "90-days" | "forever";
 export interface SettingsPreferences {
   theme: ThemeMode;
   density: InterfaceDensity;
-  agentCli: KnownAgentCli | null;
+  /**
+   * Persisted namespaced identity of the agent the next untouched chat surface opens on.
+   *
+   * Deliberately an open string: which agents exist depends on installed plugins, so a stored
+   * identity naming one that is no longer installed is an ordinary state. The pickers resolve it
+   * against the live runtime rather than validating it here.
+   */
+  agentCli: string | null;
   approvalPolicy: ApprovalPolicy;
   terminalAccess: boolean;
   fileWriteAccess: boolean;
@@ -72,23 +74,18 @@ export const useSettingsStore = create<SettingsState>()(
           settings: { ...previousSettings, agentCli: null },
         } as SettingsState;
       },
-      // Tolerate partial/corrupt persisted state by merging over defaults.
+      // Tolerate partial/corrupt persisted state by merging over defaults. A stored agent
+      // identity is carried forward unexamined: agents arrive with installed plugins, so this
+      // build cannot know which identities are real, and the pickers already resolve a stored one
+      // against the live runtime before offering or warming it.
       merge: (persisted, current) => {
         const persistedSettings = (
           persisted as Partial<SettingsState> | undefined
         )?.settings;
-        const settings = { ...DEFAULT_SETTINGS, ...(persistedSettings ?? {}) };
-        // An agent this build cannot offer is dropped rather than carried forward: agent
-        // identities are open strings now, so a stored one can name an agent written before
-        // identities were namespaced, or a plugin that has since been uninstalled. Either way
-        // the picker has no entry for it and every warm request against it would fail.
-        if (
-          settings.agentCli !== null &&
-          !(settings.agentCli in AGENT_CLI_LABELS)
-        ) {
-          settings.agentCli = DEFAULT_SETTINGS.agentCli;
-        }
-        return { ...current, settings };
+        return {
+          ...current,
+          settings: { ...DEFAULT_SETTINGS, ...(persistedSettings ?? {}) },
+        };
       },
     },
   ),

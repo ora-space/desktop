@@ -1,7 +1,5 @@
 use crate::agent::AgentApi;
-use crate::agent_runtime::{
-    AgentRuntimeManager, AgentRuntimeSetup, SessionEventStream, SessionLocator,
-};
+use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, SessionEventStream};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
@@ -13,19 +11,18 @@ use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::spec::SpecApi;
 use crate::task::TaskApi;
-use crate::task_diff::TaskDiffApi;
 use crate::user_config::{BackendPreferredLogLevelStore, UserConfigApi};
 use crate::workflow::WorkflowApi;
 use crate::workflow::run::WorkflowRunApi;
 use crate::workflow::run::{
     ConcreteWorkflowRunControl, ConcreteWorkflowRunEngine, build_workflow_run_engine,
 };
+use crate::workspace_diff::WorkspaceDiffApi;
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
-use ora_domain::AgentRef;
 use ora_logging::{ora_error, ora_warn};
 use ora_scheduler::Scheduler;
 use std::fs;
@@ -69,6 +66,10 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("persisted worktree root is invalid: {path:?}")]
+    InvalidWorktreeRoot { path: PathBuf },
+    #[error("failed to load persisted user configuration")]
+    UserConfig(#[source] BackendError),
     #[error("failed to initialize plugin lifecycle")]
     PluginLifecycle(#[source] ora_plugin_lifecycle::PluginLifecycleError),
     #[error("failed to initialize plugin management")]
@@ -92,7 +93,7 @@ pub struct Backend {
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
-    task_diff: Arc<TaskDiffApi>,
+    workspace_diff: Arc<WorkspaceDiffApi>,
     user_config: Arc<UserConfigApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
@@ -128,17 +129,33 @@ impl Backend {
                 .parent()
                 .unwrap_or_else(|| Path::new(".")),
         )?;
-        ensure_directory(&paths.worktree_root)?;
         let catalog = default_migration_catalog().map_err(BackendBootstrapError::Database)?;
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&paths.database_path), &catalog)
             .map_err(BackendBootstrapError::Database)?;
+        let user_config = Arc::new(UserConfigApi::new(pool.clone()));
+        let stored_worktree_root = user_config
+            .worktree_root()
+            .map_err(BackendBootstrapError::UserConfig)?;
+        let configured_worktree_root = match stored_worktree_root {
+            Some(root) => {
+                if !root.is_absolute() || !root.is_dir() {
+                    return Err(BackendBootstrapError::InvalidWorktreeRoot { path: root });
+                }
+                root
+            }
+            None => {
+                ensure_directory(&paths.worktree_root)?;
+                paths.worktree_root
+            }
+        };
         crate::skill_reconciliation::reconcile_skill_storage(&pool, &paths.skills_root)
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         crate::skill_reconciliation::cleanup_import_temp_sessions()
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
+        let user_config = Arc::new(UserConfigApi::new(pool.clone()));
         let plugin = Arc::new(
             PluginApi::open(
                 pool.clone(),
@@ -146,6 +163,7 @@ impl Backend {
                 paths.deno_path,
                 clock,
                 app_events.publisher(),
+                user_config.clone(),
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
@@ -153,7 +171,7 @@ impl Backend {
             .sync_installed_skills()
             .map_err(BackendBootstrapError::PluginSkillCatalog)?;
         let scheduler = Scheduler::new(paths.timezone);
-        let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
+        let worktree_root = Arc::new(RwLock::new(configured_worktree_root));
         let sessions_root = paths.sessions_root;
         // Side files holding the worktree baseline an interactive node diffs at completion.
         let baselines_root = sessions_root.join("node-baselines");
@@ -199,12 +217,24 @@ impl Backend {
         // Durable Effect reconciliation: the first pass replays every surface a previous process
         // left short of its Desired generation, including the retirement cleanup an uninstall
         // started but could not finish.
-        let effect_worker = crate::effect_worker::EffectWorker::new(pool.clone(), plugin.clone());
+        let effect_worker = crate::effect_worker::EffectWorker::new(
+            pool.clone(),
+            plugin.clone(),
+            agent_runtime.clone(),
+        );
         effect_worker.recover();
-        plugin.set_effect_reconcile(effect_worker.spawn());
+        // Creating a Workspace is not something a consumer declaration can observe, so both create
+        // paths wake the worker to converge it promptly instead of at the next scan.
+        let effect_reconcile = effect_worker.spawn();
+        plugin.set_effect_reconcile(effect_reconcile.clone());
 
         Ok(Self {
-            project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
+            project: Arc::new(ProjectApi::new(
+                pool.clone(),
+                sessions_root.clone(),
+                clock,
+                effect_reconcile.clone(),
+            )),
             task: Arc::new(TaskApi::new(
                 pool.clone(),
                 worktree_root.clone(),
@@ -212,13 +242,14 @@ impl Backend {
                 sessions_root.clone(),
                 repository_gates,
                 clock,
+                effect_reconcile,
             )),
-            task_diff: Arc::new(TaskDiffApi::new(
+            workspace_diff: Arc::new(WorkspaceDiffApi::new(
                 pool.clone(),
                 git_cleanup.clone(),
                 relative_path_base.clone(),
             )),
-            user_config: Arc::new(UserConfigApi::new(pool.clone())),
+            user_config,
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
             plugin,
@@ -320,17 +351,23 @@ impl Backend {
         self.plugin.delete_marketplace_source(request)
     }
 
+    /// Changes one marketplace source\u2019s proxy policy after persisting it.
+    pub fn update_marketplace_source(
+        &self,
+        request: UpdateMarketplaceSourceRequest,
+    ) -> Result<UpdateMarketplaceSourceResponse, BackendError> {
+        self.plugin.update_marketplace_source(request)
+    }
+
     /// Pulls the marketplace source and rebuilds the cache used by plugin discovery.
     pub fn sync_available_plugins(
         &self,
         request: SyncAvailablePluginsRequest,
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
-        self.plugin
-            .sync_available_plugins(request)
-            .map_err(|error| BackendError::internal("failed to sync plugin registry index", error))
+        self.plugin.sync_available_plugins(request)
     }
 
-    /// Explicitly rescans packages and reconciles durable and runtime state.
+    /// Explicitly rescans packages and reconciles process-local runtime state.
     pub async fn scan_plugins(
         &self,
         request: ScanPluginsRequest,
@@ -344,38 +381,7 @@ impl Backend {
         Ok(response)
     }
 
-    /// Persists plugin eligibility, starts its process, and retries the agent it supplies.
-    ///
-    /// Waking the agent here is what makes an enabled plugin usable immediately: its supervisor
-    /// has been refusing to attach a disabled plugin and is otherwise part of a backoff interval
-    /// away from discovering that the user just turned it on.
-    pub async fn enable_plugin(
-        &self,
-        request: EnablePluginRequest,
-    ) -> Result<EnablePluginResponse, BackendError> {
-        let response = self
-            .plugin
-            .enable(request)
-            .await
-            .map_err(BackendError::from)?;
-        if let Ok(agent_ref) = AgentRef::parse(&response.plugin.name) {
-            self.agent_runtime.wake_agent(&agent_ref);
-        }
-        Ok(response)
-    }
-
-    /// Stops a plugin when necessary before persisting ineligibility.
-    pub async fn disable_plugin(
-        &self,
-        request: DisablePluginRequest,
-    ) -> Result<DisablePluginResponse, BackendError> {
-        self.plugin
-            .disable(request)
-            .await
-            .map_err(BackendError::from)
-    }
-
-    /// Starts one enabled plugin and returns its immediate starting state.
+    /// Starts one installed plugin and returns its immediate starting state.
     pub async fn activate_plugin(
         &self,
         request: ActivatePluginRequest,
@@ -386,7 +392,7 @@ impl Backend {
             .map_err(BackendError::from)
     }
 
-    /// Stops one plugin process without changing durable eligibility.
+    /// Stops one plugin process while leaving the installed plugin available.
     pub async fn stop_plugin(
         &self,
         request: StopPluginRequest,
@@ -394,7 +400,7 @@ impl Backend {
         self.plugin.stop(request).await.map_err(BackendError::from)
     }
 
-    /// Stops and removes one plugin package plus its durable state.
+    /// Stops and removes one plugin package plus its process-local state.
     pub async fn uninstall_plugin(
         &self,
         request: UninstallPluginRequest,
@@ -697,13 +703,62 @@ impl Backend {
         self.user_config.set_preferred_log_level(level).await
     }
 
+    /// Returns the optional configured network proxy settings.
+    pub fn network_proxy_settings(
+        &self,
+    ) -> Result<Option<ora_application::NetworkProxySettings>, BackendError> {
+        self.user_config.network_proxy_settings()
+    }
+
+    /// Persists and returns the configured network proxy settings.
+    pub fn set_network_proxy_settings(
+        &self,
+        settings: ora_application::NetworkProxySettings,
+    ) -> Result<ora_application::NetworkProxySettings, BackendError> {
+        self.user_config.set_network_proxy_settings(settings)
+    }
+
     /// Returns the restricted preferred-level persistence capability for runtime logging.
     pub fn preferred_log_level_store(&self) -> BackendPreferredLogLevelStore {
         BackendPreferredLogLevelStore::new(self.user_config.clone())
     }
 
-    /// Replaces the root used by task creations that start after this update.
+    /// Returns the worktree root row, preserving absence for first-run migration.
+    pub fn persisted_worktree_root(&self) -> Result<Option<PathBuf>, BackendError> {
+        self.user_config.worktree_root()
+    }
+
+    /// Returns the active root used for new task worktrees.
+    pub fn worktree_root(&self) -> Result<PathBuf, BackendError> {
+        self.worktree_root
+            .read()
+            .map(|root| root.clone())
+            .map_err(|_poisoned| {
+                BackendError::new(
+                    ErrorClassification::Internal,
+                    PublicError::InternalError(EmptyErrorParams {}),
+                    "worktree root configuration is unavailable",
+                )
+            })
+    }
+
+    /// Validates and persists the root before publishing it to future task creations.
     pub fn set_worktree_root(&self, worktree_root: PathBuf) -> Result<(), BackendError> {
+        if !worktree_root.is_absolute() {
+            return Err(BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::WorktreeRootNotAbsolute(EmptyErrorParams {}),
+                "worktree root must be an absolute path",
+            ));
+        }
+        if !worktree_root.is_dir() {
+            return Err(BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::WorktreeRootNotDirectory(EmptyErrorParams {}),
+                "worktree root must be an existing directory",
+            ));
+        }
+        self.user_config.set_worktree_root(&worktree_root)?;
         let mut configured_root = self.worktree_root.write().map_err(|_poisoned| {
             BackendError::new(
                 ErrorClassification::Internal,
@@ -941,30 +996,31 @@ impl Backend {
     }
 
     // =============================================================================
-    // taskDiff
+    // workspaceDiff
     // =============================================================================
-    /// Returns the current Git snapshot for the task directory used by its agent session.
-    pub fn get_task_diff(
+    /// Returns the current Git snapshot for one workspace checkout — a task's isolated worktree
+    /// or a project's main checkout alike.
+    pub fn get_workspace_diff(
         &self,
-        request: GetTaskDiffRequest,
-    ) -> Result<GetTaskDiffResponse, BackendError> {
-        self.task_diff.get_diff(request)
+        request: GetWorkspaceDiffRequest,
+    ) -> Result<GetWorkspaceDiffResponse, BackendError> {
+        self.workspace_diff.get_diff(request)
     }
 
-    /// Commits every current change in one isolated task worktree.
-    pub fn commit_task_changes(
+    /// Commits every current change in one workspace checkout.
+    pub fn commit_workspace_changes(
         &self,
-        request: CommitTaskChangesRequest,
-    ) -> Result<CommitTaskChangesResponse, BackendError> {
-        self.task_diff.commit_changes(request)
+        request: CommitWorkspaceChangesRequest,
+    ) -> Result<CommitWorkspaceChangesResponse, BackendError> {
+        self.workspace_diff.commit_changes(request)
     }
 
-    /// Pushes the verified branch owned by one isolated task worktree.
-    pub fn push_task_branch(
+    /// Pushes one workspace checkout's branch, verified when it has a recorded `Worktree` row.
+    pub fn push_workspace_branch(
         &self,
-        request: PushTaskBranchRequest,
-    ) -> Result<PushTaskBranchResponse, BackendError> {
-        self.task_diff.push_branch(request)
+        request: PushWorkspaceBranchRequest,
+    ) -> Result<PushWorkspaceBranchResponse, BackendError> {
+        self.workspace_diff.push_branch(request)
     }
 
     // =============================================================================
@@ -1157,17 +1213,6 @@ impl Backend {
         request: ListAgentModelsRequest,
     ) -> Result<ListAgentModelsResponse, BackendError> {
         self.agent_runtime.agent_models(request)
-    }
-
-    /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
-    ///
-    /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
-    /// Desktop dashboard command consumes it to locate the agent-written trace file.
-    pub fn resolve_session_locator(
-        &self,
-        session_id: &str,
-    ) -> Result<SessionLocator, BackendError> {
-        self.agent_runtime.resolve_session_locator(session_id)
     }
 
     // =============================================================================

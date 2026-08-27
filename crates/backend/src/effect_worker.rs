@@ -5,12 +5,14 @@
 //! request again, and a request that was merged with a later edit is served once at the newer
 //! generation rather than replayed per edit.
 
-use crate::agent_runtime::plugin_agent;
+use crate::agent_runtime::{ReplacedAgentSessions, plugin_agent};
 use crate::clock::SystemClock;
+use crate::effect_surface_registration::converge_workspace_surfaces;
 use crate::plugin::PluginApi;
 use ora_application::Clock;
 use ora_db::{
     ClaimedReconcile, DueSurfaceReconcile, ReconcileClaim, RepositoryPool, SqliteEffectRepository,
+    SqliteWorkspaceRepository,
 };
 use ora_domain::PluginId;
 use ora_effect::{
@@ -19,6 +21,7 @@ use ora_effect::{
     SurfacePath, UuidManagedIdentityGenerator,
 };
 use ora_logging::{ora_info, ora_warn};
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
@@ -86,12 +89,33 @@ impl EffectWorkerHandle {
     pub(crate) fn notify(&self) {
         self.wake.notify();
     }
+
+    /// Builds a handle with no worker behind it, for APIs assembled without one in tests.
+    #[cfg(test)]
+    pub(crate) fn unwatched() -> Self {
+        Self {
+            wake: Arc::new(WakeSignal::default()),
+        }
+    }
+
+    /// Reports whether a pass is currently owed, so tests can pin the wake without a worker.
+    #[cfg(test)]
+    pub(crate) fn is_pending(&self) -> bool {
+        *self
+            .wake
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Reconciles every surface owing work, coordinating live Agent plugins around each mutation.
-pub(crate) struct EffectWorker {
+pub(crate) struct EffectWorker<Sessions> {
     repository: SqliteEffectRepository,
+    workspace_repository: SqliteWorkspaceRepository,
     plugin_host: Arc<PluginApi>,
+    /// Repairs the sessions a coordinated restart invalidates.
+    sessions: Arc<Sessions>,
     clock: SystemClock,
     wake: Arc<WakeSignal>,
     /// Identifies this worker's claims; a fresh value per process so a crashed one is never
@@ -101,11 +125,17 @@ pub(crate) struct EffectWorker {
     next_safety_scan: Mutex<i64>,
 }
 
-impl EffectWorker {
-    pub(crate) fn new(pool: RepositoryPool, plugin_host: Arc<PluginApi>) -> Self {
+impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        plugin_host: Arc<PluginApi>,
+        sessions: Arc<Sessions>,
+    ) -> Self {
         Self {
-            repository: SqliteEffectRepository::new(pool),
+            repository: SqliteEffectRepository::new(pool.clone()),
+            workspace_repository: SqliteWorkspaceRepository::new(pool),
             plugin_host,
+            sessions,
             clock: SystemClock,
             wake: Arc::new(WakeSignal::default()),
             worker_id: Uuid::new_v4().to_string(),
@@ -190,6 +220,7 @@ impl EffectWorker {
     pub(crate) fn run_pass(&self, runtime: &Handle) {
         let now = self.clock.now_timestamp_millis();
         self.run_safety_scan(now);
+        self.converge_surface_registrations(now);
         let claimed = match self.repository.claim_due_reconcile_requests(
             &self.worker_id,
             now,
@@ -238,6 +269,43 @@ impl EffectWorker {
         }
     }
 
+    /// Gives Workspaces that no declaration could reach the surfaces the current consumers ask for.
+    ///
+    /// This runs before claiming so a Workspace registered here is served in the same pass rather
+    /// than waiting out another scan interval. A failure is logged rather than propagated: the
+    /// next pass re-derives the same set, and the surfaces that are already registered still owe
+    /// their reconcile regardless.
+    fn converge_surface_registrations(&self, now: i64) {
+        let declarations = self.plugin_host.agent_effect_surface_declarations();
+        if declarations.is_empty() {
+            return;
+        }
+        let workspaces = match self.workspace_repository.list_all_workspaces() {
+            Ok(workspaces) => workspaces,
+            Err(error) => {
+                ora_warn!(
+                    operation = "effect_reconcile",
+                    error = %error,
+                    "failed to list Workspaces for Effect surface convergence",
+                );
+                return;
+            }
+        };
+        match converge_workspace_surfaces(&self.repository, &workspaces, &declarations, now) {
+            Ok(0) => {}
+            Ok(registered) => ora_info!(
+                operation = "effect_reconcile",
+                registered = registered,
+                "registered Effect surfaces for Workspaces created after the last declaration",
+            ),
+            Err(error) => ora_warn!(
+                operation = "effect_reconcile",
+                error = %error,
+                "failed to register Effect surfaces for a Workspace; the next pass retries",
+            ),
+        }
+    }
+
     /// Runs one claimed surface against the live Agent plugins declared as its consumers.
     fn reconcile_claimed(&self, runtime: &Handle, request: ClaimedReconcile) {
         let ClaimedReconcile { claim, due } = request;
@@ -248,9 +316,11 @@ impl EffectWorker {
         let renewal = LeaseRenewal::start(self, &claim);
         let coordinator = PluginSurfaceCoordinator {
             plugin_host: self.plugin_host.as_ref(),
+            sessions: self.sessions.as_ref(),
             runtime,
             workspace_root: &workspace_root,
             relative_path: &relative_path,
+            quiesced: Cell::new(false),
         };
         let outcome = reconcile_one(
             &self.repository,
@@ -324,7 +394,7 @@ struct LeaseRenewal {
 
 impl LeaseRenewal {
     /// Starts renewing until `stop`, leaving the claim untouched if the thread cannot start.
-    fn start(worker: &EffectWorker, claim: &ReconcileClaim) -> Self {
+    fn start<Sessions>(worker: &EffectWorker<Sessions>, claim: &ReconcileClaim) -> Self {
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let repository = worker.repository.clone();
         let worker_id = worker.worker_id.clone();
@@ -510,35 +580,39 @@ fn finish_retirement(
 /// The coordination contract is per-surface while the port is per-consumer, so the locator travels
 /// on the struct rather than through the trait: Ora resolves and validates the absolute Workspace
 /// root, and a plugin only ever receives the path it already declared.
-struct PluginSurfaceCoordinator<'a> {
+struct PluginSurfaceCoordinator<'a, Sessions> {
     plugin_host: &'a PluginApi,
+    sessions: &'a Sessions,
     runtime: &'a Handle,
     workspace_root: &'a Path,
     relative_path: &'a SurfacePath,
+    /// Whether this reconcile actually barriered the consumers before mutating the surface.
+    ///
+    /// Only a barriered reconcile is about to change files under a live agent, which is what makes
+    /// the plugin replace its process; resuming a surface that was already current must not cost
+    /// the user their sessions.
+    quiesced: Cell<bool>,
 }
 
-impl PluginSurfaceCoordinator<'_> {
+impl<Sessions> PluginSurfaceCoordinator<'_, Sessions> {
     /// Resolves one consumer onto the running plugin generation that must be coordinated.
     ///
     /// A consumer whose plugin is not currently running needs no coordination at all: it holds no
     /// turn that a mutation could corrupt, and it re-reads the surface when it next starts. Only a
     /// live generation can be asked to quiesce, so absence resolves to `None` rather than an error
     /// that would block materialization whenever the agent happens to be disconnected.
-    fn running_runtime(
-        &self,
-        consumer: &ConsumerId,
-    ) -> Result<Option<ora_plugin_runtime::PluginRuntime>, CoordinationError> {
-        let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
-        Ok(self
-            .plugin_host
+    fn running_runtime(&self, plugin_id: &PluginId) -> Option<ora_plugin_runtime::PluginRuntime> {
+        self.plugin_host
             .lifecycle
-            .connection(&plugin_id)
+            .connection(plugin_id)
             .ok()
-            .map(|connection| connection.runtime().process().clone()))
+            .map(|connection| connection.runtime().process().clone())
     }
 }
 
-impl ConsumerCoordinator for PluginSurfaceCoordinator<'_> {
+impl<Sessions: ReplacedAgentSessions> ConsumerCoordinator
+    for PluginSurfaceCoordinator<'_, Sessions>
+{
     /// Asks every live consumer to reach an idle boundary, stopping at the first one still busy.
     ///
     /// Reporting `WaitingForIdle` as soon as one consumer is busy is what keeps the barrier
@@ -550,7 +624,8 @@ impl ConsumerCoordinator for PluginSurfaceCoordinator<'_> {
         consumers: &[ConsumerId],
     ) -> Result<CoordinationOutcome, CoordinationError> {
         for consumer in consumers {
-            let Some(runtime) = self.running_runtime(consumer)? else {
+            let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
+            let Some(runtime) = self.running_runtime(&plugin_id) else {
                 continue;
             };
             let outcome = self
@@ -566,17 +641,26 @@ impl ConsumerCoordinator for PluginSurfaceCoordinator<'_> {
                 return Ok(CoordinationOutcome::WaitingForIdle);
             }
         }
+        self.quiesced.set(true);
         Ok(CoordinationOutcome::Ready)
     }
 
     /// Restarts one consumer so it observes the generation just written, releasing its barrier.
+    ///
+    /// A restart that followed a barrier replaced the agent's process, and every provider-side
+    /// session that process held died with it. Ora still holds those session ids, so the sessions
+    /// are detached here rather than left to fail their next prompt against an agent that has never
+    /// heard of them. Only the barriered case detaches: a surface that was already current resumes
+    /// without the plugin replacing anything, and stopping live sessions for that would cost the
+    /// user a conversation to repair nothing.
     fn resume(
         &self,
         surface_key: &SurfaceKey,
         consumer: &ConsumerId,
         generation: Generation,
     ) -> Result<(), CoordinationError> {
-        let Some(runtime) = self.running_runtime(consumer)? else {
+        let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
+        let Some(runtime) = self.running_runtime(&plugin_id) else {
             return Ok(());
         };
         self.runtime
@@ -587,21 +671,33 @@ impl ConsumerCoordinator for PluginSurfaceCoordinator<'_> {
                 self.relative_path,
                 generation,
             ))
-            .map_err(CoordinationError::new)
+            .map_err(CoordinationError::new)?;
+        if self.quiesced.get() {
+            self.sessions
+                .detach_sessions_for_replaced_plugin(&plugin_id);
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SurfaceOutcome, reconcile_one};
+    use super::{
+        EffectWorker, EffectWorkerHandle, ReplacedAgentSessions, SurfaceOutcome, reconcile_one,
+    };
+    use crate::app_event::AppEventHub;
+    use crate::effect_surface_registration::converge_workspace_surfaces;
+    use crate::plugin::PluginApi;
     use crate::project::ProjectApi;
+    use crate::user_config::UserConfigApi;
+    use ora_application::Clock;
     use ora_contracts::CreateProjectRequest;
     use ora_db::{
         ClaimedReconcile, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
         SourcePublication, SqliteEffectRepository, SqliteWorkspaceRepository,
         default_migration_catalog,
     };
-    use ora_domain::{Namespace, WorkspaceId};
+    use ora_domain::{Namespace, PluginId, WorkspaceId};
     use ora_effect::{
         ConsumerCoordination, ConsumerCoordinator, ConsumerId, CoordinationError,
         CoordinationOutcome, DesiredSkillState, Digest, EffectRepository, FilesystemSkillSurface,
@@ -610,10 +706,10 @@ mod tests {
         SurfacePath, WorkspaceEffectSpec,
     };
     use pretty_assertions::assert_eq;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
-    use std::path::Path;
-    use std::sync::{Mutex, PoisonError};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, PoisonError};
     use tempfile::TempDir;
 
     /// Later than any row the real clock writes during `ProjectApi::create`, whose Workspace
@@ -622,6 +718,21 @@ mod tests {
     const WORKER: &str = "worker-1";
 
     const MANIFEST: &str = "---\nname: grilling\ndescription: Grill a plan relentlessly.\n---\n\nAsk hard questions.\n";
+
+    /// Records which agents were detached after a coordinated restart.
+    #[derive(Debug, Default)]
+    struct RecordingSessions {
+        detached: Mutex<Vec<String>>,
+    }
+
+    impl ReplacedAgentSessions for RecordingSessions {
+        fn detach_sessions_for_replaced_plugin(&self, plugin_id: &PluginId) {
+            self.detached
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(plugin_id.canonical());
+        }
+    }
 
     /// Records coordination calls and answers with a scripted quiesce outcome.
     #[derive(Debug, Default)]
@@ -678,22 +789,45 @@ mod tests {
                 &default_migration_catalog().unwrap(),
             )
             .unwrap();
+        let workspace_id = create_project_workspace(&pool, data_root, workspace_root, "Demo");
+        (pool, workspace_id)
+    }
+
+    /// Creates one more Project and returns the Workspace it owns, through the real create path.
+    ///
+    /// Separate from `fixture` so a Workspace can also appear *after* the system already holds
+    /// state, which is the ordering a running Ora produces every time a Project or Task is added.
+    fn create_project_workspace(
+        pool: &RepositoryPool,
+        data_root: &Path,
+        workspace_root: &Path,
+        name: &str,
+    ) -> WorkspaceId {
+        fs::create_dir_all(workspace_root).unwrap();
+        let existing = SqliteWorkspaceRepository::new(pool.clone())
+            .list_all_workspaces()
+            .unwrap()
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>();
         ProjectApi::new(
             pool.clone(),
             data_root.join("sessions"),
             crate::clock::SystemClock,
+            EffectWorkerHandle::unwatched(),
         )
         .create(CreateProjectRequest {
-            name: "Demo".to_string(),
+            name: name.to_string(),
             main_workspace_path: workspace_root.to_string_lossy().into_owned(),
         })
         .unwrap();
-        let workspace_id = SqliteWorkspaceRepository::new(pool.clone())
+        SqliteWorkspaceRepository::new(pool.clone())
             .list_all_workspaces()
             .unwrap()
-            .remove(0)
-            .id;
-        (pool, workspace_id)
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .find(|id| !existing.contains(id))
+            .expect("project creation adds one Workspace")
     }
 
     /// Publishes one Local Skill source, which also selects it into every Workspace's Desired set.
@@ -701,6 +835,7 @@ mod tests {
         repository: &SqliteEffectRepository,
         workspace_id: &WorkspaceId,
         catalog: &Path,
+        published_at: i64,
     ) {
         fs::create_dir_all(catalog).unwrap();
         fs::write(catalog.join("SKILL.md"), MANIFEST).unwrap();
@@ -716,7 +851,7 @@ mod tests {
         })
         .unwrap();
         repository
-            .publish_source(&state, catalog, SourcePublication::Create, PUBLISHED_AT)
+            .publish_source(&state, catalog, SourcePublication::Create, published_at)
             .unwrap();
         // Asserting the coupling rather than replacing the spec: an install that stopped reaching
         // Desired would otherwise be masked by the test writing it by hand.
@@ -728,22 +863,23 @@ mod tests {
         );
     }
 
+    /// The surface declarations one running Agent plugin publishes when it starts.
+    fn agent_declarations() -> Vec<FilesystemSkillSurface> {
+        vec![FilesystemSkillSurface {
+            workspace_relative_path: SurfacePath::parse(".opencode/skills").unwrap(),
+            materialization_format: MaterializationFormat::skill_directory_v1(),
+            consumer: ConsumerId::new("official/ora-space.opencode"),
+            coordination: ConsumerCoordination::WaitForIdleAndRestart,
+        }]
+    }
+
     /// Declares one Agent-consumed surface rooted at the given Workspace directory.
     fn declare_surface(
         repository: &SqliteEffectRepository,
         workspace_id: &WorkspaceId,
         workspace_root: &Path,
     ) {
-        let descriptors = SurfaceDescriptorSet::merge(
-            workspace_id,
-            [FilesystemSkillSurface {
-                workspace_relative_path: SurfacePath::parse(".opencode/skills").unwrap(),
-                materialization_format: MaterializationFormat::skill_directory_v1(),
-                consumer: ConsumerId::new("official/ora-space.opencode"),
-                coordination: ConsumerCoordination::WaitForIdleAndRestart,
-            }],
-        )
-        .unwrap();
+        let descriptors = SurfaceDescriptorSet::merge(workspace_id, agent_declarations()).unwrap();
         repository
             .replace_surfaces(
                 workspace_id,
@@ -776,6 +912,205 @@ mod tests {
         claimed.len()
     }
 
+    /// A Workspace created after the declaration still materializes, with no plugin restart.
+    ///
+    /// This is the exact shape of the original defect. Surface registration only ever ran when a
+    /// plugin process started, so a Workspace created while that plugin was already running was
+    /// offered no surface at all: its Desired set was complete and correct from the first moment —
+    /// the `workspaces` insert trigger seeds it — but there was nothing to project it onto, so it
+    /// never entered the reconcile queue and no amount of waiting materialized anything. Only a
+    /// restart, by forcing the plugin to re-declare against a Workspace list that now included it,
+    /// appeared to fix it.
+    #[test]
+    fn a_workspace_created_after_the_declaration_still_materializes() {
+        let temp = TempDir::new().unwrap();
+        let first_root = temp.path().join("workspace");
+        let (pool, first_id) = fixture(temp.path(), &first_root);
+        let repository = SqliteEffectRepository::new(pool.clone());
+        let coordinator = RecordingCoordinator::default();
+        select_grilling(
+            &repository,
+            &first_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
+        declare_surface(&repository, &first_id, &first_root);
+        // Drain the Workspace that existed when the plugin declared, so what remains claimable is
+        // attributable only to the Workspace added afterwards.
+        let first = claim(&repository, PUBLISHED_AT + 20);
+        reconcile_one(&repository, &coordinator, first.due, PUBLISHED_AT + 20);
+        repository
+            .complete_reconcile_request(&first.claim, Generation::new(1), PUBLISHED_AT + 20)
+            .unwrap();
+
+        // The plugin keeps running and never declares again; a second Workspace appears now.
+        let second_root = temp.path().join("workspace-2");
+        let second_id = create_project_workspace(&pool, temp.path(), &second_root, "Second");
+        assert_eq!(
+            repository.list_workspaces_with_active_surfaces().unwrap(),
+            BTreeSet::from([first_id]),
+            "the new Workspace starts with no surface, which is what the defect never repaired",
+        );
+        assert_eq!(
+            claimable(&repository, PUBLISHED_AT + 30),
+            0,
+            "with no surface the new Workspace owes no work at all, so nothing is merely pending",
+        );
+
+        let workspaces = SqliteWorkspaceRepository::new(pool)
+            .list_all_workspaces()
+            .unwrap();
+        let converged = converge_workspace_surfaces(
+            &repository,
+            &workspaces,
+            &agent_declarations(),
+            PUBLISHED_AT + 40,
+        )
+        .unwrap();
+
+        assert_eq!(converged, 1);
+        assert_eq!(
+            claimable(&repository, PUBLISHED_AT + 50),
+            1,
+            "convergence must leave the new Workspace owing exactly the reconcile it never had",
+        );
+        let second = claim(&repository, PUBLISHED_AT + 50);
+        assert_eq!(second.due.workspace_id, second_id);
+        let outcome = reconcile_one(&repository, &coordinator, second.due, PUBLISHED_AT + 50);
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1),
+            }
+        );
+        let materialized = second_root
+            .join(".opencode")
+            .join("skills")
+            .join("grilling");
+        assert_eq!(
+            fs::read_to_string(materialized.join("SKILL.md")).unwrap(),
+            MANIFEST
+        );
+        assert!(materialized.join(MARKER_FILE_NAME).exists());
+    }
+
+    /// Creating a Workspace wakes the worker, so convergence does not wait out a scan interval.
+    ///
+    /// Correctness never depends on this wake — the pass converges the same Workspace regardless —
+    /// but creating a Workspace while a plugin is already running is the ordinary case, not an edge
+    /// one, and leaving it to the next scan means the first prompt in a new task can run before its
+    /// Skills exist.
+    #[test]
+    fn creating_a_project_wakes_the_effect_worker() {
+        let temp = TempDir::new().unwrap();
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp.path().join("ora.sqlite3")),
+                &default_migration_catalog().unwrap(),
+            )
+            .unwrap();
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let reconcile = EffectWorkerHandle::unwatched();
+        assert!(!reconcile.is_pending());
+
+        ProjectApi::new(
+            pool,
+            temp.path().join("sessions"),
+            crate::clock::SystemClock,
+            reconcile.clone(),
+        )
+        .create(CreateProjectRequest {
+            name: "Demo".to_string(),
+            main_workspace_path: workspace_root.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+
+        assert!(reconcile.is_pending());
+    }
+
+    /// One worker pass takes a late Workspace all the way from unregistered to files on disk.
+    ///
+    /// Two things are being pinned here. First, the worker itself performs the registration: the
+    /// test above drives convergence directly, which proves the logic but would stay green if the
+    /// worker stopped calling it, so this one goes through `run_pass`, the entry point production
+    /// uses. Second, registration and materialization happen in the *same* pass — convergence runs
+    /// before claiming and stamps `not_before_at` with that pass's own timestamp — which is what
+    /// bounds the user-visible delay at one scan interval rather than two.
+    #[test]
+    fn one_worker_pass_registers_and_materializes_a_late_workspace() {
+        let temp = TempDir::new().unwrap();
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp.path().join("ora.sqlite3")),
+                &default_migration_catalog().unwrap(),
+            )
+            .unwrap();
+        let first_id =
+            create_project_workspace(&pool, temp.path(), &temp.path().join("workspace"), "Demo");
+        let plugin_host = Arc::new(
+            PluginApi::open(
+                pool.clone(),
+                temp.path().to_path_buf(),
+                PathBuf::from("deno"),
+                crate::clock::SystemClock,
+                AppEventHub::new().publisher(),
+                Arc::new(UserConfigApi::new(pool.clone())),
+            )
+            .unwrap(),
+        );
+        // The declaration reaches only the Workspaces that exist at this moment.
+        plugin_host
+            .replace_agent_effect_surfaces(
+                PluginId::new("official", "ora-space.opencode").unwrap(),
+                agent_declarations(),
+            )
+            .unwrap();
+        let repository = SqliteEffectRepository::new(pool.clone());
+        // Real timestamps throughout, because `run_pass` reads the real clock: a Skill dated in the
+        // far future would make every later row fail its `updated_at >= created_at` check.
+        let installed_at = crate::clock::SystemClock.now_timestamp_millis();
+        select_grilling(
+            &repository,
+            &first_id,
+            &temp.path().join("catalog"),
+            installed_at,
+        );
+
+        // The Skill is already installed and the plugin is already running when the Workspace
+        // appears, which is exactly the ordering that used to materialize nothing until a restart.
+        let second_root = temp.path().join("workspace-2");
+        let second_id = create_project_workspace(&pool, temp.path(), &second_root, "Second");
+        assert_eq!(
+            repository.list_workspaces_with_active_surfaces().unwrap(),
+            BTreeSet::from([first_id.clone()]),
+        );
+
+        // A current-thread runtime whose handle is used from outside it, exactly as `spawn` does:
+        // the coordinator blocks on plugin IPC, which a runtime thread could not do.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        EffectWorker::new(pool, plugin_host, Arc::new(RecordingSessions::default()))
+            .run_pass(runtime.handle());
+
+        assert_eq!(
+            repository.list_workspaces_with_active_surfaces().unwrap(),
+            BTreeSet::from([first_id, second_id]),
+        );
+        let materialized = second_root
+            .join(".opencode")
+            .join("skills")
+            .join("grilling");
+        assert_eq!(
+            fs::read_to_string(materialized.join("SKILL.md")).unwrap(),
+            MANIFEST,
+            "one pass must register the surface and materialize into it, not just the first half",
+        );
+        assert!(materialized.join(MARKER_FILE_NAME).exists());
+    }
+
     /// The whole chain: a selected Skill reaches the declared surface and is marked Ora-owned.
     #[test]
     fn a_selected_skill_is_materialized_into_the_declared_surface() {
@@ -784,7 +1119,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         let coordinator = RecordingCoordinator::default();
         let request = claim(&repository, PUBLISHED_AT + 20);
@@ -849,7 +1189,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         let coordinator = RecordingCoordinator {
             busy: true,
@@ -921,7 +1266,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
 
         let first = repository
@@ -956,7 +1306,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         let stale = claim(&repository, PUBLISHED_AT + 20).claim;
         // A second worker takes over once the first lease has expired.
@@ -1023,7 +1378,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         let request = claim(&repository, PUBLISHED_AT + 20);
 
@@ -1048,7 +1408,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         let request = claim(&repository, PUBLISHED_AT + 20);
         repository
@@ -1079,7 +1444,12 @@ mod tests {
         fs::create_dir_all(&workspace_root).unwrap();
         let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
         let repository = SqliteEffectRepository::new(pool);
-        select_grilling(&repository, &workspace_id, &temp.path().join("catalog"));
+        select_grilling(
+            &repository,
+            &workspace_id,
+            &temp.path().join("catalog"),
+            PUBLISHED_AT,
+        );
         declare_surface(&repository, &workspace_id, &workspace_root);
         // Losing the request is what a crash between commit and scheduling looks like.
         let request = claim(&repository, PUBLISHED_AT + 20);

@@ -37,15 +37,6 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     let (temp_dir, pool) = bootstrapped_pool();
     let repository = SqliteSkillRepository::new(pool.clone());
     let plugin_id = PluginId::new("official", "review-pack").unwrap();
-    pool.with_connection(|connection| {
-        connection.execute(
-            "INSERT INTO plugin_state (plugin_id, enabled, created_at, updated_at)
-             VALUES (?1, 0, 1, 1)",
-            [plugin_id.canonical()],
-        )?;
-        Ok(())
-    })
-    .unwrap();
     let package_root = temp_dir.path().join("plugins/review-pack/review");
     repository
         .replace_plugin_skills(
@@ -542,6 +533,87 @@ fn deleting_workflow_run_does_not_delete_workspace_or_session() {
     );
 }
 
+/// Verifies a created-but-never-started Pending run can be discarded.
+#[test]
+fn not_started_pending_run_can_be_deleted() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+
+    assert_eq!(
+        run_repository.soft_delete_run(&run_id, 40).unwrap(),
+        ora_application::DeleteWorkflowRunResult::Deleted,
+    );
+    assert_eq!(run_repository.find_run(&run_id).unwrap(), None);
+}
+
+/// Verifies an executing run stays protected until it reaches a terminal status.
+#[test]
+fn running_run_cannot_be_deleted() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+
+    assert_eq!(
+        engine_repository
+            .start_run(
+                &run_id,
+                &NodeRunToStart {
+                    id: WorkflowNodeRunId::new("node-run-1"),
+                    node_id: "agent-1".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                40,
+            )
+            .unwrap(),
+        StartWorkflowRunResult::Started
+    );
+    assert_eq!(
+        run_repository.soft_delete_run(&run_id, 50).unwrap(),
+        ora_application::DeleteWorkflowRunResult::ActiveRun,
+    );
+}
+
+/// Verifies the library lists newest workflows first so a just-created row is on top.
+#[test]
+fn list_workflows_returns_newest_first() {
+    let (_temp_dir, pool) = bootstrapped_pool();
+    let workflow_repository = SqliteWorkflowRepository::new(pool);
+    for (id, created_at) in [("workflow-old", 10i64), ("workflow-new", 20i64)] {
+        workflow_repository
+            .create_workflow(
+                Workflow::new(
+                    WorkflowId::new(id),
+                    Namespace::local(),
+                    id,
+                    None,
+                    AuditFields::new(created_at, created_at, false),
+                )
+                .unwrap(),
+                WorkflowSnapshot::new(
+                    WorkflowSnapshotId::new(format!("snap-{id}")),
+                    WorkflowId::new(id),
+                    "draft",
+                    "{}",
+                    created_at,
+                    Some(created_at),
+                    false,
+                ),
+            )
+            .unwrap();
+    }
+    let listed = workflow_repository.list_workflows().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["workflow-new", "workflow-old"],
+    );
+}
+
 /// Opens a file-backed repository so pooled adapters exercise the production connection path.
 fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
     let temp_dir = TempDir::new().expect("create temporary database directory");
@@ -555,6 +627,72 @@ fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
             .expect("bootstrap repository pool")
     });
     (temp_dir, pool)
+}
+
+/// Seeds a created-but-never-started Pending run for deletion-policy fixtures.
+fn seed_pending_run(temp_dir: &TempDir, pool: &RepositoryPool) -> WorkflowRunId {
+    let workspace_path = existing_workspace_path(temp_dir);
+    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
+    let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    project_repository
+        .create_project(
+            Project::new(
+                ProjectId::new("project-1"),
+                "Demo",
+                AuditFields::new(10, 10, false),
+            ),
+            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
+        )
+        .unwrap();
+    let workspace = workspace_repository
+        .find_main_workspace(&ProjectId::new("project-1"))
+        .unwrap()
+        .unwrap();
+    let workflow_id = WorkflowId::new("workflow-1");
+    let snapshot_id = WorkflowSnapshotId::new("snapshot-1");
+    workflow_repository
+        .create_workflow(
+            Workflow::new(
+                workflow_id.clone(),
+                Namespace::local(),
+                "Review",
+                None,
+                ora_domain::AuditFields::new(10, 10, false),
+            )
+            .unwrap(),
+            WorkflowSnapshot::new(
+                snapshot_id.clone(),
+                workflow_id.clone(),
+                "draft",
+                "{}",
+                10,
+                Some(10),
+                false,
+            ),
+        )
+        .unwrap();
+    let run_id = WorkflowRunId::new("run-1");
+    run_repository
+        .create_run(WorkflowRun::new(
+            run_id.clone(),
+            workspace.id,
+            workflow_id,
+            snapshot_id,
+            "Review run",
+            WorkflowRunStatus::Pending,
+            Some(r#"{"current_nodes":[]}"#.to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ora_domain::AuditFields::new(20, 20, false),
+        ))
+        .unwrap();
+    run_id
 }
 
 /// Creates the existing local directory required for an admitted main Workspace fixture.

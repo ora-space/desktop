@@ -96,9 +96,11 @@ describe("useSettingsStore", () => {
     expect(useSettingsStore.getState().settings.agentCli).toBe("ora-space.nga");
   });
 
-  it("drops a persisted agent this build cannot offer", () => {
+  it("retains a persisted agent identity this build does not recognize", () => {
     // Agent identities are open strings, so a stored one can name an agent written before
-    // identities were namespaced, or a plugin that has since been uninstalled.
+    // identities were namespaced, or a plugin that has since been uninstalled. The merge
+    // strategy carries it forward unexamined; the pickers resolve it against the live
+    // runtime instead of validating it here.
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -109,6 +111,7 @@ describe("useSettingsStore", () => {
     expect(useSettingsStore.getState().settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: "light",
+      agentCli: "open_code",
     });
   });
 

@@ -121,6 +121,9 @@ impl RuntimeActor {
                         self.run_prompt(operation_id, prompt, events).await;
                     }
                 }
+                RuntimeCommand::AgentProcessReplaced { agent } => {
+                    self.detach_replaced_agent(&agent);
+                }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
@@ -366,6 +369,12 @@ impl RuntimeActor {
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
+                // The Effect barrier is what makes this unreachable while an operation is in
+                // flight: a consumer is only restarted after its plugin reported every turn
+                // finished. A replacement that still raced in leaves this request unanswered, and
+                // this loop's existing failure handling ends the operation and stops the session —
+                // the same repair the idle path performs, arrived at the slower way.
+                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { .. }) => {}
                 ActiveInput::Command(
                     RuntimeCommand::Prompt { accepted, .. } | RuntimeCommand::Load { accepted, .. },
                 ) => {
@@ -728,6 +737,12 @@ impl RuntimeActor {
                 }
                 ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
+                // The Effect barrier is what makes this unreachable while an operation is in
+                // flight: a consumer is only restarted after its plugin reported every turn
+                // finished. A replacement that still raced in leaves this request unanswered, and
+                // this loop's existing failure handling ends the operation and stops the session —
+                // the same repair the idle path performs, arrived at the slower way.
+                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::TitlePoll {
                     attempt: PollAttempt::First,
                 }) => {
@@ -903,6 +918,26 @@ impl RuntimeActor {
         self.mark_stopped();
     }
 
+    /// Drops the live registration when this session's agent process was replaced under it.
+    ///
+    /// The provider session died with the process, so the channel is dropped without `session/close`
+    /// — that call would only ask a fresh agent to close an id it has never heard of. Detaching is
+    /// enough to repair the session rather than end it: a prompt is refused while no channel is
+    /// held, and the load that establishes one calls `session/load`, which is exactly the
+    /// re-establishment the replaced process needs. Without this the actor would keep a channel it
+    /// believes is live and prompt against a session id the new process cannot resolve.
+    fn detach_replaced_agent(&mut self, agent: &ora_domain::AgentRef) {
+        if self.session.agent_ref != *agent || self.channel.is_none() {
+            return;
+        }
+        ora_debug!(
+            session_id = %self.session.id,
+            agent = %agent,
+            "detaching session after its agent process was replaced",
+        );
+        self.mark_stopped();
+    }
+
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
@@ -963,18 +998,22 @@ mod tests {
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
     use crate::plugin::PluginApi;
+    use crate::user_config::UserConfigApi;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
     };
-    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, SessionTitle, WorkspaceId};
+    use ora_domain::{
+        AgentRef, AuditFields, PluginId, SessionId, SessionStatus, SessionTitle, WorkspaceId,
+    };
     use ora_scheduler::Scheduler;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::timeout;
 
-    /// Opens one migrated pool so the plugin host can read its durable eligibility table.
+    /// Opens one migrated pool for the plugin host's database-backed collaborators.
     fn test_repository_pool(root: &Path) -> RepositoryPool {
         DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
@@ -993,8 +1032,20 @@ mod tests {
                 PathBuf::from("deno"),
                 SystemClock,
                 AppEventHub::new().publisher(),
+                Arc::new(UserConfigApi::new(pool.clone())),
             )
             .expect("open plugin host"),
+        )
+    }
+
+    /// Names one installed agent package the supervisor fixtures bind their sessions to.
+    fn test_agent_source() -> (AgentRef, AgentSource) {
+        (
+            AgentRef::parse("ora-space.codex").expect("agent identity"),
+            AgentSource {
+                plugin_id: PluginId::new("official", "ora-space.codex").expect("plugin id"),
+                package_name: "ora-space.codex".to_string(),
+            },
         )
     }
 
@@ -1004,9 +1055,10 @@ mod tests {
         let temporary = TempDir::new().expect("create actor test directory");
         let pool = test_repository_pool(temporary.path());
         let scheduler = Scheduler::new(chrono_tz::UTC);
+        let (agent_ref, agent_source) = test_agent_source();
         let connection = ConnectionSupervisor::start(
-            AgentCli::Codex.agent_ref(),
-            AgentSource::Cli(AgentCli::Codex),
+            agent_ref.clone(),
+            agent_source,
             test_plugin_host(&pool, temporary.path()),
             pool.clone(),
             temporary.path().to_path_buf(),
@@ -1023,7 +1075,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             WorkspaceId::new("workspace-1"),
-            AgentCli::Codex.agent_ref(),
+            agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),
@@ -1065,9 +1117,10 @@ mod tests {
         let temporary = TempDir::new().expect("create actor test directory");
         let pool = test_repository_pool(temporary.path());
         let scheduler = Scheduler::new(chrono_tz::UTC);
+        let (agent_ref, agent_source) = test_agent_source();
         let connection = ConnectionSupervisor::start(
-            AgentCli::Codex.agent_ref(),
-            AgentSource::Cli(AgentCli::Codex),
+            agent_ref.clone(),
+            agent_source,
             test_plugin_host(&pool, temporary.path()),
             pool.clone(),
             temporary.path().to_path_buf(),
@@ -1084,7 +1137,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             WorkspaceId::new("workspace-1"),
-            AgentCli::Codex.agent_ref(),
+            agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),

@@ -1,0 +1,19 @@
+[package]
+name = "ora-user-config"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_user_config"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

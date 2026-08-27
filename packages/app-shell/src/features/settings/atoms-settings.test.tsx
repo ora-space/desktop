@@ -116,53 +116,6 @@ describe("atom settings content", () => {
     );
   });
 
-  it("labels disabled plugin Skills with their source and status and hides mutation actions", async () => {
-    renderSettings("skill", (client) => {
-      client.skill.list = async () => ({
-        skills: [
-          {
-            id: "plugin:official/review-pack:review",
-            namespace: "official/review-pack",
-            name: "review",
-            description: "Reviews changes",
-            source: { kind: "plugin", pluginId: "official/review-pack" },
-            availability: "available",
-          },
-        ],
-      });
-      client.plugin.listInstalled = async () => ({
-        plugins: [
-          {
-            id: "official/review-pack",
-            namespace: "official",
-            name: "review-pack",
-            description: "Review skills",
-            homepage: null,
-            license: null,
-            displayName: "Review pack",
-            version: "1.0.0",
-            kind: "skill",
-            enabled: false,
-            logo: null,
-            installationValidity: { validity: "valid" },
-            configuration: { state: "not_declared" },
-            runtime: "stopped",
-          },
-        ],
-      });
-    });
-
-    const item = await screen.findByRole("listitem");
-    const source = within(item).getByText("official/review-pack");
-    expect(source).toBeVisible();
-    expect(
-      source.closest('[data-slot="badge"]')?.querySelector("svg"),
-    ).not.toBeNull();
-    expect(await within(item).findByText("已禁用")).toBeVisible();
-    expect(within(item).queryByText(/来自/)).toBeNull();
-    expect(within(item).queryByRole("button", { name: "编辑" })).toBeNull();
-    expect(within(item).queryByRole("button", { name: "删除" })).toBeNull();
-  });
   it("collapses long plugin sources to an icon and reveals the full id on hover", async () => {
     const user = userEvent.setup();
     const pluginId = "official/review-pack-with-a-name-that-does-not-fit";

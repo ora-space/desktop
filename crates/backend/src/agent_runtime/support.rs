@@ -84,25 +84,7 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
 /// separate, later question answered by the supervisor lookup.
 pub(super) fn domain_agent_ref(agent_ref: ContractAgentRef) -> Result<AgentRef, BackendError> {
     AgentRef::parse(&agent_ref)
-        .map_err(|error| runtime_internal("agent_cli_not_found", error.to_string()))
-}
-
-/// Drains child stderr so provider diagnostics can never block the shared process.
-pub(super) async fn drain_stderr(mut stderr: tokio::process::ChildStderr) {
-    use tokio::io::AsyncReadExt;
-    let mut tail = Vec::with_capacity(64 * 1024);
-    let mut buffer = [0_u8; 4096];
-    loop {
-        match stderr.read(&mut buffer).await {
-            Ok(0) | Err(_) => return,
-            Ok(read) => {
-                tail.extend_from_slice(&buffer[..read]);
-                if tail.len() > 64 * 1024 {
-                    tail.drain(..tail.len() - 64 * 1024);
-                }
-            }
-        }
-    }
+        .map_err(|error| runtime_internal("agent_not_installed", error.to_string()))
 }
 
 /// Builds the stable public error for an unknown or deleted Ora session.
@@ -125,10 +107,7 @@ pub(super) fn session_stopped() -> BackendError {
 
 /// Builds the degraded-mode error while the selected CLI is starting or recovering.
 pub(super) fn runtime_unavailable() -> BackendError {
-    runtime_internal(
-        "agent_runtime_unavailable",
-        "agent CLI runtime is unavailable",
-    )
+    runtime_internal("agent_runtime_unavailable", "agent runtime is unavailable")
 }
 
 pub(super) fn runtime_unavailable_with(
@@ -155,9 +134,9 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> BackendError {
 /// Builds an internal runtime error with a caller-selected stable code.
 pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -> BackendError {
     let (classification, public_error) = match code {
-        "agent_cli_not_found" => (
+        "agent_not_installed" => (
             ErrorClassification::NotFound,
-            PublicError::AgentCliNotFound(EmptyErrorParams {}),
+            PublicError::AgentNotInstalled(EmptyErrorParams {}),
         ),
         "agent_runtime_unavailable" => (
             ErrorClassification::Internal,

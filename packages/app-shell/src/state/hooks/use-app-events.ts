@@ -23,11 +23,8 @@ export function useAppEvents(client: ContractsClient) {
     const invalidateSessions = () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     };
-    // A plugin's eligibility decides whether the agent it supplies can be reached
-    // at all, and the lifecycle changes it from places no mutation on this client
-    // passes through — a background launch settling, a scan, a crash. Both the
-    // settings snapshot and the agent detection the pickers read from are asked
-    // again, because enabling or removing a package moves them together.
+    // Runtime transitions, scans, and package removal can happen outside mutations on this
+    // client, so refresh every view derived from installed plugin state together.
     const invalidatePluginState = () => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.installedPlugins,

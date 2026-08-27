@@ -8,7 +8,7 @@ mod tests;
 
 pub(crate) use control::{PluginAgentError, PluginAgentModel, list_models, stop_agent};
 pub(crate) use effect::{WaitForIdleOutcome, restart, wait_for_idle};
-pub(crate) use transport::{AgentTransport, PluginAcpTransport};
+pub(crate) use transport::PluginAcpTransport;
 
 use std::path::Path;
 

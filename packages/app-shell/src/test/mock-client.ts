@@ -5,6 +5,7 @@ import {
   type AgentRuntimeStatus,
   type AvailablePlugin,
   type MarketplaceSource,
+  type ProxySettings,
   type ContractsClient,
   type InstalledPlugin,
   type InstallOutcome,
@@ -77,16 +78,17 @@ export interface MockClientState {
   /**
    * What the agent runtime reports reaching, which is what decides the agents the pickers offer.
    *
-   * An agent missing from this list is one nothing supervises — an uninstalled plugin package.
+   * An agent missing from this list is one nothing supervises 鈥?an uninstalled plugin package.
    */
   agentRuntimeStatuses: AgentRuntimeStatus[];
   availablePlugins: AvailablePlugin[];
   availablePluginsUpdatedAt: bigint;
   marketplaceSources: MarketplaceSource[];
+  proxySettings: ProxySettings | null;
   /**
    * The package a local `.orax` import should materialize; `null` rejects that import.
    * Undefined means imports are not configured and always fail in tests. A concrete target is
-   * committed with enablement taken from `installOutcome`, mirroring the backend finalize step.
+   * committed as an installed package that is immediately available.
    */
   importTarget?: InstalledPlugin | null;
   /**
@@ -111,18 +113,40 @@ export interface MockClientState {
 }
 
 /**
- * Every agent identity the frontend has a picker entry for, all detected by default.
+ * Every agent this mock installation offers, supplied by an installed package and detected.
  *
- * A test that needs one to be missing or unreachable overrides `agentRuntimeStatuses` rather than
- * rebuilding the whole list.
+ * Agents exist only because a package supplies them, so a test needs both halves to see one in a
+ * picker: the installed package that names it, and a runtime status that reaches it. A test that
+ * needs one unreachable overrides `agentRuntimeStatuses`; one that needs it gone entirely
+ * overrides `installedPlugins` as well.
  */
-const AGENT_REFS = [
-  "ora-space.opencode",
-  "ora-space.nga",
-  "ora-space.codeagentcli",
-  "ora-space.claude",
-  "ora-space.codex",
+const AGENT_PACKAGES: { agentRef: string; displayName: string }[] = [
+  { agentRef: "ora-space.opencode", displayName: "OpenCode" },
+  { agentRef: "ora-space.nga", displayName: "NGA" },
+  { agentRef: "ora-space.codeagentcli", displayName: "CodeAgentCLI" },
+  { agentRef: "ora-space.claude", displayName: "Claude Code" },
+  { agentRef: "ora-space.codex", displayName: "Codex" },
 ];
+
+/** Builds the installed-package record one seeded agent is supplied by. */
+function agentPackage(agentRef: string, displayName: string): InstalledPlugin {
+  return {
+    id: `official/${agentRef}`,
+    namespace: "official",
+    name: agentRef,
+    displayName,
+    version: "1.0.0",
+    description: `${displayName} agent`,
+    homepage: null,
+    license: null,
+    kind: "agent",
+    agentDisplayName: displayName,
+    logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
+    runtime: "running",
+  };
+}
 
 /** Creates a fresh in-memory mock state with no records. */
 export function createMockClientState(): MockClientState {
@@ -133,15 +157,18 @@ export function createMockClientState(): MockClientState {
     sessions: [],
     agents: [],
     skills: [],
-    installedPlugins: [],
+    installedPlugins: AGENT_PACKAGES.map((agent) =>
+      agentPackage(agent.agentRef, agent.displayName),
+    ),
     pluginConfigurations: new Map(),
-    agentRuntimeStatuses: AGENT_REFS.map((agentRef) => ({
-      agentRef,
+    agentRuntimeStatuses: AGENT_PACKAGES.map((agent) => ({
+      agentRef: agent.agentRef,
       status: "ready",
     })),
     availablePlugins: [],
     availablePluginsUpdatedAt: 0n,
     marketplaceSources: [],
+    proxySettings: null,
     developerMode: { enabled: false },
     runtimeLogLevel: {
       configuredLevel: "info",
@@ -177,10 +204,7 @@ function nextTimestamp(): bigint {
 }
 
 /** Materializes one installed plugin from a marketplace listing for mock install tests. */
-function installedFromAvailable(
-  available: AvailablePlugin,
-  enabled: boolean,
-): InstalledPlugin {
+function installedFromAvailable(available: AvailablePlugin): InstalledPlugin {
   const shared = {
     id: available.id,
     namespace: available.namespace,
@@ -190,7 +214,6 @@ function installedFromAvailable(
     description: available.description,
     homepage: null,
     license: null,
-    enabled,
     logo: available.logo,
     installationValidity: { validity: "valid" as const },
     configuration: { state: "not_declared" as const },
@@ -295,6 +318,17 @@ export function createMockClient(state: MockClientState): ContractsClient {
     },
     workspace: {
       list: async () => ({ workspaces: visibleWorkspaces(state) }),
+      getDiff: async () => ({
+        baseCommitId: "base",
+        headCommitId: "head",
+        patch: "",
+      }),
+      commitChanges: async () => {
+        throw new Error("commitChanges not implemented in mock");
+      },
+      pushBranch: async () => {
+        throw new Error("pushBranch not implemented in mock");
+      },
     },
     task: {
       list: async () => ({ tasks: [...state.tasks] }),
@@ -340,17 +374,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
           branchName: `task/${req.taskId}`,
         },
       }),
-      getDiff: async () => ({
-        baseCommitId: "base",
-        headCommitId: "head",
-        patch: "",
-      }),
-      commitChanges: async () => {
-        throw new Error("commitChanges not implemented in mock");
-      },
-      pushBranch: async () => {
-        throw new Error("pushBranch not implemented in mock");
-      },
     },
     session: {
       list: async () => ({ sessions: [...state.sessions] }),
@@ -488,7 +511,11 @@ export function createMockClient(state: MockClientState): ContractsClient {
       addSource: async (req) => {
         if (state.marketplaceSources.some((source) => source.url === req.url))
           throw new Error(`marketplace source ${req.url} already exists`);
-        const source = { url: req.url, branch: req.branch };
+        const source = {
+          url: req.url,
+          branch: req.branch,
+          useProxy: req.useProxy,
+        };
         state.marketplaceSources.push(source);
         return { sources: [...state.marketplaceSources] };
       },
@@ -500,33 +527,20 @@ export function createMockClient(state: MockClientState): ContractsClient {
         state.marketplaceSources.splice(idx, 1);
         return { sources: [...state.marketplaceSources] };
       },
+      updateSource: async (req) => {
+        const source = state.marketplaceSources.find(
+          (candidate) => candidate.url === req.url,
+        );
+        if (source === undefined)
+          throw new Error(`marketplace source ${req.url} not found`);
+        source.useProxy = req.useProxy;
+        return { sources: [...state.marketplaceSources] };
+      },
       syncAvailable: async () => ({
         updatedAt: state.availablePluginsUpdatedAt,
         plugins: [...state.availablePlugins],
       }),
       scan: async () => ({ plugins: [...state.installedPlugins] }),
-      enable: async (req) => {
-        const plugin = state.installedPlugins.find(
-          (p) => p.id === req.pluginId,
-        );
-        if (!plugin)
-          throw new Error(`installed plugin ${req.pluginId} not found`);
-        plugin.enabled = true;
-        // Enabling a plugin is also what starts it, so the backend answers with the
-        // starting runtime and reports running once the process is up.
-        plugin.runtime = "starting";
-        return { plugin };
-      },
-      disable: async (req) => {
-        const plugin = state.installedPlugins.find(
-          (p) => p.id === req.pluginId,
-        );
-        if (!plugin)
-          throw new Error(`installed plugin ${req.pluginId} not found`);
-        plugin.enabled = false;
-        plugin.runtime = "stopped";
-        return { plugin };
-      },
       activate: async (req) => {
         const plugin = state.installedPlugins.find(
           (p) => p.id === req.pluginId,
@@ -564,10 +578,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const outcome = state.installOutcome ?? {
           state: "installed_and_enabled" as const,
         };
-        state.installedPlugins.push({
-          ...target,
-          enabled: outcome.state === "installed_and_enabled",
-        });
+        state.installedPlugins.push({ ...target });
         return {
           pluginId: target.id,
           outcome,
@@ -582,12 +593,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const outcome = state.installOutcome ?? {
           state: "installed_and_enabled" as const,
         };
-        state.installedPlugins.push(
-          installedFromAvailable(
-            available,
-            outcome.state === "installed_and_enabled",
-          ),
-        );
+        state.installedPlugins.push(installedFromAvailable(available));
         return {
           pluginId: req.pluginId,
           outcome,
@@ -694,6 +700,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
         cancelled: true,
       }),
     },
+    proxy: {
+      get: async () => ({ settings: state.proxySettings }),
+      set: async (req) => {
+        state.proxySettings = structuredClone(req.settings);
+        return { settings: state.proxySettings };
+      },
+    },
     fileSystem: {
       listWorkspaceDirectory: async () => ({ path: "", entries: [] }),
       listProjectDirectory: async () => ({ path: "", entries: [] }),
@@ -773,7 +786,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           createdAt: now,
           updatedAt: now,
         };
-        state.workflows.push({ workflow, draft, published: [] });
+        state.workflows.unshift({ workflow, draft, published: [] });
         return { workflow, draft };
       },
       get: async (req) => {

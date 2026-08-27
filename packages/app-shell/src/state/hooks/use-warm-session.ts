@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "zustand";
 import { useEffect } from "react";
 import type { WarmSessionResponse, WarmSessionTarget } from "@ora/contracts";
-import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import type { ChatStore } from "@ora/chat";
 import { useContractsClient } from "../../contracts-client-context";
 import { useChatStore } from "../../chat-store-context";
@@ -81,7 +80,7 @@ export function useWarmSession(
     sessionId: string | null;
     workflowRunId?: string | null;
   },
-  agentCli: KnownAgentCli | null,
+  agentCli: string | null,
 ): WarmSession {
   const client = useContractsClient();
   const queryClient = useQueryClient();

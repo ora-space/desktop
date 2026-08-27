@@ -61,10 +61,13 @@ const EXPANDED_PANEL_EXIT_MS = 180;
 const REVIEW_PANEL_SLIDE_MS = 180;
 const REVIEW_PANEL_COLLAPSE_THRESHOLD = MIN_REVIEW_WIDTH / 2;
 
+// `workspaceId` gates the Changes surface: it is the workspace-diff API's identity for either
+// an isolated task worktree or a project's main checkout, so a producer that has not resolved
+// one yet (or chooses not to) simply gets a Changes-less review, same as `kind: "none"` today.
 export type WorkspaceReviewContext =
   | { kind: "none" }
-  | { kind: "project"; projectId: string }
-  | { kind: "task"; taskId: string; projectId: string };
+  | { kind: "project"; projectId: string; workspaceId?: string }
+  | { kind: "task"; taskId: string; projectId: string; workspaceId?: string };
 
 interface WorkspaceReviewLayoutProps {
   context: WorkspaceReviewContext;
@@ -131,7 +134,7 @@ export function WorkspaceReviewLayout({
   const panelWidthTouchedRef = useRef(false);
   /** Host whose width drives the responsive opening width. */
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const taskId = context.kind === "task" ? context.taskId : undefined;
+  const workspaceId = context.kind === "none" ? undefined : context.workspaceId;
   const contextKey = reviewContextKey(context) ?? "none";
   const [previousContextKey, setPreviousContextKey] = useState(contextKey);
   const [restoredForContextKey, setRestoredForContextKey] = useState<
@@ -165,17 +168,12 @@ export function WorkspaceReviewLayout({
       // A surface panel shows a native plugin webview, not a file; it has no
       // stored preview to replay.
       if (panelToOpen === "surface") return;
-      // Project review has no Changes surface; its file always lives under Files.
-      const openPanel =
-        contextKind === "project" && panelToOpen === "changes"
-          ? "files"
-          : panelToOpen;
       const saved = useReviewStore.getState().byContext[contextKey];
-      const savedFile = saved?.files[openPanel];
+      const savedFile = saved?.files[panelToOpen];
       if (savedFile === undefined) return;
 
       setReviewFilePath(savedFile.path);
-      if (openPanel === "changes" && contextKind === "task") {
+      if (panelToOpen === "changes") {
         fileRequestSequence.current += 1;
         setFileRequest({
           path: savedFile.path,
@@ -248,8 +246,9 @@ export function WorkspaceReviewLayout({
       return;
     }
 
+    // A context with no resolved workspace id has no Changes surface to restore into.
     const panelToOpen =
-      contextKind === "project" && saved.panel === "changes"
+      saved.panel === "changes" && workspaceId === undefined
         ? "files"
         : saved.panel;
 
@@ -267,6 +266,7 @@ export function WorkspaceReviewLayout({
     restoredForContextKey,
     reviewHydrated,
     setReviewOpen,
+    workspaceId,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -381,8 +381,9 @@ export function WorkspaceReviewLayout({
     }
     setWorkspaceDirectoryRequest(undefined);
     setWorkspaceArtifactRequest(undefined);
-    // Project review has no Changes surface; coerce so Files chrome matches content.
-    if (context.kind === "project") setPanel("files");
+    // A context with no resolved workspace id has no Changes surface; coerce so
+    // the toolbar chrome matches the content that will actually render.
+    if (workspaceId === undefined && panel === "changes") setPanel("files");
   }
 
   const openWorkspaceFile = useCallback(
@@ -443,8 +444,8 @@ export function WorkspaceReviewLayout({
 
   const openDiff = useCallback(
     (path: string, line?: number) => {
-      // Project drafts (and any context without a task) have no Changes surface.
-      if (taskId === undefined) {
+      // A context with no resolved workspace id has no Changes surface to open.
+      if (workspaceId === undefined) {
         openWorkspaceFile(path, line);
         return;
       }
@@ -460,7 +461,7 @@ export function WorkspaceReviewLayout({
       // A close slide may still be in flight; switch it back to opening.
       if (panelAnimationRef.current !== null) slidePanelOpen();
     },
-    [openWorkspaceFile, setReviewOpen, slidePanelOpen, taskId],
+    [openWorkspaceFile, setReviewOpen, slidePanelOpen, workspaceId],
   );
 
   // The panel mounts collapsed, so opening (or re-opening after a context switch)
@@ -608,23 +609,15 @@ export function WorkspaceReviewLayout({
           <span className="mx-0.5 h-4 w-px bg-border/70" aria-hidden="true" />
         </>
       )}
-      {context.kind === "task" && (
-        <>
-          <PanelButton
-            active={open && panel === "changes"}
-            icon={<IconGitBranch />}
-            label={t("diff.changes")}
-            onClick={() => selectPanel("changes")}
-          />
-          <PanelButton
-            active={open && panel === "files"}
-            icon={<IconFolderOpen />}
-            label={t("files.files")}
-            onClick={() => selectPanel("files")}
-          />
-        </>
+      {workspaceId !== undefined && (
+        <PanelButton
+          active={open && panel === "changes"}
+          icon={<IconGitBranch />}
+          label={t("diff.changes")}
+          onClick={() => selectPanel("changes")}
+        />
       )}
-      {context.kind === "project" && (
+      {context.kind !== "none" && (
         <PanelButton
           active={open && panel === "files"}
           icon={<IconFolderOpen />}
@@ -645,10 +638,11 @@ export function WorkspaceReviewLayout({
         />
       )
     ) : context.kind === "none" ? null : panel === "changes" &&
-      context.kind === "task" ? (
+      workspaceId !== undefined ? (
       <TaskDiffView
-        key={context.taskId}
-        taskId={context.taskId}
+        key={workspaceId}
+        workspaceId={workspaceId}
+        hasBaseline={context.kind === "task"}
         viewType={viewType}
         fileTreeOpen={fileTreeOpen}
         fileRequest={fileRequest}

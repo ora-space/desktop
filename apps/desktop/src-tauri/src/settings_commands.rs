@@ -4,8 +4,10 @@ use std::future::Future;
 
 use ora_backend::{BackendError, RequestLifecycle, UuidRequestIdGenerator};
 use ora_contracts::{
-    DeveloperModeResponse, GetDeveloperModeRequest, GetRuntimeLogLevelRequest, RuntimeLogLevel,
-    RuntimeLogLevelStateResponse, SetDeveloperModeRequest, SetRuntimeLogLevelRequest,
+    DeveloperModeResponse, GetDeveloperModeRequest, GetProxySettingsRequest,
+    GetProxySettingsResponse, GetRuntimeLogLevelRequest, ProxySettings, RuntimeLogLevel,
+    RuntimeLogLevelStateResponse, SetDeveloperModeRequest, SetProxySettingsRequest,
+    SetProxySettingsResponse, SetRuntimeLogLevelRequest,
 };
 use ora_runtime_settings::RuntimeLogLevelState;
 use tauri::State;
@@ -132,6 +134,72 @@ pub async fn set_runtime_log_level(
     .await
 }
 
+/// Returns the optional configured network proxy.
+#[tauri::command]
+pub async fn get_proxy_settings(
+    state: State<'_, DesktopState>,
+    request: GetProxySettingsRequest,
+) -> Result<GetProxySettingsResponse, CommandError> {
+    let _ = request;
+    let backend = state.backend.clone();
+    run_async_command("get_proxy_settings", async move {
+        backend
+            .network_proxy_settings()
+            .map(proxy_settings_response)
+    })
+    .await
+}
+/// Persists and returns the configured network proxy.
+#[tauri::command]
+pub async fn set_proxy_settings(
+    state: State<'_, DesktopState>,
+    request: SetProxySettingsRequest,
+) -> Result<SetProxySettingsResponse, CommandError> {
+    let backend = state.backend.clone();
+    run_async_command("set_proxy_settings", async move {
+        let settings = internal_network_proxy_settings(request.settings);
+        backend
+            .set_network_proxy_settings(settings)
+            .map(set_proxy_settings_response)
+    })
+    .await
+}
+/// Converts optional persisted proxy settings into the Settings response shape.
+fn proxy_settings_response(
+    settings: Option<ora_application::NetworkProxySettings>,
+) -> GetProxySettingsResponse {
+    GetProxySettingsResponse {
+        settings: settings.map(proxy_settings_contract),
+    }
+}
+/// Converts saved proxy settings into the authoritative Settings response shape.
+fn set_proxy_settings_response(
+    settings: ora_application::NetworkProxySettings,
+) -> SetProxySettingsResponse {
+    SetProxySettingsResponse {
+        settings: Some(proxy_settings_contract(settings)),
+    }
+}
+/// Converts persisted proxy settings into one transport-neutral wire value.
+fn proxy_settings_contract(settings: ora_application::NetworkProxySettings) -> ProxySettings {
+    ProxySettings {
+        host: settings.host,
+        port: settings.port,
+        username: settings.username,
+        password: settings.password,
+    }
+}
+/// Converts transport-neutral proxy settings into the persistence-backed application value.
+fn internal_network_proxy_settings(
+    settings: ProxySettings,
+) -> ora_application::NetworkProxySettings {
+    ora_application::NetworkProxySettings {
+        host: settings.host,
+        port: settings.port,
+        username: settings.username,
+        password: settings.password,
+    }
+}
 /// Converts the application enum into the shared response contract.
 fn developer_mode_response(mode: ora_application::DeveloperMode) -> DeveloperModeResponse {
     DeveloperModeResponse {

@@ -54,7 +54,7 @@ Repositories map SQLite columns onto the current `ora-domain` shapes, including 
 
 An unrecognized persisted category value is a mapping failure, not a silently coerced default.
 
-The `user_config` adapter keeps raw SQLite text behind typed application accessors. Missing `developer_mode` and `log_level` rows resolve to `false` and `info`; malformed persisted values fail explicitly instead of being coerced. Writes use canonical lowercase values and update only the requested key.
+The `user_config` adapter implements the generic raw key/value port from `ora-user-config`; it owns only SQLite reads, upserts, and deletes. Typed interpretation stays above the adapter: the application layer owns developer-mode, log-level, and network-proxy defaults and validation, while Desktop Backend owns the `worktree_root` path policy. Malformed persisted values fail explicitly instead of being coerced, and each write updates only the requested key.
 
 ## Aggregate deletion
 

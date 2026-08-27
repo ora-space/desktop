@@ -22,10 +22,19 @@ const edge: WorkflowDefinitionEdge = {
 };
 
 describe("graph envelope codec", () => {
-  it("round-trips nodes, edges, viewport, and description", () => {
+  it("round-trips nodes, edges, annotations, viewport, and description", () => {
+    const annotation = {
+      id: "annotation-1",
+      type: "annotation" as const,
+      position: { x: 48, y: 96 },
+      width: 240,
+      height: 140,
+      data: { text: "Review this branch", theme: "yellow" as const },
+    };
     const graph = serializeWorkflowGraph({
       nodes: [node],
       edges: [edge],
+      annotations: [annotation],
       viewport: { x: 32, y: 64, zoom: 1.5 },
       description: "A review flow",
     });
@@ -33,6 +42,7 @@ describe("graph envelope codec", () => {
     expect(parseWorkflowGraph(graph)).toEqual({
       nodes: [node],
       edges: [edge],
+      annotations: [annotation],
       viewport: { x: 32, y: 64, zoom: 1.5 },
       description: "A review flow",
     });
@@ -47,6 +57,7 @@ describe("graph envelope codec", () => {
 
     expect(JSON.parse(graph)).not.toHaveProperty("description");
     expect(parseWorkflowGraph(graph)).not.toHaveProperty("description");
+    expect(parseWorkflowGraph(graph).annotations).toEqual([]);
   });
 
   it("tolerates partial envelopes with missing arrays", () => {
@@ -56,7 +67,26 @@ describe("graph envelope codec", () => {
       nodes: [],
       edges: [],
       viewport: { x: 5, y: 6, zoom: 1 },
+      annotations: [],
     });
+  });
+
+  it("drops malformed editor annotations before they reach custom node rendering", () => {
+    const graph = JSON.stringify({
+      nodes: [node],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [
+        {
+          id: "annotation-1",
+          type: "annotation",
+          position: { x: 0, y: 0 },
+          data: { text: "unsafe theme", theme: "unknown" },
+        },
+      ],
+    });
+
+    expect(parseWorkflowGraph(graph).annotations).toEqual([]);
   });
 
   it("falls back to defaults for invalid JSON and non-object envelopes", () => {
@@ -64,11 +94,13 @@ describe("graph envelope codec", () => {
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
     });
     expect(parseWorkflowGraph("[1,2]")).toEqual({
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
     });
   });
 

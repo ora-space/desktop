@@ -1,13 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
-import { ProviderLogo } from "../chat/provider-logos";
+import { IconRobot } from "@tabler/icons-react";
+import { PluginLogoMark } from "../settings/plugin-logo";
+import { useAgentCatalog } from "../chat/agent-catalog";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useSkills } from "../../state/hooks/use-skills";
-import {
-  formatAgentExecutorLabel,
-  isKnownAgentCli,
-} from "./agent-config-display";
+import { formatAgentExecutorLabel } from "./agent-config-display";
 import { RunBriefPopover } from "./run-brief-popover";
 import { shouldPreviewBrief } from "./should-preview-brief";
 
@@ -23,6 +22,7 @@ interface RunActAgentConfigProps {
  */
 export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const { t } = useTranslation();
+  const agentCatalog = useAgentCatalog();
   const agentsQuery = useAgents();
   const skillsQuery = useSkills();
   // The workflow JSON stores role/skill by name, so resolve catalog descriptions by name.
@@ -35,10 +35,12 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const role = agentByName.get(config.roleId);
   const roleLabel = role?.name ?? config.roleId;
   const roleDescription = role?.description?.trim() ?? "";
-  const modelLabel = formatAgentExecutorLabel(config.executor);
+  const modelLabel = formatAgentExecutorLabel(config.executor, agentCatalog);
   const enabledSkills = config.skills.filter((skill) => skill.enabled);
   const enabledMcps = (config.mcps ?? []).filter((mcp) => mcp.enabled);
-  const agentCli = config.executor.agentCli;
+  const agentLogo = agentCatalog.find(
+    (agent) => agent.agentRef === config.executor.agentCli,
+  )?.logo;
   const prompt = config.prompt.trim();
 
   return (
@@ -51,9 +53,11 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
           data-selectable
           className="flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2"
         >
-          {isKnownAgentCli(agentCli) && (
-            <ProviderLogo agentCli={agentCli} className="size-3.5 shrink-0" />
-          )}
+          <PluginLogoMark
+            logo={agentLogo}
+            fallback={IconRobot}
+            className="size-3.5 shrink-0 object-contain"
+          />
           <span className="min-w-0 truncate font-mono text-[11px] text-foreground/90">
             {modelLabel}
           </span>

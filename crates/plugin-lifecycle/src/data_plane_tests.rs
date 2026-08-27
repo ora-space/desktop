@@ -1,9 +1,8 @@
 //! Tests for the plugin data plane: connections, notification pump, contract validation, and the
-//! surface-closer ordering around stop, disable, and uninstall.
+//! surface-closer ordering around stop and uninstall.
 
 use crate::tests::{
-    FixedClock, NoopNotificationSink, RecordingStatusPublisher, trace_logging_guard,
-    write_plugin_package,
+    NoopNotificationSink, RecordingStatusPublisher, trace_logging_guard, write_plugin_package,
 };
 use crate::{
     ConnectionError, InboundNotification, LaunchedRuntime, PluginCallError, PluginGenerationKey,
@@ -12,11 +11,8 @@ use crate::{
     PluginRuntimeFailure, PluginRuntimeLauncher, SurfaceCloser,
 };
 use ora_contracts::{
-    ActivatePluginRequest, DisablePluginRequest, EnablePluginRequest, PluginDataDisposition,
-    PluginRuntimeStatus, StopPluginRequest, UninstallPluginRequest,
-};
-use ora_db::{
-    DatabaseBootstrapper, DatabaseLocation, SqlitePluginStateRepository, default_migration_catalog,
+    ActivatePluginRequest, PluginDataDisposition, PluginRuntimeStatus, StopPluginRequest,
+    UninstallPluginRequest,
 };
 use ora_domain::PluginId;
 use pretty_assertions::assert_eq;
@@ -178,34 +174,20 @@ impl SurfaceCloser for RecordingCloser {
     }
 }
 
-type TestLifecycle<Sink> = PluginLifecycle<
-    SqlitePluginStateRepository,
-    FixedClock,
-    ScriptedLauncher,
-    RecordingStatusPublisher,
-    Sink,
->;
+type TestLifecycle<Sink> = PluginLifecycle<ScriptedLauncher, RecordingStatusPublisher, Sink>;
 
-/// Opens a lifecycle over a fresh database in `temp_dir` with the given launcher and sink.
+/// Opens a lifecycle in `temp_dir` with the given launcher and sink.
 fn open_lifecycle<Sink: PluginNotificationSink>(
     temp_dir: &Path,
     launcher: ScriptedLauncher,
     sink: Sink,
 ) -> (TestLifecycle<Sink>, mpsc::UnboundedReceiver<PluginId>) {
-    let pool = DatabaseBootstrapper::system()
-        .bootstrap_repository_pool(
-            &DatabaseLocation::path(temp_dir.join("ora.sqlite3")),
-            &default_migration_catalog().expect("build migration catalog"),
-        )
-        .expect("bootstrap plugin lifecycle database");
     let (publisher, events) = RecordingStatusPublisher::new();
     let lifecycle = PluginLifecycle::open(
         PluginLifecycleConfig {
             data_directory: temp_dir.to_path_buf(),
             deno_path: PathBuf::from("deno"),
         },
-        SqlitePluginStateRepository::new(pool),
-        FixedClock,
         launcher,
         publisher,
         sink,
@@ -214,17 +196,17 @@ fn open_lifecycle<Sink: PluginNotificationSink>(
     (lifecycle, events)
 }
 
-/// Enables `ora.example` and drains the resulting status event.
-async fn enable_example<Sink: PluginNotificationSink>(
+/// Starts `ora.example` and drains the resulting starting status event.
+async fn start_example<Sink: PluginNotificationSink>(
     lifecycle: &TestLifecycle<Sink>,
     events: &mut mpsc::UnboundedReceiver<PluginId>,
 ) {
     lifecycle
-        .enable_plugin(EnablePluginRequest {
+        .activate_plugin(ActivatePluginRequest {
             plugin_id: "official/ora.example".to_string(),
         })
         .await
-        .expect("enable plugin");
+        .expect("activate plugin");
     assert_eq!(
         events.recv().await,
         Some(PluginId::new("official", "ora.example").expect("plugin id"))
@@ -280,8 +262,7 @@ async fn ensure_running_starts_a_stopped_plugin() {
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
     write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
-    let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let connection = lifecycle
@@ -320,22 +301,15 @@ async fn ensure_running_starts_a_stopped_plugin() {
     );
 }
 
-/// Disabled and unknown plugins are reported without any launch attempt.
+/// An unknown plugin is reported without any launch attempt.
 #[tokio::test]
-async fn ensure_running_reports_disabled_and_not_found() {
+async fn ensure_running_reports_not_found() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
     write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
 
-    let disabled = lifecycle
-        .ensure_running(
-            &PluginId::new("official", "ora.example").expect("plugin id"),
-            Duration::from_secs(1),
-        )
-        .await
-        .map(|c| c.key());
     let missing = lifecycle
         .ensure_running(
             &PluginId::new("official", "ora.missing").expect("plugin id"),
@@ -346,19 +320,10 @@ async fn ensure_running_reports_disabled_and_not_found() {
 
     assert_eq!(
         (
-            disabled,
             missing,
-            lifecycle
-                .connection(&PluginId::new("official", "ora.example").expect("plugin id"))
-                .map(|c| c.key()),
             log.lock().unwrap_or_else(PoisonError::into_inner).clone(),
         ),
-        (
-            Err(ConnectionError::Disabled),
-            Err(ConnectionError::NotFound),
-            Err(ConnectionError::Disabled),
-            Vec::new(),
-        ),
+        (Err(ConnectionError::NotFound), Vec::new(),),
     );
 }
 
@@ -370,8 +335,7 @@ async fn ensure_running_reports_launch_failure() {
     write_plugin_package(temp_dir.path(), "ora.example");
     let (mut launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     launcher.launch_failure = Some("deno exploded".to_string());
-    let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let result = lifecycle
@@ -391,8 +355,7 @@ async fn ensure_running_reports_launch_failure() {
 /// A launch that is still in flight yields `Timeout` from `ensure_running` and `NotReady` from
 /// `connection`; a stopped plugin yields `NotRunning`.
 ///
-/// A ui plugin is used because enabling one records eligibility without launching, which is the
-/// on-demand path `ensure_running` exists for.
+/// A workbench plugin is used because it follows the on-demand path `ensure_running` exists for.
 #[tokio::test]
 async fn ensure_running_times_out_while_starting() {
     let _logging = trace_logging_guard();
@@ -400,8 +363,7 @@ async fn ensure_running_times_out_while_starting() {
     write_workbench_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (launcher, release) = launcher.gated();
-    let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     let stopped = lifecycle.connection(&plugin_id).map(|c| c.key());
 
@@ -441,7 +403,7 @@ async fn pump_forwards_notifications_with_generation() {
         notifications: sink_tx,
     };
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, sink);
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
@@ -475,13 +437,13 @@ async fn pump_close_under_live_process_fails_the_plugin() {
     write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, mut senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await
         .expect("ensure running");
-    // Enabling an agent plugin already published Starting; this is the Running transition.
+    // Activation already published Starting; this is the Running transition.
     assert_eq!(events.recv().await, Some(plugin_id.clone()));
 
     drop(senders.recv().await.expect("launch handed over a sender"));
@@ -503,7 +465,7 @@ async fn pump_close_after_stop_leaves_the_plugin_stopped() {
     write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, mut senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
@@ -536,8 +498,7 @@ async fn workbench_plugin_declaring_emits_fails_after_launch() {
         emits: HashSet::from(["counter/tick".to_string()]),
         effect_surfaces: Vec::new(),
     });
-    let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let result = lifecycle
@@ -573,7 +534,7 @@ async fn workbench_plugin_runs_and_lease_reports_registered_methods() {
         effect_surfaces: Vec::new(),
     });
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
 
     let lease = lifecycle
         .ensure_running(
@@ -592,7 +553,7 @@ async fn workbench_plugin_runs_and_lease_reports_registered_methods() {
     );
 }
 
-/// Stop, disable, and uninstall each close surfaces before stopping the runtime.
+/// Stop and uninstall close surfaces before stopping the runtime.
 #[tokio::test]
 async fn surfaces_close_before_the_runtime_stops() {
     let _logging = trace_logging_guard();
@@ -606,7 +567,7 @@ async fn surfaces_close_before_the_runtime_stops() {
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     let mut observed = Vec::new();
 
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await
@@ -632,16 +593,16 @@ async fn surfaces_close_before_the_runtime_stops() {
         .await
         .expect("ensure running again");
     lifecycle
-        .disable_plugin(DisablePluginRequest {
+        .stop_plugin(StopPluginRequest {
             plugin_id: "official/ora.example".to_string(),
         })
         .await
-        .expect("disable plugin");
+        .expect("stop plugin again");
     observed.push(std::mem::take(
         &mut *log.lock().unwrap_or_else(PoisonError::into_inner),
     ));
 
-    enable_example(&lifecycle, &mut events).await;
+    start_example(&lifecycle, &mut events).await;
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await

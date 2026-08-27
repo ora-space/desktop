@@ -15,7 +15,7 @@ import {
   IconRoute,
   IconSearch,
 } from "@tabler/icons-react";
-import { useWorkflowLibrary } from "../settings/workflow-definitions";
+import { useWorkflowLibrary } from "../workflow-editor/workflow-definitions";
 import { useUiStore } from "../../state/stores/ui-store";
 
 interface SidebarCreateMenuProps {

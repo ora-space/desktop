@@ -1,20 +1,19 @@
 # ACP Agent Runtime
 
-`ora-backend` starts one independently supervised ACP connection for each agent this installation can reach when a Backend instance opens: the four built-in CLIs (`nga`, `codeagentcli`, `claude`, and `codex`) plus every installed [agent plugin](../crates/backend/src/agent_runtime/plugin_agent/README.md). Every persisted Ora Session owns a serialized actor, but actors targeting the same agent share its application-scoped ACP connection and route events by the private provider session id. One Session accepts only one prompt owner at a time, while load streams may follow that prompt and different Sessions remain concurrent. Session-scoped prompt cancellation reaches that owner without granting a load stream ownership or unloading the reusable Session.
+`ora-backend` starts one independently supervised ACP connection for each installed [agent plugin](../crates/backend/src/agent_runtime/plugin_agent/README.md) when a Backend instance opens — every agent Ora can reach is supplied by a plugin package, and there is no other source. Every persisted Ora Session owns a serialized actor, but actors targeting the same agent share its application-scoped ACP connection and route events by the private provider session id. One Session accepts only one prompt owner at a time, while load streams may follow that prompt and different Sessions remain concurrent. Session-scoped prompt cancellation reaches that owner without granting a load stream ownership or unloading the reusable Session.
 
 ## Process and Session Lifecycle
 
-- Session contracts select an `agent_ref`: the agent provider's dotted package name (the `name` segment of an installed plugin's `<namespace>/<name>` id), carried as an open string. Which agents exist depends on installed plugins and is not knowable when Ora is built, so an identity the runtime does not recognize means "that provider is not installed right now" — an ordinary runtime state reported as `agent_runtime_unavailable`, not corrupt data. The built-in CLIs supply the same values persistence has always stored: `ora-space.nga`, `ora-space.codeagentcli`, `ora-space.claude`, and `ora-space.codex`. `ora-space.opencode` keeps that same persisted identity but is now supplied by an installed agent plugin rather than a built-in CLI, so it is only supervised when that plugin is installed.
-- Supervisors are keyed by that identity. Built-in CLIs claim theirs first, so a plugin package declaring an identity already supervised is ignored rather than allowed to replace the agent the user already had. Only `agent`-kind packages supply an agent; `ui` packages contribute surfaces and are never supervised. The installed set comes from the plugin lifecycle, which is also the sole owner of plugin processes: a supervisor attaches to a running plugin (`PluginApi::attach_agent`, which starts an enabled plugin on demand) instead of launching one, reads that generation's `agent/acp` notifications through a lossless tap, and asks the lifecycle to stop the plugin when a generation ends.
-- The supervised set is reconciled whenever the installed packages change, so installing a plugin makes its agent reachable in the running process and uninstalling one removes it. Enabling a plugin additionally retries its agent at once rather than at the end of the current backoff, because enabling is the moment a plugin that was refusing to attach becomes usable. Every installed agent plugin is supervised whether or not it is enabled; a disabled or uninstalled plugin refuses to attach and is reported exactly like a CLI that is not installed, so it is retried silently until the user enables it.
-- Executable resolution has the same semantics on every platform and is repeated on every retry generation. Each directory on the process `PATH` is searched first (on Windows trying every `PATHEXT` extension, so npm `.cmd` shims are covered), then the CLI's fixed per-user install directory as a fallback — `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`, `<home>/.claude/bin/claude-agent-acp`, `<home>/.codex/bin/codex-acp`. PATH wins so the resolved binary matches what `which` reports in the user's terminal; the fallback keeps install-script setups working when a GUI-launched process inherits a minimal PATH. A CLI that cannot be resolved reports `agent_cli_not_found` with every searched location enumerated in the internal message.
-- The shared child starts in the user's home directory with piped stdin, stdout, and stderr. Ora's own CLIs (`nga`, `codeagentcli`) are started with a single `acp` argument; `claude` and `codex` run their dedicated `claude-agent-acp`/`codex-acp` adapter binaries directly with no arguments, since those adapters speak ACP without a subcommand. Stderr is drained continuously so provider diagnostics can never block the process. Session setup requests carry the owning Task worktree as `cwd`.
+- Session contracts select an `agent_ref`: the agent provider's dotted package name (the `name` segment of an installed plugin's `<namespace>/<name>` id), carried as an open string. Which agents exist depends entirely on installed plugins and is not knowable when Ora is built, so an identity the runtime does not recognize means "that provider is not installed right now" — an ordinary runtime state reported as `agent_runtime_unavailable`, not corrupt data. Nothing is bundled: Ora ships with zero agents until the user installs plugin packages that supply them, one agent per package (see [plugin_agent](../crates/backend/src/agent_runtime/plugin_agent/README.md)).
+- Supervisors are keyed by that identity. A plugin package declaring an identity another installed package already supervises is ignored rather than allowed to replace it. Only `agent`-kind packages supply an agent; `ui` packages contribute surfaces and are never supervised. The installed set comes from the plugin lifecycle, which is also the sole owner of plugin processes: a supervisor attaches to a running plugin (`PluginApi::attach_agent`, which starts an installed plugin on demand) instead of launching one, reads that generation's `agent/acp` notifications through a lossless tap, and asks the lifecycle to stop the plugin when a generation ends.
+- The supervised set is reconciled whenever installed packages change. Installing a plugin makes its agent reachable in the running process, uninstalling it removes the supervisor, and every installed agent plugin can always start.
+- The plugin owns the agent process end to end: it spawns its own CLI, resolves its own executable, and relays ACP frames to the host over its `agent/acp` notification channel. The host never spawns a CLI or resolves an executable path itself. A missing agent process reports `agent_not_installed` with the detail the plugin chose to surface.
 - Task worktrees resolve through Task → Workspace id → stored Worktree branch name → Git's authoritative worktree metadata. A configured worktree creation root is never used to reconstruct an existing path. Main project workspaces resolve their stored location against the bootstrap path base (the parent of `ORA_DATA_DIR` in Desktop), not live process cwd.
-- Backend startup reconciles stale Running rows to Stopped, then one dedicated runtime thread per agent attempts startup and performs `initialize`. Owning the runtimes here is necessary because synchronous Desktop bootstrap does not guarantee an ambient Tokio runtime. Each agent retries independently with capped exponential backoff; Ora remains available even if every initial attempt fails, and one unavailable agent does not disable the others. Operations targeting an unavailable agent report `agent_runtime_unavailable`. A missing local CLI remains retryable and does not count as a crash. More than three genuine startup or connection failures in one minute publishes `Failing` and stops that agent's automatic retries for the rest of the process. A plugin whose registration does not implement the agent contract enters `Failing` immediately because every retry would repeat the same deterministic failure.
+- Backend startup reconciles stale Running rows to Stopped, then one dedicated runtime thread per agent attempts startup and performs `initialize`. Owning the runtimes here is necessary because synchronous Desktop bootstrap does not guarantee an ambient Tokio runtime. Each agent retries independently with capped exponential backoff; Ora remains available even if every initial attempt fails, and one unavailable agent does not disable the others. Operations targeting an unavailable agent report `agent_runtime_unavailable`. A missing agent process remains retryable and does not count as a crash. More than three genuine startup or connection failures in one minute publishes `Failing` and stops that agent's automatic retries for the rest of the process. A plugin whose registration does not implement the agent contract enters `Failing` immediately because every retry would repeat the same deterministic failure.
 - Warm creates open a temporary setup-registration window and call `session/new` on the ready shared connection, but persist nothing. Because the provider session id is not known until the response arrives, otherwise-unrouted setup notifications are buffered during that window and transferred to the matching session route once its id is known. The latest setup-time `available_commands_update` is kept with the warm session, because nothing consumes its updates until it is attached and the announcement would otherwise be lost.
 - Attach binds one warm session to its owning Task and persists the Ora Session under the identifier the client already holds, reporting the captured catalog as `AttachSessionResponse.availableCommands`. The guarded insert fails if its Task was deleted while the handshake was in flight. The session's history file is opened with its header record before the session can be prompted.
 - Load registers a route on the current connection generation when the provider conversation is idle, marks the row Running, and calls `session/load` with the private `agentSessionId`. The caller's admission signal resolves only after the Running row is persisted (and the row's task and project were re-validated as visible), so an aggregate deletion that starts after admission is guaranteed to observe the Running session and refuse, while a deletion that already committed makes the admission itself fail. Every setup or replay failure restores Stopped. The agent's replay is drained and discarded — `session/load` is called so the agent restores the context it needs to answer the next prompt, not to tell Ora what the conversation was. What the client receives is Ora's own record, including typed notices for known holes rather than a transcript that silently appears continuous. If a prompt already owns the session, load replays the record through its attachment point and then follows later events from that prompt; it neither starts a second prompt nor takes ownership of the first. See [Session History](#session-history).
-- Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
+- Connection loss fails that agent's in-flight operations, marks only its registered Sessions Stopped, asks the plugin lifecycle to stop the old process, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - The `initialize` handshake advertises the client's session config-option capability. Agents withhold configuration options from clients that do not, so the model selector depends on it. Boolean options stay undeclared because Ora renders only id-valued selectors.
 
 ### First session title acquisition
@@ -132,38 +131,29 @@ Dropping the last Backend owner asks every supervisor to stop accepting work, ca
 
 ## Caveats After Opening the Agent Identity
 
-Agent identity became an open string once agents could arrive with installed plugins. Persistence
-did not have to move — the `agent_cli` column already stored `ora-space.claude`-style values — but
-two stores held the _older_, pre-namespaced spellings and are worth knowing about:
+Agent identity is an open string: agents arrive with installed plugins, and which ones exist is not
+knowable when Ora is built. Persistence never had to move — the `agent_cli` column already stored
+`ora-space.claude`-style namespaced values — but one store held an _older_, pre-namespaced spelling
+and is worth knowing about:
 
-- **Workflow graphs still name agents by their old short id.** A saved graph persists
-  `executor.agentCli` inside its snapshot JSON, and older snapshots hold `open_code` rather than
-  `ora-space.opencode`. That value is carried through to the runtime as written, so it matches no
-  supervised agent and the node fails as an unavailable provider until the model is picked again.
-  Nothing rewrites it: translating old spellings would be a compatibility layer, and rewriting
-  snapshot JSON is a database migration that should be decided on deliberately rather than smuggled
-  in. Re-picking the model on an affected node fixes it permanently.
-- **A stored frontend agent preference is dropped when it cannot be offered.** `ora.settings.v1`
-  persists the default agent, and a value naming an agent this build cannot offer — an old spelling,
-  or a plugin that has since been uninstalled — falls back to the built-in default on load. The
-  choice is lost once; nothing else breaks.
+- **Workflow graphs may still name an agent by an old short id.** A saved graph persists
+  `executor.agentCli` inside its snapshot JSON, and a snapshot saved before identities were
+  namespaced can hold `open_code` rather than `ora-space.opencode`. That value is carried through
+  to the runtime as written, so it matches no supervised agent and the node fails as an unavailable
+  provider until the model is picked again. Nothing rewrites it: translating old spellings would be
+  a compatibility layer, and rewriting snapshot JSON is a database migration that should be decided
+  on deliberately rather than smuggled in. Re-picking the model on an affected node fixes it
+  permanently.
 
-Two limits are deliberate rather than incidental:
-
-- **The chat model picker offers only the agents it has a label and a logo for.** A plugin-provided
-  agent is supervised, bindable by id, and reported by the runtime status endpoint, but the picker
-  does not enumerate arbitrary ones: rendering one needs a label and a logo, which are product
-  decisions rather than runtime ones. The frontend keeps a closed `KnownAgentCli` subset so this
-  boundary is visible in the types instead of implied. Within that subset an entry is offered only
-  while `getAgentRuntimeStatus` reports it `Ready` or `Starting`. That one answer already covers
-  every way an agent can be out of reach — a built-in CLI missing from this machine, a plugin
-  package that was never installed and so has no supervisor, and one the user disabled, which the
-  supervisor reports exactly like a missing CLI — so the client models none of them separately.
-  `Unavailable` is polled on at a slow cadence because it is expected configuration that can
-  resolve itself; `Failing` is not, because the restart circuit is open for the rest of the
-  process. A stored default naming an agent that is no longer reachable yields to the first one
-  that is, but a session's own binding is still reported as written — the conversation genuinely
-  runs on that agent.
-- **`agent_cli_not_found` keeps its name.** The code is part of the public error contract and its
-  translations; renaming it is unrelated to how identity is modelled, and what an uninstalled agent
-  should look like in the UI is still an open question.
+The frontend agent catalog is entirely runtime-derived — the chat and workflow pickers list
+whatever `listInstalled` reports as `kind: "agent"`, labelled and drawn with each package's own
+`agentDisplayName` and `logo`, offering only the identities `getAgentRuntimeStatus` reports
+`Ready` or `Starting` for. That one status answer already covers every way an agent can be out of
+reach — a package that was never installed and so has no supervisor, and an agent process missing
+on this machine — so the client models none of them separately.
+`Unavailable` is polled on at a slow cadence because it is expected configuration that can resolve
+itself; `Failing` is not, because the restart circuit is open for the rest of the process. A
+stored preference naming an agent that is no longer reachable is carried forward unexamined rather
+than dropped — the frontend does not validate agent identities against a closed set — and a
+session's own binding is always reported as written, since that is what the conversation genuinely
+runs on.

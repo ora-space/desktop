@@ -143,7 +143,7 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   readonly worktreeStorage = {
     getRoot: async (): Promise<string> => {
       const config = await invoke<{ worktreeRoot: string }>(
-        "get_desktop_config",
+        "get_worktree_root",
         {
           request: {},
         },

@@ -48,19 +48,6 @@ impl PluginGateway {
         self.plugin.lifecycle().installed_plugin(plugin_id)
     }
 
-    /// Reports whether `plugin_id` is installed and enabled.
-    ///
-    /// Surfaces of a disabled plugin must not open even though the package is still discoverable,
-    /// so the surface layer checks this before it creates a webview.
-    pub fn plugin_enabled(&self, plugin_id: &PluginId) -> bool {
-        self.plugin
-            .lifecycle()
-            .list_installed_plugins()
-            .plugins
-            .iter()
-            .any(|plugin| plugin.id == plugin_id.canonical() && plugin.enabled)
-    }
-
     /// Creates the plugin's data directory if needed and returns it.
     ///
     /// The surface layer calls this before any download lands, so the directory exists even when

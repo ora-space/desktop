@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@ora/contracts";
 import { listSurfaceDefinitions } from "./surface-definitions";
 
-/** Builds one webview plugin (external site) with the given enabled state. */
+/** Builds one installed webview plugin (external site). */
 function webviewPlugin(
   id: string,
   displayName: string,
   title: string,
-  enabled: boolean,
 ): InstalledPlugin {
   return {
     id: `official/${id}`,
@@ -22,7 +21,6 @@ function webviewPlugin(
     title,
     startUrl: "https://www.example.com/",
     logo: null,
-    enabled,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },
     runtime: "stopped",
@@ -47,7 +45,6 @@ function workbenchPlugin(
     kind: "workbench",
     title,
     logo: null,
-    enabled: true,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },
     runtime: "stopped",
@@ -66,19 +63,18 @@ const agentPlugin: InstalledPlugin = {
   kind: "agent",
   agentDisplayName: "Review Agent",
   logo: null,
-  enabled: true,
   installationValidity: { validity: "valid" },
   configuration: { state: "not_declared" },
   runtime: "running",
 };
 
 describe("listSurfaceDefinitions", () => {
-  it("returns one entry per enabled workbench or webview plugin sorted by name then title", () => {
+  it("returns one entry per installed workbench or webview plugin sorted by name then title", () => {
     const plugins = [
       agentPlugin,
-      webviewPlugin("acme.hub", "Hub", "Market", true),
-      webviewPlugin("ora-space.disabled", "Disabled", "X", false),
-      webviewPlugin("acme.portal", "Portal", "Developer", true),
+      webviewPlugin("acme.hub", "Hub", "Market"),
+      webviewPlugin("ora-space.tools", "Tools", "X"),
+      webviewPlugin("acme.portal", "Portal", "Developer"),
       workbenchPlugin("acme.panel", "Panel", "Counter"),
     ];
 
@@ -101,10 +97,16 @@ describe("listSurfaceDefinitions", () => {
         title: "Developer",
         pluginDisplayName: "Portal",
       },
+      {
+        pluginId: "official/ora-space.tools",
+        kind: "webview",
+        title: "X",
+        pluginDisplayName: "Tools",
+      },
     ]);
   });
 
-  it("returns an empty list when no surface plugin is enabled", () => {
+  it("returns an empty list when no surface plugin is installed", () => {
     expect(listSurfaceDefinitions([agentPlugin])).toEqual([]);
   });
 });

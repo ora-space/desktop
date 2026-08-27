@@ -1,9 +1,8 @@
 use std::io;
 
-use ora_acp::{AcpError, AcpTransport, NdjsonTransport};
+use ora_acp::{AcpError, AcpTransport};
 use ora_plugin_runtime::PluginRuntime;
 use serde_json::Value;
-use tokio::process::ChildStdin;
 
 use super::control::AGENT_ACP_METHOD;
 
@@ -29,27 +28,5 @@ impl AcpTransport for PluginAcpTransport {
             .notify(AGENT_ACP_METHOD, message)
             .await
             .map_err(|error| AcpError::Io(io::Error::other(error.to_string())))
-    }
-}
-
-/// Selects the transport that carries one connection's ACP traffic.
-///
-/// `RuntimeConnection` is published through a `watch` channel, so the transport cannot remain a
-/// generic parameter of the connection type. An enum keeps dispatch static and every match
-/// exhaustive, which a trait object would give up.
-///
-/// The `Stdio` variant exists only while Ora still launches agent CLIs itself; once every builtin
-/// CLI ships as a plugin, plugins are the sole transport and this enum collapses.
-pub(crate) enum AgentTransport {
-    Stdio(NdjsonTransport<ChildStdin>),
-    Plugin(PluginAcpTransport),
-}
-
-impl AcpTransport for AgentTransport {
-    async fn send(&self, message: Value) -> Result<(), AcpError> {
-        match self {
-            Self::Stdio(transport) => transport.send(message).await,
-            Self::Plugin(transport) => transport.send(message).await,
-        }
     }
 }

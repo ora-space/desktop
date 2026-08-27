@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::DatabaseError;
 
-use super::{schema_v0001, schema_v0002, schema_v0003, schema_v0004, schema_v0005, schema_v0006};
+use super::schema;
 
 /// Captures one versioned migration and the SQL needed to move schema state up or down.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,14 +99,7 @@ impl MigrationCatalog {
 
 /// Builds the default migration catalog shipped by the crate.
 pub fn default_migration_catalog() -> Result<MigrationCatalog, DatabaseError> {
-    MigrationCatalog::new(vec![
-        schema_v0001::migration(),
-        schema_v0002::migration(),
-        schema_v0003::migration(),
-        schema_v0004::migration(),
-        schema_v0005::migration(),
-        schema_v0006::migration(),
-    ])
+    MigrationCatalog::new(schema::migrations())
 }
 
 /// Produces stable, executable SQL from an ordered statement list.

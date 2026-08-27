@@ -15,18 +15,16 @@ export type SurfaceDefinitionRef = {
 };
 
 /**
- * Lists the surface of every enabled workbench or webview plugin in a stable menu order.
+ * Lists the surface of every installed workbench or webview plugin in a stable menu order.
  *
- * Each such plugin contributes exactly one surface. Disabled plugins are excluded so that
- * disabling a plugin removes its entry without a separate lifecycle hook; ordering by plugin
- * name then title keeps the menu independent of backend snapshot order.
+ * Each such plugin contributes exactly one surface. Ordering by plugin name then title keeps the
+ * menu independent of backend snapshot order.
  */
 export function listSurfaceDefinitions(
   plugins: readonly InstalledPlugin[],
 ): SurfaceDefinitionRef[] {
   const refs: SurfaceDefinitionRef[] = [];
   for (const plugin of plugins) {
-    if (!plugin.enabled) continue;
     if (plugin.kind !== "workbench" && plugin.kind !== "webview") continue;
     refs.push({
       pluginId: plugin.id,

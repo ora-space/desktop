@@ -1,32 +1,17 @@
 import { useTranslation } from "react-i18next";
 import type { InstalledPlugin, Session } from "@ora/contracts";
-import { Button } from "@ora/ui";
-import { IconAlertTriangle, IconLoader2 } from "@tabler/icons-react";
-import { localizeContractError } from "../../i18n/contract-error";
+import { IconAlertTriangle } from "@tabler/icons-react";
 import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
-import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 
 /** Why the agent a session is bound to cannot serve it right now. */
 type AgentAvailability =
   | { kind: "available" }
-  | { kind: "disabled"; plugin: InstalledPlugin }
   | { kind: "failed"; plugin: InstalledPlugin; reason: string }
   | { kind: "uninstalled" };
 
 /**
- * Warns when the plugin behind a session's agent was disabled or uninstalled.
- *
- * A session keeps its agent binding for its whole life, so turning the plugin
- * off leaves a conversation that looks ordinary but cannot be answered. Saying
- * so up front is what separates "your agent is switched off" from the generic
- * failure a send would otherwise produce, and the enable action makes the fix
- * reachable without a detour through settings.
- *
- * Eligibility is read from the installed-plugin list rather than the agent
- * runtime status: disabling publishes the plugin change immediately, while the
- * supervisor only reports `unavailable` once its connection has actually
- * dropped, so the runtime view can still say `ready` for a moment afterwards.
+ * Warns when the plugin behind a session's agent failed or was uninstalled.
  *
  * Rendering nothing while the agent is fine keeps callers free to mount this
  * unconditionally beside the conversation it belongs to.
@@ -50,11 +35,7 @@ export function SessionAgentBanner({
 }
 
 /**
- * Renders one unavailability reason, with the repair action the reason allows.
- *
- * Split from the resolver so the message stays a pure function of availability;
- * the enable mutation lives in its own component because a hook keyed by plugin
- * id must not run for the case that has no plugin to name.
+ * Renders one plugin-agent unavailability reason.
  */
 function AgentUnavailableBanner({
   availability,
@@ -80,10 +61,6 @@ function AgentUnavailableBanner({
           {t("chat.agentUnavailable.title")}
         </p>
         <p className="mt-0.5 break-words text-muted-foreground">
-          {availability.kind === "disabled" &&
-            t("chat.agentUnavailable.disabled", {
-              plugin: availability.plugin.displayName,
-            })}
           {availability.kind === "uninstalled" &&
             t("chat.agentUnavailable.uninstalled")}
           {/* The backend's reason is the only description of what actually broke,
@@ -95,43 +72,6 @@ function AgentUnavailableBanner({
             })}
         </p>
       </div>
-      {availability.kind === "disabled" && (
-        <EnablePluginAction pluginId={availability.plugin.id} t={t} />
-      )}
-    </div>
-  );
-}
-
-/** Offers the one repair a disabled plugin needs, reporting a refused enable in place. */
-function EnablePluginAction({
-  pluginId,
-  t,
-}: {
-  pluginId: string;
-  t: ReturnType<typeof useTranslation>["t"];
-}) {
-  const { enable } = usePluginMutations(pluginId);
-
-  return (
-    <div className="flex shrink-0 flex-col items-end gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 text-xs"
-        disabled={enable.isPending}
-        onClick={() => enable.mutate()}
-      >
-        {enable.isPending && (
-          <IconLoader2 className="size-3 animate-spin" aria-hidden="true" />
-        )}
-        {t("chat.agentUnavailable.enable")}
-      </Button>
-      {enable.isError && (
-        <p className="text-destructive">
-          {localizeContractError(enable.error, t)}
-        </p>
-      )}
     </div>
   );
 }
@@ -170,7 +110,6 @@ function resolveAvailability(
     }
     return { kind: "uninstalled" };
   }
-  if (!plugin.enabled) return { kind: "disabled", plugin };
   if (plugin.runtime === "failed") {
     return { kind: "failed", plugin, reason: plugin.failureReason };
   }

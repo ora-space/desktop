@@ -1,4 +1,5 @@
 use crate::clock::SystemClock;
+use crate::effect_worker::EffectWorkerHandle;
 use crate::git_cleanup::GatedWorktreeProvisioner;
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
@@ -38,6 +39,8 @@ pub(crate) struct TaskApi {
     list: ListTasksHandler<SqliteTaskRepository>,
     update: UpdateTaskHandler<SqliteTaskRepository, SystemClock>,
     clock: SystemClock,
+    /// Wakes Effect convergence for the Workspace a new task brings with it.
+    effect_reconcile: EffectWorkerHandle,
 }
 
 impl TaskApi {
@@ -49,6 +52,7 @@ impl TaskApi {
         sessions_root: PathBuf,
         repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
         clock: SystemClock,
+        effect_reconcile: EffectWorkerHandle,
     ) -> Self {
         let repository = SqliteTaskRepository::new(pool.clone());
 
@@ -58,6 +62,7 @@ impl TaskApi {
             relative_path_base,
             sessions_root,
             repository_gates,
+            effect_reconcile,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
             update: UpdateTaskHandler::new(repository, clock),
@@ -66,6 +71,11 @@ impl TaskApi {
     }
 
     /// Resolves the requested project and creates its task in the matching Git repository.
+    ///
+    /// The task's Workspace needs the Effect surfaces every running consumer already declared, and
+    /// no declaration will fire again on its own. Waking here is a latency optimization only: the
+    /// worker converges the same Workspace within one scan interval regardless, so a wake lost to a
+    /// crash costs a scan interval rather than the materialization.
     pub(crate) fn create(
         &self,
         request: CreateTaskRequest,
@@ -87,7 +97,9 @@ impl TaskApi {
             self.clock,
         );
 
-        handler.handle(request)
+        let response = handler.handle(request)?;
+        self.effect_reconcile.notify();
+        Ok(response)
     }
 
     /// Executes one task lookup through the application handler.

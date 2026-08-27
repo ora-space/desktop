@@ -5,14 +5,23 @@ import {
   resolveTheaterActInstruction,
 } from "./agent-config-display";
 import type { WorkflowNodeData } from "@ora/workflow-runtime";
+import type { AgentEntry } from "../chat/agent-catalog";
+
+/** The installed agent packages these summaries are rendered against. */
+const AGENTS: AgentEntry[] = [
+  { agentRef: "ora-space.opencode", label: "OpenCode", logo: null },
+];
 
 describe("agent-config-display", () => {
-  it("formats known Agent CLI labels for the mono summary line", () => {
+  it("names the agent its installed package declares in the mono summary line", () => {
     expect(
-      formatAgentExecutorLabel({
-        agentCli: "ora-space.opencode",
-        modelId: "deepseek/deepseek-v4-pro",
-      }),
+      formatAgentExecutorLabel(
+        {
+          agentCli: "ora-space.opencode",
+          modelId: "deepseek/deepseek-v4-pro",
+        },
+        AGENTS,
+      ),
     ).toBe("OpenCode · deepseek/deepseek-v4-pro");
   });
 
@@ -33,10 +42,19 @@ describe("agent-config-display", () => {
         prompt: "梳理现状与风险。",
       },
     };
-    expect(resolveTheaterActDetail(data)).toBe(
+    expect(resolveTheaterActDetail(data, AGENTS)).toBe(
       "OpenCode · deepseek/deepseek-v4-flash",
     );
     expect(resolveTheaterActInstruction(data)).toBe("梳理现状与风险。");
+  });
+
+  it("falls back to the raw identity when no installed package names the agent", () => {
+    expect(
+      formatAgentExecutorLabel(
+        { agentCli: "acme.my-agent", modelId: "acme/one" },
+        AGENTS,
+      ),
+    ).toBe("acme.my-agent · acme/one");
   });
 
   it("prefers flat tool/condition and instruction over agentConfig", () => {
@@ -56,7 +74,7 @@ describe("agent-config-display", () => {
         prompt: "Unused prompt",
       },
     };
-    expect(resolveTheaterActDetail(data)).toBe("Terminal");
+    expect(resolveTheaterActDetail(data, AGENTS)).toBe("Terminal");
     expect(resolveTheaterActInstruction(data)).toBe("Find regressions.");
   });
 });

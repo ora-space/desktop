@@ -678,12 +678,17 @@ mod tests {
     use crate::agent_runtime::WarmOwner;
     use crate::agent_runtime::warm_pool::{AttachedWarm, CreatedProvider, Reservation, WarmKey};
     use ora_contracts::WarmSessionTarget;
-    use ora_domain::{AgentCli, SessionId};
+    use ora_domain::{AgentRef, SessionId};
     use pretty_assertions::assert_eq;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex as StdMutex;
 
     const GENERATION: u64 = 1;
+
+    /// Names one installed agent package these fixtures bind their warm sessions to.
+    fn test_agent_ref() -> AgentRef {
+        AgentRef::parse("ora-space.nga").expect("agent identity")
+    }
 
     /// Builds a pool holding one live warm session already reserved for attach.
     fn reserved_pool() -> (StdMutex<WarmPool>, SessionId) {
@@ -692,7 +697,7 @@ mod tests {
             target: WarmSessionTarget::Workspace {
                 workspace_id: "workspace-1".to_string(),
             },
-            agent_ref: AgentCli::Nga.agent_ref(),
+            agent_ref: test_agent_ref(),
             owner: WarmOwner::Interactive,
         };
         let session_id = SessionId::new("session-1");
@@ -715,7 +720,7 @@ mod tests {
 
     fn attachment() -> WarmAttachment {
         WarmAttachment {
-            agent_ref: AgentCli::Nga.agent_ref(),
+            agent_ref: test_agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             cwd: PathBuf::from("/repo"),
             available_commands: Vec::new(),
@@ -740,7 +745,7 @@ mod tests {
             lock_pool(&pool).reserve_for_attach(&session_id, Path::new("/repo")),
             Reservation::Held(AttachedWarm {
                 session_id,
-                agent_ref: AgentCli::Nga.agent_ref(),
+                agent_ref: test_agent_ref(),
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],

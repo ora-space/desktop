@@ -22,7 +22,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
-  Switch,
   toast,
 } from "@ora/ui";
 import {
@@ -38,7 +37,7 @@ import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 
-/** The installed-plugin manager drives durable state through the backend lifecycle commands. */
+/** The installed-plugin manager exposes runtime and package lifecycle commands. */
 export function PluginManager({
   plugins,
   onBack,
@@ -151,10 +150,8 @@ function InstalledPluginRow({
     plugin.id,
     plugin.kind === "agent" ? plugin.name : undefined,
   );
-  const enabling = mutations.enable.isPending;
-  const disabling = mutations.disable.isPending;
   const uninstalling = mutations.uninstall.isPending;
-  const busy = enabling || disabling || uninstalling;
+  const busy = uninstalling;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
   const failUninstall = (cause: unknown) => {
@@ -247,24 +244,6 @@ function InstalledPluginRow({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-
-        <Switch
-          checked={plugin.enabled}
-          disabled={
-            busy ||
-            plugin.installationValidity.validity === "invalid_declaration"
-          }
-          onCheckedChange={(next) => {
-            if (next) void mutations.enable.mutate();
-            else void mutations.disable.mutate();
-          }}
-          aria-label={t("settings.plugins.toggleSkill", {
-            name: plugin.displayName,
-          })}
-        />
-        {(enabling || disabling) && (
-          <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-        )}
       </div>
       <AlertDialog
         open={uninstallOpen}

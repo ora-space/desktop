@@ -45,6 +45,9 @@ const WEATHER_LOGO =
 
 function clientWithWeather(logo: string | null = null) {
   const state = createMockClientState();
+  // This file exercises install/import flows in isolation from the seeded agent
+  // packages, so installed-plugin assertions can count exactly the fixture under test.
+  state.installedPlugins = [];
   state.availablePlugins.push({
     id: "official/weather",
     name: "weather",
@@ -72,7 +75,6 @@ function weatherInstalled(): InstalledPlugin {
     license: null,
     kind: "agent",
     agentDisplayName: "weather",
-    enabled: false,
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },
@@ -220,7 +222,6 @@ it("imports a local archive through the backend", async () => {
   await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
   expect(state.installedPlugins[0]).toMatchObject({
     id: "official/weather",
-    enabled: true,
   });
   expect(successToast).toHaveBeenCalledWith(
     expect.stringMatching(/插件已导入|Plugin imported/),
@@ -549,7 +550,6 @@ it("shows hook descriptor fields and hides configure when settings are not decla
     command: "rtk",
     target: "x86_64-pc-windows-msvc",
     toolVersion: "0.45.0",
-    enabled: true,
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },
@@ -588,7 +588,6 @@ it("reports a command-alias conflict after a successful install", async () => {
   await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
 
   await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
-  expect(state.installedPlugins[0]?.enabled).toBe(false);
   await waitFor(() => expect(successToast).toHaveBeenCalled());
   expect(successToast.mock.calls[0]?.[0]).toEqual(
     expect.stringMatching(/official\/other-rtk/),

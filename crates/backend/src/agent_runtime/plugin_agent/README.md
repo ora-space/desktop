@@ -1,9 +1,9 @@
 # plugin_agent
 
-`plugin_agent` turns one installed agent plugin into something the connection supervisor can treat
-exactly like a built-in CLI. It attaches to a plugin process the plugin lifecycle already owns,
-verifies the plugin declared the whole agent contract, brings the agent up, and exposes the
-plugin's notification channel as an ACP message stream and sink.
+`plugin_agent` turns one installed agent plugin into a supervised connection: every agent Ora
+reaches is one of these, there is no other kind of provider. It attaches to a plugin process the
+plugin lifecycle already owns, verifies the plugin declared the whole agent contract, brings the
+agent up, and exposes the plugin's notification channel as an ACP message stream and sink.
 
 This module is the only place in the agent runtime that knows a plugin exists. Everything above it
 sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
@@ -53,9 +53,9 @@ the supervisor publishes `Failing` and abandons the agent for the rest of the pr
 retrying, because the same plugin will fail identically every time and retrying only produces a
 warning per backoff interval.
 
-`agent/start` failures split in two. `-32001` means the agent CLI is absent from this machine; that
-is an expected local configuration, so it maps onto the same public error a missing built-in CLI
-produces and is retried without logging or contributing to the crash counter. Every other code is a
+`agent/start` failures split in two. `-32001` means the agent CLI the plugin wraps is absent from
+this machine; that is an expected local configuration, so it is reported as `agent_not_installed`
+and is retried without logging or contributing to the crash counter. Every other code is a
 genuine startup failure. More than three genuine failures in one minute opens the connection
 supervisor's restart circuit, publishes `Failing` to the UI, and stops automatic retries.
 
@@ -91,6 +91,15 @@ An Agent registration may include `effectSurfaces`. Each declaration contains
 Workspace path. Ora validates the portable relative locator, combines declarations from all live
 Agent plugins, and persists one merged surface/consumer snapshot for every local Workspace.
 
+Restart replaces the agent instance, so **every ACP session that instance was serving is invalid
+once `effect/restart` returns.** Ora owns that consequence: after a restart that followed a barrier
+it detaches the live sessions bound to that agent, and each one is re-established through the
+ordinary `session/load` path before its next prompt. A plugin therefore does not have to keep
+session ids alive across a restart, and must not replay host frames it captured behind the barrier —
+those carry session ids the replaced instance can no longer resolve, and re-sending them bypasses
+the re-establishment Ora is performing. Frames held at the barrier should be failed back to the host
+instead, which re-sends them once the session is loaded again.
+
 For `wait_for_idle_and_restart`, the plugin must register both `effect/waitForIdle` and
 `effect/restart`. `effect/waitForIdle` is idempotent by `surfaceKey`: it returns
 `waiting_for_idle` while any affected instance is serving a turn, and returns `ready` only after it
@@ -104,6 +113,13 @@ that claim's lease while coordination waits on a consumer, so a plugin that neve
 lease interval rather than the surface. A consumer whose plugin is not currently running is skipped
 rather than started: it holds no turn a mutation could corrupt, and it reads the surface fresh when
 it next starts.
+
+The worker also owns the other half of that snapshot. A declaration can only reach the Workspaces
+that exist at the moment its plugin starts, so every pass re-derives the surface set and registers
+the current declarations into any local Workspace that owns none. Keeping the surface set a
+convergence result rather than the side effect of one process event is what makes a Workspace
+created while a plugin is already running materialize on its own, instead of waiting for that
+plugin's next start.
 
 ## Sandboxing
 

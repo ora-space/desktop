@@ -9,28 +9,51 @@ export interface WorkflowGraphEnvelope {
   nodes: WorkflowDefinitionNode[];
   edges: WorkflowDefinitionEdge[];
   viewport: WorkflowViewport;
+  annotations: WorkflowGraphAnnotation[];
   description?: string;
 }
 
+/** Serializable editor note kept outside the executable node list. */
+export interface WorkflowGraphAnnotation {
+  id: string;
+  type: "annotation";
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+  selected?: boolean;
+  data: {
+    text: string;
+    theme: "yellow" | "blue" | "green" | "pink" | "gray";
+  };
+}
+
 const DEFAULT_VIEWPORT: WorkflowViewport = { x: 0, y: 0, zoom: 1 };
+const WORKFLOW_ANNOTATION_THEMES = new Set([
+  "yellow",
+  "blue",
+  "green",
+  "pink",
+  "gray",
+]);
 
 /**
  * Serializes the editor graph into the JSON envelope stored in a snapshot's graph column.
  *
- * The envelope carries only serializable geometry and the description; the workflow name and
- * timestamps stay on the Workflow record, so description is the sole editor metadata entering
- * the graph string. Unknown fields ride through the JSON round-trip unchanged.
+ * The envelope carries serializable geometry, annotations, and the description; the workflow
+ * name and timestamps stay on the Workflow record. Unknown fields ride through parsing unchanged.
  */
 export function serializeWorkflowGraph(input: {
   nodes: readonly WorkflowDefinitionNode[];
   edges: readonly WorkflowDefinitionEdge[];
   viewport: WorkflowViewport;
+  annotations?: readonly WorkflowGraphAnnotation[];
   description?: string;
 }): string {
   return JSON.stringify({
     nodes: input.nodes,
     edges: input.edges,
     viewport: input.viewport,
+    annotations: input.annotations ?? [],
     ...(input.description === undefined
       ? {}
       : { description: input.description }),
@@ -48,10 +71,20 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
   try {
     value = JSON.parse(graph);
   } catch {
-    return { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT };
+    return {
+      nodes: [],
+      edges: [],
+      viewport: DEFAULT_VIEWPORT,
+      annotations: [],
+    };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT };
+    return {
+      nodes: [],
+      edges: [],
+      viewport: DEFAULT_VIEWPORT,
+      annotations: [],
+    };
   }
   const record = value as Record<string, unknown>;
   // Spread the raw record first so unknown fields added by future versions survive a
@@ -67,11 +100,38 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
     viewport: isWorkflowViewport(record.viewport)
       ? record.viewport
       : DEFAULT_VIEWPORT,
+    annotations: Array.isArray(record.annotations)
+      ? record.annotations.filter(isWorkflowGraphAnnotation)
+      : [],
   };
   if (typeof record.description === "string") {
     envelope.description = record.description;
   }
   return envelope;
+}
+
+/** Guards editor-note data before custom nodes render persisted content. */
+function isWorkflowGraphAnnotation(
+  value: unknown,
+): value is WorkflowGraphAnnotation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const annotation = value as Record<string, unknown>;
+  const position = annotation.position as Record<string, unknown> | undefined;
+  const data = annotation.data as Record<string, unknown> | undefined;
+  return (
+    typeof annotation.id === "string" &&
+    annotation.id.trim() !== "" &&
+    annotation.type === "annotation" &&
+    typeof position?.x === "number" &&
+    Number.isFinite(position.x) &&
+    typeof position.y === "number" &&
+    Number.isFinite(position.y) &&
+    typeof data?.text === "string" &&
+    typeof data.theme === "string" &&
+    WORKFLOW_ANNOTATION_THEMES.has(data.theme)
+  );
 }
 
 /**

@@ -74,7 +74,6 @@ impl SurfaceConnection for FakeConnection {
 struct FakeGateway {
     data_root: PathBuf,
     connection: FakeConnection,
-    enabled: bool,
 }
 
 impl FakeGateway {
@@ -82,7 +81,6 @@ impl FakeGateway {
         Self {
             data_root,
             connection: FakeConnection::default(),
-            enabled: true,
         }
     }
 
@@ -122,10 +120,6 @@ impl SurfacePluginGateway for FakeGateway {
             }),
             _ => None,
         }
-    }
-
-    fn plugin_enabled(&self, _plugin_id: &PluginId) -> bool {
-        self.enabled
     }
 
     fn data_directory(&self, _plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure> {
@@ -282,21 +276,19 @@ fn opening_a_webview_singleton_twice_reuses_the_instance() {
     );
 }
 
-/// A disabled plugin cannot be opened, and an unknown plugin is not found.
+/// An unknown plugin cannot be opened.
 #[test]
-fn refuses_disabled_and_unknown_plugins() {
+fn refuses_unknown_plugins() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut gateway = FakeGateway::new(temp.path().to_path_buf());
-    gateway.enabled = false;
+    let gateway = FakeGateway::new(temp.path().to_path_buf());
     let (_app, service, _events) = harness(gateway);
 
-    let disabled = service.open(&webview_plugin(), MountTarget::Windowed);
     let unknown = service.open(
         &PluginId::new("official", "acme.missing").expect("plugin id"),
         MountTarget::Windowed,
     );
 
-    assert_eq!((disabled.is_err(), unknown.is_err()), (true, true));
+    assert!(unknown.is_err());
 }
 
 /// The workbench asset protocol serves a file below the instance's asset root, marks the HTML

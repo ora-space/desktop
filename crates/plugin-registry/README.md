@@ -6,7 +6,10 @@
 ## Responsibilities
 
 - `RegistrySync::sync` clones a marketplace source when absent, otherwise fetches, checks out the
-  tracked branch, and fast-forwards it against its remote through an injected `gitlancer::Git`.
+  tracked branch, and fast-forwards it against its remote through an injected `gitlancer::Git`;
+  the environment held by the source (`RegistrySource::git_env`) is applied to those Git commands.
+- `RegistrySource` carries a `gitlancer::GitEnv` set with `with_git_env` and read with `git_env`,
+  allowing callers such as the backend to opt individual marketplace checkouts into a network proxy.
 - `RegistrySource::from_git` derives a source's checkout directory from its git URL beneath the
   sources root, so several marketplace sources can be synced side by side without a manual
   URL-to-directory mapping.
