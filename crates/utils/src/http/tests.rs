@@ -374,4 +374,41 @@ mod reqwest_integration {
         }
         assert!(!destination.exists());
     }
+
+    /// A failed connection surfaces the full reqwest cause chain instead of only the outermost
+    /// message, so the real TLS/connect reason stays visible.
+    ///
+    /// We point at a loopback port that refuses connections (`127.0.0.1:1`), which forces a
+    /// connect-time failure whose error carries an inner cause (the underlying connect error).
+    #[tokio::test]
+    async fn network_error_preserves_cause_chain() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let destination = temp_dir.path().join("pkg.orax");
+        let downloader = ReqwestDownloader::new(Default::default());
+        // Port 1 is reserved and refuses TCP connections, guaranteeing a connect-time failure.
+        let url = Url::parse("http://127.0.0.1:1/pkg.orax").unwrap();
+
+        let error = downloader
+            .download(DownloadRequest {
+                source: DownloadSource::Url(url),
+                destination: destination.clone(),
+                checksum: None,
+                options: DownloadOptions::default(),
+                progress: None,
+                cancel: None,
+            })
+            .await
+            .unwrap_err();
+
+        let message = match error {
+            DownloadError::Network { source, .. } => source.to_string(),
+            other => panic!("expected network error, got {other:?}"),
+        };
+        // The flattened chain must keep the outermost message plus at least one inner cause,
+        // proving the " <- " joining happened instead of only `error.to_string()`.
+        assert!(
+            message.contains(" <- "),
+            "expected a cause chain joined by ' <- ', got: {message}"
+        );
+    }
 }

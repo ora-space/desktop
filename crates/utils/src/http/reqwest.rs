@@ -6,6 +6,7 @@
 //! variables, so it needs an async runtime provided by the caller.
 
 use sha2::{Digest, Sha256};
+use std::error::Error as StdError;
 use std::fs::File;
 use std::future::Future;
 use std::io::Write;
@@ -242,12 +243,30 @@ fn proxy_reqwest(proxy: Proxy) -> Result<reqwest::Proxy, DownloadError> {
 /// Wraps a reqwest transport error as a structured error, carrying a URL for context.
 ///
 /// The shared error model exposes `io::Error` as the transport source, so the richer `reqwest::Error`
-/// is flattened into a displayable error string.
+/// is flattened into a displayable error string that preserves the full cause chain, so the real
+/// failure reason (for example a TLS certificate verification error) is not hidden behind the
+/// outermost "error sending request" message.
 fn network_error(url: &Url, error: reqwest::Error) -> DownloadError {
     DownloadError::Network {
         url: url.clone(),
-        source: std::io::Error::other(error.to_string()),
+        source: std::io::Error::other(flatten_reqwest_error(&error)),
     }
+}
+
+/// Flattens a reqwest error and its whole cause chain into a single displayable string.
+///
+/// reqwest's `Display` only surfaces the outermost error (for example "error sending request for
+/// url ..."), hiding the underlying cause (such as "invalid peer certificate: UnknownIssuer") in
+/// its `source()` chain. Joining every link with " <- " keeps that context without pulling in a
+/// logging dependency.
+fn flatten_reqwest_error(error: &reqwest::Error) -> String {
+    let mut links: Vec<String> = vec![error.to_string()];
+    let mut current: Option<&(dyn StdError + 'static)> = error.source();
+    while let Some(cause) = current {
+        links.push(cause.to_string());
+        current = cause.source();
+    }
+    links.join(" <- ")
 }
 
 /// Returns true for failures that are worth retrying (transient or rate-limited).
