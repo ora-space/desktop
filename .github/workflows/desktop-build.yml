@@ -63,13 +63,13 @@ jobs:
       # Installs the toolchain pinned by rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
-      # Two independent cargo workspaces: the root workspace (compiled by
-      # `cargo xtask export-contracts`) and the standalone src-tauri workspace.
+      # The Tauri crate is a member of the single root cargo workspace, so
+      # `tauri build` compiles the binary and writes every bundle into the
+      # root `target/` directory (there is no separate src-tauri workspace).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
-            apps/desktop/src-tauri -> target
       # System libraries required to compile and bundle Tauri 2 on Ubuntu 22.04.
       # Keep in sync with https://v2.tauri.app/start/prerequisites/#linux when
       # upgrading Tauri.
@@ -104,15 +104,20 @@ jobs:
         env:
           DENO_VERSION: v2.9.5
           RG_VERSION: 15.2.0
+      # Each platform produces only the bundle types valid for its OS
+      # (macOS=dmg, Windows=nsis, Linux=appimage+deb). Listing all four
+      # globs is safe: upload-artifact combines them into one search and
+      # only fails when the combined result is empty, so a per-platform
+      # miss on the other types never trips `if-no-files-found: error`.
       - uses: actions/upload-artifact@v6
         with:
           name: ora-desktop-${{ matrix.os }}
           if-no-files-found: error
           path: |
-            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
 
   release:
     needs: bundle
