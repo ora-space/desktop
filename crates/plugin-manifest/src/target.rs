@@ -31,12 +31,12 @@ impl HookTarget {
         if value.chars().any(char::is_control) {
             return Err(HookTargetError::ContainsControlCharacter);
         }
-        // Triples are produced by build scripts and consumed verbatim, so whitespace or any
-        // non-ASCII byte is a packaging mistake rather than a portable value.
-        if value
-            .chars()
-            .any(|character| character.is_whitespace() || !character.is_ascii())
-        {
+        if value.chars().any(char::is_whitespace) {
+            return Err(HookTargetError::ContainsWhitespace);
+        }
+        // Triples are produced by build scripts and consumed verbatim, so any non-ASCII byte is a
+        // packaging mistake rather than a portable value.
+        if !value.is_ascii() {
             return Err(HookTargetError::NonAscii);
         }
 
@@ -79,6 +79,8 @@ pub enum HookTargetError {
     },
     #[error("target triple must not contain control characters")]
     ContainsControlCharacter,
+    #[error("target triple must not contain whitespace")]
+    ContainsWhitespace,
     #[error("target triple must contain ASCII text only")]
     NonAscii,
 }
@@ -114,7 +116,7 @@ mod tests {
         );
         assert_eq!(
             HookTarget::parse("x86_64-pc-windows-msvc "),
-            Err(HookTargetError::NonAscii)
+            Err(HookTargetError::ContainsWhitespace)
         );
         assert_eq!(
             HookTarget::parse("x86_64-pc-windows-msvcß"),

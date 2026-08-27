@@ -13,8 +13,8 @@ that actually exist. When a process starts depends on the contribution kind: ena
 plugin also launches it, because its agent supervisor attaches to a running process rather than
 starting one, so durable intent and reported runtime never disagree beyond the transition itself;
 enabling a workbench plugin only records eligibility, because its process is started on demand by
-the first surface that needs it and stopped again when it has been idle. Webview, skill, and MCP
-plugins have no process; enabling them records eligibility and reports an `enabled` + `stopped`
+the first surface that needs it and stopped again when it has been idle. Webview, skill, MCP, and
+Hook plugins have no process; enabling them records eligibility and reports an `enabled` + `stopped`
 state.
 
 Consumers that need to speak a protocol over a plugin connect to it instead of launching it
@@ -71,8 +71,8 @@ launch, never by request params.
 
 After a successful handshake the registration is validated against the manifest kind
 (`validate_registration`). Workbench registrations may expose well-formed methods but cannot
-declare emitted notifications. Webview, skill, and MCP plugins cannot register because they have
-no process. Agent contracts are verified by the backend's agent runtime, not here.
+declare emitted notifications. Webview, skill, MCP, and Hook plugins cannot register because they
+have no process. Agent contracts are verified by the backend's agent runtime, not here.
 
 ## Storage host methods
 

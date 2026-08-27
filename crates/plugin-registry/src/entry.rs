@@ -30,20 +30,25 @@ pub struct RegistryEntry {
     logo: Option<String>,
     /// Cached release-source target support, so the UI can disable installation of an
     /// unsupported target before downloading any artifact.
+    ///
+    /// `None` means the listing has no downloadable release. `Some([])` is a universal release
+    /// compatible with every host. `Some(non-empty)` lists the exact target triples.
     #[serde(default)]
-    release_targets: Vec<String>,
+    release_targets: Option<Vec<String>>,
 }
 
 impl RegistryEntry {
     /// Builds one index record from a validated plugin manifest and its already-validated icon.
     pub(crate) fn from_manifest(manifest: &PluginManifest, logo: Option<String>) -> Self {
         let release_targets = match manifest.release_source() {
-            Some(PluginReleaseSource::Universal { .. }) => Vec::new(),
-            Some(PluginReleaseSource::Targets(targets)) => targets
-                .iter()
-                .map(|target| target.target().as_str().to_owned())
-                .collect(),
-            None => Vec::new(),
+            Some(PluginReleaseSource::Universal { .. }) => Some(Vec::new()),
+            Some(PluginReleaseSource::Targets(targets)) => Some(
+                targets
+                    .iter()
+                    .map(|target| target.target().as_str().to_owned())
+                    .collect(),
+            ),
+            None => None,
         };
         Self {
             id: entry_id(manifest),
@@ -98,38 +103,47 @@ impl RegistryEntry {
         self.logo.as_deref()
     }
 
-    /// Returns the target triples the release ships artifacts for, empty for a universal
-    /// release or a release without downloadable artifacts.
-    pub fn release_targets(&self) -> &[String] {
-        &self.release_targets
+    /// Returns the target triples the release ships artifacts for.
+    ///
+    /// `None` means the listing has no downloadable release. An empty slice is a universal
+    /// release. A non-empty slice is the exact targeted triples.
+    pub fn release_targets(&self) -> Option<&[String]> {
+        self.release_targets.as_deref()
     }
 
     /// Returns whether the current host can install this release.
-    ///
-    /// A universal release (empty `release_targets`) is always compatible; a targeted release is
-    /// compatible only when the host target triple appears in the cached target list.
     pub fn is_compatible_with_host(&self) -> bool {
-        self.incompatible_reason_for_host().is_none()
+        self.host_compatibility().is_ok()
     }
 
     /// Returns a human-readable incompatibility reason for the current host, or `None` when the
     /// host can install the release.
     pub fn incompatible_reason_for_host(&self) -> Option<String> {
-        if self.release_targets.is_empty() {
-            return None;
-        }
-        let host = crate::host::current_host_target();
-        if self
-            .release_targets
-            .iter()
-            .any(|target| target == host.as_str())
-        {
-            None
-        } else {
-            Some(format!(
-                "this release supports {} but your host is {host}",
-                self.release_targets.join(", ")
-            ))
+        self.host_compatibility().err()
+    }
+
+    /// Computes host compatibility once so callers can take either the success or the reason
+    /// without allocating a reason string just to discard it.
+    pub fn host_compatibility(&self) -> Result<(), String> {
+        match &self.release_targets {
+            None => Err("this listing has no downloadable release".to_string()),
+            Some(targets) if targets.is_empty() => Ok(()),
+            Some(targets) => {
+                let Some(host) = crate::host::current_host_target() else {
+                    return Err(format!(
+                        "this release supports {} but the host is not a supported plugin target",
+                        targets.join(", ")
+                    ));
+                };
+                if targets.iter().any(|target| target == host.as_str()) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "this release supports {} but your host is {host}",
+                        targets.join(", ")
+                    ))
+                }
+            }
         }
     }
 }

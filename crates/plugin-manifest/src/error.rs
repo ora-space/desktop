@@ -191,6 +191,12 @@ pub enum InvalidFieldReason {
     MissingForKind { kind: PluginKind },
     #[error("section is not allowed for plugin kind `{kind}`")]
     NotAllowedForKind { kind: PluginKind },
+    #[error("field is required when declaring a universal release")]
+    MissingUniversalReleaseField,
+    #[error("targeted download list is not allowed on an installed manifest")]
+    TargetsNotAllowedOnInstalled,
+    #[error("installed `[artifact]` is not allowed on a release manifest")]
+    ArtifactNotAllowedOnRelease,
     #[error("invalid slug: {0}")]
     InvalidSlug(#[from] SlugError),
     #[error("value is declared more than once")]

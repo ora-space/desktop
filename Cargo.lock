@@ -2985,6 +2985,7 @@ dependencies = [
  "ora-plugin-config",
  "ora-plugin-lifecycle",
  "ora-plugin-manager",
+ "ora-plugin-manifest",
  "ora-plugin-registry",
  "ora-plugin-runtime",
  "ora-process",

@@ -1,9 +1,9 @@
 use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
     InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
-    PageMatcher, PathPrefix, PluginArtifact, PluginDependencies, PluginHead, PluginKind,
-    PluginManifest, PluginName, PluginNamespace, PluginReleaseSource, PluginWebview,
-    PluginWorkbench, ReleaseUrl, RepositoryUrl, RuleField, Sha256Digest, StartUrl,
+    PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
+    PluginName, PluginNamespace, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseUrl,
+    RepositoryUrl, RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -1184,4 +1184,92 @@ fn hook_kind_rejects_workbench_and_webview_sections() {
         panic!("expected workbench rejection for hook kind");
     };
     assert_eq!(field, ManifestField::Workbench);
+
+    let webview = TARGETED_HOOK_MANIFEST.to_owned()
+        + "\n[webview]\nstart_url = \"https://a.example\"\nallowed_origins = [\"https://a.example\"]\n";
+    let Err(ManifestError::InvalidField { field, .. }) = PluginManifest::parse(&webview) else {
+        panic!("expected webview rejection for hook kind");
+    };
+    assert_eq!(field, ManifestField::Webview);
+}
+
+/// A release manifest cannot carry the installed `[artifact]` self-declaration.
+#[test]
+fn rejects_artifact_section_on_release_manifest() {
+    let source =
+        TARGETED_HOOK_MANIFEST.to_owned() + "\n[artifact]\ntarget = \"x86_64-pc-windows-msvc\"\n";
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(&source) else {
+        panic!("expected artifact rejection on release form");
+    };
+    assert_eq!(field, ManifestField::Artifact);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::ArtifactNotAllowedOnRelease
+    ));
+}
+
+/// An installed manifest cannot carry the marketplace `[[targets]]` download list.
+#[test]
+fn rejects_targets_section_on_installed_manifest() {
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(TARGETED_HOOK_MANIFEST)
+    else {
+        panic!("expected targets rejection on installed form");
+    };
+    assert_eq!(field, ManifestField::Targets);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::TargetsNotAllowedOnInstalled
+    ));
+}
+
+/// `[artifact]` is exclusive to the hook kind on an installed package.
+#[test]
+fn rejects_artifact_section_for_non_hook_kinds() {
+    let source = r#"resolver = 1
+identifier = "weather"
+namespace = "official"
+kind = "agent"
+version = "1.0.0"
+description = "Weather agent"
+
+[artifact]
+target = "x86_64-pc-windows-msvc"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(source)
+    else {
+        panic!("expected artifact rejection for non-hook kind");
+    };
+    assert_eq!(field, ManifestField::Artifact);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::NotAllowedForKind {
+            kind: PluginKind::Agent
+        }
+    ));
+}
+
+/// An installed hook package must self-declare `[artifact]`.
+#[test]
+fn rejects_installed_hook_without_artifact() {
+    let source = r#"resolver = 1
+identifier = "rtk-ai.rtk"
+namespace = "official"
+kind = "hook"
+version = "0.1.0"
+description = "RTK command rewrite hook"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(source)
+    else {
+        panic!("expected missing artifact rejection");
+    };
+    assert_eq!(field, ManifestField::Artifact);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::MissingForKind {
+            kind: PluginKind::Hook
+        }
+    ));
 }

@@ -57,10 +57,12 @@ Call `PluginManager::discover(data_dir)` once during application bootstrap. Cons
 resulting snapshot through `installed_plugins()` and report any non-fatal problems from
 `discovery_issues()`. `installed_root(data_dir)`, `MANIFEST_FILE_NAME`, and
 `INSTALLED_ENTRYPOINT` expose the layout to callers that write or inspect it. A local `.orax`
-archive is imported with `Installer::install_local(archive_path, data_dir)`, which returns an
-`InstalledPackage` carrying the materialized `package_dir` and the `namespace/name` plugin id
-derived from the in-archive manifest. `Installer::new` accepts any `HttpDownload`; `install`
-returns the package directory it extracted into.
+archive is imported with `Installer::install_local(archive_path, data_dir, host_target)`, which
+returns an `InstalledPackage` carrying the materialized `package_dir` and the `namespace/name`
+plugin id derived from the in-archive manifest. `host_target` is `Some` for the current host's
+canonical triple and `None` when the compiled host is not a supported plugin target; Hook
+archives must match that triple, while other kinds ignore it. `Installer::new` accepts any
+`HttpDownload`; `install` returns the package directory it extracted into.
 
 ## Validation split
 

@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
+import type { TFunction } from "i18next";
+import type {
+  AvailablePlugin,
+  InstalledPlugin,
+  InstallOutcome,
+} from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -101,7 +106,14 @@ export function PluginsSettings({
       importPlugin.mutate(
         { path },
         {
-          onSuccess: () => toast.success(t("settings.plugins.importSuccess")),
+          onSuccess: (response) =>
+            toast.success(
+              installOutcomeMessage(
+                response.outcome,
+                t,
+                "settings.plugins.importSuccess",
+              ),
+            ),
           onError: (cause) =>
             toast.error(t("settings.plugins.importFailed"), {
               description: localizeContractError(cause, t),
@@ -257,12 +269,21 @@ function AvailablePluginRow({
   const busy = install.isPending || mutations.uninstall.isPending;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
-  const incompatible = !plugin.compatible;
+  const incompatible = plugin.compatibility === "incompatible";
 
   const failInstall = (cause: unknown) => {
     toast.error(t("settings.plugins.installFailed"), {
       description: localizeContractError(cause, t),
     });
+  };
+  const succeedInstall = (response: { outcome: InstallOutcome }) => {
+    toast.success(
+      installOutcomeMessage(
+        response.outcome,
+        t,
+        "settings.plugins.installSuccess",
+      ),
+    );
   };
   const failUninstall = (cause: unknown) => {
     toast.error(t("settings.plugins.uninstallFailed"), {
@@ -304,7 +325,12 @@ function AvailablePluginRow({
             size="sm"
             className="shrink-0"
             disabled={incompatible}
-            onClick={() => install.mutate({}, { onError: failInstall })}
+            onClick={() =>
+              install.mutate(
+                {},
+                { onError: failInstall, onSuccess: succeedInstall },
+              )
+            }
           >
             {t("settings.plugins.install")}
           </Button>
@@ -318,9 +344,9 @@ function AvailablePluginRow({
             {t("settings.plugins.uninstall")}
           </Button>
         )}
-        {incompatible && plugin.incompatibleReason !== null && (
+        {plugin.compatibility === "incompatible" && (
           <span className="block text-xs text-muted-foreground">
-            {plugin.incompatibleReason}
+            {plugin.reason}
           </span>
         )}
       </div>
@@ -369,4 +395,19 @@ function AvailablePluginRow({
       </AlertDialog>
     </>
   );
+}
+
+/** Maps a typed install outcome to the toast the settings surface already shows. */
+function installOutcomeMessage(
+  outcome: InstallOutcome,
+  t: TFunction,
+  successKey:
+    "settings.plugins.installSuccess" | "settings.plugins.importSuccess",
+): string {
+  if (outcome.state === "installed_but_disabled") {
+    return t("settings.plugins.installDisabledConflict", {
+      pluginId: outcome.conflictPluginId,
+    });
+  }
+  return t(successKey);
 }

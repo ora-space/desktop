@@ -30,10 +30,12 @@
   `RegistryBuild::skipped` without blocking the whole build.
 - Each entry caches the release-source target support (`release_targets`) so the UI can disable
   installation of an unsupported target before downloading any artifact.
-  `is_compatible_with_host` resolves the current host's canonical Rust target triple
-  (`current_host_target`) and reports whether the release has a matching artifact; an incompatible
-  release carries a human-readable `incompatible_reason_for_host`. A universal release (empty
-  `release_targets`) is always compatible.
+  `is_compatible_with_host` / `host_compatibility` resolve the current host's canonical Rust
+  target triple (`current_host_target`, `None` on an unsupported host) and report whether the
+  release has a matching artifact. `release_targets` is `None` when the listing has no
+  downloadable release, `Some([])` for a universal release that is always compatible, and
+  `Some(non-empty)` for the exact targeted triples. An incompatible release carries a
+  human-readable `incompatible_reason_for_host`.
 
 ## Non-responsibilities
 

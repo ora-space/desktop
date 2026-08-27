@@ -1,7 +1,9 @@
 //! Host-side validation of the `mcp` kind: a configuration-only package whose single artifact
 //! is the compiled MCP Configuration from `assets/config.json`.
 
-use crate::validation::{INSTALLED_ENTRYPOINT, ManifestValidationError, invalid};
+use crate::validation::{
+    CONFIGURATION_FILE, INSTALLED_ENTRYPOINT, ManifestValidationError, invalid,
+};
 use ora_plugin_config::{
     CompileConfigurationFileError, CompiledConfigurationFile, CompiledMcpConfiguration,
     McpStdioTransport, McpTransport,
@@ -10,7 +12,7 @@ use ora_utils::path::CanonicalPathRoot;
 use std::path::Path;
 
 /// Package-relative path of the MCP configuration file mandated by the spec.
-pub const MCP_CONFIGURATION_FILE: &str = "assets/config.json";
+pub const MCP_CONFIGURATION_FILE: &str = CONFIGURATION_FILE;
 
 /// Holds the Installed MCP Descriptor of one mcp-kind package.
 ///

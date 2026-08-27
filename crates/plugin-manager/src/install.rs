@@ -1,7 +1,7 @@
 //! Installs a plugin release by downloading its package and safely extracting it.
 
 use crate::discovery::installed_root;
-use ora_plugin_manifest::{HookTarget, PluginManifest, PluginReleaseSource};
+use ora_plugin_manifest::{HookTarget, PluginKind, PluginManifest, PluginReleaseSource};
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::hash;
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
@@ -46,9 +46,17 @@ pub enum InstallError {
         "installed artifact target {artifact} does not match the selected release target {release}"
     )]
     TargetMismatch { release: String, artifact: String },
+    /// A targeted archive is missing the in-package `[artifact]` self-declaration required to
+    /// prove host compatibility independently of marketplace metadata.
+    #[error("targeted archive does not declare an [artifact] target")]
+    MissingArtifactTarget,
     /// The release does not provide an artifact for the requested host target.
     #[error("release has no artifact for target {target}")]
     NoArtifactForTarget { target: String },
+    /// The compiled host is not a supported plugin target, so a targeted release cannot be
+    /// selected and a Hook archive cannot be matched against the machine it would run on.
+    #[error("current host is not a supported plugin target")]
+    UnsupportedHost,
     /// A plugin with the same namespace, name, and version is already installed.
     #[error(
         "a plugin with namespace `{namespace}` name `{name}` version `{version}` is already installed at {path}"
@@ -83,7 +91,6 @@ impl InstallError {
     }
 }
 
-/// Describes one package materialized from a local release archive.
 /// Carries the resolved download source and digest for one release, after target selection.
 ///
 /// The backend resolves this from a release manifest before handing it to the installer, so the
@@ -134,13 +141,13 @@ impl ResolvedReleaseSource {
 
 /// Selects the release source matching `host_target` from a manifest's `release_source()`.
 ///
-/// A universal release resolves to the single URL/digest pair regardless of target. A targeted
-/// release resolves to the one exact-matching target, returning `NoArtifactForTarget` when the
-/// host target has no matching artifact so the host can reject an unsupported target before
-/// download.
+/// A universal release resolves to the single URL/digest pair regardless of host. A targeted
+/// release requires a supported host and resolves to the one exact-matching target, returning
+/// `UnsupportedHost` when the compiled host is not a plugin target and `NoArtifactForTarget`
+/// when that host has no matching artifact, so the caller can reject before download.
 pub fn select_release(
     manifest: &PluginManifest,
-    host_target: &HookTarget,
+    host_target: Option<&HookTarget>,
 ) -> Result<ResolvedReleaseSource, InstallError> {
     match manifest.release_source() {
         Some(PluginReleaseSource::Universal { url, sha256 }) => {
@@ -150,6 +157,7 @@ pub fn select_release(
             ))
         }
         Some(PluginReleaseSource::Targets(targets)) => {
+            let host_target = host_target.ok_or(InstallError::UnsupportedHost)?;
             let entry = targets
                 .iter()
                 .find(|entry| entry.target() == host_target)
@@ -166,6 +174,7 @@ pub fn select_release(
     }
 }
 
+/// Describes one package materialized from a local release archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPackage {
     /// The package directory below `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
@@ -245,30 +254,31 @@ where
         })?;
         crate::validation::validate(staging.path(), manifest, None)
             .map_err(InstallError::invalid_package)?;
-        // A targeted archive self-declares its target in an in-package `[artifact]` section, which
-        // lives in the installed form of `orax.toml` rather than the release manifest the registry
-        // supplied. Reading the in-package manifest here keeps the host-compatibility check
-        // independent of marketplace metadata, exactly like local import.
+        // A targeted archive must self-declare its target in an in-package `[artifact]` section.
+        // Missing the installed manifest or the section fails closed so a wrong-architecture
+        // archive cannot install as valid. Local import applies the same check against the host.
         if let Some(selected) = source.target() {
             let installed_manifest_path = staging.path().join(crate::discovery::MANIFEST_FILE_NAME);
-            if installed_manifest_path.is_file() {
-                let installed_source =
-                    std::fs::read_to_string(&installed_manifest_path).map_err(|source| {
-                        InstallError::Io {
-                            path: installed_manifest_path.clone(),
-                            source,
-                        }
-                    })?;
-                let installed_manifest =
-                    ora_plugin_manifest::PluginManifest::parse_installed(&installed_source)?;
-                if let Some(artifact) = installed_manifest.artifact()
-                    && selected != artifact.target()
-                {
-                    return Err(InstallError::TargetMismatch {
-                        release: selected.to_string(),
-                        artifact: artifact.target().to_string(),
-                    });
-                }
+            if !installed_manifest_path.is_file() {
+                return Err(InstallError::MissingManifest);
+            }
+            let installed_source =
+                std::fs::read_to_string(&installed_manifest_path).map_err(|source| {
+                    InstallError::Io {
+                        path: installed_manifest_path.clone(),
+                        source,
+                    }
+                })?;
+            let installed_manifest =
+                ora_plugin_manifest::PluginManifest::parse_installed(&installed_source)?;
+            let Some(artifact) = installed_manifest.artifact() else {
+                return Err(InstallError::MissingArtifactTarget);
+            };
+            if selected != artifact.target() {
+                return Err(InstallError::TargetMismatch {
+                    release: selected.to_string(),
+                    artifact: artifact.target().to_string(),
+                });
             }
         }
         std::fs::rename(staging.path(), &package_dir).map_err(|source| InstallError::Io {
@@ -284,11 +294,15 @@ where
     /// a disposable staging directory first, reads and validates the in-archive `orax.toml`, and
     /// only then moves the verified tree into
     /// `<data-dir>/plugins/installed/<namespace>/<name>/<version>`. A `sha256` declared by the
-    /// in-archive manifest is checked against the archive before anything is committed.
+    /// in-archive manifest is checked against the archive before anything is committed. A Hook
+    /// archive must self-declare `[artifact]` and that target must match `host_target`; other
+    /// kinds ignore the host. `host_target` is `None` when the compiled host is not a supported
+    /// plugin target, which refuses Hook imports and leaves universal packages installable.
     pub fn install_local(
         &self,
         archive_path: &Path,
         data_dir: &Path,
+        host_target: Option<&HookTarget>,
     ) -> Result<InstalledPackage, InstallError> {
         let plugins_dir = data_dir.join("plugins");
         // Importing may target a profile that never synced the marketplace, so the plugins
@@ -355,6 +369,20 @@ where
         }
         crate::validation::validate(staging.path(), &manifest, None)
             .map_err(InstallError::invalid_package)?;
+        if matches!(manifest.kind(), PluginKind::Hook) {
+            let Some(artifact) = manifest.artifact() else {
+                return Err(InstallError::MissingArtifactTarget);
+            };
+            let Some(host_target) = host_target else {
+                return Err(InstallError::UnsupportedHost);
+            };
+            if artifact.target() != host_target {
+                return Err(InstallError::TargetMismatch {
+                    release: host_target.to_string(),
+                    artifact: artifact.target().to_string(),
+                });
+            }
+        }
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent).map_err(|source| InstallError::Io {
                 path: parent.to_path_buf(),
@@ -411,7 +439,7 @@ where
 mod tests {
     use super::{InstallError, InstalledPackage, Installer, ResolvedReleaseSource};
     use futures::executor::block_on;
-    use ora_plugin_manifest::PluginManifest;
+    use ora_plugin_manifest::{HookTarget, PluginManifest};
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
@@ -438,6 +466,11 @@ mod tests {
             output.push(char::from(HEX_DIGITS[(byte & 0x0f) as usize]));
         }
         output
+    }
+
+    /// Returns the Windows x86_64 host triple used by Hook local-import tests.
+    fn windows_host() -> HookTarget {
+        HookTarget::parse("x86_64-pc-windows-msvc").unwrap()
     }
 
     /// Writes an orax-shaped zip package with the given files.
@@ -556,7 +589,13 @@ mod tests {
         ))
         .expect("install marketplace Skill release");
 
-        assert!(package_dir.join("assets/review/SKILL.md").is_file());
+        assert!(
+            package_dir
+                .join("assets")
+                .join("review")
+                .join("SKILL.md")
+                .is_file()
+        );
         assert!(!package_dir.join("main.js").exists());
     }
 
@@ -624,7 +663,7 @@ mod tests {
 
         let installer = Installer::new(LocalFileDownloader);
         let package = installer
-            .install_local(&release_path, temp_dir.path())
+            .install_local(&release_path, temp_dir.path(), None)
             .expect("import static Skill archive");
 
         assert_eq!(package.id, "official/ora.skill-pack");
@@ -639,11 +678,20 @@ mod tests {
                 .join("0.1.1")
         );
         assert!(package.package_dir.join("orax.toml").is_file());
-        assert!(package.package_dir.join("assets/review/SKILL.md").is_file());
         assert!(
             package
                 .package_dir
-                .join("assets/testing/SKILL.md")
+                .join("assets")
+                .join("review")
+                .join("SKILL.md")
+                .is_file()
+        );
+        assert!(
+            package
+                .package_dir
+                .join("assets")
+                .join("testing")
+                .join("SKILL.md")
                 .is_file()
         );
         assert!(!package.package_dir.join("main.js").exists());
@@ -663,7 +711,7 @@ mod tests {
         );
 
         let error = Installer::new(LocalFileDownloader)
-            .install_local(&release_path, temp_dir.path())
+            .install_local(&release_path, temp_dir.path(), None)
             .unwrap_err();
 
         assert!(matches!(
@@ -673,7 +721,11 @@ mod tests {
         assert!(
             !temp_dir
                 .path()
-                .join("plugins/installed/official/ora.skill-pack/0.1.1")
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("ora.skill-pack")
+                .join("0.1.1")
                 .exists()
         );
     }
@@ -697,7 +749,7 @@ mod tests {
 
         let installer = Installer::new(LocalFileDownloader);
         let package = installer
-            .install_local(&release_path, temp_dir.path())
+            .install_local(&release_path, temp_dir.path(), None)
             .expect("import agent archive into a fresh profile");
 
         assert_eq!(
@@ -757,8 +809,8 @@ mod tests {
         ))
         .expect("install targeted hook release");
 
-        assert!(package_dir.join("assets/rtk.exe").is_file());
-        assert!(package_dir.join("assets/config.json").is_file());
+        assert!(package_dir.join("assets").join("rtk.exe").is_file());
+        assert!(package_dir.join("assets").join("config.json").is_file());
         assert!(!package_dir.join("main.js").exists());
     }
 
@@ -806,9 +858,83 @@ mod tests {
         assert!(
             !temp_dir
                 .path()
-                .join("plugins/installed/official/rtk-ai.rtk/0.1.0")
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("rtk-ai.rtk")
+                .join("0.1.0")
                 .exists()
         );
+    }
+
+    /// Local import of a Hook archive whose `[artifact]` target does not match the host is
+    /// rejected so a wrong-ABI package never lands as valid.
+    #[test]
+    fn rejects_local_hook_import_with_mismatched_host_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"aarch64-apple-darwin\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+
+        let error = Installer::new(LocalFileDownloader)
+            .install_local(&release_path, temp_dir.path(), Some(&windows_host()))
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::TargetMismatch { .. }));
+    }
+
+    /// A targeted marketplace install whose extracted package lacks `[artifact]` fails closed.
+    #[test]
+    fn rejects_targeted_hook_release_without_artifact_section() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{}\"\n",
+            hex(digest)
+        ))
+        .unwrap();
+        let source = ResolvedReleaseSource::targeted(
+            DownloadSource::Local(release_path),
+            digest,
+            windows_host(),
+        );
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            source,
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            InstallError::MissingArtifactTarget | InstallError::InvalidManifest(_)
+        ));
     }
 
     /// select_release returns NoArtifactForTarget when the host target has no matching artifact.
@@ -820,7 +946,57 @@ mod tests {
         ))
         .unwrap();
         let host_target = ora_plugin_manifest::HookTarget::parse("aarch64-apple-darwin").unwrap();
-        let error = super::select_release(&manifest, &host_target).unwrap_err();
+        let error = super::select_release(&manifest, Some(&host_target)).unwrap_err();
         assert!(matches!(error, InstallError::NoArtifactForTarget { .. }));
+    }
+
+    /// A universal release can be selected without a host triple, so agent/MCP/skill packages
+    /// stay installable on hosts that are not Hook targets.
+    #[test]
+    fn select_release_accepts_a_universal_release_without_a_host_target() {
+        let digest = format!("{}{}", "ab".repeat(31), "ab");
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather\"\nurl = \"https://example.com/weather.orax\"\nsha256 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        super::select_release(&manifest, None).expect("universal release does not need a host");
+    }
+
+    /// A targeted release cannot be selected when the compiled host is not a plugin target.
+    #[test]
+    fn select_release_rejects_a_targeted_release_without_a_host_target() {
+        let digest = format!("{}{}", "ab".repeat(31), "ab");
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        let error = super::select_release(&manifest, None).unwrap_err();
+        assert!(matches!(error, InstallError::UnsupportedHost));
+    }
+
+    /// Local Hook import without a host target fails closed rather than skipping the match.
+    #[test]
+    fn rejects_local_hook_import_without_a_host_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"x86_64-pc-windows-msvc\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+
+        let error = Installer::new(LocalFileDownloader)
+            .install_local(&release_path, temp_dir.path(), None)
+            .unwrap_err();
+        assert!(matches!(error, InstallError::UnsupportedHost));
     }
 }

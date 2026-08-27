@@ -45,6 +45,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+ora-plugin-manifest = { workspace = true }
 ora-test-support = { workspace = true }
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }

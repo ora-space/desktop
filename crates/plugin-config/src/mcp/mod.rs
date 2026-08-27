@@ -15,7 +15,7 @@ use crate::declaration::{
     compile_declaration_from_value, parse_strict_json,
 };
 use crate::hook::{
-    CompileHookConfigurationError, CompiledHookConfiguration, compile_hook_configuration_from_value,
+    CompileHookConfigurationError, CompiledHookConfiguration, compile_hook_configuration,
 };
 use ora_utils::path::PortableRelativePath;
 use serde::Deserialize;
@@ -162,7 +162,7 @@ pub fn compile_configuration_file(
             .map(CompiledConfigurationFile::Mcp)
             .map_err(CompileConfigurationFileError::Mcp)
     } else if has_hook {
-        compile_hook_configuration_from_value(value)
+        compile_hook_configuration(value)
             .map(CompiledConfigurationFile::Hook)
             .map_err(CompileConfigurationFileError::Hook)
     } else {

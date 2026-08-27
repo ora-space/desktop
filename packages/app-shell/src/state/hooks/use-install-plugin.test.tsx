@@ -19,8 +19,7 @@ describe("useInstallPlugin", () => {
       version: "1.2.0",
       description: "Weather",
       logo: null,
-      compatible: true,
-      incompatibleReason: null,
+      compatibility: "compatible",
     });
     const client = createMockClient(state);
     const { result } = renderHookWithClient(

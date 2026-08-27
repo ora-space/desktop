@@ -223,13 +223,27 @@ pub struct AvailablePlugin {
     pub description: String,
     /// Security-validated SVG source for the marketplace icon, absent when none is published.
     pub logo: Option<String>,
-    /// Whether the host can install this release. A universal release is always compatible; a
-    /// targeted release is compatible only when the host target has a matching artifact. The
-    /// UI uses this to disable the install action before any download is attempted.
-    pub compatible: bool,
-    /// Human-readable reason the release is incompatible, present only when `compatible` is
-    /// false, so the UI can explain why installation is unavailable.
-    pub incompatible_reason: Option<String>,
+    /// Host compatibility as a closed enum so a listing cannot be both compatible and carry a
+    /// reason, or incompatible without one.
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub compatibility: PluginHostCompatibility,
+}
+
+/// Reports whether the current host can install one marketplace listing.
+///
+/// A universal release is always compatible. A targeted release is compatible only when the host
+/// target has a matching artifact. A listing with no downloadable release is incompatible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "compatibility",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginHostCompatibility {
+    Compatible,
+    Incompatible { reason: String },
 }
 
 /// Requests the cached marketplace registry index used to populate the plugin catalog.
@@ -453,9 +467,9 @@ pub struct InstallPluginRequest {
 pub struct InstallPluginResponse {
     pub plugin_id: String,
     /// The typed installation and activation outcome, so callers cannot observe contradictory
-    /// success flags. An enabled Hook with no command conflict reports `InstalledAndEnabled`;
-    /// a Hook whose command alias conflicts with an already-enabled Hook reports
-    /// `InstalledButDisabled` carrying the conflicting plugin identity.
+    /// success flags. A conflict-free install reports `installed_and_enabled`; a Hook whose
+    /// command alias conflicts with an already-enabled Hook reports `installed_but_disabled`
+    /// carrying the conflicting plugin identity.
     pub outcome: InstallOutcome,
 }
 
@@ -581,6 +595,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PluginConfigurationDetails::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
+    PluginHostCompatibility::export(config)?;
     AvailablePlugin::export(config)?;
     ListAvailablePluginsRequest::export(config)?;
     ListAvailablePluginsResponse::export(config)?;
@@ -846,8 +861,7 @@ mod tests {
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
                     logo: None,
-                    compatible: true,
-                    incompatible_reason: None,
+                    compatibility: super::PluginHostCompatibility::Compatible,
                 }],
             })
             .unwrap(),
@@ -862,8 +876,7 @@ mod tests {
                     "version": "1.2.0",
                     "description": "Weather plugin",
                     "logo": null,
-                    "compatible": true,
-                    "incompatibleReason": null
+                    "compatibility": "compatible"
                 }]
             })
         );

@@ -54,8 +54,7 @@ function clientWithWeather(logo: string | null = null) {
     version: "1.2.0",
     description: "Weather plugin",
     logo,
-    compatible: true,
-    incompatibleReason: null,
+    compatibility: "compatible",
   });
   return { state, client: createMockClient(state) };
 }
@@ -503,4 +502,95 @@ it("confirms corrupt configuration recovery before replacing values", async () =
     }),
   );
   expect(await screen.findByLabelText(/Endpoint/)).toBeInTheDocument();
+});
+
+/** Host-incompatible marketplace listings keep Install disabled and explain why. */
+it("disables install for a host-incompatible marketplace plugin", async () => {
+  const state = createMockClientState();
+  state.availablePlugins.push({
+    id: "official/rtk-ai.rtk",
+    name: "rtk-ai.rtk",
+    title: "RTK",
+    kind: "hook",
+    namespace: "official",
+    version: "0.1.0",
+    description: "RTK command rewrite hook",
+    logo: null,
+    compatibility: "incompatible",
+    reason:
+      "this release supports x86_64-pc-windows-msvc but your host is aarch64-apple-darwin",
+  });
+  renderSettings(createMockClient(state));
+
+  expect(await screen.findByText("RTK")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /安装|Install/ })).toBeDisabled();
+  expect(
+    screen.getByText(
+      /this release supports x86_64-pc-windows-msvc but your host is aarch64-apple-darwin/,
+    ),
+  ).toBeInTheDocument();
+});
+
+/** A Hook package without Settings has no Configure action and surfaces its descriptor. */
+it("shows hook descriptor fields and hides configure when settings are not declared", async () => {
+  const user = userEvent.setup();
+  const state = createMockClientState();
+  state.installedPlugins.push({
+    id: "official/rtk-ai.rtk",
+    namespace: "official",
+    name: "rtk-ai.rtk",
+    displayName: "rtk-ai.rtk",
+    version: "0.1.0",
+    description: "RTK command rewrite hook",
+    homepage: null,
+    license: null,
+    kind: "hook",
+    protocol: "rtk-rewrite-v1",
+    command: "rtk",
+    target: "x86_64-pc-windows-msvc",
+    toolVersion: "0.45.0",
+    enabled: true,
+    logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
+    runtime: "stopped",
+  });
+  renderSettings(createMockClient(state));
+
+  await user.click(
+    await screen.findByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
+  expect(await screen.findByText("official/rtk-ai.rtk")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      /0\.1\.0 · hook · stopped · rtk-rewrite-v1 · rtk · x86_64-pc-windows-msvc · 0\.45\.0/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /配置|Configure/ }),
+  ).not.toBeInTheDocument();
+});
+
+/** A command-alias conflict is a successful install that the toast must not report as enabled. */
+it("reports a command-alias conflict after a successful install", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installOutcome = {
+    state: "installed_but_disabled",
+    conflictPluginId: "official/other-rtk",
+  };
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
+  expect(state.installedPlugins[0]?.enabled).toBe(false);
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(successToast.mock.calls[0]?.[0]).toEqual(
+    expect.stringMatching(/official\/other-rtk/),
+  );
 });

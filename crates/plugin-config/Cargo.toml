@@ -25,4 +25,3 @@ windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
-semver = { workspace = true }

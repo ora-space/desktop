@@ -29,7 +29,7 @@ pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
 };
 pub use validation::{
-    INSTALLED_ENTRYPOINT, InstalledPlugin, InstalledPluginAgent,
+    CONFIGURATION_FILE, INSTALLED_ENTRYPOINT, InstalledPlugin, InstalledPluginAgent,
     PluginConfigurationDeclarationValidity, PluginContribution,
 };
 pub use webview::InstalledWebviewDescriptor;

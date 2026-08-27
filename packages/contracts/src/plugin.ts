@@ -25,37 +25,31 @@ export type AddMarketplaceSourceResponse = {
 /**
  * Describes one marketplace plugin listed by the cached registry index.
  */
-export type AvailablePlugin = {
-  id: string;
-  name: string;
-  /**
-   * Human-readable display title declared by the manifest; falls back to `name` when a cached
-   * index or older manifest omits it.
-   */
-  title: string;
-  /**
-   * The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`).
-   */
-  kind: string;
-  namespace: string;
-  version: string;
-  description: string;
-  /**
-   * Security-validated SVG source for the marketplace icon, absent when none is published.
-   */
-  logo: string | null;
-  /**
-   * Whether the host can install this release. A universal release is always compatible; a
-   * targeted release is compatible only when the host target has a matching artifact. The
-   * UI uses this to disable the install action before any download is attempted.
-   */
-  compatible: boolean;
-  /**
-   * Human-readable reason the release is incompatible, present only when `compatible` is
-   * false, so the UI can explain why installation is unavailable.
-   */
-  incompatibleReason: string | null;
-};
+export type AvailablePlugin =
+  & {
+    id: string;
+    name: string;
+    /**
+     * Human-readable display title declared by the manifest; falls back to `name` when a cached
+     * index or older manifest omits it.
+     */
+    title: string;
+    /**
+     * The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`).
+     */
+    kind: string;
+    namespace: string;
+    version: string;
+    description: string;
+    /**
+     * Security-validated SVG source for the marketplace icon, absent when none is published.
+     */
+    logo: string | null;
+  }
+  & ({ "compatibility": "compatible" } | {
+    "compatibility": "incompatible";
+    reason: string;
+  });
 
 /**
  * Requests removal of one marketplace Git source by its URL.
@@ -146,9 +140,9 @@ export type InstallPluginResponse = {
   pluginId: string;
   /**
    * The typed installation and activation outcome, so callers cannot observe contradictory
-   * success flags. An enabled Hook with no command conflict reports `InstalledAndEnabled`;
-   * a Hook whose command alias conflicts with an already-enabled Hook reports
-   * `InstalledButDisabled` carrying the conflicting plugin identity.
+   * success flags. A conflict-free install reports `installed_and_enabled`; a Hook whose
+   * command alias conflicts with an already-enabled Hook reports `installed_but_disabled`
+   * carrying the conflicting plugin identity.
    */
   outcome: InstallOutcome;
 };
@@ -314,6 +308,17 @@ export type PluginConfigurationSummary = { "state": "not_declared" } | {
  * Selects whether uninstall retains or deletes host-owned plugin data.
  */
 export type PluginDataDisposition = "delete" | "retain";
+
+/**
+ * Reports whether the current host can install one marketplace listing.
+ *
+ * A universal release is always compatible. A targeted release is compatible only when the host
+ * target has a matching artifact. A listing with no downloadable release is incompatible.
+ */
+export type PluginHostCompatibility = { "compatibility": "compatible" } | {
+  "compatibility": "incompatible";
+  reason: string;
+};
 
 /**
  * Represents whether the installed package and its immutable declaration are usable.

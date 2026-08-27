@@ -190,4 +190,28 @@ mod tests {
             )),
         );
     }
+
+    /// Hook plugins are processless and have no runtime handshake.
+    #[test]
+    fn hook_plugins_cannot_register() {
+        use ora_plugin_config::{CompiledConfigurationFile, compile_configuration_file};
+        use ora_plugin_manager::InstalledHookDescriptor;
+
+        let CompiledConfigurationFile::Hook(configuration) = compile_configuration_file(
+            br#"{ "schemaVersion": 1, "hook": { "protocol": "rtk-rewrite-v1", "executable": "assets/rtk.exe", "command": "rtk", "toolVersion": "0.45.0" } }"#,
+        )
+        .expect("compile fixture") else {
+            panic!("expected the Hook shape");
+        };
+        let contribution = PluginContribution::Hook(InstalledHookDescriptor {
+            configuration,
+            artifact_target: None,
+        });
+        assert_eq!(
+            validate_registration(&contribution, &PluginRegistration::default()),
+            Err(PluginRuntimeFailure::new(
+                "hook plugins have no process and cannot register",
+            )),
+        );
+    }
 }

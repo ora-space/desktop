@@ -1,15 +1,16 @@
 //! Host-side validation of the `hook` kind: a processless package whose single artifact is the
 //! compiled Hook Configuration from `assets/config.json` plus one package-contained executable.
 
-use crate::mcp::MCP_CONFIGURATION_FILE;
-use crate::validation::{INSTALLED_ENTRYPOINT, ManifestValidationError, invalid};
+use crate::validation::{
+    CONFIGURATION_FILE, INSTALLED_ENTRYPOINT, ManifestValidationError, invalid,
+};
 use ora_plugin_config::{
     CompileConfigurationFileError, CompiledConfigurationFile, CompiledHookConfiguration,
     HookDescriptor,
 };
 use ora_plugin_manifest::{HookTarget, PluginArtifact};
 use ora_utils::path::CanonicalPathRoot;
-use std::path::Path;
+use std::path::{Component, Path};
 
 /// Holds the validated Hook descriptor of one hook-kind package.
 ///
@@ -27,8 +28,8 @@ pub struct InstalledHookDescriptor {
 ///
 /// A Hook package must not look runnable (no `main.js`), must ship a Hook-shaped
 /// `assets/config.json`, must contain the declared executable as a real regular file inside the
-/// package, and — for a targeted package — must self-declare a target whose host compatibility
-/// is checked by the installer. Validation never executes the executable.
+/// package `assets/` tree, and — for a targeted package — must self-declare a target whose host
+/// compatibility is checked by the installer. Validation never executes the executable.
 pub(crate) fn validate_hook(
     package_root: &Path,
     configuration_file: &Result<Option<CompiledConfigurationFile>, CompileConfigurationFileError>,
@@ -47,27 +48,27 @@ pub(crate) fn validate_hook(
         // contribution of a Hook package.
         Err(error) => {
             return Err(invalid(
-                MCP_CONFIGURATION_FILE,
+                CONFIGURATION_FILE,
                 format!("Hook configuration is invalid: {error}"),
             ));
         }
         Ok(None) => {
             return Err(invalid(
-                MCP_CONFIGURATION_FILE,
-                format!("a hook plugin must ship `{MCP_CONFIGURATION_FILE}`"),
+                CONFIGURATION_FILE,
+                format!("a hook plugin must ship `{CONFIGURATION_FILE}`"),
             ));
         }
         // A Hook package must declare the Hook shape; a Settings-only or MCP file is a kind
         // mismatch the host rejects so a package cannot masquerade as another contribution type.
         Ok(Some(CompiledConfigurationFile::Settings(_))) => {
             return Err(invalid(
-                MCP_CONFIGURATION_FILE,
+                CONFIGURATION_FILE,
                 "a hook plugin must declare a `hook` contribution",
             ));
         }
         Ok(Some(CompiledConfigurationFile::Mcp(_))) => {
             return Err(invalid(
-                MCP_CONFIGURATION_FILE,
+                CONFIGURATION_FILE,
                 "a hook plugin must not declare an MCP `transport`",
             ));
         }
@@ -82,14 +83,25 @@ pub(crate) fn validate_hook(
     })
 }
 
-/// Confirms the compiled executable resolves to a regular non-symlink file that stays inside this
-/// exact installed package version, refusing symlink or reparse-point escapes. On Windows the
-/// milestone requires the `.exe` suffix; PE headers are not parsed here.
+/// Confirms the compiled executable resolves to a regular non-symlink file contained under this
+/// package's `assets/` tree, refusing symlink or reparse-point escapes. On Windows the milestone
+/// requires the `.exe` suffix; PE headers are not parsed here.
 fn validate_executable_containment(
     package_root: &Path,
     hook: &HookDescriptor,
 ) -> Result<(), ManifestValidationError> {
     let executable = hook.executable.as_str();
+    let declared = Path::new(executable);
+    if declared
+        .components()
+        .next()
+        .is_none_or(|component| component != Component::Normal("assets".as_ref()))
+    {
+        return Err(invalid(
+            "hook.executable",
+            format!("executable `{executable}` must be contained under the package assets tree"),
+        ));
+    }
     let root = CanonicalPathRoot::new(package_root).map_err(|error| {
         invalid(
             "hook.executable",
@@ -110,12 +122,22 @@ fn validate_executable_containment(
             format!("executable `{executable}` must be a regular package file"),
         ));
     }
-    root.relative_path(&resolved).map_err(|error| {
+    let relative = root.relative_path(&resolved).map_err(|error| {
         invalid(
             "hook.executable",
             format!("executable must resolve inside the plugin package: {error}"),
         )
     })?;
+    if Path::new(relative.as_str())
+        .components()
+        .next()
+        .is_none_or(|component| component != Component::Normal("assets".as_ref()))
+    {
+        return Err(invalid(
+            "hook.executable",
+            format!("executable `{executable}` must resolve under the package assets tree"),
+        ));
+    }
     // Windows decides executability by extension at spawn time; the milestone requires the `.exe`
     // suffix on the first RTK release target so an unusable binary is never installed as valid.
     // PE headers are intentionally not parsed in this milestone.

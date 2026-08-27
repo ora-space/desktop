@@ -112,11 +112,14 @@ impl HookCommand {
             });
         }
         // Command names are produced by build scripts and consumed verbatim, so control
-        // characters or non-ASCII bytes are packaging mistakes.
-        if value.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        // characters, whitespace, or non-ASCII bytes are packaging mistakes.
+        if value.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || !character.is_ascii()
+        }) {
             return Err(CompileHookConfigurationError::InvalidDescriptor {
                 field: "hook.command".to_string(),
-                reason: "command must not contain whitespace or control characters".to_string(),
+                reason: "command must contain ASCII text without whitespace or control characters"
+                    .to_string(),
             });
         }
         Ok(Self(value.to_owned()))
@@ -147,7 +150,7 @@ struct RawHookDescriptor {
 }
 
 /// Compiles one duplicate-free Hook configuration JSON value.
-fn compile_hook_configuration(
+pub(crate) fn compile_hook_configuration(
     value: Value,
 ) -> Result<CompiledHookConfiguration, CompileHookConfigurationError> {
     let raw: RawHookConfiguration = serde_json::from_value(value)
@@ -226,12 +229,5 @@ pub fn compile_hook_configuration_from_bytes(
         return Err(CompileDeclarationError::TooLarge.into());
     }
     let value = parse_strict_json(source).map_err(CompileHookConfigurationError::Declaration)?;
-    compile_hook_configuration(value)
-}
-
-/// Compiles one Hook configuration from a JSON value parsed strictly elsewhere.
-pub(crate) fn compile_hook_configuration_from_value(
-    value: Value,
-) -> Result<CompiledHookConfiguration, CompileHookConfigurationError> {
     compile_hook_configuration(value)
 }

@@ -1,5 +1,5 @@
 use crate::hook::{InstalledHookDescriptor, validate_hook};
-use crate::mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE, validate_mcp};
+use crate::mcp::{InstalledMcpDescriptor, validate_mcp};
 use crate::skill::{InstalledSkillDescriptor, validate_skill};
 use crate::webview::{InstalledWebviewDescriptor, validate_webview};
 use crate::workbench::{InstalledWorkbenchDescriptor, validate_workbench};
@@ -10,6 +10,10 @@ use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+/// Package-relative path of the strict `assets/config.json` contribution file shared by the
+/// processless MCP and Hook kinds.
+pub const CONFIGURATION_FILE: &str = "assets/config.json";
 
 /// Installed orax packages with a process always ship a fixed `main.js` at the package root.
 pub const INSTALLED_ENTRYPOINT: &str = "main.js";
@@ -138,7 +142,7 @@ pub(crate) fn validate(
             Err(ConfigurationError::InvalidDeclaration(error)) => Err(error),
             Err(error) => {
                 return Err(invalid(
-                    MCP_CONFIGURATION_FILE,
+                    CONFIGURATION_FILE,
                     format!("configuration declaration could not be read: {error}"),
                 ));
             }
@@ -153,7 +157,7 @@ pub(crate) fn validate(
         )
     {
         return Err(invalid(
-            MCP_CONFIGURATION_FILE,
+            CONFIGURATION_FILE,
             format!(
                 "only `mcp` packages may declare an MCP transport (kind is `{}`)",
                 manifest.kind()
@@ -167,7 +171,7 @@ pub(crate) fn validate(
         )
     {
         return Err(invalid(
-            MCP_CONFIGURATION_FILE,
+            CONFIGURATION_FILE,
             format!(
                 "only `hook` packages may declare a Hook configuration (kind is `{}`)",
                 manifest.kind()

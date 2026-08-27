@@ -12,6 +12,14 @@ use std::str::FromStr;
 
 const SUPPORTED_RESOLVER: u64 = 1;
 
+/// Distinguishes the marketplace listing form from the in-package installed form so each can
+/// refuse the other form's download/artifact sections.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManifestForm {
+    Release,
+    Installed,
+}
+
 /// Holds one fully validated plugin release manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PluginManifest {
@@ -42,7 +50,7 @@ impl PluginManifest {
     pub fn parse(source: &str) -> Result<Self, ManifestError> {
         let raw: RawPluginManifest = deserialize(source)?;
         let (metadata, resolver, url, sha256) = raw.into_parts();
-        Self::from_raw_parts(metadata, resolver, url, sha256)
+        Self::from_raw_parts(metadata, resolver, url, sha256, ManifestForm::Release)
     }
 
     /// Parses and validates an installed plugin's manifest (the `orax.toml` shipped inside a
@@ -52,7 +60,7 @@ impl PluginManifest {
         let raw: RawInstalledManifest = deserialize(source)?;
         let (metadata, resolver, url, sha256) = raw.into_parts();
         let resolver = resolver.unwrap_or(SUPPORTED_RESOLVER);
-        Self::from_raw_parts(metadata, resolver, url, sha256)
+        Self::from_raw_parts(metadata, resolver, url, sha256, ManifestForm::Installed)
     }
 
     /// Applies every semantic validation rule to the values shared by both manifest forms,
@@ -65,6 +73,7 @@ impl PluginManifest {
         resolver: u64,
         url: Option<String>,
         sha256: Option<String>,
+        form: ManifestForm,
     ) -> Result<Self, ManifestError> {
         if resolver != SUPPORTED_RESOLVER {
             return Err(ManifestError::UnsupportedResolver { found: resolver });
@@ -134,7 +143,32 @@ impl PluginManifest {
             sha256.as_ref(),
             metadata.targets.as_deref(),
             kind,
+            form,
         )?;
+        if metadata.artifact.is_some() && matches!(form, ManifestForm::Release) {
+            return Err(invalid_field(
+                ManifestField::Artifact,
+                InvalidFieldReason::ArtifactNotAllowedOnRelease,
+            ));
+        }
+        if metadata.artifact.is_some() && !matches!(kind, PluginKind::Hook) {
+            return Err(invalid_field(
+                ManifestField::Artifact,
+                InvalidFieldReason::NotAllowedForKind { kind },
+            ));
+        }
+        // A targeted Hook package self-declares its host triple in `[artifact]`; an installed
+        // Hook without that section cannot prove host compatibility independently of marketplace
+        // metadata.
+        if matches!(form, ManifestForm::Installed)
+            && matches!(kind, PluginKind::Hook)
+            && metadata.artifact.is_none()
+        {
+            return Err(invalid_field(
+                ManifestField::Artifact,
+                InvalidFieldReason::MissingForKind { kind },
+            ));
+        }
         let artifact = metadata
             .artifact
             .map(PluginArtifact::try_from)
@@ -441,9 +475,23 @@ fn validate_release_source(
     sha256: Option<&Sha256Digest>,
     targets: Option<&[RawReleaseTarget]>,
     kind: PluginKind,
+    form: ManifestForm,
 ) -> Result<Option<PluginReleaseSource>, ManifestError> {
     let has_universal = url.is_some() || sha256.is_some();
     let has_targets = targets.is_some_and(|entries| !entries.is_empty());
+
+    // Installed packages may carry a self-declared `sha256` for the archive they came from, but
+    // they never advertise a downloadable release: `[[targets]]` would smuggle download URLs into
+    // the installed form, and `url`/`sha256` are not a marketplace source.
+    if matches!(form, ManifestForm::Installed) {
+        if has_targets {
+            return Err(invalid_field(
+                ManifestField::Targets,
+                InvalidFieldReason::TargetsNotAllowedOnInstalled,
+            ));
+        }
+        return Ok(None);
+    }
 
     // Neither form means the manifest declares no downloadable release at all; marketplace listings
     // without a release are still indexed, they simply cannot be installed online.
@@ -462,13 +510,13 @@ fn validate_release_source(
         let Some(url) = url else {
             return Err(invalid_field(
                 ManifestField::Url,
-                InvalidFieldReason::MissingForKind { kind },
+                InvalidFieldReason::MissingUniversalReleaseField,
             ));
         };
         let Some(sha256) = sha256 else {
             return Err(invalid_field(
                 ManifestField::Sha256,
-                InvalidFieldReason::MissingForKind { kind },
+                InvalidFieldReason::MissingUniversalReleaseField,
             ));
         };
         return Ok(Some(PluginReleaseSource::Universal {
