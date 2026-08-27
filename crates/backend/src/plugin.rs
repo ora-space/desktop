@@ -585,21 +585,24 @@ impl PluginApi {
         // triple. Requiring a host up front would refuse agent/MCP/skill packages on an
         // unsupported architecture.
         let host_target = ora_plugin_registry::current_host_target();
-        let release_source = ora_plugin_manager::select_release(&manifest, host_target.as_ref())
-            .map_err(|error| match error {
-                ora_plugin_manager::InstallError::NoArtifactForTarget { .. }
-                | ora_plugin_manager::InstallError::MissingRelease
-                | ora_plugin_manager::InstallError::UnsupportedHost => BackendError::new(
-                    ErrorClassification::Unprocessable,
-                    PublicError::PluginHostIncompatible(EmptyErrorParams {}),
-                    format!("{error}"),
-                ),
-                error => BackendError::new(
-                    ErrorClassification::InvalidRequest,
-                    PublicError::InvalidRequest(EmptyErrorParams {}),
-                    format!("{error}"),
-                ),
-            })?;
+        let release_source = ora_plugin_manager::select_release(
+            &manifest,
+            ora_plugin_manager::HostTarget::from_option(host_target.as_ref()),
+        )
+        .map_err(|error| match error {
+            ora_plugin_manager::InstallError::NoArtifactForTarget { .. }
+            | ora_plugin_manager::InstallError::MissingRelease
+            | ora_plugin_manager::InstallError::UnsupportedHost => BackendError::new(
+                ErrorClassification::Unprocessable,
+                PublicError::PluginHostIncompatible(EmptyErrorParams {}),
+                format!("{error}"),
+            ),
+            error => BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                format!("{error}"),
+            ),
+        })?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
                 ora_info!(plugin_id = %request.plugin_id, url = %url, "installing marketplace plugin");
@@ -645,7 +648,11 @@ impl PluginApi {
         let data_directory = self.data_directory.clone();
         let host_target = ora_plugin_registry::current_host_target();
         let package = tokio::task::spawn_blocking(move || {
-            installer.install_local(&archive_path, &data_directory, host_target.as_ref())
+            installer.install_local(
+                &archive_path,
+                &data_directory,
+                ora_plugin_manager::HostTarget::from_option(host_target.as_ref()),
+            )
         })
         .await
         .map_err(|error| BackendError::internal("failed to join plugin import task", error))?
@@ -669,28 +676,28 @@ impl PluginApi {
     }
 
     /// Refreshes the installed-plugin snapshot after a new package lands and reports the typed
-    /// installation outcome. Upstream removed plugin enablement, so every installed package is
-    /// available; a Hook command-alias conflict still returns `InstalledButDisabled` so callers
-    /// can surface the colliding identity instead of silently sharing a PATH alias.
+    /// installation outcome. Every installed package is available; a Hook command-alias conflict
+    /// still returns `InstalledWithCommandConflict` so callers can surface the colliding identity
+    /// instead of silently sharing a PATH alias. Both packages remain installed and available;
+    /// uniqueness is deferred to a future consumer.
     async fn finalize_new_install(&self, plugin_id: &str) -> Result<InstallOutcome, BackendError> {
         self.sync_plugin_skills(plugin_id)?;
         if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
             ora_warn!(plugin_id = %plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
         }
-        // Every installed plugin is available after upstream dropped enablement. A second Hook
-        // with the same bare command still makes PATH resolution ambiguous, so the typed outcome
-        // carries the colliding identity instead of looking like an ordinary success.
+        // A second Hook with the same bare command still makes PATH resolution ambiguous, so the
+        // typed outcome carries the colliding identity instead of looking like an ordinary success.
         if let Some(conflict) = self.detect_hook_command_conflict(plugin_id) {
             ora_warn!(
                 plugin_id = %plugin_id,
                 conflict_plugin_id = %conflict,
                 "installed hook plugin reports a command conflict"
             );
-            return Ok(InstallOutcome::InstalledButDisabled {
+            return Ok(InstallOutcome::InstalledWithCommandConflict {
                 conflict_plugin_id: conflict,
             });
         }
-        Ok(InstallOutcome::InstalledAndEnabled)
+        Ok(InstallOutcome::Installed)
     }
 
     /// Returns the canonical plugin id of another installed Hook that owns the same command
@@ -902,8 +909,9 @@ mod tests {
     /// Clean-data-directory E2E for the RTK Hook Plugin milestone: marketplace index build
     /// (local checkout) -> compatible display -> install the verified release artifact through
     /// the real installer -> static Hook validation (no payload execution) -> discovery ->
-    /// auto-enable -> disable -> uninstall. The release artifact path comes from
-    /// `RTK_RELEASE_ORAX`; when unset the test is skipped so CI without the asset does not fail.
+    /// uninstall. The release artifact path comes from `RTK_RELEASE_ORAX`; when unset the test
+    /// is skipped so CI without the asset does not fail. There is no enable/disable step: every
+    /// installed valid Hook is available and processless, so runtime stays `stopped`.
     #[tokio::test]
     async fn rtk_hook_plugin_clean_data_directory_e2e() {
         let Some(orax_path) = std::env::var("RTK_RELEASE_ORAX")

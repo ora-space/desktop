@@ -34,3 +34,6 @@ pub use plugin_gateway::{GatewayError, PluginGateway};
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};
 pub use skill_reconciliation::SkillStorageReconciliationError;
 pub use user_config::BackendPreferredLogLevelStore;
+
+#[cfg(test)]
+mod plugin_install_tests;

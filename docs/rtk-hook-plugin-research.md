@@ -246,13 +246,13 @@ RTK v0.1.0 不声明用户 Settings。未来确有可消费的、插件全局、
 
 - plugin-manager 只做静态校验，安装期间绝不执行 payload；可运行性由包装 CI 和隔离 E2E 证明。
 - Hook 必须无 `main.js`，executable 必须是包内非 symlink 普通文件，installed artifact target 必须精确匹配宿主；Windows 首版要求 `.exe`。
-- 安装后沿用现有默认自动启用行为。命令别名与另一 Enabled Hook 冲突时，安装保留但新插件保持 disabled，并返回强类型原因。
+- 安装后每个合法 Hook 立即 available，宿主不再有 enable/disable。命令别名与另一已安装 Hook 冲突时，两包都保留并返回 `installed_with_command_conflict`；别名唯一性交给后续消费层。
 - 本次不实现 Workspace 选择、Agent Plugin 交付、PATH 注入或 agent 配置。未来进入消费阶段后，disable/uninstall/upgrade 必须先协调消费者 idle/restart，不能直接删除仍被使用的 payload。
 - RTK v0.45.0 无法真正关闭 tracking；未来消费时必须将 DB 重定向到 Ora 管理目录、关闭 tee 和 telemetry，并在用户文档中披露本地原始命令与项目路径的 90 天记录行为。
 
 ### 验收
 
-除 Rust/TypeScript 单元与集成测试外，必须使用干净 Ora 数据目录在 Windows x86_64 完成：同步 marketplace、显示 compatible、下载、摘要校验、安装、自动启用、禁用、卸载；隔离 E2E 还必须从实际 installed path 验证 RTK `0.45.0` 和 `rtk-rewrite-v1`，并仅在测试进程内临时扩展 PATH。
+除 Rust/TypeScript 单元与集成测试外，必须使用干净 Ora 数据目录在 Windows x86_64 完成：同步 marketplace、显示 compatible、下载、摘要校验、安装、发现、卸载；隔离 E2E 还必须从实际 installed path 验证 RTK `0.45.0` 和 `rtk-rewrite-v1`，并仅在测试进程内临时扩展 PATH。
 
 ## 附录 A：评审前的过时备选分析
 

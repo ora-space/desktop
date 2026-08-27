@@ -9,12 +9,12 @@ An Ora plugin package that contributes exactly one managed executable and one ag
 _Avoid_: RTK plugin, hook capability
 
 **Agent Plugin**:
-An Ora plugin package that provides an agent and owns the agent-specific work needed to configure enabled Hook Plugins for that agent.
+An Ora plugin package that provides an agent and owns the agent-specific work needed to configure installed Hook Plugins for that agent.
 _Avoid_: agent adapter, hook configurator
 
-**Enabled Hook Plugin**:
-A globally eligible Hook Plugin that Agent Plugins may consume. It does not imply project-specific selection or that every Agent Plugin supports it.
-_Avoid_: project hook, configured hook
+**Installed Hook Plugin**:
+A globally available Hook Plugin that Agent Plugins may consume. Installation does not write eligibility state; every installed valid Hook is available. Command-alias uniqueness is deferred to a future consumer.
+_Avoid_: enabled hook, project hook, configured hook
 
 **Hook Protocol**:
 A versioned, strongly typed contract that identifies how an Agent Plugin integrates a Hook Plugin. RTK uses an RTK-specific protocol within this common contract instead of RTK-specific manifest fields.
@@ -49,5 +49,5 @@ The validated bare command name through which an Agent Plugin may expose a Hook 
 _Avoid_: executable path, PATH entry
 
 **Unsupported Hook**:
-An Enabled Hook Plugin whose Hook Protocol an Agent Plugin does not implement. It remains eligible globally but is not configured for that agent.
+An Installed Hook Plugin whose Hook Protocol an Agent Plugin does not implement. It remains available globally but is not configured for that agent.
 _Avoid_: broken hook, disabled hook

@@ -1,7 +1,7 @@
 use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
-    InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
-    PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
+    HookTargetError, InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError,
+    Origin, PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
     PluginName, PluginNamespace, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseUrl,
     RepositoryUrl, RuleField, Sha256Digest, StartUrl,
 };
@@ -1070,6 +1070,22 @@ fn parses_targeted_hook_manifest() {
     assert_eq!(targets[0].target().as_str(), "x86_64-pc-windows-msvc");
     assert_eq!(targets[0].url().as_str(), "https://example.com/rtk.orax");
     assert_eq!(manifest.artifact(), None);
+}
+
+/// Unknown rustc triples never enter the domain model, so a packaging typo cannot look like a
+/// distinct installable architecture.
+#[test]
+fn rejects_unsupported_target_triples() {
+    let source = TARGETED_HOOK_MANIFEST.replace("x86_64-pc-windows-msvc", "not-a-real-triple");
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(&source) else {
+        panic!("expected unsupported triple rejection");
+    };
+    assert_eq!(field, ManifestField::ReleaseTargetTarget { index: 0 });
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::InvalidHookTarget(HookTargetError::Unsupported { ref found })
+            if found == "not-a-real-triple"
+    ));
 }
 
 /// A universal hook manifest is parsed and carries a universal release source.

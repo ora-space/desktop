@@ -4,6 +4,26 @@ use thiserror::Error;
 /// Maximum byte length of a canonical Rust target triple.
 const MAX_TARGET_TRIPLE_BYTES: usize = 64;
 
+/// Canonical rustc triples Ora accepts as Hook artifact targets.
+///
+/// The list is the hosts Ora itself ships for plus additional triples marketplace listings may
+/// advertise so a future native artifact can land without inventing a fake identifier. Unknown
+/// ASCII strings such as `not-a-real-triple` must not parse, because exact matching would
+/// otherwise treat packaging typos as a distinct, installable architecture.
+const CANONICAL_RUST_TARGET_TRIPLES: &[&str] = &[
+    "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-pc-windows-gnu",
+    "aarch64-pc-windows-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+];
+
 /// Holds one canonical Rust target triple identifying an installable artifact's OS, architecture,
 /// and binary ABI.
 ///
@@ -16,8 +36,9 @@ pub struct HookTarget {
 }
 
 impl HookTarget {
-    /// Parses a canonical target triple, rejecting empties, control characters, and overlong
-    /// values before they enter the domain model.
+    /// Parses a canonical target triple from the known rustc allowlist, rejecting empties,
+    /// control characters, overlong values, and unknown triples before they enter the domain
+    /// model.
     pub fn parse(value: &str) -> Result<Self, HookTargetError> {
         if value.is_empty() {
             return Err(HookTargetError::Empty);
@@ -38,6 +59,11 @@ impl HookTarget {
         // packaging mistake rather than a portable value.
         if !value.is_ascii() {
             return Err(HookTargetError::NonAscii);
+        }
+        if !CANONICAL_RUST_TARGET_TRIPLES.contains(&value) {
+            return Err(HookTargetError::Unsupported {
+                found: value.to_owned(),
+            });
         }
 
         Ok(Self {
@@ -83,6 +109,8 @@ pub enum HookTargetError {
     ContainsWhitespace,
     #[error("target triple must contain ASCII text only")]
     NonAscii,
+    #[error("unsupported target triple {found:?}")]
+    Unsupported { found: String },
 }
 
 #[cfg(test)]
@@ -99,7 +127,7 @@ mod tests {
         assert_eq!(target.to_string(), "x86_64-pc-windows-msvc");
     }
 
-    /// Empty, overlong, and non-ASCII triples never enter the domain model.
+    /// Empty, overlong, non-ASCII, and unknown triples never enter the domain model.
     #[test]
     fn rejects_invalid_target_triples() {
         assert_eq!(HookTarget::parse(""), Err(HookTargetError::Empty));
@@ -121,6 +149,12 @@ mod tests {
         assert_eq!(
             HookTarget::parse("x86_64-pc-windows-msvcß"),
             Err(HookTargetError::NonAscii)
+        );
+        assert_eq!(
+            HookTarget::parse("not-a-real-triple"),
+            Err(HookTargetError::Unsupported {
+                found: "not-a-real-triple".to_owned(),
+            })
         );
     }
 }

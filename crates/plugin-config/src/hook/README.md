@@ -38,7 +38,7 @@ Ora plugin package.
 - The executable must be a portable relative path under `assets/`; the package validator enforces
   the actual filesystem containment.
 - The command alias must be a bare name with no path separators so PATH resolution stays
-  deterministic across Enabled Hooks.
+  deterministic across installed Hooks.
 
 ## Failure semantics
 

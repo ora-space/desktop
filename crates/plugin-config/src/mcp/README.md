@@ -1,16 +1,23 @@
 # ora-plugin-config::mcp
 
-Compiles one MCP Plugin's `assets/config.json` into an immutable MCP Configuration: the optional
-Settings subset plus exactly one MCP Transport.
+Compiles one `assets/config.json` into the closed union of Settings-only, MCP, and Hook shapes.
+
+The presence of a top-level `transport` member selects the MCP shape, the presence of `hook`
+selects the Hook shape, and the absence of both falls back to Settings-only. The three shapes are
+mutually exclusive: a file declaring `transport` and `hook` together fails closed
+(`MixedContribution`) so one package can never carry two contribution types. Kind policy — an MCP
+package must ship the MCP shape, a Hook package must ship the Hook shape, and every other kind
+must not — belongs to `ora-plugin-manager`.
 
 ## Responsibilities
 
-- Distinguish the Settings-only shape from the MCP shape by the presence of a top-level
-  `transport` member, without taking a kind hint from the caller.
+- Distinguish Settings-only, MCP, and Hook shapes without taking a kind hint from the caller.
 - Compile exclusive Stdio or HTTP transport so mixed shapes (HTTP with a command, stdio with a
   URL) are unrepresentable.
+- Dispatch a Hook-shaped file to the Hook compiler so protocol, executable, command alias, and
+  tool version are validated with the same strictness as MCP transport.
 - Reuse the Settings-only declaration compiler for the settings subset so the existing editor and
-  `store.json` machinery consume MCP Settings unchanged.
+  `store.json` machinery consume MCP and Hook Settings unchanged.
 - Reject control characters (including CR/LF) in every bound-text position: stdio argument and
   environment literals, and Setting-reference prefix/suffix on args, env, and HTTP headers.
 - Reject HTTP URLs that are not HTTPS, that carry userinfo, a query string, or a fragment, and
@@ -18,15 +25,15 @@ Settings subset plus exactly one MCP Transport.
 
 ## Non-responsibilities
 
-- Kind policy — only `mcp` packages may ship this shape, and an MCP package must — belongs to
-  `ora-plugin-manager`.
-- Filesystem containment of a stdio command inside the installed package belongs to
-  `ora-plugin-manager`.
-- `ResolvedMcp`, Agent materialization, and workspace MCP selection are later slices.
+- Kind policy — only `mcp` packages may ship the MCP shape, only `hook` packages may ship the
+  Hook shape, and those packages must — belongs to `ora-plugin-manager`.
+- Filesystem containment of a stdio command or Hook executable inside the installed package
+  belongs to `ora-plugin-manager`.
+- `ResolvedMcp`, `ResolvedHook`, Agent materialization, and workspace selection are later slices.
 
 ## Failure semantics
 
 Unknown fields, unknown schema versions, unknown transport types, reserved Setting types
-(`secret` / `file` / `directory`), and bound-text / URL policy violations fail compilation with a
-stable field path. A missing `transport` member is not an MCP error: that file compiles as a
-Settings-only declaration.
+(`secret` / `file` / `directory`), mixed `transport`+`hook`, and bound-text / URL policy
+violations fail compilation with a stable field path. A missing `transport` and `hook` member is
+not an MCP or Hook error: that file compiles as a Settings-only declaration.

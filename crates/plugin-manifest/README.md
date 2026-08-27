@@ -18,10 +18,11 @@ forms accept an optional human-readable `title` that falls back to the identifie
   download policy) for webview plugins. Agent, skill, MCP, and hook plugins reject both sections.
 - Model the resolver-one release source as a mutually exclusive union: one universal `url` +
   `sha256` pair installable on every host, or one or more unique `[[targets]]` entries each carrying
-  an exact Rust target triple (`HookTarget`), URL, and digest. The targeted form is exclusive to
-  `hook` plugins. An installed targeted package carries an `[artifact]` section self-declaring its
-  target so online install and local import apply the same host-compatibility check; the target is
-  never part of plugin identity. Universal and targeted forms may not coexist.
+  an exact Rust target triple (`HookTarget`) from a known rustc allowlist, URL, and digest. The
+  targeted form is exclusive to `hook` plugins. An installed targeted package carries an
+  `[artifact]` section self-declaring its target so online install and local import apply the
+  same host-compatibility check; the target is never part of plugin identity. Universal and
+  targeted forms may not coexist.
 - Report structural failures with the TOML path of the offending value and semantic failures with
   a typed `ManifestField`, including the index of a webview origin or download rule.
 - Preserve deterministic validation order so callers receive a stable first error.

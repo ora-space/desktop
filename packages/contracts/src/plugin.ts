@@ -95,20 +95,21 @@ export type ImportPluginRequest = {
 export type ImportPluginResponse = {
   pluginId: string;
   /**
-   * The typed installation and activation outcome, identical in shape to a marketplace install.
+   * The typed installation outcome, identical in shape to a marketplace install.
    */
   outcome: InstallOutcome;
 };
 
 /**
- * Models the closed set of installation and activation outcomes.
+ * Models the closed set of installation outcomes.
  *
  * The outcome is a closed enum rather than a pair of booleans so a caller can never observe
- * contradictory success flags: installation always succeeds, but automatic enablement may be
- * blocked by a command-alias conflict.
+ * contradictory success flags. Installation always succeeds and the package remains available;
+ * a command-alias collision is reported rather than silently sharing a PATH alias or pretending
+ * the new package was disabled.
  */
-export type InstallOutcome = { "state": "installed_and_enabled" } | {
-  "state": "installed_but_disabled";
+export type InstallOutcome = { "state": "installed" } | {
+  "state": "installed_with_command_conflict";
   conflictPluginId: string;
 };
 
@@ -123,10 +124,11 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = {
   pluginId: string;
   /**
-   * The typed installation and activation outcome, so callers cannot observe contradictory
-   * success flags. A conflict-free install reports `installed_and_enabled`; a Hook whose
-   * command alias conflicts with an already-enabled Hook reports `installed_but_disabled`
-   * carrying the conflicting plugin identity.
+   * The typed installation outcome. Installation always retains the package. A conflict-free
+   * install reports `installed`; a Hook whose command alias collides with another installed
+   * Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
+   * packages remain available: the host has no enablement state, and uniqueness is deferred
+   * to a future consumer.
    */
   outcome: InstallOutcome;
 };

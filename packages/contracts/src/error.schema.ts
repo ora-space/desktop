@@ -73,7 +73,6 @@ export const contractErrorSchema = z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
     }), z.object({
-
         "code": z.literal("plugin_configuration_declaration_invalid"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -382,7 +381,6 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
     }), z.object({
-
         "code": z.literal("plugin_configuration_declaration_invalid"),
         "params": emptyErrorParamsSchema
     }), z.object({

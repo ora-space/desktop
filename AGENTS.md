@@ -108,17 +108,3 @@ keep that await inside `act` so restore that still updates React stays covered.
 # TypeScript/packages
 
 - A test that renders anything calling `useTranslation` must import `appI18n` itself: react-i18next keeps its instance in a `node_modules` module that Vitest loads once per worker, so a file relying on an earlier file in the same worker to have initialized it passes locally and fails on CI, where a different worker split leaves it first and the missing-instance warning trips the clean-stderr gate on an otherwise green run.
-
-## Agent skills
-
-### Issue tracker
-
-Issues live as GitHub issues, resolved via the `gh` CLI from the configured default repo. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Five canonical triage roles, each label string equal to its role name. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Multi-context: a root `CONTEXT-MAP.md` points to per-context `CONTEXT.md` files. See `docs/agents/domain.md`.

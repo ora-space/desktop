@@ -84,8 +84,8 @@ fn scoped_flag(flag: &str, path: &Path) -> Result<OsString, PermissionFlagError>
 /// environment access is a hard `PermissionDenied`, and everything it legitimately needs (its
 /// data directory) is served by the host over `ora/storage/*`. An agent plugin keeps the broad
 /// grants it has always had (see `agent_permissions`); narrowing them is deliberately out of
-/// scope here. Webview, skill, and MCP plugins are never launched, so their empty sets only make
-/// the match exhaustive.
+/// scope here. Webview, skill, MCP, and Hook plugins are never launched, so their empty sets only
+/// make the match exhaustive.
 pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission> {
     match contribution {
         PluginContribution::Agent(_) => agent_permissions(),

@@ -829,9 +829,9 @@ export const translationResources = {
     "settings.plugins.installing": "安装中",
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
-    "settings.plugins.installSuccess": "插件已安装并启用。",
-    "settings.plugins.installDisabledConflict":
-      "插件已安装，但因与 {{pluginId}} 的命令别名冲突而保持禁用。",
+    "settings.plugins.installSuccess": "插件已安装。",
+    "settings.plugins.installCommandConflict":
+      "插件已安装。其命令别名与 {{pluginId}} 冲突，两包均保持可用。",
     "settings.plugins.uninstallFailed": "卸载失败",
     "settings.plugins.import": "导入插件",
     "settings.plugins.importSuccess": "插件已导入。",
@@ -2346,9 +2346,9 @@ export const translationResources = {
     "settings.plugins.installing": "Installing",
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",
-    "settings.plugins.installSuccess": "Plugin installed and enabled.",
-    "settings.plugins.installDisabledConflict":
-      "Plugin installed but left disabled because its command alias conflicts with {{pluginId}}.",
+    "settings.plugins.installSuccess": "Plugin installed.",
+    "settings.plugins.installCommandConflict":
+      "Plugin installed. Its command alias conflicts with {{pluginId}}; both packages remain available.",
     "settings.plugins.uninstallFailed": "Uninstall failed",
     "settings.plugins.import": "Import plugin",
     "settings.plugins.importSuccess": "Plugin imported.",

@@ -51,3 +51,4 @@ ora-plugin-manifest = { workspace = true }
 ora-test-support = { workspace = true }
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
+zip = { workspace = true }

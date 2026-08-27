@@ -48,7 +48,7 @@ pub enum PluginNamespaceError {
 ///
 /// `Hook` is a processless contribution: its package carries one immutable Hook Configuration
 /// and one package-contained executable, but the host never starts a Deno runtime for it. An
-/// enabled Hook records global eligibility only; its lifecycle runtime stays `stopped`.
+/// installed Hook is globally available; its lifecycle runtime stays `stopped`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PluginKind {
     Workbench,

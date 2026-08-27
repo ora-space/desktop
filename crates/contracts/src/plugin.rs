@@ -453,18 +453,20 @@ pub struct InstallPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct InstallPluginResponse {
     pub plugin_id: String,
-    /// The typed installation and activation outcome, so callers cannot observe contradictory
-    /// success flags. A conflict-free install reports `installed_and_enabled`; a Hook whose
-    /// command alias conflicts with an already-enabled Hook reports `installed_but_disabled`
-    /// carrying the conflicting plugin identity.
+    /// The typed installation outcome. Installation always retains the package. A conflict-free
+    /// install reports `installed`; a Hook whose command alias collides with another installed
+    /// Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
+    /// packages remain available: the host has no enablement state, and uniqueness is deferred
+    /// to a future consumer.
     pub outcome: InstallOutcome,
 }
 
-/// Models the closed set of installation and activation outcomes.
+/// Models the closed set of installation outcomes.
 ///
 /// The outcome is a closed enum rather than a pair of booleans so a caller can never observe
-/// contradictory success flags: installation always succeeds, but automatic enablement may be
-/// blocked by a command-alias conflict.
+/// contradictory success flags. Installation always succeeds and the package remains available;
+/// a command-alias collision is reported rather than silently sharing a PATH alias or pretending
+/// the new package was disabled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "state",
@@ -473,12 +475,12 @@ pub struct InstallPluginResponse {
 )]
 #[ts(export_to = "plugin.ts")]
 pub enum InstallOutcome {
-    /// The package was installed and automatically enabled because no conflict existed.
-    InstalledAndEnabled,
-    /// The package was installed but left disabled because another Enabled Hook owns the same
-    /// command alias. The conflicting plugin identity is carried so PATH resolution can never
-    /// silently select the wrong Hook.
-    InstalledButDisabled { conflict_plugin_id: String },
+    /// The package was installed and is available.
+    Installed,
+    /// The package was installed and remains available, but another installed Hook already owns
+    /// the same command alias. The colliding plugin identity is carried so a future consumer can
+    /// refuse ambiguous PATH resolution instead of silently selecting the wrong Hook.
+    InstalledWithCommandConflict { conflict_plugin_id: String },
 }
 
 /// Requests importing one local `.orax` release archive into the installed plugins tree.
@@ -496,7 +498,7 @@ pub struct ImportPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct ImportPluginResponse {
     pub plugin_id: String,
-    /// The typed installation and activation outcome, identical in shape to a marketplace install.
+    /// The typed installation outcome, identical in shape to a marketplace install.
     pub outcome: InstallOutcome,
 }
 
@@ -981,10 +983,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
                 plugin_id: "official/weather".to_string(),
-                outcome: InstallOutcome::InstalledAndEnabled,
+                outcome: InstallOutcome::Installed,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
         );
     }
 
@@ -1001,10 +1003,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ImportPluginResponse {
                 plugin_id: "official/weather".to_string(),
-                outcome: InstallOutcome::InstalledAndEnabled,
+                outcome: InstallOutcome::Installed,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
         );
     }
 

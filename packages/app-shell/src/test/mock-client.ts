@@ -93,7 +93,7 @@ export interface MockClientState {
   importTarget?: InstalledPlugin | null;
   /**
    * The typed install/import outcome returned by the mock plugin commands. Defaults to
-   * `installed_and_enabled`; a conflict test supplies `installed_but_disabled`.
+   * `installed`; a conflict test supplies `installed_with_command_conflict`.
    */
   installOutcome?: InstallOutcome;
   developerMode: { enabled: boolean };
@@ -576,7 +576,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           throw new Error(`import not configured for ${req.path}`);
         if (target === null) throw new Error(`import failed for ${req.path}`);
         const outcome = state.installOutcome ?? {
-          state: "installed_and_enabled" as const,
+          state: "installed" as const,
         };
         state.installedPlugins.push({ ...target });
         return {
@@ -591,7 +591,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (!available)
           throw new Error(`available plugin ${req.pluginId} not found`);
         const outcome = state.installOutcome ?? {
-          state: "installed_and_enabled" as const,
+          state: "installed" as const,
         };
         state.installedPlugins.push(installedFromAvailable(available));
         return {

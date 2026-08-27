@@ -20,7 +20,7 @@ mod tests;
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
 pub use hook::InstalledHookDescriptor;
 pub use install::{
-    InstallError, InstalledPackage, Installer, ResolvedReleaseSource, select_release,
+    HostTarget, InstallError, InstalledPackage, Installer, ResolvedReleaseSource, select_release,
 };
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};

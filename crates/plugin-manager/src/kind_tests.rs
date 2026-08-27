@@ -1,6 +1,6 @@
 //! Discovery tests for the host-side policy of the `workbench`, `webview`, `mcp`, and `hook` kinds.
 
-use super::tests::{agent_manifest, replace_path, write_manifest};
+use super::tests::{SymlinkKind, agent_manifest, create_symlink, replace_path, write_manifest};
 use super::{PluginContribution, PluginManager};
 use ora_plugin_config::{HookProtocol, McpHttpTransport, McpTransport, McpValueExpression};
 use ora_plugin_manifest::MethodName;
@@ -594,4 +594,45 @@ fn rejects_hook_executable_containment_and_extension_violations() {
             Some("hook.executable"),
         );
     }
+}
+
+/// A Hook executable that is a directory is not a regular package file.
+#[test]
+fn rejects_hook_executable_that_is_a_directory() {
+    let data_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(data_dir.path(), NAME, hook_manifest());
+    write_hook_package(&package_root, HOOK_CONFIG);
+    fs::remove_file(package_root.join("assets").join("rtk.exe")).unwrap();
+    fs::create_dir_all(package_root.join("assets").join("rtk.exe")).unwrap();
+
+    let manager = PluginManager::discover(data_dir.path());
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager.discovery_issues()[0].field_path(),
+        Some("hook.executable"),
+    );
+}
+
+/// A Hook executable symlink that escapes the package is rejected so a caller-controlled
+/// replacement cannot smuggle a file from outside `assets/`.
+#[test]
+fn rejects_hook_executable_symlink_escape() {
+    let data_dir = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let package_root = write_manifest(data_dir.path(), NAME, hook_manifest());
+    write_hook_package(&package_root, HOOK_CONFIG);
+    let link = package_root.join("assets").join("rtk.exe");
+    fs::remove_file(&link).unwrap();
+    let outside_executable = outside.path().join("rtk.exe");
+    fs::write(&outside_executable, b"MZdummy").unwrap();
+    if create_symlink(&outside_executable, &link, SymlinkKind::File).is_err() {
+        return;
+    }
+
+    let manager = PluginManager::discover(data_dir.path());
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager.discovery_issues()[0].field_path(),
+        Some("hook.executable"),
+    );
 }

@@ -23,10 +23,11 @@ orchestrates checksum-verified installs of new plugin releases.
   `assets/config.json` plus the installed artifact target.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
-  or invalid so lifecycle can refuse to enable a broken package. A transport-bearing (MCP-shaped)
-  `assets/config.json` is only accepted on `kind = "mcp"` packages, and an MCP package requires
-  one. A Hook-shaped (hook-bearing) `assets/config.json` is only accepted on `kind = "hook"`
-  packages, and a hook package requires one.
+  or invalid so lifecycle can refuse to start a broken package. Invalid packages remain visible
+  but unusable. A transport-bearing (MCP-shaped) `assets/config.json` is only accepted on
+  `kind = "mcp"` packages, and an MCP package requires one. A Hook-shaped (hook-bearing)
+  `assets/config.json` is only accepted on `kind = "hook"` packages, and a hook package requires
+  one.
 - Apply host-side workbench and webview policy that the manifest crate cannot check: a workbench
   package must ship `assets/index.html` beside `main.js`; a webview package must not ship
   `main.js`, must cover `start_url` with `allowed_origins`, and must not declare shadowed
@@ -59,10 +60,11 @@ resulting snapshot through `installed_plugins()` and report any non-fatal proble
 `INSTALLED_ENTRYPOINT` expose the layout to callers that write or inspect it. A local `.orax`
 archive is imported with `Installer::install_local(archive_path, data_dir, host_target)`, which
 returns an `InstalledPackage` carrying the materialized `package_dir` and the `namespace/name`
-plugin id derived from the in-archive manifest. `host_target` is `Some` for the current host's
-canonical triple and `None` when the compiled host is not a supported plugin target; Hook
-archives must match that triple, while other kinds ignore it. `Installer::new` accepts any
-`HttpDownload`; `install` returns the package directory it extracted into.
+plugin id derived from the in-archive manifest. `host_target` is `HostTarget::Triple` for the
+current host's canonical triple and `HostTarget::Unsupported` when the compiled host is not a
+supported plugin target; Hook archives must match that triple, while other kinds ignore it.
+`select_release` takes the same `HostTarget`. `Installer::new` accepts any `HttpDownload`;
+`install` returns the package directory it extracted into.
 
 ## Validation split
 

@@ -139,6 +139,29 @@ impl ResolvedReleaseSource {
     }
 }
 
+/// Distinguishes a supported host triple from a compiled host that cannot run targeted plugins.
+///
+/// Universal releases ignore this value. Targeted marketplace selection and Hook local import
+/// require [`HostTarget::Triple`]. [`HostTarget::Unsupported`] is the explicit "this binary is
+/// not a plugin host" case, not "universal does not need a host".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostTarget<'a> {
+    /// The compiled host is not a supported plugin target.
+    Unsupported,
+    /// The host's canonical Rust target triple.
+    Triple(&'a HookTarget),
+}
+
+impl<'a> HostTarget<'a> {
+    /// Maps `current_host_target()` into a self-documenting host capability.
+    pub fn from_option(target: Option<&'a HookTarget>) -> Self {
+        match target {
+            Some(target) => Self::Triple(target),
+            None => Self::Unsupported,
+        }
+    }
+}
+
 /// Selects the release source matching `host_target` from a manifest's `release_source()`.
 ///
 /// A universal release resolves to the single URL/digest pair regardless of host. A targeted
@@ -147,7 +170,7 @@ impl ResolvedReleaseSource {
 /// when that host has no matching artifact, so the caller can reject before download.
 pub fn select_release(
     manifest: &PluginManifest,
-    host_target: Option<&HookTarget>,
+    host_target: HostTarget<'_>,
 ) -> Result<ResolvedReleaseSource, InstallError> {
     match manifest.release_source() {
         Some(PluginReleaseSource::Universal { url, sha256 }) => {
@@ -157,7 +180,9 @@ pub fn select_release(
             ))
         }
         Some(PluginReleaseSource::Targets(targets)) => {
-            let host_target = host_target.ok_or(InstallError::UnsupportedHost)?;
+            let HostTarget::Triple(host_target) = host_target else {
+                return Err(InstallError::UnsupportedHost);
+            };
             let entry = targets
                 .iter()
                 .find(|entry| entry.target() == host_target)
@@ -252,7 +277,7 @@ where
             path: staging.path().to_path_buf(),
             source,
         })?;
-        crate::validation::validate(staging.path(), manifest, None)
+        crate::validation::validate(staging.path(), manifest, /*logo*/ None)
             .map_err(InstallError::invalid_package)?;
         // A targeted archive must self-declare its target in an in-package `[artifact]` section.
         // Missing the installed manifest or the section fails closed so a wrong-architecture
@@ -296,13 +321,13 @@ where
     /// `<data-dir>/plugins/installed/<namespace>/<name>/<version>`. A `sha256` declared by the
     /// in-archive manifest is checked against the archive before anything is committed. A Hook
     /// archive must self-declare `[artifact]` and that target must match `host_target`; other
-    /// kinds ignore the host. `host_target` is `None` when the compiled host is not a supported
-    /// plugin target, which refuses Hook imports and leaves universal packages installable.
+    /// kinds ignore the host. [`HostTarget::Unsupported`] refuses Hook imports and leaves
+    /// universal packages installable.
     pub fn install_local(
         &self,
         archive_path: &Path,
         data_dir: &Path,
-        host_target: Option<&HookTarget>,
+        host_target: HostTarget<'_>,
     ) -> Result<InstalledPackage, InstallError> {
         let plugins_dir = data_dir.join("plugins");
         // Importing may target a profile that never synced the marketplace, so the plugins
@@ -367,13 +392,13 @@ where
                 version,
             });
         }
-        crate::validation::validate(staging.path(), &manifest, None)
+        crate::validation::validate(staging.path(), &manifest, /*logo*/ None)
             .map_err(InstallError::invalid_package)?;
         if matches!(manifest.kind(), PluginKind::Hook) {
             let Some(artifact) = manifest.artifact() else {
                 return Err(InstallError::MissingArtifactTarget);
             };
-            let Some(host_target) = host_target else {
+            let HostTarget::Triple(host_target) = host_target else {
                 return Err(InstallError::UnsupportedHost);
             };
             if artifact.target() != host_target {
@@ -437,7 +462,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallError, InstalledPackage, Installer, ResolvedReleaseSource};
+    use super::{HostTarget, InstallError, InstalledPackage, Installer, ResolvedReleaseSource};
     use futures::executor::block_on;
     use ora_plugin_manifest::{HookTarget, PluginManifest};
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
@@ -663,7 +688,7 @@ mod tests {
 
         let installer = Installer::new(LocalFileDownloader);
         let package = installer
-            .install_local(&release_path, temp_dir.path(), None)
+            .install_local(&release_path, temp_dir.path(), HostTarget::Unsupported)
             .expect("import static Skill archive");
 
         assert_eq!(package.id, "official/ora.skill-pack");
@@ -711,7 +736,7 @@ mod tests {
         );
 
         let error = Installer::new(LocalFileDownloader)
-            .install_local(&release_path, temp_dir.path(), None)
+            .install_local(&release_path, temp_dir.path(), HostTarget::Unsupported)
             .unwrap_err();
 
         assert!(matches!(
@@ -749,7 +774,7 @@ mod tests {
 
         let installer = Installer::new(LocalFileDownloader);
         let package = installer
-            .install_local(&release_path, temp_dir.path(), None)
+            .install_local(&release_path, temp_dir.path(), HostTarget::Unsupported)
             .expect("import agent archive into a fresh profile");
 
         assert_eq!(
@@ -889,7 +914,11 @@ mod tests {
         );
 
         let error = Installer::new(LocalFileDownloader)
-            .install_local(&release_path, temp_dir.path(), Some(&windows_host()))
+            .install_local(
+                &release_path,
+                temp_dir.path(),
+                HostTarget::Triple(&windows_host()),
+            )
             .unwrap_err();
 
         assert!(matches!(error, InstallError::TargetMismatch { .. }));
@@ -946,7 +975,7 @@ mod tests {
         ))
         .unwrap();
         let host_target = ora_plugin_manifest::HookTarget::parse("aarch64-apple-darwin").unwrap();
-        let error = super::select_release(&manifest, Some(&host_target)).unwrap_err();
+        let error = super::select_release(&manifest, HostTarget::Triple(&host_target)).unwrap_err();
         assert!(matches!(error, InstallError::NoArtifactForTarget { .. }));
     }
 
@@ -959,7 +988,8 @@ mod tests {
             "resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather\"\nurl = \"https://example.com/weather.orax\"\nsha256 = \"{digest}\"\n"
         ))
         .unwrap();
-        super::select_release(&manifest, None).expect("universal release does not need a host");
+        super::select_release(&manifest, HostTarget::Unsupported)
+            .expect("universal release does not need a host");
     }
 
     /// A targeted release cannot be selected when the compiled host is not a plugin target.
@@ -970,7 +1000,7 @@ mod tests {
             "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{digest}\"\n"
         ))
         .unwrap();
-        let error = super::select_release(&manifest, None).unwrap_err();
+        let error = super::select_release(&manifest, HostTarget::Unsupported).unwrap_err();
         assert!(matches!(error, InstallError::UnsupportedHost));
     }
 
@@ -995,7 +1025,7 @@ mod tests {
         );
 
         let error = Installer::new(LocalFileDownloader)
-            .install_local(&release_path, temp_dir.path(), None)
+            .install_local(&release_path, temp_dir.path(), HostTarget::Unsupported)
             .unwrap_err();
         assert!(matches!(error, InstallError::UnsupportedHost));
     }
