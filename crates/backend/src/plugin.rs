@@ -17,6 +17,7 @@ use ora_contracts::{
     PublicError, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
     SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
     UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    UpdatePluginRequest, UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -31,7 +32,11 @@ use ora_plugin_lifecycle::{
     PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
-use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
+use ora_plugin_manager::{
+    HostTarget, InstallError, Installer, PluginContribution, PluginManager, UpdateError,
+    select_release,
+};
+use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{ProxyConfig, ReqwestDownloader};
 use std::collections::BTreeMap;
@@ -552,57 +557,8 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let registry_sources = self.prepared_registry_sources()?;
-        // A malformed identifier can never name a registry entry, so it is reported the same way
-        // as an unknown one instead of leaking the id grammar as a separate error class.
-        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
-            BackendError::new(
-                ErrorClassification::NotFound,
-                PublicError::PluginNotFound(EmptyErrorParams {}),
-                "marketplace plugin id is not a valid `<namespace>/<name>`",
-            )
-        })?;
-        let mut resolved = None;
-        for (source, use_proxy) in &registry_sources {
-            let registry_dir = source.checkout_dir().join("registry");
-            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
-                .map_err(|error| {
-                    BackendError::internal("failed to resolve plugin release manifest", error)
-                })?
-            {
-                resolved = Some((manifest, *use_proxy));
-                break;
-            }
-        }
-        let (manifest, use_proxy) = resolved.ok_or_else(|| {
-            BackendError::new(
-                ErrorClassification::NotFound,
-                PublicError::PluginNotFound(EmptyErrorParams {}),
-                "marketplace plugin was not found in the registry",
-            )
-        })?;
-        // Universal releases install on any host; only targeted selection needs a supported
-        // triple. Requiring a host up front would refuse agent/MCP/skill packages on an
-        // unsupported architecture.
-        let host_target = ora_plugin_registry::current_host_target();
-        let release_source = ora_plugin_manager::select_release(
-            &manifest,
-            ora_plugin_manager::HostTarget::from_option(host_target.as_ref()),
-        )
-        .map_err(|error| match error {
-            ora_plugin_manager::InstallError::NoArtifactForTarget { .. }
-            | ora_plugin_manager::InstallError::MissingRelease
-            | ora_plugin_manager::InstallError::UnsupportedHost => BackendError::new(
-                ErrorClassification::Unprocessable,
-                PublicError::PluginHostIncompatible(EmptyErrorParams {}),
-                format!("{error}"),
-            ),
-            error => BackendError::new(
-                ErrorClassification::InvalidRequest,
-                PublicError::InvalidRequest(EmptyErrorParams {}),
-                format!("{error}"),
-            ),
-        })?;
+        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
+        let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
                 ora_info!(plugin_id = %request.plugin_id, url = %url, "installing marketplace plugin");
@@ -611,25 +567,141 @@ impl PluginApi {
                 ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "installing marketplace plugin from local source");
             }
         }
-        let proxy_settings = self.user_config.network_proxy_settings()?;
-        let download_proxy = if use_proxy {
-            proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
-                BackendError::invalid_proxy_settings(
-                    "a marketplace source uses the proxy but no proxy is configured",
-                )
-            })?
-        } else {
-            ProxyConfig::default()
-        };
+        let download_proxy = self.download_proxy_for(use_proxy)?;
         Installer::new(ReqwestDownloader::new(download_proxy))
             .install(&manifest, release_source, &self.data_directory)
             .await
-            .map_err(|error| BackendError::internal("failed to install plugin", error))?;
+            .map_err(|error| self.map_install_error("failed to install plugin", error))?;
         let outcome = self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, outcome = ?outcome, "installed marketplace plugin");
         Ok(InstallPluginResponse {
             plugin_id: request.plugin_id,
             outcome,
+        })
+    }
+
+    /// Updates one installed marketplace plugin to the version its source publishes.
+    ///
+    /// The source resolution and proxy policy are identical to an install: the winning
+    /// marketplace source decides whether the download goes through the configured proxy. The
+    /// running process is stopped before its package is replaced, and the installed snapshot is
+    /// rescanned afterwards so the new version becomes effective without a restart.
+    pub(crate) async fn update(
+        &self,
+        request: UpdatePluginRequest,
+    ) -> Result<UpdatePluginResponse, BackendError> {
+        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
+        let release_source = self.select_marketplace_release(&manifest)?;
+        match release_source.download() {
+            ora_utils::http::DownloadSource::Url(url) => {
+                ora_info!(plugin_id = %request.plugin_id, url = %url, "updating marketplace plugin");
+            }
+            ora_utils::http::DownloadSource::Local(path) => {
+                ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "updating marketplace plugin from local source");
+            }
+        }
+        // The package directory is replaced while the plugin may be running, so the process is
+        // stopped first; stopping a webview/skill/MCP/hook package is a no-op.
+        self.lifecycle
+            .stop_plugin(StopPluginRequest {
+                plugin_id: request.plugin_id.clone(),
+            })
+            .await
+            .map_err(BackendError::from)?;
+        let download_proxy = self.download_proxy_for(use_proxy)?;
+        Installer::new(ReqwestDownloader::new(download_proxy))
+            .update(&manifest, release_source, &self.data_directory)
+            .await
+            .map_err(|error| self.map_update_error("failed to update plugin", error))?;
+        self.finalize_new_install(&request.plugin_id).await?;
+        ora_info!(plugin_id = %request.plugin_id, "updated marketplace plugin");
+        Ok(UpdatePluginResponse {
+            plugin_id: request.plugin_id,
+        })
+    }
+
+    /// Resolves the release manifest for one marketplace identifier across the configured sources.
+    ///
+    /// Sources are consulted in precedence order, and the returned flag is the winning source's
+    /// proxy policy so installs and updates honor the same per-source setting as the git sync.
+    fn resolve_marketplace_release(
+        &self,
+        plugin_id: &str,
+    ) -> Result<(PluginManifest, bool), BackendError> {
+        let registry_sources = self.prepared_registry_sources()?;
+        // A malformed identifier can never name a registry entry, so it is reported the same way
+        // as an unknown one instead of leaking the id grammar as a separate error class.
+        let plugin_id = PluginId::parse(plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        for (source, use_proxy) in &registry_sources {
+            let registry_dir = source.checkout_dir().join("registry");
+            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
+                .map_err(|error| {
+                    BackendError::internal("failed to resolve plugin release manifest", error)
+                })?
+            {
+                return Ok((manifest, *use_proxy));
+            }
+        }
+        Err(BackendError::new(
+            ErrorClassification::NotFound,
+            PublicError::PluginNotFound(EmptyErrorParams {}),
+            "marketplace plugin was not found in the registry",
+        ))
+    }
+
+    /// Selects the downloadable release for `manifest` against the current host.
+    ///
+    /// Universal releases ignore the host. Targeted Hook releases require a supported triple and
+    /// an exact artifact match so a wrong-architecture package is refused before download.
+    fn select_marketplace_release(
+        &self,
+        manifest: &PluginManifest,
+    ) -> Result<ora_plugin_manager::ResolvedReleaseSource, BackendError> {
+        let host_target = ora_plugin_registry::current_host_target();
+        select_release(manifest, HostTarget::from_option(host_target.as_ref()))
+            .map_err(|error| self.map_install_error("failed to select plugin release", error))
+    }
+
+    /// Maps installer failures that describe host incompatibility onto the public contract error.
+    fn map_install_error(&self, context: &'static str, error: InstallError) -> BackendError {
+        match error {
+            InstallError::NoArtifactForTarget { .. }
+            | InstallError::MissingRelease
+            | InstallError::UnsupportedHost
+            | InstallError::TargetMismatch { .. }
+            | InstallError::MissingArtifactTarget => BackendError::new(
+                ErrorClassification::Unprocessable,
+                PublicError::PluginHostIncompatible(EmptyErrorParams {}),
+                format!("{error}"),
+            ),
+            error => BackendError::internal(context, error),
+        }
+    }
+
+    /// Maps update failures, preserving host-incompatibility from the nested install path.
+    fn map_update_error(&self, context: &'static str, error: UpdateError) -> BackendError {
+        match error {
+            UpdateError::Install(install_error) => self.map_install_error(context, install_error),
+            error => BackendError::internal(context, error),
+        }
+    }
+
+    /// Returns the downloader proxy configuration for one marketplace source's proxy policy.
+    fn download_proxy_for(&self, use_proxy: bool) -> Result<ProxyConfig, BackendError> {
+        if !use_proxy {
+            return Ok(ProxyConfig::default());
+        }
+        let proxy_settings = self.user_config.network_proxy_settings()?;
+        proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
+            BackendError::invalid_proxy_settings(
+                "a marketplace source uses the proxy but no proxy is configured",
+            )
         })
     }
 

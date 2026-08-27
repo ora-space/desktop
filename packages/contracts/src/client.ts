@@ -217,6 +217,8 @@ export function createContractsClient(
         executeOperation("uninstallPlugin", request, transport, options),
       install: (request, options) =>
         executeOperation("installPlugin", request, transport, options),
+      update: (request, options) =>
+        executeOperation("updatePlugin", request, transport, options),
       import: (request, options) =>
         executeOperation("importPlugin", request, transport, options),
     },

@@ -23,6 +23,7 @@ ora-fs = { workspace = true }
 ora-history = { workspace = true }
 ora-logging = { workspace = true }
 ora-plugin-config = { workspace = true }
+ora-plugin-manifest = { workspace = true }
 ora-plugin-lifecycle = { workspace = true }
 ora-plugin-manager = { workspace = true }
 ora-plugin-runtime = { workspace = true }

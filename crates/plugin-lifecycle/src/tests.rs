@@ -150,6 +150,49 @@ async fn manages_static_skill_plugin_without_a_runtime() {
     );
     assert!(!package_version_root(temp_dir.path(), "ora.skill-pack").exists());
 }
+
+/// Verifies a processless Hook plugin can be listed and uninstalled but never activated.
+#[tokio::test]
+async fn manages_static_hook_plugin_without_a_runtime() {
+    let _logging = trace_logging_guard();
+    let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+    write_hook_plugin_package(temp_dir.path(), "rtk-ai.rtk");
+    let lifecycle = open_without_runtime(temp_dir.path());
+    let plugin_id = "official/rtk-ai.rtk".to_string();
+
+    assert_eq!(
+        lifecycle.list_installed_plugins(),
+        ListInstalledPluginsResponse {
+            plugins: vec![expected_hook_plugin()],
+        }
+    );
+    assert!(matches!(
+        lifecycle
+            .activate_plugin(ActivatePluginRequest {
+                plugin_id: plugin_id.clone(),
+            })
+            .await,
+        Err(PluginLifecycleError::NoProcess { plugin_id: found }) if found == plugin_id
+    ));
+    assert_eq!(
+        lifecycle
+            .uninstall_plugin(UninstallPluginRequest {
+                plugin_id: plugin_id.clone(),
+                data_disposition: PluginDataDisposition::Delete,
+            })
+            .await
+            .expect("uninstall Hook plugin"),
+        UninstallPluginResponse { plugin_id }
+    );
+    assert_eq!(
+        lifecycle.list_installed_plugins(),
+        ListInstalledPluginsResponse {
+            plugins: Vec::new(),
+        }
+    );
+    assert!(!package_version_root(temp_dir.path(), "rtk-ai.rtk").exists());
+}
+
 /// Verifies an installed process plugin can start directly.
 #[tokio::test]
 async fn activates_plugin_and_starts_its_runtime() {
@@ -786,6 +829,31 @@ fn expected_skill_plugin() -> InstalledPlugin {
         runtime: PluginRuntimeStatus::Stopped,
     }
 }
+
+/// Builds the expected wire contract for the static Hook package fixture.
+fn expected_hook_plugin() -> InstalledPlugin {
+    InstalledPlugin {
+        id: "official/rtk-ai.rtk".to_string(),
+        namespace: "official".to_string(),
+        name: "rtk-ai.rtk".to_string(),
+        display_name: "rtk-ai.rtk".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Example Hook plugin".to_string(),
+        homepage: None,
+        license: None,
+        contribution: InstalledPluginContribution::Hook {
+            protocol: "rtk-rewrite-v1".to_string(),
+            command: "rtk".to_string(),
+            target: Some("x86_64-pc-windows-msvc".to_string()),
+            tool_version: "0.45.0".to_string(),
+        },
+        logo: Some(PACKAGE_LOGO.to_string()),
+        installation_validity: PluginInstallationValidity::Valid,
+        configuration: PluginConfigurationSummary::NotDeclared,
+        runtime: PluginRuntimeStatus::Stopped,
+    }
+}
+
 /// Builds the expected package contract with an explicit lifecycle state.
 fn expected_plugin_with_runtime(runtime: PluginRuntimeStatus) -> InstalledPlugin {
     InstalledPlugin {
@@ -1155,6 +1223,44 @@ description = "Example Skill plugin"
     )
     .expect("write Skill plugin manifest");
 }
+
+/// Writes one processless Hook package with a contained executable and no `main.js`.
+fn write_hook_plugin_package(data_dir: &std::path::Path, name: &str) {
+    let package_root = package_version_root(data_dir, name);
+    fs::create_dir_all(package_root.join("assets")).expect("create Hook plugin assets");
+    fs::write(package_root.join("logo.svg"), PACKAGE_LOGO).expect("write plugin logo");
+    fs::write(
+        package_root.join("assets").join("config.json"),
+        r#"{
+            "schemaVersion": 1,
+            "hook": {
+                "protocol": "rtk-rewrite-v1",
+                "executable": "assets/rtk.exe",
+                "command": "rtk",
+                "toolVersion": "0.45.0"
+            }
+        }"#,
+    )
+    .expect("write Hook configuration");
+    fs::write(package_root.join("assets").join("rtk.exe"), b"MZdummy")
+        .expect("write Hook executable");
+    fs::write(
+        package_root.join("orax.toml"),
+        format!(
+            r#"identifier = "{name}"
+namespace = "official"
+kind = "hook"
+version = "1.0.0"
+description = "Example Hook plugin"
+
+[artifact]
+target = "x86_64-pc-windows-msvc"
+"#
+        ),
+    )
+    .expect("write Hook plugin manifest");
+}
+
 /// Writes one complete agent package into the versioned installed layout.
 pub(super) fn write_plugin_package(data_dir: &std::path::Path, name: &str) {
     let package_root = package_version_root(data_dir, name);

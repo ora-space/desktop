@@ -12,7 +12,7 @@ orchestrates checksum-verified installs of new plugin releases.
   schema, and require the manifest version to match the version directory.
 - Resolve the fixed `main.js` entrypoint for agent and workbench packages as an existing regular
   file whose canonical target remains inside its package, then retain its portable relative path.
-  Webview, skill, and MCP packages have no process entrypoint.
+  Webview, skill, MCP, and hook packages have no process entrypoint.
 - Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
   `::Webview`, `::Skill`, `::Mcp`, or `::Hook`), so a validated plugin always carries exactly what
   its kind promises. Skill contributions carry no additional contract fields, but the package must
@@ -41,6 +41,10 @@ orchestrates checksum-verified installs of new plugin releases.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`.
+- Update an installed plugin release by refusing no-op and downgrade attempts (the marketplace
+  manifest must declare a higher version than the highest installed SemVer directory), then
+  downloading, verifying, and extracting the new release into its version directory and retiring
+  every other version directory underneath `<data-dir>/plugins/installed/<namespace>/<name>`.
 - Import one local `.orax` release archive by extracting into a disposable staging directory,
   parsing its in-archive `orax.toml`, verifying a declared `sha256`, and then moving only the
   validated tree into `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
@@ -64,7 +68,9 @@ plugin id derived from the in-archive manifest. `host_target` is `HostTarget::Tr
 current host's canonical triple and `HostTarget::Unsupported` when the compiled host is not a
 supported plugin target; Hook archives must match that triple, while other kinds ignore it.
 `select_release` takes the same `HostTarget`. `Installer::new` accepts any `HttpDownload`;
-`install` returns the package directory it extracted into.
+`install` returns the package directory it extracted into, and `update` returns the committed
+`InstalledPackage` after stale versions are retired. Both `install` and `update` take a
+`ResolvedReleaseSource` so targeted Hook releases keep the same host-selection path.
 
 ## Validation split
 
@@ -73,7 +79,7 @@ supported plugin target; Hook archives must match that triple, while other kinds
 and that `[workbench]` is refused for every other kind. This crate adds what depends on the host
 or on the package on disk:
 
-- Agent and workbench packages must contain `main.js`; webview and MCP packages must not. Skill
+- Agent and workbench packages must contain `main.js`; webview, MCP, and hook packages must not. Skill
   packages have no process entrypoint.
 - A workbench package must ship `assets/index.html`; the canonical `assets/` directory is the
   only tree ever served to the page.

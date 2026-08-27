@@ -599,6 +599,22 @@ export function createMockClient(state: MockClientState): ContractsClient {
           outcome,
         };
       },
+      update: async (req) => {
+        const available = state.availablePlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!available)
+          throw new Error(`available plugin ${req.pluginId} not found`);
+        const installed = state.installedPlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!installed)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        installed.version = available.version;
+        installed.description = available.description;
+        installed.logo = available.logo;
+        return { pluginId: req.pluginId };
+      },
     },
     agent: {
       list: async () => ({ agents: [...state.agents] }),

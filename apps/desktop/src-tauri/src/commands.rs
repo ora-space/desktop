@@ -1125,6 +1125,13 @@ async_backend_command!(
     "Installs one marketplace plugin by downloading, verifying, and extracting it."
 );
 async_backend_command!(
+    update_plugin,
+    UpdatePluginRequest,
+    UpdatePluginResponse,
+    update_plugin,
+    "Updates one installed plugin to the version its marketplace source publishes."
+);
+async_backend_command!(
     import_plugin,
     ImportPluginRequest,
     ImportPluginResponse,

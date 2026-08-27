@@ -122,6 +122,21 @@ describe("createTauriTransport", () => {
       request: { pluginId: "official/weather" },
     });
   });
+  it("maps marketplace plugin updates to the Desktop plugin command", async () => {
+    const response = { pluginId: "official/weather" };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "updatePlugin",
+        request: { pluginId: "official/weather" },
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("update_plugin", {
+      request: { pluginId: "official/weather" },
+    });
+  });
   it("maps local archive import to the Desktop plugin command", async () => {
     const response = { pluginId: "official/weather" };
     const invoke = vi.fn().mockResolvedValue(response);

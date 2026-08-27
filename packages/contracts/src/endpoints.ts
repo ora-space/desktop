@@ -5,7 +5,7 @@ import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse } from "./plugin.js";
+import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
@@ -91,6 +91,7 @@ export type RequestByOperation = {
   stopPlugin: StopPluginRequest;
   uninstallPlugin: UninstallPluginRequest;
   installPlugin: InstallPluginRequest;
+  updatePlugin: UpdatePluginRequest;
   importPlugin: ImportPluginRequest;
   getProxySettings: GetProxySettingsRequest;
   setProxySettings: SetProxySettingsRequest;
@@ -202,6 +203,7 @@ export type ResponseByOperation = {
   stopPlugin: StopPluginResponse;
   uninstallPlugin: UninstallPluginResponse;
   installPlugin: InstallPluginResponse;
+  updatePlugin: UpdatePluginResponse;
   importPlugin: ImportPluginResponse;
   getProxySettings: GetProxySettingsResponse;
   setProxySettings: SetProxySettingsResponse;
@@ -754,6 +756,14 @@ export const endpoints = {
     memberName: "install",
     requestType: "InstallPluginRequest",
     responseType: "InstallPluginResponse",
+    responseMode: "unary",
+  },
+  updatePlugin: {
+    operationName: "updatePlugin",
+    namespace: "plugin",
+    memberName: "update",
+    requestType: "UpdatePluginRequest",
+    responseType: "UpdatePluginResponse",
     responseMode: "unary",
   },
   importPlugin: {
