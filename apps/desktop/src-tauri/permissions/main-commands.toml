@@ -69,6 +69,7 @@ commands.allow = [
     "stop_plugin",
     "uninstall_plugin",
     "install_plugin",
+    "update_plugin",
     "import_plugin",
     "update_agent",
     "delete_agent",

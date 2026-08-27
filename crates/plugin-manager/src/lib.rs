@@ -17,7 +17,7 @@ mod kind_tests;
 mod tests;
 
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
-pub use install::{InstallError, InstalledPackage, Installer};
+pub use install::{InstallError, InstalledPackage, Installer, UpdateError};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
 pub use skill::{

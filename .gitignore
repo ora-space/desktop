@@ -31,3 +31,8 @@ packages/contracts/.test-dist/
 
 /specs
 /memories
+# Local scratch / agent working files
+.pnpm-store/
+.tmp_patch.txt
+HANDOFF*.md
+plugin-doc/

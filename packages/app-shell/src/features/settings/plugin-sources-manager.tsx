@@ -1,6 +1,17 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input, Switch, toast } from "@ora/ui";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  Button,
+  Input,
+  Switch,
+  toast,
+} from "@ora/ui";
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
 import {
@@ -26,7 +37,6 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const updateSource = useUpdateMarketplaceSource();
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("main");
-  const [useProxy, setUseProxy] = useState(false);
 
   const sources = sourcesQuery.data?.sources ?? [];
 
@@ -35,7 +45,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
     const nextBranch = branch.trim();
     if (nextUrl === "" || nextBranch === "") return;
     addSource.mutate(
-      { url: nextUrl, branch: nextBranch, useProxy },
+      { url: nextUrl, branch: nextBranch, useProxy: false },
       {
         onSuccess: () => {
           setUrl("");
@@ -52,18 +62,29 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={onBack}>
-          {t("settings.plugins.back")}
-        </Button>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold">
-            {t("settings.plugins.manageSources")}
-          </h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {t("settings.plugins.manageSourcesDescription")}
-          </p>
-        </div>
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink render={<button type="button" onClick={onBack} />}>
+              {t("settings.plugins.title")}
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>
+              {t("settings.plugins.manageSources")}
+            </BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+
+      <header>
+        <h2 className="text-lg font-semibold">
+          {t("settings.plugins.manageSources")}
+        </h2>
+        <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+          {t("settings.plugins.manageSourcesDescription")}
+        </p>
       </header>
 
       <form
@@ -87,16 +108,6 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           aria-label={t("settings.plugins.sourceBranch")}
           className="bg-background sm:w-40"
         />
-        <div className="flex items-center gap-2 sm:pl-2">
-          <Switch
-            checked={useProxy}
-            onCheckedChange={setUseProxy}
-            aria-label={t("settings.plugins.sourceUseProxy")}
-          />
-          <span className="text-xs text-muted-foreground">
-            {t("settings.plugins.sourceUseProxy")}
-          </span>
-        </div>
         <Button
           type="submit"
           variant="outline"
@@ -133,25 +144,31 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                   <span className="font-mono">{source.branch}</span>
                 </span>
               </span>
-              <Switch
-                checked={source.useProxy}
-                disabled={updateSource.isPending}
-                onCheckedChange={(checked) =>
-                  updateSource.mutate(
-                    { url: source.url, useProxy: checked },
-                    {
-                      onError: (cause) =>
-                        toast.error(
-                          t("settings.plugins.sourceProxyUpdateFailed"),
-                          {
-                            description: localizeContractError(cause, t),
-                          },
-                        ),
-                    },
-                  )
-                }
-                aria-label={`${t("settings.plugins.sourceUseProxy")}: ${source.url}`}
-              />
+              <label className="flex items-center gap-2">
+                <Switch
+                  checked={source.useProxy}
+                  title={t("settings.plugins.sourceUseProxy")}
+                  disabled={updateSource.isPending}
+                  onCheckedChange={(checked) =>
+                    updateSource.mutate(
+                      { url: source.url, useProxy: checked },
+                      {
+                        onError: (cause) =>
+                          toast.error(
+                            t("settings.plugins.sourceProxyUpdateFailed"),
+                            {
+                              description: localizeContractError(cause, t),
+                            },
+                          ),
+                      },
+                    )
+                  }
+                  aria-label={`${t("settings.plugins.sourceUseProxy")}: ${source.url}`}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {t("settings.plugins.sourceUseProxy")}
+                </span>
+              </label>
               <Button
                 variant="ghost"
                 size="icon-sm"

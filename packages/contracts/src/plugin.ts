@@ -390,3 +390,13 @@ export type UpdateMarketplaceSourceRequest = { url: string; useProxy: boolean };
 export type UpdateMarketplaceSourceResponse = {
   sources: Array<MarketplaceSource>;
 };
+
+/**
+ * Requests updating one installed marketplace plugin to the version its source publishes.
+ */
+export type UpdatePluginRequest = { pluginId: string };
+
+/**
+ * Confirms the identifier updated after the new release is verified and stale versions removed.
+ */
+export type UpdatePluginResponse = { pluginId: string };

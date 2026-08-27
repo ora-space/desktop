@@ -374,6 +374,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "UninstallPluginResponse"
         | "InstallPluginRequest"
         | "InstallPluginResponse"
+        | "UpdatePluginRequest"
+        | "UpdatePluginResponse"
         | "ImportPluginRequest"
         | "ImportPluginResponse"
         | "AddMarketplaceSourceRequest"

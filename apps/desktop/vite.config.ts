@@ -1,10 +1,29 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 import * as path from "node:path";
+
+/** Reads the workspace version that Cargo.toml owns for the whole Rust workspace. */
+function readWorkspaceVersion(): string {
+  const cargoToml = readFileSync(
+    path.resolve(__dirname, "../../Cargo.toml"),
+    "utf8",
+  );
+  const match = cargoToml.match(
+    /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m,
+  );
+  if (match === null) {
+    throw new Error("workspace.package version missing in Cargo.toml");
+  }
+  return match[1];
+}
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __ORA_APP_VERSION__: JSON.stringify(readWorkspaceVersion()),
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: [

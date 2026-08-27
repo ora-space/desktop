@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { InstalledPlugin } from "@ora/contracts";
+import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -25,10 +25,13 @@ import {
   toast,
 } from "@ora/ui";
 import {
+  IconArrowBigUpLines,
   IconDots,
   IconLoader2,
+  IconProgressDown,
   IconRefresh,
   IconSearch,
+  IconSettingsBolt,
   IconTrash,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
@@ -36,16 +39,19 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
+import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 
 /** The installed-plugin manager exposes runtime and package lifecycle commands. */
 export function PluginManager({
   plugins,
   onBack,
   onConfigure,
+  availableById,
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
+  availableById?: ReadonlyMap<string, AvailablePlugin>;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -130,6 +136,7 @@ export function PluginManager({
               key={plugin.id}
               plugin={plugin}
               onConfigure={onConfigure}
+              available={availableById?.get(plugin.id)}
             />
           ))}
         </div>
@@ -141,19 +148,29 @@ export function PluginManager({
 function InstalledPluginRow({
   plugin,
   onConfigure,
+  available,
 }: {
   plugin: InstalledPlugin;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
+  available: AvailablePlugin | undefined;
 }) {
   const { t } = useTranslation();
+  const update = useUpdatePlugin(plugin.id);
   const mutations = usePluginMutations(
     plugin.id,
     plugin.kind === "agent" ? plugin.name : undefined,
   );
   const uninstalling = mutations.uninstall.isPending;
-  const busy = uninstalling;
+  const busy = uninstalling || update.isPending;
+  const hasUpdate =
+    available !== undefined && available.version !== plugin.version;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const failUpdate = (cause: unknown) => {
+    toast.error(t("settings.plugins.updateFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
   const failUninstall = (cause: unknown) => {
     toast.error(t("settings.plugins.uninstallFailed"), {
       description: localizeContractError(cause, t),
@@ -195,6 +212,18 @@ function InstalledPluginRow({
           )}
         </span>
 
+        {hasUpdate && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => update.mutate({}, { onError: failUpdate })}
+          >
+            {update.isPending ? <IconProgressDown /> : <IconArrowBigUpLines />}
+            {t("settings.plugins.update")}
+          </Button>
+        )}
+
         {plugin.installationValidity.validity === "valid" &&
           plugin.configuration.state !== "not_declared" && (
             <Button
@@ -203,6 +232,7 @@ function InstalledPluginRow({
               disabled={busy}
               onClick={() => onConfigure(plugin)}
             >
+              <IconSettingsBolt />
               {t("settings.plugins.configuration.configure")}
             </Button>
           )}

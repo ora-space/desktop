@@ -1,10 +1,11 @@
-//! Installs a plugin release by downloading its package and safely extracting it.
+//! Installs and updates plugin releases by downloading and safely extracting their package.
 
 use crate::discovery::installed_root;
 use ora_plugin_manifest::PluginManifest;
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::hash;
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
+use semver::Version;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -73,6 +74,37 @@ impl InstallError {
             message: source.to_string(),
         }
     }
+}
+
+/// Reports why one plugin release could not be updated.
+#[derive(Debug, Error)]
+pub enum UpdateError {
+    /// The new release could not be downloaded, verified, or materialized.
+    #[error("failed to install the updated release: {0}")]
+    Install(#[from] InstallError),
+    /// No installed package exists for the plugin, so there is nothing to update.
+    #[error("plugin `{id}` is not installed")]
+    NotFound { id: String },
+    /// The marketplace still publishes the version that is already installed.
+    #[error("plugin `{id}` version `{version}` is already up to date")]
+    AlreadyUpToDate { id: String, version: String },
+    /// The marketplace publishes a version older than the installed one.
+    #[error(
+        "marketplace version `{available}` is older than installed version `{installed}` for plugin `{id}`"
+    )]
+    Downgrade {
+        id: String,
+        installed: String,
+        available: String,
+    },
+    /// A stale version directory could not be removed after the new version landed.
+    #[error("failed to remove stale plugin version {path} for `{id}`: {source}")]
+    Retire {
+        id: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Describes one package materialized from a local release archive.
@@ -156,6 +188,60 @@ where
             source,
         })?;
         Ok(package_dir)
+    }
+
+    /// Updates one installed plugin to `manifest`'s version by downloading, verifying, and
+    /// extracting the new release, then retiring every older version directory.
+    ///
+    /// The currently installed version is derived from the highest valid SemVer directory below
+    /// `<data-dir>/plugins/installed/<namespace>/<name>`, so the marketplace cannot silently
+    /// downgrade a package or re-materialize an identical release. Only a verified package is
+    /// ever committed, and stale versions are removed after the new one is on disk so a failed
+    /// download leaves the previous installation untouched.
+    pub async fn update(
+        &self,
+        manifest: &PluginManifest,
+        source: DownloadSource,
+        data_dir: &Path,
+    ) -> Result<InstalledPackage, UpdateError> {
+        let namespace = manifest.namespace();
+        let name = manifest.name();
+        let id = format!("{}/{}", namespace.as_str(), name.as_str());
+        let plugin_root = installed_root(data_dir)
+            .join(namespace.as_str())
+            .join(name.as_str());
+        let latest_installed = match latest_installed_version(&plugin_root) {
+            Ok(latest) => latest,
+            // A missing name root means the plugin was never installed, which is a distinct
+            // outcome from a stale-version removal failure.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(UpdateError::Retire {
+                    id: id.clone(),
+                    path: plugin_root.clone(),
+                    source,
+                });
+            }
+        };
+        let Some(latest_installed) = latest_installed else {
+            return Err(UpdateError::NotFound { id });
+        };
+        if manifest.version() == &latest_installed {
+            return Err(UpdateError::AlreadyUpToDate {
+                id,
+                version: latest_installed.to_string(),
+            });
+        }
+        if manifest.version() < &latest_installed {
+            return Err(UpdateError::Downgrade {
+                id,
+                installed: latest_installed.to_string(),
+                available: manifest.version().to_string(),
+            });
+        }
+        let package_dir = self.install(manifest, source, data_dir).await?;
+        retire_stale_versions(&id, &plugin_root, &package_dir)?;
+        Ok(InstalledPackage { package_dir, id })
     }
 
     /// Imports an already-downloaded release archive from `archive_path` into the installed tree.
@@ -286,9 +372,59 @@ where
         Ok(archive_path)
     }
 }
+
+/// Returns the highest valid SemVer version directory below `plugin_root`, if any.
+///
+/// Directory names that are not valid SemVer are ignored here exactly as discovery treats them:
+/// they cannot decide whether an update is a no-op or a downgrade, and they are retired along
+/// with every other stale version once a new release lands.
+fn latest_installed_version(plugin_root: &Path) -> std::io::Result<Option<Version>> {
+    let mut latest = None;
+    for entry in std::fs::read_dir(plugin_root)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if let Ok(version) = Version::parse(&entry.file_name().to_string_lossy())
+            && (latest.as_ref().is_none_or(|installed| version > *installed))
+        {
+            latest = Some(version);
+        }
+    }
+    Ok(latest)
+}
+
+/// Removes every version directory below `plugin_root` except the one that was just installed.
+///
+/// The plugin name root is derived from manifest-validated segments and the retained directory is
+/// the exact path the installer just committed, so only sibling version directories can be
+/// touched. A removal failure is reported after the new version is already committed; the caller
+/// keeps the installed plugin usable and can retry cleanup independently.
+fn retire_stale_versions(id: &str, plugin_root: &Path, retain: &Path) -> Result<(), UpdateError> {
+    for entry in std::fs::read_dir(plugin_root).map_err(|source| UpdateError::Retire {
+        id: id.to_owned(),
+        path: plugin_root.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| UpdateError::Retire {
+            id: id.to_owned(),
+            path: plugin_root.to_path_buf(),
+            source,
+        })?;
+        if entry.path() == retain {
+            continue;
+        }
+        std::fs::remove_dir_all(entry.path()).map_err(|source| UpdateError::Retire {
+            id: id.to_owned(),
+            path: entry.path(),
+            source,
+        })?;
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
-    use super::{InstallError, InstalledPackage, Installer};
+    use super::{InstallError, InstalledPackage, Installer, UpdateError};
     use futures::executor::block_on;
     use ora_plugin_manifest::PluginManifest;
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
@@ -592,5 +728,201 @@ mod tests {
         );
         assert!(package.package_dir.join("main.js").exists());
         assert!(package.package_dir.join("logo.svg").exists());
+    }
+
+    /// Stages one installed package version below `<data>/plugins/installed/official/weather`.
+    fn stage_installed_weather_version(data_dir: &Path, version: &str) {
+        let package_root = data_dir
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join(version);
+        std::fs::create_dir_all(&package_root).unwrap();
+        std::fs::write(
+            package_root.join("orax.toml"),
+            format!(
+                "resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(package_root.join("main.js"), "export {};\n").unwrap();
+    }
+
+    /// Updates an installed plugin to the marketplace release and retires the older package.
+    #[test]
+    fn updates_installed_plugin_and_retires_old_versions() {
+        let temp_dir = TempDir::new().unwrap();
+        stage_installed_weather_version(temp_dir.path(), "0.9.0");
+        let release_path = temp_dir.path().join("weather-1.0.0.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    &b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n"[..],
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+                ("logo.svg", b"<svg/>".as_slice()),
+            ],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+
+        let package = block_on(Installer::new(LocalFileDownloader).update(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap();
+
+        let new_package = temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join("1.0.0");
+        assert_eq!(
+            package,
+            InstalledPackage {
+                package_dir: new_package.clone(),
+                id: "official/weather".to_owned(),
+            }
+        );
+        assert!(new_package.join("main.js").is_file());
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("0.9.0")
+                .exists()
+        );
+    }
+
+    /// An update is refused when the marketplace still publishes the installed version.
+    #[test]
+    fn rejects_updating_a_plugin_already_at_the_latest_version() {
+        let temp_dir = TempDir::new().unwrap();
+        stage_installed_weather_version(temp_dir.path(), "1.0.0");
+        let release_path = temp_dir.path().join("weather-1.0.0.orax");
+        write_orax_zip(
+            &release_path,
+            &[(
+                "orax.toml",
+                &b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n"[..],
+            )],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).update(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpdateError::AlreadyUpToDate { ref id, .. } if id == "official/weather"
+        ));
+        assert!(
+            temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("1.0.0")
+                .join("main.js")
+                .is_file()
+        );
+    }
+
+    /// The marketplace is never allowed to downgrade an installed plugin.
+    #[test]
+    fn rejects_downgrading_an_installed_plugin() {
+        let temp_dir = TempDir::new().unwrap();
+        stage_installed_weather_version(temp_dir.path(), "2.0.0");
+        let release_path = temp_dir.path().join("weather-1.0.0.orax");
+        write_orax_zip(
+            &release_path,
+            &[(
+                "orax.toml",
+                &b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n"[..],
+            )],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).update(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpdateError::Downgrade { ref id, .. } if id == "official/weather"
+        ));
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("1.0.0")
+                .exists()
+        );
+    }
+
+    /// Updating a plugin that has no installed package reports NotFound.
+    #[test]
+    fn rejects_updating_a_plugin_that_is_not_installed() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("weather-1.0.0.orax");
+        write_orax_zip(
+            &release_path,
+            &[(
+                "orax.toml",
+                &b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n"[..],
+            )],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).update(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpdateError::NotFound { ref id } if id == "official/weather"
+        ));
     }
 }

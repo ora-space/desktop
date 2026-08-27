@@ -422,6 +422,22 @@ pub struct InstallPluginResponse {
     pub plugin_id: String,
 }
 
+/// Requests updating one installed marketplace plugin to the version its source publishes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdatePluginRequest {
+    pub plugin_id: String,
+}
+
+/// Confirms the identifier updated after the new release is verified and stale versions removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdatePluginResponse {
+    pub plugin_id: String,
+}
+
 /// Requests importing one local `.orax` release archive into the installed plugins tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -548,6 +564,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     UninstallPluginResponse::export(config)?;
     InstallPluginRequest::export(config)?;
     InstallPluginResponse::export(config)?;
+    UpdatePluginRequest::export(config)?;
+    UpdatePluginResponse::export(config)?;
     ImportPluginRequest::export(config)?;
     ImportPluginResponse::export(config)?;
     GetPluginConfigurationRequest::export(config)?;
@@ -571,7 +589,7 @@ mod tests {
         ListMarketplaceSourcesResponse, MarketplaceSource, PluginConfigurationSummary,
         PluginInstallationValidity, PluginRuntimeStatus, SyncAvailablePluginsRequest,
         SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
-        UpdateMarketplaceSourceResponse,
+        UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -915,6 +933,25 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
+        );
+    }
+
+    /// Verifies the update request/response wire shape for an installed marketplace plugin.
+    #[test]
+    fn serializes_update_plugin_contract() {
+        assert_eq!(
+            serde_json::to_value(UpdatePluginRequest {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdatePluginResponse {
                 plugin_id: "official/weather".to_string(),
             })
             .unwrap(),

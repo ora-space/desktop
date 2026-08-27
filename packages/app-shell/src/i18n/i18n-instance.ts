@@ -347,8 +347,6 @@ export const translationResources = {
     "account.language": "语言",
     "account.switchEnglish": "English",
     "account.switchChinese": "简体中文",
-    "settings.productName": "Ora Agent IDE",
-    "settings.prototypeLabel": "原型设置",
     "settings.description":
       "配置 Ora 的界面、角色、技能、模型和 Agent 执行策略。",
     "settings.nav.appearance": "外观",
@@ -775,7 +773,7 @@ export const translationResources = {
     "settings.plugins.syncMarketplace": "同步插件市场",
     "settings.plugins.syncFailed": "同步插件市场失败。",
     "settings.plugins.back": "返回",
-    "settings.plugins.manageSources": "管理市场源",
+    "settings.plugins.manageSources": "管理市场",
     "settings.plugins.manageSourcesDescription":
       "添加或删除用于同步插件市场的 Git 源。列表顺序决定同名插件的优先级。",
     "settings.plugins.sourceUrl": "Git URL",
@@ -820,6 +818,9 @@ export const translationResources = {
     "settings.plugins.showLess": "收起",
     "settings.plugins.empty": "没有匹配的插件。",
     "settings.plugins.install": "安装",
+    "settings.plugins.update": "更新",
+    "settings.plugins.updating": "更新中",
+    "settings.plugins.updateFailed": "更新失败",
     "settings.plugins.uninstall": "卸载",
     "settings.plugins.uninstallTitle": "卸载“{{name}}”？",
     "settings.plugins.uninstallDescription":
@@ -1825,8 +1826,6 @@ export const translationResources = {
     "account.language": "Language",
     "account.switchEnglish": "English",
     "account.switchChinese": "简体中文",
-    "settings.productName": "Ora Agent IDE",
-    "settings.prototypeLabel": "Prototype settings",
     "settings.description":
       "Configure Ora appearance, roles, skills, models, and agent execution policies.",
     "settings.nav.appearance": "Appearance",
@@ -2299,7 +2298,7 @@ export const translationResources = {
     "settings.proxy.loadError": "Could not read proxy settings.",
     "settings.proxy.updateError": "Could not save proxy settings.",
     "settings.plugins.back": "Back",
-    "settings.plugins.manageSources": "Manage marketplace sources",
+    "settings.plugins.manageSources": "Manage marketplace",
     "settings.plugins.manageSourcesDescription":
       "Add or remove the Git sources used to sync the plugin marketplace. List order determines precedence for duplicate plugin ids.",
     "settings.plugins.sourceUrl": "Git URL",
@@ -2331,6 +2330,9 @@ export const translationResources = {
     "settings.plugins.showLess": "Show less",
     "settings.plugins.empty": "No matching plugins.",
     "settings.plugins.install": "Install",
+    "settings.plugins.update": "Update",
+    "settings.plugins.updating": "Updating",
+    "settings.plugins.updateFailed": "Update failed",
     "settings.plugins.uninstall": "Uninstall",
     "settings.plugins.uninstallTitle": "Uninstall {{name}}?",
     "settings.plugins.uninstallDescription":

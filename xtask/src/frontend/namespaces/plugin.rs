@@ -111,6 +111,13 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "InstallPluginResponse",
     },
     FrontendEndpoint {
+        operation_name: "updatePlugin",
+        namespace: NAMESPACE,
+        member_name: "update",
+        request_type: "UpdatePluginRequest",
+        response_type: "UpdatePluginResponse",
+    },
+    FrontendEndpoint {
         operation_name: "importPlugin",
         namespace: NAMESPACE,
         member_name: "import",

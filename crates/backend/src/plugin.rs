@@ -16,7 +16,8 @@ use ora_contracts::{
     ListMarketplaceSourcesResponse, PublicError, ScanPluginsRequest, ScanPluginsResponse,
     StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
     SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
-    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
+    UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -32,6 +33,7 @@ use ora_plugin_lifecycle::{
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
+use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::collections::BTreeMap;
@@ -552,35 +554,7 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let registry_sources = self.prepared_registry_sources()?;
-        // A malformed identifier can never name a registry entry, so it is reported the same way
-        // as an unknown one instead of leaking the id grammar as a separate error class.
-        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
-            BackendError::new(
-                ErrorClassification::NotFound,
-                PublicError::PluginNotFound(EmptyErrorParams {}),
-                "marketplace plugin id is not a valid `<namespace>/<name>`",
-            )
-        })?;
-        let mut resolved = None;
-        for (source, use_proxy) in &registry_sources {
-            let registry_dir = source.checkout_dir().join("registry");
-            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
-                .map_err(|error| {
-                    BackendError::internal("failed to resolve plugin release manifest", error)
-                })?
-            {
-                resolved = Some((manifest, *use_proxy));
-                break;
-            }
-        }
-        let (manifest, use_proxy) = resolved.ok_or_else(|| {
-            BackendError::new(
-                ErrorClassification::NotFound,
-                PublicError::PluginNotFound(EmptyErrorParams {}),
-                "marketplace plugin was not found in the registry",
-            )
-        })?;
+        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
         let release_url = manifest
             .url()
             .ok_or_else(|| {
@@ -591,16 +565,7 @@ impl PluginApi {
             })?
             .as_url();
         ora_info!(plugin_id = %request.plugin_id, url = %release_url, "installing marketplace plugin");
-        let proxy_settings = self.user_config.network_proxy_settings()?;
-        let download_proxy = if use_proxy {
-            proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
-                BackendError::invalid_proxy_settings(
-                    "a marketplace source uses the proxy but no proxy is configured",
-                )
-            })?
-        } else {
-            ProxyConfig::default()
-        };
+        let download_proxy = self.download_proxy_for(use_proxy)?;
         Installer::new(ReqwestDownloader::new(download_proxy))
             .install(
                 &manifest,
@@ -613,6 +578,99 @@ impl PluginApi {
         ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
         Ok(InstallPluginResponse {
             plugin_id: request.plugin_id,
+        })
+    }
+
+    /// Updates one installed marketplace plugin to the version its source publishes.
+    ///
+    /// The source resolution and proxy policy are identical to an install: the winning
+    /// marketplace source decides whether the download goes through the configured proxy. The
+    /// running process is stopped before its package is replaced, and the installed snapshot is
+    /// rescanned afterwards so the new version becomes effective without a restart.
+    pub(crate) async fn update(
+        &self,
+        request: UpdatePluginRequest,
+    ) -> Result<UpdatePluginResponse, BackendError> {
+        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
+        let release_url = manifest
+            .url()
+            .ok_or_else(|| {
+                BackendError::internal(
+                    "marketplace plugin manifest is missing its release url",
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "missing release url"),
+                )
+            })?
+            .as_url();
+        ora_info!(plugin_id = %request.plugin_id, url = %release_url, "updating marketplace plugin");
+        // The package directory is replaced while the plugin may be running, so the process is
+        // stopped first; stopping a webview/skill/MCP package is a no-op.
+        self.lifecycle
+            .stop_plugin(StopPluginRequest {
+                plugin_id: request.plugin_id.clone(),
+            })
+            .await
+            .map_err(BackendError::from)?;
+        let download_proxy = self.download_proxy_for(use_proxy)?;
+        Installer::new(ReqwestDownloader::new(download_proxy))
+            .update(
+                &manifest,
+                DownloadSource::Url(release_url.clone()),
+                &self.data_directory,
+            )
+            .await
+            .map_err(|error| BackendError::internal("failed to update plugin", error))?;
+        self.finalize_new_install(&request.plugin_id).await?;
+        ora_info!(plugin_id = %request.plugin_id, "updated marketplace plugin");
+        Ok(UpdatePluginResponse {
+            plugin_id: request.plugin_id,
+        })
+    }
+
+    /// Resolves the release manifest for one marketplace identifier across the configured sources.
+    ///
+    /// Sources are consulted in precedence order, and the returned flag is the winning source's
+    /// proxy policy so installs and updates honor the same per-source setting as the git sync.
+    fn resolve_marketplace_release(
+        &self,
+        plugin_id: &str,
+    ) -> Result<(PluginManifest, bool), BackendError> {
+        let registry_sources = self.prepared_registry_sources()?;
+        // A malformed identifier can never name a registry entry, so it is reported the same way
+        // as an unknown one instead of leaking the id grammar as a separate error class.
+        let plugin_id = PluginId::parse(plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        for (source, use_proxy) in &registry_sources {
+            let registry_dir = source.checkout_dir().join("registry");
+            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
+                .map_err(|error| {
+                    BackendError::internal("failed to resolve plugin release manifest", error)
+                })?
+            {
+                return Ok((manifest, *use_proxy));
+            }
+        }
+        Err(BackendError::new(
+            ErrorClassification::NotFound,
+            PublicError::PluginNotFound(EmptyErrorParams {}),
+            "marketplace plugin was not found in the registry",
+        ))
+    }
+
+    /// Returns the downloader proxy configuration for one marketplace source's proxy policy.
+    fn download_proxy_for(&self, use_proxy: bool) -> Result<ProxyConfig, BackendError> {
+        if !use_proxy {
+            return Ok(ProxyConfig::default());
+        }
+        let proxy_settings = self.user_config.network_proxy_settings()?;
+        proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
+            BackendError::invalid_proxy_settings(
+                "a marketplace source uses the proxy but no proxy is configured",
+            )
         })
     }
 

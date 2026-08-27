@@ -424,6 +424,20 @@ impl Backend {
         Ok(response)
     }
 
+    /// Updates one installed marketplace plugin to the version its source publishes and
+    /// reconciles the agent set afterwards.
+    ///
+    /// The agent set is reconciled so a replaced agent package supplies a reachable agent in this
+    /// process rather than only after the next restart.
+    pub async fn update_plugin(
+        &self,
+        request: UpdatePluginRequest,
+    ) -> Result<UpdatePluginResponse, BackendError> {
+        let response = self.plugin.update(request).await?;
+        self.agent_runtime.sync_plugin_agents();
+        Ok(response)
+    }
+
     /// Imports one local release archive and reconciles the agent set afterwards.
     ///
     /// The agent set is reconciled so the imported package supplies a reachable agent in this

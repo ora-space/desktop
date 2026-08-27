@@ -67,6 +67,7 @@ desktop_command_registry! {
     commands::stop_plugin,
     commands::uninstall_plugin,
     commands::install_plugin,
+    commands::update_plugin,
     commands::import_plugin,
     commands::update_agent,
     commands::delete_agent,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
+import { appVersion } from "../../lib/app-version";
 import { usePlatform } from "../../platform";
 import {
   AlertDialog,
@@ -36,9 +37,9 @@ import {
   IconLanguage,
   IconLock,
   IconMoon,
+  IconProng,
   IconPuzzle,
   IconRobot,
-  IconRoute,
   IconShieldCheck,
   IconSparkles,
   IconSun,
@@ -133,7 +134,7 @@ export function SettingsDialog() {
     { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
-    { id: "proxy", icon: IconRoute, label: t("settings.nav.proxy") },
+    { id: "proxy", icon: IconProng, label: t("settings.nav.proxy") },
     {
       id: "permissions",
       icon: IconShieldCheck,
@@ -204,10 +205,8 @@ export function SettingsDialog() {
                   );
                 })}
               </nav>
-              <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">
-                {t("settings.productName")}
-                <br />
-                {t("settings.prototypeLabel")}
+              <p className="mt-auto hidden px-2 pb-1 pt-6 text-xs leading-5 text-muted-foreground sm:block">
+                v{appVersion}
               </p>
             </aside>
 

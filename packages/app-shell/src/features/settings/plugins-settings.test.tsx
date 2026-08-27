@@ -125,9 +125,6 @@ it("renders marketplace plugins from the registry index", async () => {
   renderSettings(client);
 
   expect(await screen.findByText("Weather")).toBeInTheDocument();
-  expect(
-    screen.getByText(/weather · official · agent · 1.2.0/),
-  ).toBeInTheDocument();
   expect(screen.getByText("Weather plugin")).toBeInTheDocument();
 });
 
@@ -148,7 +145,7 @@ it("installs a marketplace plugin through the backend", async () => {
     version: "1.2.0",
   });
   expect(
-    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+    await screen.findByRole("button", { name: /已安装|Installed/ }),
   ).toBeInTheDocument();
 });
 

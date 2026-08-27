@@ -11,6 +11,7 @@ not grow into a feature module: chat, diff, and files keep their own folders.
 - Review-panel motion helpers (`panel-motion.ts`)
 - Workspace path matching shared by Changes and chat inline links (`workspace-path.ts`)
 - Host path directory derivation for "open folder" actions (`path.ts`)
+- Workspace version for the settings stamp, injected by the desktop build (`app-version.ts`)
 
 ## Path matching
 
