@@ -231,6 +231,3 @@ fn compile_settings_subset(
     });
     Ok(compile_declaration_from_value(wrapped)?)
 }
-
-// Reserved spec types are surfaced through the shared compiler's `InvalidSetting` error; the
-// phase-one policy message is preserved via the `Display` impl.

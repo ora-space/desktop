@@ -15,7 +15,8 @@ pub struct RegistryEntry {
     /// it defaults to empty and consumers fall back to `name` until the next resync.
     #[serde(default)]
     title: String,
-    /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, or `mcp`) surfaced for the marketplace card.
+    /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`) surfaced for
+    /// the marketplace card.
     #[serde(default)]
     kind: String,
     namespace: String,

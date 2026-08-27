@@ -108,8 +108,8 @@ export type ImportPluginResponse = {
  * a command-alias collision is reported rather than silently sharing a PATH alias or pretending
  * the new package was disabled.
  */
-export type InstallOutcome = { "state": "installed" } | {
-  "state": "installed_with_command_conflict";
+export type InstallOutcome = { "state": "installed_and_enabled" } | {
+  "state": "installed_but_disabled";
   conflictPluginId: string;
 };
 
@@ -124,11 +124,12 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = {
   pluginId: string;
   /**
-   * The typed installation outcome. Installation always retains the package. A conflict-free
-   * install reports `installed`; a Hook whose command alias collides with another installed
-   * Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
-   * packages remain available: the host has no enablement state, and uniqueness is deferred
-   * to a future consumer.
+   * The typed installation outcome. Installation always retains the package. After install
+   * the host attempts automatic enable; a conflict-free install reports
+   * `installed_and_enabled` (a processless Hook records global eligibility with a `stopped`
+   * runtime). A Hook whose command alias collides with an already-enabled Hook reports
+   * `installed_but_disabled` carrying the conflicting plugin identity, so the new Hook stays
+   * ineligible until the conflict is resolved.
    */
   outcome: InstallOutcome;
 };

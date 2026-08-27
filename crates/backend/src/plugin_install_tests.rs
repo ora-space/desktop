@@ -89,7 +89,7 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                     .expect("import first Hook");
                 assert_eq!(
                     first_response.outcome,
-                    InstallOutcome::Installed,
+                    InstallOutcome::InstalledAndEnabled,
                     "the first Hook must be available without a conflict"
                 );
 
@@ -101,7 +101,7 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                     .expect("import second Hook");
                 assert_eq!(
                     second_response.outcome,
-                    InstallOutcome::InstalledWithCommandConflict {
+                    InstallOutcome::InstalledButDisabled {
                         conflict_plugin_id: "official/rtk-ai.rtk".to_string(),
                     }
                 );
