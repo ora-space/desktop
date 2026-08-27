@@ -19,6 +19,7 @@ describe("useUpdatePlugin", () => {
       version: "1.1.0",
       description: "Weather",
       logo: null,
+      compatibility: "compatible",
     });
     state.installedPlugins.push({
       id: "official/weather",
