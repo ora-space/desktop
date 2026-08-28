@@ -277,19 +277,19 @@ fn deserialize<'de, T: Deserialize<'de>>(source: &'de str) -> Result<T, Manifest
 ///
 /// `[webview]` is required by, and exclusive to, `kind = "webview"`; `[workbench]` is exclusive
 /// to `kind = "workbench"` but optional there, because a static page needs no methods.
+/// The kind-specific sections one manifest may carry after validation.
+type KindSections = (
+    Option<PluginAgent>,
+    Option<PluginWorkbench>,
+    Option<PluginWebview>,
+);
+
 fn validate_kind_sections(
     kind: PluginKind,
     agent: Option<RawAgent>,
     workbench: Option<RawWorkbench>,
     webview: Option<RawWebview>,
-) -> Result<
-    (
-        Option<PluginAgent>,
-        Option<PluginWorkbench>,
-        Option<PluginWebview>,
-    ),
-    ManifestError,
-> {
+) -> Result<KindSections, ManifestError> {
     let agent = match (kind, agent) {
         (PluginKind::Agent, Some(agent)) => Some(PluginAgent::try_from(agent)?),
         (PluginKind::Agent, None) => None,

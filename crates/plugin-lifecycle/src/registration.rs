@@ -79,6 +79,7 @@ mod tests {
             declared_methods: vec![
                 ora_plugin_manifest::MethodName::parse("counter/get").expect("method"),
             ],
+            host_capabilities: Vec::new(),
         })
     }
 

@@ -129,6 +129,7 @@ mod tests {
             asset_root: PathBuf::from("/plugins/example/assets"),
             page_entry: PortableRelativePath::parse("index.html").expect("page entry"),
             declared_methods: Vec::new(),
+            host_capabilities: Vec::new(),
         })
     }
 

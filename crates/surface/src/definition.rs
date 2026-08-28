@@ -1,7 +1,7 @@
 use crate::navigation::NavigationPolicy;
 use ora_domain::PluginId;
 use ora_plugin_manager::{InstalledPlugin, PluginContribution};
-use ora_plugin_manifest::{DownloadPolicy, MethodName};
+use ora_plugin_manifest::{DownloadPolicy, HostCapability, MethodName};
 use ora_utils::path::PortableRelativePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -35,6 +35,8 @@ pub struct WorkbenchDefinition {
     pub page_entry: PortableRelativePath,
     /// Methods the manifest exposes to the page; intersected with the running registration.
     pub declared_methods: Vec<MethodName>,
+    /// Host capabilities the manifest requests; host methods gate on these at call time.
+    pub host_capabilities: Vec<HostCapability>,
 }
 
 /// An external HTTPS site shown inside an isolated webview.
@@ -92,6 +94,7 @@ impl SurfaceDefinition {
                     asset_root: descriptor.asset_root.clone(),
                     page_entry: descriptor.page_entry.clone(),
                     declared_methods: descriptor.declared_methods.clone(),
+                    host_capabilities: descriptor.host_capabilities.clone(),
                 })
             }
             PluginContribution::Webview(descriptor) => {
@@ -182,6 +185,7 @@ mod tests {
                 asset_root: PathBuf::from("/plugins/hello/assets"),
                 page_entry: PortableRelativePath::parse("index.html").expect("entry"),
                 declared_methods: vec![MethodName::parse("counter/get").expect("method")],
+                host_capabilities: Vec::new(),
             }),
         );
         let agent = installed(
@@ -252,6 +256,7 @@ mod tests {
                 asset_root: PathBuf::from("/plugins/hello/assets"),
                 page_entry: PortableRelativePath::parse("index.html").expect("entry"),
                 declared_methods: vec![MethodName::parse("counter/get").expect("method")],
+                host_capabilities: Vec::new(),
             }))
         );
     }

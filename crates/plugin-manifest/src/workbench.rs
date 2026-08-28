@@ -14,9 +14,14 @@ const HOST_METHOD_PREFIX: &str = "ora/";
 /// through the bridge. It only narrows what the page can reach and never grants `main.js` any
 /// host capability. The effective set at runtime is the intersection with what the running
 /// process generation actually registered; that intersection is computed by the host.
+///
+/// `host_capabilities` is the one thing that does grant capability: it declares which closed-set
+/// host facilities the plugin process may use. Each capability is disclosed to the user at
+/// install time, and a host method that requires one refuses an undeclared caller.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PluginWorkbench {
     pub(crate) methods: Vec<MethodName>,
+    pub(crate) host_capabilities: Vec<HostCapability>,
 }
 
 impl PluginWorkbench {
@@ -24,6 +29,56 @@ impl PluginWorkbench {
     pub fn methods(&self) -> &[MethodName] {
         &self.methods
     }
+
+    /// Returns the requested host capabilities in declaration order, without duplicates.
+    pub fn host_capabilities(&self) -> &[HostCapability] {
+        &self.host_capabilities
+    }
+}
+
+/// Identifies the closed set of host capabilities a workbench plugin may request.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum HostCapability {
+    /// `session.trace`: read the trace files of agent sessions through the host's
+    /// `ora/session/trace_*` methods, never a filesystem path.
+    SessionTrace,
+}
+
+impl HostCapability {
+    /// Returns the manifest spelling of this capability.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SessionTrace => "session.trace",
+        }
+    }
+}
+
+impl fmt::Display for HostCapability {
+    /// Writes the manifest spelling of this capability.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for HostCapability {
+    type Err = HostCapabilityError;
+
+    /// Parses a capability without accepting future values under resolver version 1.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "session.trace" => Ok(Self::SessionTrace),
+            found => Err(HostCapabilityError::Unsupported {
+                found: found.to_owned(),
+            }),
+        }
+    }
+}
+
+/// Reports an unsupported host capability spelling.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum HostCapabilityError {
+    #[error("unsupported host capability {found:?}")]
+    Unsupported { found: String },
 }
 
 /// A plugin protocol method name a page may invoke: `segment(/segment)*` of `[a-z0-9_]`.
@@ -108,6 +163,7 @@ pub enum MethodNameError {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawWorkbench {
     methods: Vec<String>,
+    host_capabilities: Option<Vec<String>>,
 }
 
 impl TryFrom<RawWorkbench> for PluginWorkbench {
@@ -140,6 +196,25 @@ impl TryFrom<RawWorkbench> for PluginWorkbench {
             methods.push(method);
         }
 
-        Ok(Self { methods })
+        let mut host_capabilities = Vec::new();
+        for (index, value) in raw.host_capabilities.unwrap_or_default().iter().enumerate() {
+            let capability =
+                HostCapability::from_str(value).map_err(|reason| ManifestError::InvalidField {
+                    field: ManifestField::WorkbenchHostCapability { index },
+                    reason: reason.into(),
+                })?;
+            if host_capabilities.contains(&capability) {
+                return Err(ManifestError::InvalidField {
+                    field: ManifestField::WorkbenchHostCapability { index },
+                    reason: InvalidFieldReason::Duplicate,
+                });
+            }
+            host_capabilities.push(capability);
+        }
+
+        Ok(Self {
+            methods,
+            host_capabilities,
+        })
     }
 }

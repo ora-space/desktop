@@ -717,6 +717,7 @@ fn parses_workbench_section_into_method_list() {
                     success(MethodName::parse("weather/get_current"), "method"),
                     success(MethodName::parse("weather/search_city"), "method"),
                 ],
+                host_capabilities: Vec::new(),
             }),
             None,
         )
@@ -1061,10 +1062,9 @@ fn parses_agent_trace_file_form() {
         PluginManifest::parse_installed(AGENT_FILE_MANIFEST),
         "agent file manifest",
     );
-    let trace = manifest
-        .agent()
-        .and_then(|agent| agent.trace())
-        .expect("agent trace declaration");
+    let Some(trace) = manifest.agent().and_then(|agent| agent.trace()) else {
+        panic!("expected an agent trace declaration");
+    };
     assert_eq!(trace.format(), "opencode");
     let locator = success(
         trace.resolve(&TraceResolveContext {
@@ -1089,10 +1089,9 @@ fn parses_agent_trace_search_form() {
         PluginManifest::parse_installed(AGENT_SEARCH_MANIFEST),
         "agent search manifest",
     );
-    let trace = manifest
-        .agent()
-        .and_then(|agent| agent.trace())
-        .expect("agent trace declaration");
+    let Some(trace) = manifest.agent().and_then(|agent| agent.trace()) else {
+        panic!("expected an agent trace declaration");
+    };
     assert_eq!(trace.format(), "claude_code");
     let locator = success(
         trace.resolve(&TraceResolveContext {
@@ -1177,4 +1176,41 @@ fn reports_structural_agent_errors_with_paths() {
         panic!("expected an unknown agent.trace field to fail structurally");
     };
     assert_eq!(path.as_deref(), Some("agent.trace.files"));
+}
+
+/// Verifies `workbench.host_capabilities` parses, deduplicates by rejection, and refuses
+/// values outside the closed set with the indexed field path.
+#[test]
+fn parses_and_validates_workbench_host_capabilities() {
+    let with_capability =
+        format!("{WORKBENCH_MANIFEST}\nhost_capabilities = [\"session.trace\"]\n");
+    let manifest = success(
+        PluginManifest::parse_installed(&with_capability),
+        "workbench manifest with a host capability",
+    );
+    let Some(workbench) = manifest.workbench() else {
+        panic!("expected a workbench section");
+    };
+    assert_eq!(
+        workbench.host_capabilities(),
+        &[crate::HostCapability::SessionTrace]
+    );
+
+    let unknown = format!("{WORKBENCH_MANIFEST}\nhost_capabilities = [\"session.write\"]\n");
+    let Err(ManifestError::InvalidField { field, .. }) = PluginManifest::parse_installed(&unknown)
+    else {
+        panic!("expected an unknown capability to be rejected");
+    };
+    assert_eq!(field, ManifestField::WorkbenchHostCapability { index: 0 });
+
+    let duplicate = format!(
+        "{WORKBENCH_MANIFEST}\nhost_capabilities = [\"session.trace\", \"session.trace\"]\n"
+    );
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(&duplicate)
+    else {
+        panic!("expected a duplicate capability to be rejected");
+    };
+    assert_eq!(field, ManifestField::WorkbenchHostCapability { index: 1 });
+    assert!(matches!(reason, InvalidFieldReason::Duplicate));
 }

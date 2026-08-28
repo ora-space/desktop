@@ -1,7 +1,7 @@
 use crate::{
-    AgentTraceFormatError, DownloadActionError, MethodNameError, PathPrefixError, PluginKind,
-    PluginKindError, PluginNameError, PluginNamespaceError, Sha256DigestError, UrlError,
-    WebviewUrlError,
+    AgentTraceFormatError, DownloadActionError, HostCapabilityError, MethodNameError,
+    PathPrefixError, PluginKind, PluginKindError, PluginNameError, PluginNamespaceError,
+    Sha256DigestError, UrlError, WebviewUrlError,
 };
 use ora_utils::{GitBranchNameError, SlugError};
 use std::{fmt, ops::Range};
@@ -85,6 +85,10 @@ pub enum ManifestField {
     /// The locator pair `agent.trace.file` / `agent.trace.search` as a whole, used when
     /// neither or both are declared.
     AgentTraceLocator,
+    /// The capability at `index` in `workbench.host_capabilities`.
+    WorkbenchHostCapability {
+        index: usize,
+    },
 }
 
 impl fmt::Display for ManifestField {
@@ -123,6 +127,9 @@ impl fmt::Display for ManifestField {
             Self::AgentTraceSearchRoot => formatter.write_str("agent.trace.search.root"),
             Self::AgentTraceSearchPattern => formatter.write_str("agent.trace.search.glob"),
             Self::AgentTraceLocator => formatter.write_str("agent.trace"),
+            Self::WorkbenchHostCapability { index } => {
+                write!(formatter, "workbench.host_capabilities[{index}]")
+            }
         }
     }
 }
@@ -214,4 +221,6 @@ pub enum InvalidFieldReason {
     FileAndSearchConflict,
     #[error("exactly one of `agent.trace.file` and `agent.trace.search` must be declared")]
     MissingFileOrSearch,
+    #[error(transparent)]
+    InvalidHostCapability(#[from] HostCapabilityError),
 }

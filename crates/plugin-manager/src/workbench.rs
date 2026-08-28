@@ -1,5 +1,5 @@
 use crate::validation::{ManifestValidationError, invalid, validate_entrypoint};
-use ora_plugin_manifest::{MethodName, PluginWorkbench};
+use ora_plugin_manifest::{HostCapability, MethodName, PluginWorkbench};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use std::path::{Path, PathBuf};
 
@@ -24,6 +24,9 @@ pub struct InstalledWorkbenchDescriptor {
     pub page_entry: PortableRelativePath,
     /// Page-visible methods in manifest order, without duplicates; empty for a static page.
     pub declared_methods: Vec<MethodName>,
+    /// Requested host capabilities in manifest order, without duplicates; empty for a plugin
+    /// that uses only its own process. Host methods gate on this at call time.
+    pub host_capabilities: Vec<HostCapability>,
 }
 
 /// Applies the host's workbench policy to a parsed manifest, reporting the first failing field.
@@ -95,6 +98,9 @@ pub(crate) fn validate_workbench(
         page_entry,
         declared_methods: workbench
             .map(|workbench| workbench.methods().to_vec())
+            .unwrap_or_default(),
+        host_capabilities: workbench
+            .map(|workbench| workbench.host_capabilities().to_vec())
             .unwrap_or_default(),
     })
 }

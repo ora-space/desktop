@@ -25,7 +25,9 @@ pub use webview::{
     DownloadAction, DownloadActionError, DownloadDisposition, DownloadPolicy, DownloadRule, Origin,
     PageMatcher, PathPrefix, PathPrefixError, PluginWebview, StartUrl, WebviewUrlError,
 };
-pub use workbench::{MethodName, MethodNameError, PluginWorkbench};
+pub use workbench::{
+    HostCapability, HostCapabilityError, MethodName, MethodNameError, PluginWorkbench,
+};
 
 #[cfg(test)]
 mod tests;

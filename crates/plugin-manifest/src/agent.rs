@@ -114,6 +114,8 @@ pub enum TraceResolutionError {
         max_bytes: usize,
         actual_bytes: usize,
     },
+    #[error("trace template contains an unclosed placeholder: {found:?}")]
+    UnclosedPlaceholder { found: String },
 }
 
 /// A trace format identifier: lowercase `[a-z][a-z0-9_]*`, for example `claude_code`.
@@ -438,7 +440,14 @@ fn substitute(
     let mut rest = template;
     while let Some(open) = rest.find('{') {
         output.push_str(&rest[..open]);
-        let close = rest[open + 1..].find('}').expect("template was validated") + open + 1;
+        let Some(close) = rest[open + 1..].find('}') else {
+            // Unreachable for a validated template; defended anyway because a panic here would
+            // take down the host process, not just one resolution.
+            return Err(TraceResolutionError::UnclosedPlaceholder {
+                found: rest[open..].to_owned(),
+            });
+        };
+        let close = close + open + 1;
         let placeholder = &rest[open..=close];
         let replacement = match placeholder {
             PLACEHOLDER_HOME => context.home.to_string_lossy().into_owned(),
@@ -484,6 +493,22 @@ fn validate_session_id(session_id: &str) -> Result<(), TraceResolutionError> {
 mod tests {
     use super::*;
 
+    /// Extracts an expected successful result without using `unwrap` in tests.
+    fn success<T, E: std::fmt::Debug>(result: Result<T, E>, label: &str) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => panic!("expected {label} to succeed, got {error:?}"),
+        }
+    }
+
+    /// Extracts an expected failure without using `unwrap_err` in tests.
+    fn failure<T, E>(result: Result<T, E>, label: &str) -> E {
+        match result {
+            Ok(_) => panic!("expected {label} to fail"),
+            Err(error) => error,
+        }
+    }
+
     #[test]
     fn accepts_known_formats_and_rejects_invalid_ones() {
         for valid in ["claude_code", "opencode", "gemini", "a1_b"] {
@@ -502,18 +527,20 @@ mod tests {
 
     #[test]
     fn file_template_resolves_with_session_context() {
-        let trace = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{data_dir}/opencode/trace/{agent_session_id}.ndjson".to_owned()),
-            search: None,
-        })
-        .unwrap();
+        let trace = success(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{data_dir}/opencode/trace/{agent_session_id}.ndjson".to_owned()),
+                search: None,
+            }),
+            "file template",
+        );
         let context = TraceResolveContext {
             home: Path::new("/home/user"),
             data_dir: Path::new("/home/user/.local/share"),
             agent_session_id: "ses_abc123",
         };
-        let locator = trace.resolve(&context).unwrap();
+        let locator = success(trace.resolve(&context), "trace resolution");
         assert_eq!(
             locator,
             TraceLocator::File {
@@ -524,21 +551,23 @@ mod tests {
 
     #[test]
     fn search_template_resolves_to_rooted_pattern() {
-        let trace = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "claude_code".to_owned(),
-            file: None,
-            search: Some(RawAgentTraceSearch {
-                root: "{home}/.claude/projects".to_owned(),
-                glob: "**/{agent_session_id}.jsonl".to_owned(),
+        let trace = success(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "claude_code".to_owned(),
+                file: None,
+                search: Some(RawAgentTraceSearch {
+                    root: "{home}/.claude/projects".to_owned(),
+                    glob: "**/{agent_session_id}.jsonl".to_owned(),
+                }),
             }),
-        })
-        .unwrap();
+            "search template",
+        );
         let context = TraceResolveContext {
             home: Path::new("/home/user"),
             data_dir: Path::new("/home/user/.local/share"),
             agent_session_id: "1f1f2a2e-0000-4b7c-9f3d-1234567890ab",
         };
-        let locator = trace.resolve(&context).unwrap();
+        let locator = success(trace.resolve(&context), "trace resolution");
         assert_eq!(
             locator,
             TraceLocator::Search {
@@ -550,12 +579,14 @@ mod tests {
 
     #[test]
     fn rejects_file_template_without_session_id_placeholder() {
-        let error = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{data_dir}/opencode/trace/all.ndjson".to_owned()),
-            search: None,
-        })
-        .unwrap_err();
+        let error = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{data_dir}/opencode/trace/all.ndjson".to_owned()),
+                search: None,
+            }),
+            "file template without the session id placeholder",
+        );
         assert!(matches!(
             error,
             ManifestError::InvalidField {
@@ -569,12 +600,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_placeholders_and_parent_segments() {
-        let unknown = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{home}/{agent_session_id}/{workspace}.ndjson".to_owned()),
-            search: None,
-        })
-        .unwrap_err();
+        let unknown = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{home}/{agent_session_id}/{workspace}.ndjson".to_owned()),
+                search: None,
+            }),
+            "template with an unknown placeholder",
+        );
         assert!(matches!(
             unknown,
             ManifestError::InvalidField {
@@ -583,12 +616,14 @@ mod tests {
             }
         ));
 
-        let parent = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{home}/../../{agent_session_id}.ndjson".to_owned()),
-            search: None,
-        })
-        .unwrap_err();
+        let parent = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{home}/../../{agent_session_id}.ndjson".to_owned()),
+                search: None,
+            }),
+            "template with a parent segment",
+        );
         assert!(matches!(
             parent,
             ManifestError::InvalidField {
@@ -600,15 +635,17 @@ mod tests {
 
     #[test]
     fn rejects_unanchored_search_root_and_absolute_pattern() {
-        let unanchored = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "claude_code".to_owned(),
-            file: None,
-            search: Some(RawAgentTraceSearch {
-                root: "/tmp/traces".to_owned(),
-                glob: "**/{agent_session_id}.jsonl".to_owned(),
+        let unanchored = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "claude_code".to_owned(),
+                file: None,
+                search: Some(RawAgentTraceSearch {
+                    root: "/tmp/traces".to_owned(),
+                    glob: "**/{agent_session_id}.jsonl".to_owned(),
+                }),
             }),
-        })
-        .unwrap_err();
+            "unanchored search root",
+        );
         assert!(matches!(
             unanchored,
             ManifestError::InvalidField {
@@ -617,15 +654,17 @@ mod tests {
             }
         ));
 
-        let absolute = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "claude_code".to_owned(),
-            file: None,
-            search: Some(RawAgentTraceSearch {
-                root: "{home}/.claude/projects".to_owned(),
-                glob: "/etc/{agent_session_id}.jsonl".to_owned(),
+        let absolute = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "claude_code".to_owned(),
+                file: None,
+                search: Some(RawAgentTraceSearch {
+                    root: "{home}/.claude/projects".to_owned(),
+                    glob: "/etc/{agent_session_id}.jsonl".to_owned(),
+                }),
             }),
-        })
-        .unwrap_err();
+            "absolute search pattern",
+        );
         assert!(matches!(
             absolute,
             ManifestError::InvalidField {
@@ -637,15 +676,17 @@ mod tests {
 
     #[test]
     fn requires_exactly_one_locator_form() {
-        let both = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{data_dir}/a/{agent_session_id}.ndjson".to_owned()),
-            search: Some(RawAgentTraceSearch {
-                root: "{home}/a".to_owned(),
-                glob: "**/{agent_session_id}.jsonl".to_owned(),
+        let both = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{data_dir}/a/{agent_session_id}.ndjson".to_owned()),
+                search: Some(RawAgentTraceSearch {
+                    root: "{home}/a".to_owned(),
+                    glob: "**/{agent_session_id}.jsonl".to_owned(),
+                }),
             }),
-        })
-        .unwrap_err();
+            "both locator forms",
+        );
         assert!(matches!(
             both,
             ManifestError::InvalidField {
@@ -654,12 +695,14 @@ mod tests {
             }
         ));
 
-        let neither = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: None,
-            search: None,
-        })
-        .unwrap_err();
+        let neither = failure(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: None,
+                search: None,
+            }),
+            "neither locator form",
+        );
         assert!(matches!(
             neither,
             ManifestError::InvalidField {
@@ -671,12 +714,14 @@ mod tests {
 
     #[test]
     fn resolution_rejects_unsafe_session_ids() {
-        let trace = PluginAgentTrace::try_from(RawAgentTrace {
-            format: "opencode".to_owned(),
-            file: Some("{data_dir}/opencode/trace/{agent_session_id}.ndjson".to_owned()),
-            search: None,
-        })
-        .unwrap();
+        let trace = success(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "opencode".to_owned(),
+                file: Some("{data_dir}/opencode/trace/{agent_session_id}.ndjson".to_owned()),
+                search: None,
+            }),
+            "file template",
+        );
         let context = TraceResolveContext {
             home: Path::new("/home/user"),
             data_dir: Path::new("/home/user/.local/share"),

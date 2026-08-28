@@ -138,6 +138,7 @@ mod tests {
             asset_root: PathBuf::from("/plugins/hello/assets"),
             page_entry: PortableRelativePath::parse("index.html").expect("entry"),
             declared_methods: Vec::new(),
+            host_capabilities: Vec::new(),
         };
         let instance = SurfaceInstanceId::new(7);
         assert_eq!(
