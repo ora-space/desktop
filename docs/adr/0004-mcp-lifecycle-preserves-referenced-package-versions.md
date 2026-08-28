@@ -1,0 +1,3 @@
+# MCP lifecycle preserves referenced package versions
+
+An MCP Source keeps a stable Plugin identity while each immutable revision binds an exact package version and configuration-store revision. Updates commit new and old package versions side by side, publish the new revision, and garbage-collect an old version only after no Desired state, applied receipt, runtime resource, or operation references it; uninstall first retires the source and converges Agent configuration removal before deleting packages. This avoids dangling stdio executable references and makes update or uninstall recovery durable instead of relying on the current installer's immediate deletion order.

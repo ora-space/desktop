@@ -1,0 +1,3 @@
+# MCP configuration is an optional negotiated Agent capability
+
+Agent plugins advertise a versioned `mcpConfiguration` capability with supported transports and coordination semantics, and expose one full-snapshot `agent/configureWorkspace` method when that capability is present. This additive registration contract lets new hosts treat older Agents as `UnsupportedByAgent` and lets older hosts ignore the new capability without inventing a global `pluginApi` version; published plugins that require the capability still declare and enforce a minimum Ora product version through marketplace dependency validation so installation cannot silently promise an unavailable MCP experience.

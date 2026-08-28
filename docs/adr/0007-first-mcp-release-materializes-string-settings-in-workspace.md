@@ -1,0 +1,3 @@
+# The first MCP release materializes string Settings in the Workspace
+
+The first MCP delivery slice may write resolved values declared as ordinary `string` Settings, including Tavily's current API key declaration, into the Agent plugin's generated Workspace configuration document. This deliberately precedes SecretRef support to close the marketplace-to-conversation loop, so the document must be repository-locally ignored, permission-restricted, excluded from logs and diagnostics, and clearly presented as containing plaintext; future Secret settings require a separate secure Agent handoff and must never silently reuse this path.

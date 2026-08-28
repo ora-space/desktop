@@ -1,0 +1,3 @@
+# OpenCode uses a Workspace-managed configuration document
+
+The OpenCode Agent plugin materializes its complete MCP snapshot into `<workspace>/.opencode/opencode.json`, owned as one Managed Agent Configuration Document with a durable locator and fingerprint. OpenCode discovers that document from each Session Workspace, which preserves Workspace isolation while the current plugin shares one CLI process; user-authored configuration remains in the project-root `opencode.json`, and the generated path is repository-locally excluded from Git because the first release may contain plaintext credentials.

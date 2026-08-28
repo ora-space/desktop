@@ -1,0 +1,3 @@
+# Skills and MCPs share Effect convergence
+
+Skills and MCPs share one Workspace generation, durable request store, claim loop, operation recovery protocol, and safety scan, while keeping separate strongly typed planning and materialization adapters. Their operations may complete independently, but an Agent Target advances its Ready Generation only after every required Skill and MCP operation for that Workspace generation has been processed, preferably within one quiesce and resume window; this reuses the proven reliability mechanism without coupling filesystem Skill projection to Agent-specific MCP rendering.
