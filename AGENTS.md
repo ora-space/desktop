@@ -108,3 +108,17 @@ keep that await inside `act` so restore that still updates React stays covered.
 # TypeScript/packages
 
 - A test that renders anything calling `useTranslation` must import `appI18n` itself: react-i18next keeps its instance in a `node_modules` module that Vitest loads once per worker, so a file relying on an earlier file in the same worker to have initialized it passes locally and fails on CI, where a different worker split leaves it first and the missing-instance warning trips the clean-stderr gate on an otherwise green run.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues. The repo is a fork of `ora-space/desktop`; Ora-project issues go upstream, fork-specific work stays on `origin`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles, label strings equal to role names: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
