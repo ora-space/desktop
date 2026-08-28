@@ -51,6 +51,16 @@ impl TraceRegistry {
             .remove(agent_ref);
     }
 
+    /// Returns the raw declaration for one agent, for listing scans that need the unsubstituted
+    /// template.
+    pub fn declaration(&self, agent_ref: &AgentRef) -> Option<PluginAgentTrace> {
+        self.entries
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(agent_ref)
+            .cloned()
+    }
+
     /// Resolves one session's trace locator through the registered declaration, or `None` when
     /// the agent is not installed or declares no trace.
     pub fn resolve(

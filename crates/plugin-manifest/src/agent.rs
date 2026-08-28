@@ -88,26 +88,38 @@ impl PluginAgentTrace {
         context: &TraceResolveContext<'_>,
     ) -> Result<TraceLocator, TraceResolutionError> {
         validate_session_id(context.agent_session_id)?;
+        self.resolve_with(context.home, context.data_dir, context.agent_session_id)
+    }
+
+    /// Substitutes the declaration for listing: `{agent_session_id}` becomes `*` so the result
+    /// matches every session file. No session id is validated because none is supplied.
+    pub fn resolve_listing(
+        &self,
+        home: &Path,
+        data_dir: &Path,
+    ) -> Result<TraceLocator, TraceResolutionError> {
+        self.resolve_with(home, data_dir, "*")
+    }
+
+    /// Shared substitution used by both `resolve` and `resolve_listing`.
+    fn resolve_with(
+        &self,
+        home: &Path,
+        data_dir: &Path,
+        session_value: &str,
+    ) -> Result<TraceLocator, TraceResolutionError> {
         match &self.locator {
             AgentTraceLocatorTemplate::File { template } => Ok(TraceLocator::File {
                 path: PathBuf::from(substitute(
                     template.as_str(),
-                    context,
-                    &[
-                        PLACEHOLDER_HOME,
-                        PLACEHOLDER_DATA_DIR,
-                        PLACEHOLDER_AGENT_SESSION_ID,
-                    ],
+                    home,
+                    data_dir,
+                    session_value,
                 )?),
             }),
             AgentTraceLocatorTemplate::Search { root, pattern } => {
-                let root = PathBuf::from(substitute(
-                    root.as_str(),
-                    context,
-                    &[PLACEHOLDER_HOME, PLACEHOLDER_DATA_DIR],
-                )?);
-                let pattern =
-                    substitute(pattern.as_str(), context, &[PLACEHOLDER_AGENT_SESSION_ID])?;
+                let root = PathBuf::from(substitute(root.as_str(), home, data_dir, session_value)?);
+                let pattern = substitute(pattern.as_str(), home, data_dir, session_value)?;
                 Ok(TraceLocator::Search { root, pattern })
             }
         }
@@ -458,14 +470,15 @@ fn validate_placeholders(
     Ok(())
 }
 
-/// Substitutes every occurrence of the allowed placeholders with the session context.
+/// Substitutes every occurrence of the allowed placeholders with the given values.
 ///
-/// Callers pass the exact set of placeholders the template was validated with, so no unknown
-/// placeholder can survive to resolution.
+/// Templates were validated at install time, so only the three known placeholders can appear;
+/// an unknown one is still reported rather than panicked over.
 fn substitute(
     template: &str,
-    context: &TraceResolveContext<'_>,
-    allowed: &[&str],
+    home: &Path,
+    data_dir: &Path,
+    session_value: &str,
 ) -> Result<String, TraceResolutionError> {
     let mut output = String::with_capacity(template.len() + 16);
     let mut rest = template;
@@ -481,16 +494,15 @@ fn substitute(
         let close = close + open + 1;
         let placeholder = &rest[open..=close];
         let replacement = match placeholder {
-            PLACEHOLDER_HOME => context.home.to_string_lossy().into_owned(),
-            PLACEHOLDER_DATA_DIR => context.data_dir.to_string_lossy().into_owned(),
-            PLACEHOLDER_AGENT_SESSION_ID => context.agent_session_id.to_owned(),
+            PLACEHOLDER_HOME => home.to_string_lossy().into_owned(),
+            PLACEHOLDER_DATA_DIR => data_dir.to_string_lossy().into_owned(),
+            PLACEHOLDER_AGENT_SESSION_ID => session_value.to_owned(),
             found => {
                 return Err(TraceResolutionError::UnsafeSessionId {
                     found: found.to_owned(),
                 });
             }
         };
-        let _ = allowed; // The validated set decides membership; the match above is exhaustive.
         output.push_str(&replacement);
         rest = &rest[close + 1..];
     }
@@ -741,6 +753,35 @@ mod tests {
                 reason: InvalidFieldReason::MissingFileOrSearch,
             }
         ));
+    }
+
+    #[test]
+    fn listing_resolution_uses_a_wildcard_session_id() {
+        let trace = success(
+            PluginAgentTrace::try_from(RawAgentTrace {
+                format: "claude_code".to_owned(),
+                file: None,
+                search: Some(RawAgentTraceSearch {
+                    root: "{home}/.claude/projects".to_owned(),
+                    glob: "**/{agent_session_id}.jsonl".to_owned(),
+                }),
+            }),
+            "search template",
+        );
+        let locator = success(
+            trace.resolve_listing(
+                Path::new("/home/user"),
+                Path::new("/home/user/.local/share"),
+            ),
+            "listing resolution",
+        );
+        assert_eq!(
+            locator,
+            TraceLocator::Search {
+                root: PathBuf::from("/home/user/.claude/projects"),
+                pattern: "**/*.jsonl".to_owned(),
+            }
+        );
     }
 
     #[test]

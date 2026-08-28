@@ -22,6 +22,7 @@ mod source_boundary;
 mod spec;
 mod task;
 mod trace_registry;
+mod trace_service;
 mod user_config;
 mod workflow;
 mod workspace_diff;
@@ -34,4 +35,7 @@ pub use plugin_gateway::{GatewayError, PluginGateway};
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};
 pub use skill_reconciliation::SkillStorageReconciliationError;
 pub use trace_registry::{ResolvedTrace, TraceRegistry};
+pub use trace_service::{
+    TRACE_CHUNK_MAX_BYTES, TraceChunk, TraceEntryMeta, TraceService, TraceStat,
+};
 pub use user_config::BackendPreferredLogLevelStore;
