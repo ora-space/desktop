@@ -1,6 +1,7 @@
 use crate::{
-    DownloadActionError, MethodNameError, PathPrefixError, PluginKind, PluginKindError,
-    PluginNameError, PluginNamespaceError, Sha256DigestError, UrlError, WebviewUrlError,
+    AgentTraceFormatError, DownloadActionError, MethodNameError, PathPrefixError, PluginKind,
+    PluginKindError, PluginNameError, PluginNamespaceError, Sha256DigestError, UrlError,
+    WebviewUrlError,
 };
 use ora_utils::{GitBranchNameError, SlugError};
 use std::{fmt, ops::Range};
@@ -71,6 +72,19 @@ pub enum ManifestField {
         index: usize,
         field: RuleField,
     },
+    /// The whole `[agent]` section, used when its presence disagrees with `kind`.
+    Agent,
+    /// The `agent.trace.format` value.
+    AgentTraceFormat,
+    /// The `agent.trace.file` template.
+    AgentTraceFile,
+    /// The `agent.trace.search.root` template.
+    AgentTraceSearchRoot,
+    /// The `agent.trace.search.glob` pattern.
+    AgentTraceSearchPattern,
+    /// The locator pair `agent.trace.file` / `agent.trace.search` as a whole, used when
+    /// neither or both are declared.
+    AgentTraceLocator,
 }
 
 impl fmt::Display for ManifestField {
@@ -103,6 +117,12 @@ impl fmt::Display for ManifestField {
             Self::WebviewDownloadRule { index, field } => {
                 write!(formatter, "webview.downloads.rules[{index}].{field}")
             }
+            Self::Agent => formatter.write_str("agent"),
+            Self::AgentTraceFormat => formatter.write_str("agent.trace.format"),
+            Self::AgentTraceFile => formatter.write_str("agent.trace.file"),
+            Self::AgentTraceSearchRoot => formatter.write_str("agent.trace.search.root"),
+            Self::AgentTraceSearchPattern => formatter.write_str("agent.trace.search.glob"),
+            Self::AgentTraceLocator => formatter.write_str("agent.trace"),
         }
     }
 }
@@ -178,4 +198,20 @@ pub enum InvalidFieldReason {
     InvalidDownloadAction(DownloadActionError),
     #[error("action must declare exactly one of `auto`, `prompt`, or `reject = true`")]
     AmbiguousDownloadAction,
+    #[error(transparent)]
+    InvalidTraceFormat(#[from] AgentTraceFormatError),
+    #[error("trace template contains unknown placeholder {found:?}")]
+    UnknownPlaceholder { found: String },
+    #[error("trace template must contain the {placeholder} placeholder")]
+    MissingRequiredPlaceholder { placeholder: &'static str },
+    #[error("trace template must not contain `..` path segments")]
+    ContainsParentSegment,
+    #[error("trace search root must be anchored at `{{home}}` or `{{data_dir}}`")]
+    RootMustBeAnchored,
+    #[error("trace search pattern must be relative to its root")]
+    PatternMustBeRelative,
+    #[error("`agent.trace.file` and `agent.trace.search` are mutually exclusive")]
+    FileAndSearchConflict,
+    #[error("exactly one of `agent.trace.file` and `agent.trace.search` must be declared")]
+    MissingFileOrSearch,
 }

@@ -3,7 +3,7 @@ use crate::{
     InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
     PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
     PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
-    RuleField, Sha256Digest, StartUrl,
+    RuleField, Sha256Digest, StartUrl, TraceLocator, TraceResolveContext,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -93,6 +93,7 @@ fn parses_complete_manifest_into_full_domain_object() {
         dependencies: Some(PluginDependencies {
             ora: success(VersionReq::parse(">= 0.8.0"), "Ora requirement"),
         }),
+        agent: None,
         workbench: None,
         webview: None,
     };
@@ -1025,4 +1026,155 @@ fn reports_structural_webview_errors_with_paths() {
         };
         assert_eq!(path.as_deref(), Some(expected_path));
     }
+}
+
+/// The installed spelling of an agent manifest declaring an exact trace file template.
+const AGENT_FILE_MANIFEST: &str = r#"resolver = 1
+identifier = "ora-space.opencode"
+namespace = "official"
+kind = "agent"
+version = "0.2.2"
+description = "Ora Space OpenCode Agent"
+
+[agent.trace]
+format = "opencode"
+file = "{data_dir}/opencode/trace/{agent_session_id}.ndjson"
+"#;
+
+/// The installed spelling of an agent manifest declaring a rooted trace search.
+const AGENT_SEARCH_MANIFEST: &str = r#"resolver = 1
+identifier = "ora-space.claude"
+namespace = "official"
+kind = "agent"
+version = "0.1.0"
+description = "Ora Space Claude Code Agent"
+
+[agent.trace]
+format = "claude_code"
+search = { root = "{home}/.claude/projects", glob = "**/{agent_session_id}.jsonl" }
+"#;
+
+/// Verifies the `file` form parses and resolves to the substituted path.
+#[test]
+fn parses_agent_trace_file_form() {
+    let manifest = success(
+        PluginManifest::parse_installed(AGENT_FILE_MANIFEST),
+        "agent file manifest",
+    );
+    let trace = manifest
+        .agent()
+        .and_then(|agent| agent.trace())
+        .expect("agent trace declaration");
+    assert_eq!(trace.format(), "opencode");
+    let locator = success(
+        trace.resolve(&TraceResolveContext {
+            home: std::path::Path::new("/home/user"),
+            data_dir: std::path::Path::new("/home/user/.local/share"),
+            agent_session_id: "ses_abc",
+        }),
+        "trace resolution",
+    );
+    assert_eq!(
+        locator,
+        TraceLocator::File {
+            path: "/home/user/.local/share/opencode/trace/ses_abc.ndjson".into(),
+        }
+    );
+}
+
+/// Verifies the `search` form parses and resolves to the rooted pattern.
+#[test]
+fn parses_agent_trace_search_form() {
+    let manifest = success(
+        PluginManifest::parse_installed(AGENT_SEARCH_MANIFEST),
+        "agent search manifest",
+    );
+    let trace = manifest
+        .agent()
+        .and_then(|agent| agent.trace())
+        .expect("agent trace declaration");
+    assert_eq!(trace.format(), "claude_code");
+    let locator = success(
+        trace.resolve(&TraceResolveContext {
+            home: std::path::Path::new("/home/user"),
+            data_dir: std::path::Path::new("/home/user/.local/share"),
+            agent_session_id: "abc-123",
+        }),
+        "trace resolution",
+    );
+    assert_eq!(
+        locator,
+        TraceLocator::Search {
+            root: "/home/user/.claude/projects".into(),
+            pattern: "**/abc-123.jsonl".to_owned(),
+        }
+    );
+}
+
+/// Verifies `[agent]` is rejected on a non-agent kind with the section-level field.
+#[test]
+fn rejects_agent_section_on_other_kinds() {
+    let source = format!(
+        "{MINIMAL_MANIFEST}\n[agent.trace]\nformat = \"opencode\"\nfile = \"{{home}}/{{agent_session_id}}.ndjson\"\n"
+    );
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(&source) else {
+        panic!("expected the agent section to be rejected for a workbench kind");
+    };
+    assert_eq!(field, ManifestField::Agent);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::NotAllowedForKind {
+            kind: PluginKind::Workbench
+        }
+    ));
+}
+
+/// Verifies trace template failures surface as semantic errors with the precise field path.
+#[test]
+fn reports_agent_trace_field_errors() {
+    let cases = [
+        (
+            AGENT_FILE_MANIFEST.replace(
+                "file = \"{data_dir}/opencode/trace/{agent_session_id}.ndjson\"",
+                "file = \"{home}/{agent_session_id}/{workspace}.ndjson\"",
+            ),
+            ManifestField::AgentTraceFile,
+        ),
+        (
+            AGENT_SEARCH_MANIFEST.replace(
+                "search = { root = \"{home}/.claude/projects\", glob = \"**/{agent_session_id}.jsonl\" }",
+                "search = { root = \"/etc\", glob = \"**/{agent_session_id}.jsonl\" }",
+            ),
+            ManifestField::AgentTraceSearchRoot,
+        ),
+        (
+            AGENT_SEARCH_MANIFEST.replace(
+                "glob = \"**/{agent_session_id}.jsonl\"",
+                "glob = \"../{agent_session_id}.jsonl\"",
+            ),
+            ManifestField::AgentTraceSearchPattern,
+        ),
+    ];
+    for (source, expected_field) in cases {
+        let Err(ManifestError::InvalidField { field, .. }) =
+            PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected a semantic field error");
+        };
+        assert_eq!(field, expected_field);
+    }
+}
+
+/// Verifies unknown `[agent]` fields stay structural errors naming the TOML path.
+#[test]
+fn reports_structural_agent_errors_with_paths() {
+    let source = AGENT_FILE_MANIFEST.replace(
+        "file = \"{data_dir}/opencode/trace/{agent_session_id}.ndjson\"",
+        "files = [\"{data_dir}/opencode/trace/{agent_session_id}.ndjson\"]",
+    );
+    let Err(ManifestError::InvalidToml { path, .. }) = PluginManifest::parse_installed(&source)
+    else {
+        panic!("expected an unknown agent.trace field to fail structurally");
+    };
+    assert_eq!(path.as_deref(), Some("agent.trace.files"));
 }

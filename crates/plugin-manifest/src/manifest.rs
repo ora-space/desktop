@@ -1,3 +1,4 @@
+use crate::agent::{PluginAgent, RawAgent};
 use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
 use crate::{
@@ -27,6 +28,7 @@ pub struct PluginManifest {
     pub(crate) sha256: Option<Sha256Digest>,
     pub(crate) head: Option<PluginHead>,
     pub(crate) dependencies: Option<PluginDependencies>,
+    pub(crate) agent: Option<PluginAgent>,
     pub(crate) workbench: Option<PluginWorkbench>,
     pub(crate) webview: Option<PluginWebview>,
 }
@@ -126,8 +128,8 @@ impl PluginManifest {
                     })
             })
             .transpose()?;
-        let (workbench, webview) =
-            validate_kind_sections(kind, metadata.workbench, metadata.webview)?;
+        let (agent, workbench, webview) =
+            validate_kind_sections(kind, metadata.agent, metadata.workbench, metadata.webview)?;
 
         Ok(Self {
             resolver,
@@ -143,6 +145,7 @@ impl PluginManifest {
             sha256,
             head,
             dependencies,
+            agent,
             workbench,
             webview,
         })
@@ -221,6 +224,14 @@ impl PluginManifest {
         self.dependencies.as_ref()
     }
 
+    /// Returns the `[agent]` section; only an agent-kind manifest may carry one.
+    ///
+    /// The section is optional even for that kind: an agent whose runtime produces no trace
+    /// files simply omits it.
+    pub fn agent(&self) -> Option<&PluginAgent> {
+        self.agent.as_ref()
+    }
+
     /// Returns the `[workbench]` section; only a workbench-kind manifest may carry one.
     ///
     /// The section is optional even for that kind: a workbench plugin without page-callable
@@ -268,9 +279,34 @@ fn deserialize<'de, T: Deserialize<'de>>(source: &'de str) -> Result<T, Manifest
 /// to `kind = "workbench"` but optional there, because a static page needs no methods.
 fn validate_kind_sections(
     kind: PluginKind,
+    agent: Option<RawAgent>,
     workbench: Option<RawWorkbench>,
     webview: Option<RawWebview>,
-) -> Result<(Option<PluginWorkbench>, Option<PluginWebview>), ManifestError> {
+) -> Result<
+    (
+        Option<PluginAgent>,
+        Option<PluginWorkbench>,
+        Option<PluginWebview>,
+    ),
+    ManifestError,
+> {
+    let agent = match (kind, agent) {
+        (PluginKind::Agent, Some(agent)) => Some(PluginAgent::try_from(agent)?),
+        (PluginKind::Agent, None) => None,
+        (
+            PluginKind::Workbench | PluginKind::Webview | PluginKind::Skill | PluginKind::Mcp,
+            Some(_),
+        ) => {
+            return Err(invalid_field(
+                ManifestField::Agent,
+                InvalidFieldReason::NotAllowedForKind { kind },
+            ));
+        }
+        (
+            PluginKind::Workbench | PluginKind::Webview | PluginKind::Skill | PluginKind::Mcp,
+            None,
+        ) => None,
+    };
     let workbench = match (kind, workbench) {
         (PluginKind::Workbench, Some(workbench)) => Some(PluginWorkbench::try_from(workbench)?),
         (PluginKind::Workbench, None) => None,
@@ -309,7 +345,7 @@ fn validate_kind_sections(
         }
     };
 
-    Ok((workbench, webview))
+    Ok((agent, workbench, webview))
 }
 
 /// Holds validated source repository metadata for one plugin release.
@@ -374,6 +410,7 @@ struct RawPluginManifest {
     sha256: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    agent: Option<RawAgent>,
     workbench: Option<RawWorkbench>,
     webview: Option<RawWebview>,
 }
@@ -397,6 +434,7 @@ struct RawInstalledManifest {
     sha256: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    agent: Option<RawAgent>,
     workbench: Option<RawWorkbench>,
     webview: Option<RawWebview>,
 }
@@ -429,6 +467,7 @@ struct RawMetadata {
     license: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    agent: Option<RawAgent>,
     workbench: Option<RawWorkbench>,
     webview: Option<RawWebview>,
 }
@@ -450,6 +489,7 @@ impl RawPluginManifest {
             license: self.license,
             head: self.head,
             dependencies: self.dependencies,
+            agent: self.agent,
             workbench: self.workbench,
             webview: self.webview,
         };
@@ -473,6 +513,7 @@ impl RawInstalledManifest {
             license: self.license,
             head: self.head,
             dependencies: self.dependencies,
+            agent: self.agent,
             workbench: self.workbench,
             webview: self.webview,
         };

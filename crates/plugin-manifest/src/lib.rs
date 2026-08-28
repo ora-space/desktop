@@ -1,6 +1,7 @@
 //! Parses and validates the `orax.toml` manifest of one Ora plugin, both in its marketplace
 //! release form and in the form shipped inside an installed package.
 
+mod agent;
 mod enums;
 mod error;
 mod manifest;
@@ -10,6 +11,10 @@ mod urls;
 mod webview;
 mod workbench;
 
+pub use agent::{
+    AgentTraceFormat, AgentTraceFormatError, PluginAgent, PluginAgentTrace, TraceLocator,
+    TraceResolutionError, TraceResolveContext,
+};
 pub use enums::{PluginKind, PluginKindError, PluginNamespace, PluginNamespaceError};
 pub use error::{InvalidFieldReason, ManifestError, ManifestField, RuleField};
 pub use manifest::{PluginDependencies, PluginHead, PluginManifest};
