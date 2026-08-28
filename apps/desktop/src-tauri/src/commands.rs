@@ -1060,6 +1060,13 @@ backend_command!(
     sync_available_plugins,
     "Pulls the marketplace source and rebuilds the cached registry index."
 );
+backend_command!(
+    read_plugin_readme,
+    ReadPluginReadmeRequest,
+    ReadPluginReadmeResponse,
+    read_plugin_readme,
+    "Reads one marketplace plugin's published README for its detail page."
+);
 
 backend_command!(
     list_marketplace_sources,

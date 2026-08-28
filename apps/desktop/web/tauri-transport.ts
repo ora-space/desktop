@@ -122,6 +122,7 @@ const tauriCommands = {
   // =============================================================================
   listAvailablePlugins: "list_available_plugins",
   syncAvailablePlugins: "sync_available_plugins",
+  readPluginReadme: "read_plugin_readme",
   listMarketplaceSources: "list_marketplace_sources",
   addMarketplaceSource: "add_marketplace_source",
   deleteMarketplaceSource: "delete_marketplace_source",

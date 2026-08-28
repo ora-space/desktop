@@ -175,6 +175,8 @@ export function createContractsClient(
         executeOperation("listAvailablePlugins", request, transport, options),
       syncAvailable: (request, options) =>
         executeOperation("syncAvailablePlugins", request, transport, options),
+      readReadme: (request, options) =>
+        executeOperation("readPluginReadme", request, transport, options),
       listSources: (request, options) =>
         executeOperation("listMarketplaceSources", request, transport, options),
       addSource: (request, options) =>

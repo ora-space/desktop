@@ -5,7 +5,7 @@ import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
+import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
@@ -78,6 +78,7 @@ export type RequestByOperation = {
   commitAgentImport: CommitAgentImportRequest;
   listAvailablePlugins: ListAvailablePluginsRequest;
   syncAvailablePlugins: SyncAvailablePluginsRequest;
+  readPluginReadme: ReadPluginReadmeRequest;
   listMarketplaceSources: ListMarketplaceSourcesRequest;
   addMarketplaceSource: AddMarketplaceSourceRequest;
   deleteMarketplaceSource: DeleteMarketplaceSourceRequest;
@@ -190,6 +191,7 @@ export type ResponseByOperation = {
   commitAgentImport: CommitAgentImportResponse;
   listAvailablePlugins: ListAvailablePluginsResponse;
   syncAvailablePlugins: SyncAvailablePluginsResponse;
+  readPluginReadme: ReadPluginReadmeResponse;
   listMarketplaceSources: ListMarketplaceSourcesResponse;
   addMarketplaceSource: AddMarketplaceSourceResponse;
   deleteMarketplaceSource: DeleteMarketplaceSourceResponse;
@@ -652,6 +654,14 @@ export const endpoints = {
     memberName: "syncAvailable",
     requestType: "SyncAvailablePluginsRequest",
     responseType: "SyncAvailablePluginsResponse",
+    responseMode: "unary",
+  },
+  readPluginReadme: {
+    operationName: "readPluginReadme",
+    namespace: "plugin",
+    memberName: "readReadme",
+    requestType: "ReadPluginReadmeRequest",
+    responseType: "ReadPluginReadmeResponse",
     responseMode: "unary",
   },
   listMarketplaceSources: {

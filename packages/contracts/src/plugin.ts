@@ -366,6 +366,21 @@ export type PluginSettingValue = string | number | boolean;
 export type PluginSettingValueSource = "stored" | "default" | "absent";
 
 /**
+ * Requests the README one marketplace listing publishes beside its `orax.toml`.
+ */
+export type ReadPluginReadmeRequest = {
+  /**
+   * The canonical `namespace/name` marketplace identifier.
+   */
+  pluginId: string;
+};
+
+/**
+ * Returns the README text the winning marketplace source publishes, absent when none ships.
+ */
+export type ReadPluginReadmeResponse = { readme: string | null };
+
+/**
  * Selects the explicit reset operation authorized by the user.
  */
 export type ResetPluginConfigurationMode = {

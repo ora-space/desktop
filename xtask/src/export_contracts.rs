@@ -386,7 +386,9 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListMarketplaceSourcesResponse"
         | "UpdateMarketplaceSourceResponse"
         | "UpdateMarketplaceSourceRequest"
-        | "MarketplaceSource" => "plugin",
+        | "MarketplaceSource"
+        | "ReadPluginReadmeRequest"
+        | "ReadPluginReadmeResponse" => "plugin",
         // proxy
         "GetProxySettingsRequest"
         | "GetProxySettingsResponse"

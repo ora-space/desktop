@@ -92,6 +92,21 @@ describe("createTauriTransport", () => {
       request: {},
     });
   });
+  it("reads a marketplace plugin README through the Desktop plugin command", async () => {
+    const response = { readme: "# Weather" };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "readPluginReadme",
+        request: { pluginId: "official/weather" },
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("read_plugin_readme", {
+      request: { pluginId: "official/weather" },
+    });
+  });
   it("lists marketplace sources through the Desktop plugin command", async () => {
     const response = { sources: [] };
     const invoke = vi.fn().mockResolvedValue(response);

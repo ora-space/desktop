@@ -6,7 +6,15 @@ import type {
   InstalledPlugin,
   InstallOutcome,
 } from "@ora/contracts";
-import { Button, Input, toast } from "@ora/ui";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Input,
+  toast,
+} from "@ora/ui";
 import {
   IconArrowBigUpLines,
   IconCircleCheck,
@@ -16,7 +24,6 @@ import {
   IconRefresh,
   IconSearch,
   IconSettings,
-  IconUpload,
 } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
 import { usePlatform } from "../../platform";
@@ -29,6 +36,7 @@ import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-syn
 import { PluginLogo } from "./plugin-logo";
 import { PluginSourcesManager } from "./plugin-sources-manager";
 import { PluginManager } from "./plugin-manager";
+import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 
@@ -73,6 +81,9 @@ export function PluginsSettings({
     displayName: string;
   } | null>(null);
   const [selecting, setSelecting] = useState(false);
+  const [readmePlugin, setReadmePlugin] = useState<AvailablePlugin | null>(
+    null,
+  );
 
   const platform = usePlatform();
   const available = useAvailablePlugins();
@@ -170,6 +181,15 @@ export function PluginsSettings({
     }
   };
 
+  if (readmePlugin !== null) {
+    return (
+      <PluginReadmeView
+        plugin={readmePlugin}
+        onBack={() => setReadmePlugin(null)}
+      />
+    );
+  }
+
   if (managingSources) {
     return <PluginSourcesManager onBack={() => setManagingSources(false)} />;
   }
@@ -190,6 +210,8 @@ export function PluginsSettings({
         plugins={installed.data ?? []}
         onBack={() => setManaging(false)}
         availableById={availableById}
+        onImport={() => void handleImport()}
+        importing={importPlugin.isPending || selecting}
         onConfigure={(plugin) =>
           setConfigurationPlugin({
             id: plugin.id,
@@ -203,7 +225,27 @@ export function PluginsSettings({
   return (
     <div className="space-y-5">
       <header>
-        <h2 className="text-lg font-semibold">{t("settings.plugins.title")}</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-lg font-semibold">
+            {t("settings.plugins.title")}
+          </h2>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={t("settings.plugins.manageActions")}
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
+            >
+              <IconSettings className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-44">
+              <DropdownMenuItem onClick={() => setManaging(true)}>
+                {t("settings.plugins.manageInstalled")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setManagingSources(true)}>
+                {t("settings.plugins.manageSources")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
           {t("settings.plugins.description")}
         </p>
@@ -224,7 +266,7 @@ export function PluginsSettings({
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0"
+            className="shrink-0 min-w-32"
             disabled={sync.isPending}
             onClick={() =>
               sync.mutate(undefined, {
@@ -248,43 +290,9 @@ export function PluginsSettings({
           </Button>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-xs text-muted-foreground">{lastSynced}</span>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setManaging(true)}
-            >
-              <IconSettings />
-              {t("settings.plugins.manageInstalled")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setManagingSources(true)}
-            >
-              <IconSettings />
-              {t("settings.plugins.manageSources")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={importPlugin.isPending || selecting}
-              onClick={() => void handleImport()}
-              aria-label={t("settings.plugins.import")}
-            >
-              {importPlugin.isPending || selecting ? (
-                <IconLoader2 className="animate-spin" />
-              ) : (
-                <IconUpload />
-              )}
-              <span className="hidden sm:inline">
-                {t("settings.plugins.import")}
-              </span>
-            </Button>
-          </div>
-        </div>
+        <span className="block text-xs text-muted-foreground">
+          {lastSynced}
+        </span>
       </div>
 
       {visiblePlugins.length === 0 ? (
@@ -304,6 +312,7 @@ export function PluginsSettings({
                     key={plugin.id}
                     plugin={plugin}
                     installed={installedById.get(plugin.id)}
+                    onSelect={setReadmePlugin}
                   />
                 ))}
               </div>
@@ -319,9 +328,11 @@ export function PluginsSettings({
 function AvailablePluginCard({
   plugin,
   installed,
+  onSelect,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
+  onSelect: (plugin: AvailablePlugin) => void;
 }) {
   const { t } = useTranslation();
   const install = useInstallPlugin(plugin.id);
@@ -351,14 +362,28 @@ function AvailablePluginCard({
   };
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border p-3">
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t("settings.plugins.viewReadme", {
+        title: plugin.title || plugin.name,
+      })}
+      onClick={() => onSelect(plugin)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(plugin);
+        }
+      }}
+      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <PluginLogo logo={plugin.logo} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {plugin.title || plugin.name}
         </span>
         {plugin.description !== "" && (
-          <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-muted-foreground">
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
             {plugin.description}
           </span>
         )}
@@ -390,12 +415,13 @@ function AvailablePluginCard({
             className="shrink-0"
             disabled={incompatible}
             aria-label={t("settings.plugins.install")}
-            onClick={() =>
+            onClick={(event) => {
+              event.stopPropagation();
               install.mutate(
                 {},
                 { onError: failInstall, onSuccess: succeedInstall },
-              )
-            }
+              );
+            }}
           >
             <IconPlus />
           </Button>
@@ -405,7 +431,10 @@ function AvailablePluginCard({
             size="icon-sm"
             className="shrink-0"
             aria-label={t("settings.plugins.update")}
-            onClick={() => update.mutate({}, { onError: failUpdate })}
+            onClick={(event) => {
+              event.stopPropagation();
+              update.mutate({}, { onError: failUpdate });
+            }}
           >
             <IconArrowBigUpLines />
           </Button>

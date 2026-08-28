@@ -20,6 +20,13 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "SyncAvailablePluginsResponse",
     },
     FrontendEndpoint {
+        operation_name: "readPluginReadme",
+        namespace: NAMESPACE,
+        member_name: "readReadme",
+        request_type: "ReadPluginReadmeRequest",
+        response_type: "ReadPluginReadmeResponse",
+    },
+    FrontendEndpoint {
         operation_name: "listMarketplaceSources",
         namespace: NAMESPACE,
         member_name: "listSources",

@@ -28,11 +28,14 @@ import {
   IconArrowBigUpLines,
   IconDots,
   IconLoader2,
+  IconPlayerPlay,
+  IconPlayerStop,
   IconProgressDown,
   IconRefresh,
   IconSearch,
   IconSettingsBolt,
   IconTrash,
+  IconUpload,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 import { localizeContractError } from "../../i18n/contract-error";
@@ -47,11 +50,15 @@ export function PluginManager({
   onBack,
   onConfigure,
   availableById,
+  onImport,
+  importing,
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
   availableById?: ReadonlyMap<string, AvailablePlugin>;
+  onImport: () => void;
+  importing: boolean;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -82,7 +89,9 @@ export function PluginManager({
       </Breadcrumb>
 
       <header>
-        <h2 className="text-lg font-semibold">{t("settings.plugins.title")}</h2>
+        <h2 className="text-lg font-semibold">
+          {t("settings.plugins.manageInstalled")}
+        </h2>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
           {t("settings.plugins.manageDescription")}
         </p>
@@ -120,6 +129,23 @@ export function PluginManager({
           ) : (
             <IconRefresh />
           )}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          disabled={importing}
+          onClick={onImport}
+          aria-label={t("settings.plugins.import")}
+        >
+          {importing ? (
+            <IconLoader2 className="animate-spin" />
+          ) : (
+            <IconUpload />
+          )}
+          <span className="hidden sm:inline">
+            {t("settings.plugins.import")}
+          </span>
         </Button>
       </div>
 
@@ -161,11 +187,23 @@ function InstalledPluginRow({
     plugin.kind === "agent" ? plugin.name : undefined,
   );
   const uninstalling = mutations.uninstall.isPending;
-  const busy = uninstalling || update.isPending;
+  const lifecycleBusy =
+    mutations.activate.isPending || mutations.stop.isPending;
+  const busy = uninstalling || update.isPending || lifecycleBusy;
   const hasUpdate =
     available !== undefined && available.version !== plugin.version;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const failStart = (cause: unknown) => {
+    toast.error(t("settings.plugins.startFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
+  const failStop = (cause: unknown) => {
+    toast.error(t("settings.plugins.stopFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
   const failUpdate = (cause: unknown) => {
     toast.error(t("settings.plugins.updateFailed"), {
       description: localizeContractError(cause, t),
@@ -213,6 +251,49 @@ function InstalledPluginRow({
             </Badge>
           )}
         </span>
+
+        {(plugin.runtime === "stopped" || plugin.runtime === "failed") && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() =>
+              mutations.activate.mutate(undefined, { onError: failStart })
+            }
+          >
+            {mutations.activate.isPending ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconPlayerPlay />
+            )}
+            {t("settings.plugins.start")}
+          </Button>
+        )}
+
+        {plugin.runtime === "starting" && (
+          <Button variant="outline" size="sm" disabled>
+            <IconLoader2 className="animate-spin" />
+            {t("settings.plugins.starting")}
+          </Button>
+        )}
+
+        {plugin.runtime === "running" && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() =>
+              mutations.stop.mutate(undefined, { onError: failStop })
+            }
+          >
+            {mutations.stop.isPending ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconPlayerStop />
+            )}
+            {t("settings.plugins.stop")}
+          </Button>
+        )}
 
         {hasUpdate && (
           <Button

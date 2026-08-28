@@ -82,6 +82,35 @@ impl RegistryIndex {
         registry_dir: &Path,
         id: &PluginId,
     ) -> Result<Option<PluginManifest>, RegistryError> {
+        let Some(path) = Self::find_manifest_path(registry_dir, id)? else {
+            return Ok(None);
+        };
+        Ok(Some(parse_manifest(&path)?))
+    }
+
+    /// Resolves the README text beside the manifest that matches `id`.
+    ///
+    /// This is the detail-page companion of [`Self::resolve_manifest`]: the cached index carries
+    /// only display fields, so the UI reads the source README on demand. A listing without a
+    /// README reads as `None`; an unreadable, non-UTF-8, or oversized document is reported.
+    pub fn resolve_readme(
+        registry_dir: &Path,
+        id: &PluginId,
+    ) -> Result<Option<String>, crate::readme::ReadmeReadError> {
+        let Some(path) = Self::find_manifest_path(registry_dir, id)? else {
+            return Ok(None);
+        };
+        crate::readme::read_beside_manifest(&path)
+    }
+
+    /// Locates the source manifest whose parsed identifier equals `id`.
+    ///
+    /// Unparseable manifests are skipped exactly as they are during the index build, so one bad
+    /// file never blocks a lookup.
+    fn find_manifest_path(
+        registry_dir: &Path,
+        id: &PluginId,
+    ) -> Result<Option<PathBuf>, RegistryError> {
         for path in orax_manifest_paths(registry_dir) {
             let manifest = match parse_manifest(&path) {
                 Ok(manifest) => manifest,
@@ -91,7 +120,7 @@ impl RegistryIndex {
                 }
             };
             if entry_id(&manifest) == *id {
-                return Ok(Some(manifest));
+                return Ok(Some(path));
             }
         }
         Ok(None)
@@ -323,6 +352,35 @@ mod tests {
             &PluginId::new("official", "absent").expect("plugin id"),
         )?;
         assert!(missing.is_none());
+        Ok(())
+    }
+    /// Verifies detail-page resolution reads the README beside the matching manifest.
+    #[test]
+    fn resolves_readme_beside_a_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let manifest_path = write_manifest(
+            root.path(),
+            "weather",
+            &valid_manifest("weather", "Weather plugin"),
+        )?;
+        let entry_dir = manifest_path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no parent"))?;
+        fs::write(entry_dir.join("README.md"), "# Weather\n\nLive forecasts.")?;
+
+        let registry_dir = root.path().join("registry");
+        let id = PluginId::new("official", "weather").expect("plugin id");
+        assert_eq!(
+            RegistryIndex::resolve_readme(&registry_dir, &id)?,
+            Some("# Weather\n\nLive forecasts.".to_string())
+        );
+
+        // An identifier absent from the registry, or a listing without a README, reads as none.
+        let absent = PluginId::new("official", "absent").expect("plugin id");
+        assert_eq!(RegistryIndex::resolve_readme(&registry_dir, &absent)?, None);
+        write_manifest(root.path(), "silent", &valid_manifest("silent", "No docs"))?;
+        let silent = PluginId::new("official", "silent").expect("plugin id");
+        assert_eq!(RegistryIndex::resolve_readme(&registry_dir, &silent)?, None);
         Ok(())
     }
     /// Verifies the `logo.svg` beside a manifest is inlined into that entry's index record.

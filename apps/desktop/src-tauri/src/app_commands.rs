@@ -58,6 +58,7 @@ desktop_command_registry! {
     commands::reset_plugin_configuration,
     commands::list_available_plugins,
     commands::sync_available_plugins,
+    commands::read_plugin_readme,
     commands::list_marketplace_sources,
     commands::add_marketplace_source,
     commands::delete_marketplace_source,

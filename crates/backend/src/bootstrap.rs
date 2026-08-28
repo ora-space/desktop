@@ -367,6 +367,14 @@ impl Backend {
         self.plugin.sync_available_plugins(request)
     }
 
+    /// Reads the README one marketplace listing publishes for its detail page.
+    pub fn read_plugin_readme(
+        &self,
+        request: ReadPluginReadmeRequest,
+    ) -> Result<ReadPluginReadmeResponse, BackendError> {
+        self.plugin.read_plugin_readme(request)
+    }
+
     /// Explicitly rescans packages and reconciles process-local runtime state.
     pub async fn scan_plugins(
         &self,

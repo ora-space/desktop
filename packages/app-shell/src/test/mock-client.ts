@@ -82,6 +82,8 @@ export interface MockClientState {
    */
   agentRuntimeStatuses: AgentRuntimeStatus[];
   availablePlugins: AvailablePlugin[];
+  /** README text served for one marketplace listing keyed by plugin id. */
+  pluginReadmes: Map<string, string>;
   availablePluginsUpdatedAt: bigint;
   marketplaceSources: MarketplaceSource[];
   proxySettings: ProxySettings | null;
@@ -167,6 +169,7 @@ export function createMockClientState(): MockClientState {
     })),
     availablePlugins: [],
     availablePluginsUpdatedAt: 0n,
+    pluginReadmes: new Map(),
     marketplaceSources: [],
     proxySettings: null,
     developerMode: { enabled: false },
@@ -539,6 +542,9 @@ export function createMockClient(state: MockClientState): ContractsClient {
       syncAvailable: async () => ({
         updatedAt: state.availablePluginsUpdatedAt,
         plugins: [...state.availablePlugins],
+      }),
+      readReadme: async (req) => ({
+        readme: state.pluginReadmes.get(req.pluginId) ?? null,
       }),
       scan: async () => ({ plugins: [...state.installedPlugins] }),
       activate: async (req) => {

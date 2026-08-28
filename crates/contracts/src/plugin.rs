@@ -275,6 +275,23 @@ pub struct SyncAvailablePluginsResponse {
     pub plugins: Vec<AvailablePlugin>,
 }
 
+/// Requests the README one marketplace listing publishes beside its `orax.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ReadPluginReadmeRequest {
+    /// The canonical `namespace/name` marketplace identifier.
+    pub plugin_id: String,
+}
+
+/// Returns the README text the winning marketplace source publishes, absent when none ships.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ReadPluginReadmeResponse {
+    pub readme: Option<String>,
+}
+
 /// Lists one configured marketplace source repository and its tracked branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -606,6 +623,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;
     SyncAvailablePluginsResponse::export(config)?;
+    ReadPluginReadmeRequest::export(config)?;
+    ReadPluginReadmeResponse::export(config)?;
     MarketplaceSource::export(config)?;
     ListMarketplaceSourcesRequest::export(config)?;
     ListMarketplaceSourcesResponse::export(config)?;
@@ -653,7 +672,8 @@ mod tests {
         ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
         ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, MarketplaceSource,
         PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
+        ReadPluginReadmeRequest, ReadPluginReadmeResponse, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
         UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse,
     };
     use pretty_assertions::assert_eq;
@@ -903,6 +923,29 @@ mod tests {
         );
     }
 
+    // TEMP-ANCHOR-MARKER
+    /// Verifies the README read request/response wire shapes for the marketplace detail page.
+    #[test]
+    fn serializes_read_plugin_readme_contracts() {
+        assert_eq!(
+            serde_json::to_value(ReadPluginReadmeRequest {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
+        );
+        assert_eq!(
+            serde_json::to_value(ReadPluginReadmeResponse {
+                readme: Some("# Weather\n\nLive forecasts.".to_string()),
+            })
+            .unwrap(),
+            json!({ "readme": "# Weather\n\nLive forecasts." })
+        );
+        assert_eq!(
+            serde_json::to_value(ReadPluginReadmeResponse { readme: None }).unwrap(),
+            json!({ "readme": null })
+        );
+    }
     /// Verifies marketplace source request/response wire shapes.
     #[test]
     fn serializes_marketplace_source_contracts() {

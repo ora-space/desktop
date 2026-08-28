@@ -14,10 +14,11 @@ use ora_contracts::{
     InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest,
     ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
     ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, PluginHostCompatibility,
-    PublicError, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
-    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
-    UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
-    UpdatePluginRequest, UpdatePluginResponse,
+    PublicError, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ScanPluginsRequest,
+    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
+    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
+    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
+    UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -373,6 +374,74 @@ impl PluginApi {
         })
     }
 
+    /// Returns the README a marketplace listing publishes, resolved from the source checkouts.
+    ///
+    /// The cached index carries display fields only, so the detail page reads the README on
+    /// demand. Sources follow the same precedence as the index: the first source that lists the
+    /// id wins, a listing without a README reports `None`, and an identifier absent from every
+    /// checkout reports `PluginNotFound` exactly like the install path.
+    pub(crate) fn read_plugin_readme(
+        &self,
+        request: ReadPluginReadmeRequest,
+    ) -> Result<ReadPluginReadmeResponse, BackendError> {
+        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        let registry_sources = self.registry_sources()?;
+        let mut known = false;
+        for source in &registry_sources {
+            let registry_dir = source.checkout_dir().join("registry");
+            if let Some(readme) = RegistryIndex::resolve_readme(&registry_dir, &plugin_id)
+                .map_err(|error| BackendError::internal("failed to read plugin README", error))?
+            {
+                return Ok(ReadPluginReadmeResponse {
+                    readme: Some(readme),
+                });
+            }
+            // A source may host the listing without a README; remember it so the response can
+            // distinguish "no documentation published" from an unknown identifier.
+            if RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
+                .map_err(|error| {
+                    BackendError::internal("failed to resolve plugin README listing", error)
+                })?
+                .is_some()
+            {
+                known = true;
+            }
+        }
+        if known {
+            return Ok(ReadPluginReadmeResponse { readme: None });
+        }
+        Err(BackendError::new(
+            ErrorClassification::NotFound,
+            PublicError::PluginNotFound(EmptyErrorParams {}),
+            "marketplace plugin was not found in the registry",
+        ))
+    }
+
+    /// Binds every configured marketplace source to its checkout without network or proxy work.
+    ///
+    /// Reads resolve listings from the local checkouts, so they can skip the proxy validation
+    /// that only matters when a source is fetched or its release is downloaded.
+    fn registry_sources(&self) -> Result<Vec<ora_plugin_registry::RegistrySource>, BackendError> {
+        let configured = self
+            .marketplace_sources
+            .list()
+            .map_err(map_marketplace_source_error)?;
+        configured
+            .iter()
+            .map(|source| {
+                self.marketplace_sources
+                    .registry_source(source)
+                    .map_err(map_marketplace_source_error)
+            })
+            .collect()
+    }
+
     /// Binds every configured marketplace source to a registry checkout, applying proxy policy.
     fn prepared_registry_sources(
         &self,
@@ -384,11 +453,7 @@ impl PluginApi {
         let proxy_settings = self.user_config.network_proxy_settings()?;
         let mut registry_sources = Vec::with_capacity(configured.len());
 
-        for source in &configured {
-            let mut registry_source = self
-                .marketplace_sources
-                .registry_source(source)
-                .map_err(map_marketplace_source_error)?;
+        for (source, mut registry_source) in configured.iter().zip(self.registry_sources()?) {
             if source.use_proxy {
                 let git_env = proxy::git_proxy_env(proxy_settings.as_ref())?.ok_or_else(|| {
                     BackendError::invalid_proxy_settings(
