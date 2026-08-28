@@ -143,6 +143,7 @@ impl Backend {
             PluginApi::open(
                 pool.clone(),
                 paths.data_directory,
+                paths.home_directory.clone(),
                 paths.deno_path,
                 clock,
                 app_events.publisher(),

@@ -187,6 +187,7 @@ fn open_lifecycle<Sink: PluginNotificationSink>(
         PluginLifecycleConfig {
             data_directory: temp_dir.to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         launcher,
         publisher,

@@ -36,6 +36,7 @@ fn open_without_runtime(
         PluginLifecycleConfig {
             data_directory: data_directory.to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         UnusedRuntimeLauncher,
         NoopStatusPublisher,
@@ -162,6 +163,7 @@ async fn activates_plugin_and_starts_its_runtime() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         ImmediateRuntimeLauncher { runtime },
         publisher,
@@ -291,6 +293,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         ImmediateRuntimeLauncher { runtime },
         NoopStatusPublisher,
@@ -368,6 +371,7 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         launcher,
         publisher,
@@ -452,6 +456,7 @@ async fn stops_running_plugin() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         launcher,
         publisher,
@@ -519,6 +524,7 @@ async fn queues_stop_behind_an_in_flight_launch() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         launcher,
         publisher,
@@ -578,6 +584,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         launcher,
         publisher,
@@ -653,6 +660,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         ImmediateRuntimeLauncher { runtime },
         publisher,
@@ -723,6 +731,7 @@ async fn records_runtime_failure() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            home_directory: None,
         },
         FailureRuntimeLauncher { runtime },
         publisher,

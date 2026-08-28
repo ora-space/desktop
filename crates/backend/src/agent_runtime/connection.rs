@@ -1161,6 +1161,7 @@ mod tests {
             PluginApi::open(
                 pool.clone(),
                 temporary.path().to_path_buf(),
+                temporary.path().join("home").to_path_buf(),
                 PathBuf::from("deno"),
                 SystemClock,
                 AppEventHub::new().publisher(),

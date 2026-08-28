@@ -179,6 +179,7 @@ impl PluginApi {
     pub(crate) fn open(
         pool: RepositoryPool,
         data_directory: PathBuf,
+        home_directory: PathBuf,
         deno_path: PathBuf,
         clock: SystemClock,
         publisher: AppEventPublisher,
@@ -204,6 +205,7 @@ impl PluginApi {
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
                 deno_path,
+                home_directory: Some(home_directory),
             },
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,

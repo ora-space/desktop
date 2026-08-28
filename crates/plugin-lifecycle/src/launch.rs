@@ -73,7 +73,10 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
             deno_path: inner.config.deno_path.clone(),
             entrypoint: plugin.package_root.join(entrypoint.to_path_buf()),
             package_root: plugin.package_root.clone(),
-            permissions: permissions_for(&plugin.contributes),
+            permissions: permissions_for(
+                &plugin.contributes,
+                inner.config.home_directory.as_deref(),
+            ),
             data_dir,
             generation: attempt,
         })

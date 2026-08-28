@@ -86,9 +86,12 @@ fn scoped_flag(flag: &str, path: &Path) -> Result<OsString, PermissionFlagError>
 /// grants it has always had (see `agent_permissions`); narrowing them is deliberately out of
 /// scope here. Webview, skill, and MCP plugins are never launched, so their empty sets only make
 /// the match exhaustive.
-pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission> {
+pub fn permissions_for(
+    contribution: &PluginContribution,
+    home_directory: Option<&Path>,
+) -> Vec<DenoPermission> {
     match contribution {
-        PluginContribution::Agent(_) => agent_permissions(),
+        PluginContribution::Agent(_) => agent_permissions(home_directory),
         PluginContribution::Workbench(_)
         | PluginContribution::Webview(_)
         | PluginContribution::Skill(_)
@@ -101,13 +104,51 @@ pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission>
 /// An agent plugin owns the agent process itself, so it needs `--allow-run` plus whatever that
 /// CLI needs. That makes it roughly as privileged as the host: a deliberate, documented gap that
 /// closes later by changing only how the agent is started, never the `agent/acp` pipe.
-pub fn agent_permissions() -> Vec<DenoPermission> {
-    vec![
+///
+/// When `home_directory` is known, the agent additionally gets write access to the two opencode
+/// collector directories (plugin deployment + trace files); without a home directory the grants
+/// are skipped rather than guessed. The directories are created here so Deno's canonicalization
+/// of the grant paths cannot fail on a first launch.
+pub fn agent_permissions(home_directory: Option<&Path>) -> Vec<DenoPermission> {
+    let mut permissions = vec![
         DenoPermission::AllowRun,
         DenoPermission::AllowRead(ReadScope::Everything),
         DenoPermission::AllowEnv,
         DenoPermission::AllowNet,
-    ]
+    ];
+    if let Some(home) = home_directory {
+        let xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let xdg_data = std::env::var("XDG_DATA_HOME").ok();
+        for directory in [
+            opencode_plugin_dir(home, xdg_config.as_deref()),
+            opencode_trace_dir(home, xdg_data.as_deref()),
+        ] {
+            if std::fs::create_dir_all(&directory).is_ok() {
+                permissions.push(DenoPermission::AllowWrite(directory));
+            }
+        }
+    }
+    permissions
+}
+
+/// The opencode plugin directory as the agent plugin resolves it (`XDG_CONFIG_HOME` or
+/// `~/.config`); kept in sync with the plugin's `opencodePluginDir`.
+fn opencode_plugin_dir(home: &Path, xdg_config_home: Option<&str>) -> PathBuf {
+    let config = xdg_config_home
+        .filter(|value| value.starts_with('/'))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    config.join("opencode").join("plugins")
+}
+
+/// The opencode trace directory as the collector resolves it (`XDG_DATA_HOME` or
+/// `~/.local/share`); kept in sync with the collector's `traceDir`.
+fn opencode_trace_dir(home: &Path, xdg_data_home: Option<&str>) -> PathBuf {
+    let data = xdg_data_home
+        .filter(|value| value.starts_with('/'))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local").join("share"));
+    data.join("opencode").join("trace")
 }
 
 #[cfg(test)]
@@ -133,7 +174,8 @@ mod tests {
         })
     }
 
-    /// Agent plugins keep the historical unscoped grants.
+    /// Agent plugins keep the historical unscoped grants; with a home directory they also get
+    /// write access scoped to the two opencode collector directories.
     #[test]
     fn agent_plugins_get_broad_permissions() {
         let contribution = PluginContribution::Agent(InstalledPluginAgent {
@@ -141,42 +183,53 @@ mod tests {
             entrypoint: PortableRelativePath::parse("main.js").expect("entrypoint"),
             trace: None,
         });
-        let permissions = permissions_for(&contribution);
+        let home = TempDir::new().expect("temp home");
+        // The expected grants mirror the production env-aware resolution, so the assertion
+        // holds whether or not the test process has XDG_*_HOME set.
+        let xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let xdg_data = std::env::var("XDG_DATA_HOME").ok();
+        let plugin_dir = super::opencode_plugin_dir(home.path(), xdg_config.as_deref());
+        let trace_dir = super::opencode_trace_dir(home.path(), xdg_data.as_deref());
+
+        let permissions = permissions_for(&contribution, Some(home.path()));
+        assert_eq!(
+            permissions,
+            vec![
+                DenoPermission::AllowRun,
+                DenoPermission::AllowRead(ReadScope::Everything),
+                DenoPermission::AllowEnv,
+                DenoPermission::AllowNet,
+                DenoPermission::AllowWrite(plugin_dir.clone()),
+                DenoPermission::AllowWrite(trace_dir.clone()),
+            ],
+        );
+        // The grant directories are created eagerly so Deno can canonicalize them.
+        assert!(plugin_dir.is_dir());
+        assert!(trace_dir.is_dir());
+
+        // Without a home directory the write grants are skipped rather than guessed.
+        assert_eq!(permissions_for(&contribution, None).len(), 4);
+
+        // Every flag renders, including the two scoped write grants.
         let flags = permissions
             .iter()
             .map(|permission| permission.to_flag().expect("render agent flag"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            (permissions, flags),
-            (
-                vec![
-                    DenoPermission::AllowRun,
-                    DenoPermission::AllowRead(ReadScope::Everything),
-                    DenoPermission::AllowEnv,
-                    DenoPermission::AllowNet,
-                ],
-                vec![
-                    OsString::from("--allow-run"),
-                    OsString::from("--allow-read"),
-                    OsString::from("--allow-env"),
-                    OsString::from("--allow-net"),
-                ],
-            ),
-        );
+            .filter(|flag| flag.to_string_lossy().starts_with("--allow-write="))
+            .count();
+        assert_eq!(flags, 2);
     }
 
     /// Workbench plugins launch with no permission flags at all; their data goes through the host.
     #[test]
     fn workbench_plugins_get_no_permissions() {
-        assert_eq!(permissions_for(&workbench_contribution()), Vec::new());
+        assert_eq!(permissions_for(&workbench_contribution(), None), Vec::new());
     }
 
     /// Skill plugins are static packages and never receive runtime permissions.
     #[test]
     fn skill_plugins_get_no_permissions() {
         assert_eq!(
-            permissions_for(&PluginContribution::Skill(Default::default())),
+            permissions_for(&PluginContribution::Skill(Default::default()), None),
             Vec::new()
         );
     }
@@ -194,9 +247,10 @@ mod tests {
             panic!("expected the MCP shape");
         };
         assert_eq!(
-            permissions_for(&PluginContribution::Mcp(InstalledMcpDescriptor {
-                configuration
-            })),
+            permissions_for(
+                &PluginContribution::Mcp(InstalledMcpDescriptor { configuration }),
+                None,
+            ),
             Vec::new()
         );
     }

@@ -63,6 +63,9 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 pub struct PluginLifecycleConfig {
     pub data_directory: PathBuf,
     pub deno_path: PathBuf,
+    /// The user home directory, used to scope agent write grants to the collector directories.
+    /// `None` skips the write grants (tests and hosts without a resolved home).
+    pub home_directory: Option<PathBuf>,
 }
 
 /// Reports a failure while constructing or operating plugin lifecycle state.
