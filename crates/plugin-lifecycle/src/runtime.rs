@@ -4,6 +4,7 @@ use crate::ports::{
 };
 use crate::storage::PluginStorage;
 use ora_domain::PluginId;
+use ora_plugin_manager::PluginContribution;
 use ora_plugin_runtime::{
     CompositeHostRequests, HostRequestHandler, PluginProcessExit, PluginRegistration,
     PluginRuntime as ProcessPluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
@@ -34,10 +35,12 @@ impl Default for PluginRuntimeTimeouts {
 
 /// Produces the extra host-request handlers one launch serves on top of `ora/storage/*`.
 ///
-/// The factory runs per launch attempt and receives the plugin id and the attempt number, which
-/// lets a handler pin its identity checks to the process generation it was built for.
+/// The factory runs per launch attempt and receives the plugin id, the attempt number, and the
+/// validated contribution: the attempt lets a handler pin its identity checks to the process
+/// generation it was built for, and the contribution supplies the declared capabilities the
+/// handler gates on.
 pub type HostRequestExtensionFactory =
-    dyn Fn(&PluginId, u64) -> Vec<Arc<dyn HostRequestHandler>> + Send + Sync;
+    dyn Fn(&PluginId, u64, &PluginContribution) -> Vec<Arc<dyn HostRequestHandler>> + Send + Sync;
 
 /// Launches production Deno plugin processes through Ora's process-tree supervisor.
 #[derive(Clone, Default)]
@@ -110,7 +113,13 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
             let extensions = self
                 .host_request_extensions
                 .as_ref()
-                .map(|factory| factory(&request.plugin_id, request.generation))
+                .map(|factory| {
+                    factory(
+                        &request.plugin_id,
+                        request.generation,
+                        &request.contribution,
+                    )
+                })
                 .unwrap_or_default();
             let host_requests = {
                 let mut handlers: Vec<Arc<dyn HostRequestHandler>> =

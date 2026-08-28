@@ -19,6 +19,42 @@ pub struct ResolvedTrace {
     pub locator: TraceLocator,
 }
 
+/// The built-in default table: one entry per bundled CLI, mirroring the legacy dashboard
+/// resolver until the CLIs are plugin-ized (their plugin manifests will then carry the same
+/// declarations and these entries become dead data).
+///
+/// `data_dir`/`home` placeholders are left for `TraceService` to substitute per session.
+pub fn builtin_defaults() -> Vec<(AgentRef, PluginAgentTrace)> {
+    let mut defaults = Vec::new();
+    // Claude-Code-compatible forks all emit transcript JSONL under a projects root that is
+    // fork-specific; the search form matches the session file by id across project directories.
+    for (agent_ref, root) in [
+        ("ora-space.claude", "{home}/.claude/projects"),
+        ("ora-space.codex", "{home}/.claude/projects"),
+        ("ora-space.codeagentcli", "{home}/.cac/projects"),
+    ] {
+        if let (Ok(agent_ref), Ok(declaration)) = (
+            AgentRef::parse(agent_ref),
+            PluginAgentTrace::search("claude_code", root, "**/{agent_session_id}.jsonl"),
+        ) {
+            defaults.push((agent_ref, declaration));
+        }
+    }
+    // opencode and its Nga variant write one NDJSON per session through the deployed collector.
+    for agent_ref in ["ora-space.opencode", "ora-space.nga"] {
+        if let (Ok(agent_ref), Ok(declaration)) = (
+            AgentRef::parse(agent_ref),
+            PluginAgentTrace::file(
+                "opencode",
+                "{data_dir}/opencode/trace/{agent_session_id}.ndjson",
+            ),
+        ) {
+            defaults.push((agent_ref, declaration));
+        }
+    }
+    defaults
+}
+
 /// Maps one agent to its installed trace declaration.
 ///
 /// Reads are cheap (`RwLock` + clone of an immutable declaration) so the per-read resolve path

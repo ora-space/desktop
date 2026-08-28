@@ -15,6 +15,8 @@ use crate::spec::SpecApi;
 use crate::task::TaskApi;
 use crate::trace_bindings::TraceBindingRegistry;
 use crate::trace_host::TraceSessionBinding;
+use crate::trace_registry::TraceRegistry;
+use crate::trace_service::TraceService;
 use crate::user_config::{BackendPreferredLogLevelStore, UserConfigApi};
 use crate::workflow::WorkflowApi;
 use crate::workflow::run::WorkflowRunApi;
@@ -144,6 +146,22 @@ impl Backend {
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
         let user_config = Arc::new(UserConfigApi::new(pool.clone()));
+        // The trace pipeline: a registry seeded below from built-in defaults plus installed
+        // plugin declarations, a read service resolving through it, and the surface binding
+        // table. The registry is filled after the plugin snapshot exists, so the launch
+        // factory only needs the (empty-but-shared) Arc.
+        let trace_registry = Arc::new(TraceRegistry::new(Vec::new()));
+        let user_data_directory = std::env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|value| value.starts_with('/'))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| paths.home_directory.join(".local").join("share"));
+        let trace_service = Arc::new(TraceService::new(
+            Arc::clone(&trace_registry),
+            paths.home_directory.clone(),
+            user_data_directory,
+        ));
+        let trace_bindings = Arc::new(TraceBindingRegistry::new());
         let plugin = Arc::new(
             PluginApi::open(
                 pool.clone(),
@@ -153,9 +171,17 @@ impl Backend {
                 clock,
                 app_events.publisher(),
                 user_config.clone(),
+                Arc::clone(&trace_registry),
+                Arc::clone(&trace_service),
+                Arc::clone(&trace_bindings),
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
+        // Built-in CLIs resolve from the default table until they are plugin-ized; plugin agents
+        // register their [agent.trace] declarations at launch time (in the extension factory).
+        for (agent_ref, declaration) in crate::trace_registry::builtin_defaults() {
+            trace_registry.register_plugin(agent_ref, declaration);
+        }
         plugin
             .sync_installed_skills()
             .map_err(BackendBootstrapError::PluginSkillCatalog)?;
@@ -253,7 +279,7 @@ impl Backend {
             pool,
             worktree_root,
             relative_path_base,
-            trace_bindings: Arc::new(TraceBindingRegistry::new()),
+            trace_bindings,
         })
     }
 

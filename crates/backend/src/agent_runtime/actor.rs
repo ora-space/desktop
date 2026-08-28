@@ -963,6 +963,9 @@ mod tests {
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
     use crate::plugin::PluginApi;
+    use crate::trace_bindings::TraceBindingRegistry;
+    use crate::trace_registry::TraceRegistry;
+    use crate::trace_service::TraceService;
     use crate::user_config::UserConfigApi;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
@@ -997,6 +1000,13 @@ mod tests {
                 SystemClock,
                 AppEventHub::new().publisher(),
                 Arc::new(UserConfigApi::new(pool.clone())),
+                Arc::new(TraceRegistry::new(Vec::new())),
+                Arc::new(TraceService::new(
+                    Arc::new(TraceRegistry::new(Vec::new())),
+                    root.to_path_buf().join("home"),
+                    root.to_path_buf().join("data"),
+                )),
+                Arc::new(TraceBindingRegistry::new()),
             )
             .expect("open plugin host"),
         )

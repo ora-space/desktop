@@ -414,6 +414,53 @@ mod tests {
         assert_eq!(entries[0]["name"], json!("t"));
     }
 
+    /// The production composition: storage and trace methods served side by side, unknown
+    /// methods falling through the whole chain.
+    #[tokio::test]
+    async fn composite_serves_storage_and_trace_side_by_side() {
+        struct StorageStub;
+        impl HostRequestHandler for StorageStub {
+            fn handle(
+                &self,
+                method: &str,
+                _params: Value,
+            ) -> BoxFuture<'static, Result<Value, HostRequestError>> {
+                let method = method.to_owned();
+                Box::pin(async move {
+                    if method == "ora/storage/list" {
+                        Ok(json!({ "stub": true }))
+                    } else {
+                        Err(HostRequestError::method_not_found(&method))
+                    }
+                })
+            }
+        }
+
+        let (host, _temp) = host_with_bound_session();
+        let composite = ora_plugin_runtime::CompositeHostRequests::new(vec![
+            Arc::new(StorageStub),
+            host.clone(),
+        ]);
+
+        let storage = composite
+            .handle("ora/storage/list", Value::Null)
+            .await
+            .expect("storage is served by the first handler");
+        assert_eq!(storage, json!({ "stub": true }));
+
+        let stat = composite
+            .handle(TRACE_STAT_METHOD, surface_params(7, 1))
+            .await
+            .expect("trace falls through to the trace host");
+        assert_eq!(stat["exists"], json!(true));
+
+        let error = composite
+            .handle("nobody/ping", Value::Null)
+            .await
+            .expect_err("unknown method exhausts the chain");
+        assert_eq!(error.code(), ora_plugin_runtime::METHOD_NOT_FOUND_CODE);
+    }
+
     /// Unknown methods fall through so the composite can keep delegating.
     #[tokio::test]
     async fn unknown_methods_are_method_not_found() {

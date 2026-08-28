@@ -79,6 +79,7 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
             ),
             data_dir,
             generation: attempt,
+            contribution: plugin.contributes.clone(),
         })
         .await;
 

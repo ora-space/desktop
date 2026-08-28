@@ -12,6 +12,8 @@ use ora_contracts::{
 };
 use ora_domain::PluginId;
 use ora_logging::with_trace_logging;
+use ora_plugin_manager::{InstalledPluginAgent, PluginContribution};
+use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::future::{Future, pending};
@@ -414,6 +416,11 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
                 .join("official")
                 .join("ora.example"),
             generation: 1,
+            contribution: PluginContribution::Agent(InstalledPluginAgent {
+                display_name: "ora.example".to_owned(),
+                entrypoint: PortableRelativePath::parse("main.js").expect("entrypoint"),
+                trace: None,
+            }),
         }),
     );
 

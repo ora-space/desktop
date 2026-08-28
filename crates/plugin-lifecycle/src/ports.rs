@@ -6,6 +6,7 @@
 
 use crate::permissions::DenoPermission;
 use ora_domain::PluginId;
+use ora_plugin_manager::PluginContribution;
 use ora_plugin_runtime::{PluginNotification, PluginRegistration};
 use serde_json::Value;
 use std::future::Future;
@@ -28,6 +29,9 @@ pub struct PluginLaunchRequest {
     /// The lifecycle attempt this launch belongs to; host request extensions use it to pin
     /// identity checks (a surface's generation must equal the process generation that serves it).
     pub generation: u64,
+    /// The validated contribution of the launched package; host request extensions gate on the
+    /// capabilities it declares.
+    pub contribution: PluginContribution,
 }
 
 /// Preserves the reason a plugin process could not start or stopped unexpectedly.

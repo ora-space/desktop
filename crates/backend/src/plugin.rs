@@ -4,6 +4,10 @@ use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
 use crate::proxy;
+use crate::trace_bindings::TraceBindingRegistry;
+use crate::trace_host::TraceHost;
+use crate::trace_registry::TraceRegistry;
+use crate::trace_service::TraceService;
 use crate::user_config::UserConfigApi;
 use gitlancer::{CliGitRunner, Git};
 use ora_application::Clock;
@@ -22,7 +26,7 @@ use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
     SqlitePluginMarketplaceSourceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
-use ora_domain::{PluginId, WorkspaceLocation};
+use ora_domain::{AgentRef, PluginId, WorkspaceLocation};
 use ora_effect::{Digest, FilesystemSkillSurface, SurfaceDescriptorSet};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
@@ -176,6 +180,9 @@ pub(crate) struct PluginApi {
 
 impl PluginApi {
     /// Opens plugin lifecycle state with the concrete backend adapters.
+    // The trace triple (registry, service, bindings) rides along as three ordinary parameters;
+    // grouping them would only move the count onto a config struct.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open(
         pool: RepositoryPool,
         data_directory: PathBuf,
@@ -184,6 +191,9 @@ impl PluginApi {
         clock: SystemClock,
         publisher: AppEventPublisher,
         user_config: Arc<UserConfigApi>,
+        trace_registry: Arc<TraceRegistry>,
+        trace_service: Arc<TraceService>,
+        trace_bindings: Arc<TraceBindingRegistry>,
     ) -> Result<Self, BackendError> {
         let plugins_directory = data_directory.join("plugins");
         let marketplace_sources = MarketplaceSourceStore::open(
@@ -201,13 +211,42 @@ impl PluginApi {
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
         let configuration = ConfigurationService::new(data_directory.clone());
+        // The trace host handler rides along every launch: it serves nothing until a workbench
+        // page calls `ora/session/trace_*`, gates on the manifest capability, and pins the
+        // surface generation to the process generation it was built for.
+        let launcher = DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default())
+            .with_host_request_extensions(Arc::new(move |plugin_id, generation, contribution| {
+                // Launch is also the registration point: an agent's [agent.trace]
+                // declaration joins the registry the moment the plugin actually runs, so
+                // upgrades replace the entry exactly when the new process starts.
+                if let PluginContribution::Agent(agent) = contribution
+                    && let Some(declaration) = &agent.trace
+                    && let Ok(agent_ref) = AgentRef::parse(plugin_id.to_string())
+                {
+                    trace_registry.register_plugin(agent_ref, declaration.clone());
+                }
+                let capabilities = match contribution {
+                    PluginContribution::Workbench(descriptor) => {
+                        descriptor.host_capabilities.clone()
+                    }
+                    _ => Vec::new(),
+                };
+                vec![Arc::new(TraceHost::new(
+                    plugin_id.to_string(),
+                    generation,
+                    capabilities,
+                    Arc::clone(&trace_service),
+                    Arc::clone(&trace_bindings)
+                        as Arc<dyn crate::trace_host::TraceSessionBindingLookup>,
+                ))]
+            }));
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
                 deno_path,
                 home_directory: Some(home_directory),
             },
-            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
+            launcher,
             publisher,
             notifications.clone(),
         )
@@ -742,7 +781,7 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
 #[cfg(test)]
 mod tests {
     use super::BroadcastNotificationSink;
-    use ora_domain::PluginId;
+    use ora_domain::{AgentRef, PluginId};
     use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey, PluginNotificationSink};
     use pretty_assertions::assert_eq;
     use serde_json::json;
