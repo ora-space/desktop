@@ -133,15 +133,48 @@ impl HostRequestHandler for TraceHost {
                 }));
             }
 
-            let Some(binding) = bindings.binding(instance_id, surface_generation) else {
-                return Err(HostRequestError::new(
-                    SESSION_NOT_BOUND_CODE,
-                    "this surface is not bound to a session",
-                )
-                .with_data(json!({ "kind": "session_not_bound" })));
+            // Two read paths: the bound session (surface → binding), or an explicitly named
+            // session from the browse listing (validated for membership so a page can only read
+            // what the listing can show).
+            let (agent, session_id) = match (
+                params.get("sessionId").and_then(Value::as_str),
+                params.get("agent").and_then(Value::as_str),
+            ) {
+                (Some(session_id), Some(agent)) => {
+                    let Ok(agent_ref) = AgentRef::parse(agent) else {
+                        return Err(HostRequestError::new(
+                            -32602,
+                            "the `agent` filter is not a valid agent id",
+                        )
+                        .with_data(json!({ "kind": "invalid_params" })));
+                    };
+                    if !service.has_session(&agent_ref, session_id) {
+                        return Err(HostRequestError::new(
+                            SESSION_NOT_BOUND_CODE,
+                            "the named session is not in the trace listing",
+                        )
+                        .with_data(json!({ "kind": "session_not_bound" })));
+                    }
+                    (agent_ref, session_id.to_owned())
+                }
+                (None, None) => {
+                    let Some(binding) = bindings.binding(instance_id, surface_generation) else {
+                        return Err(HostRequestError::new(
+                            SESSION_NOT_BOUND_CODE,
+                            "this surface is not bound to a session",
+                        )
+                        .with_data(json!({ "kind": "session_not_bound" })));
+                    };
+                    (binding.agent_ref, binding.agent_session_id)
+                }
+                _ => {
+                    return Err(HostRequestError::new(
+                        -32602,
+                        "name either both `agent` and `sessionId` or neither",
+                    )
+                    .with_data(json!({ "kind": "invalid_params" })));
+                }
             };
-            let agent = binding.agent_ref;
-            let session_id = binding.agent_session_id;
             tracing::info!(
                 method = %method,
                 %plugin_id,
@@ -459,6 +492,60 @@ mod tests {
             .await
             .expect_err("unknown method exhausts the chain");
         assert_eq!(error.code(), ora_plugin_runtime::METHOD_NOT_FOUND_CODE);
+    }
+
+    /// A session named through the browse listing is readable; an unlisted id is refused.
+    #[tokio::test]
+    async fn reads_named_sessions_from_the_listing_only() {
+        let (host, temp) = host_with_bound_session();
+        let trace_dir = temp.path().join("data/opencode/trace");
+        std::fs::write(
+            trace_dir.join("ses_2.ndjson"),
+            "{\"type\":\"session.start\",\"title\":\"two\"}\n",
+        )
+        .expect("second trace");
+
+        let read = host
+            .handle(
+                TRACE_READ_METHOD,
+                json!({
+                    "surface": { "instanceId": 7, "generation": 1 },
+                    "agent": "ora-space.test",
+                    "sessionId": "ses_2",
+                }),
+            )
+            .await
+            .expect("listed session reads");
+        assert_eq!(
+            read["text"],
+            json!("{\"type\":\"session.start\",\"title\":\"two\"}\n")
+        );
+
+        let missing = host
+            .handle(
+                TRACE_READ_METHOD,
+                json!({
+                    "surface": { "instanceId": 7, "generation": 1 },
+                    "agent": "ora-space.test",
+                    "sessionId": "ses_missing",
+                }),
+            )
+            .await
+            .expect_err("unlisted session is refused");
+        assert_eq!(missing.code(), SESSION_NOT_BOUND_CODE);
+
+        // Half-named requests are invalid params.
+        let half = host
+            .handle(
+                TRACE_READ_METHOD,
+                json!({
+                    "surface": { "instanceId": 7, "generation": 1 },
+                    "sessionId": "ses_2",
+                }),
+            )
+            .await
+            .expect_err("half-named request is refused");
+        assert_eq!(half.code(), -32602);
     }
 
     /// Unknown methods fall through so the composite can keep delegating.

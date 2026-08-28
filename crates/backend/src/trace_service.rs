@@ -139,6 +139,17 @@ impl TraceService {
         self.read(agent, child_session_id, offset, max_bytes)
     }
 
+    /// Whether one session file exists under the agent's declared roots.
+    ///
+    /// Membership is what gates "read by listed id" in `TraceHost`: the caller may only name a
+    /// session that the listing can show, never an arbitrary path-derived id.
+    pub fn has_session(&self, agent: &AgentRef, session_id: &str) -> bool {
+        let Some(resolved) = self.resolve(agent, session_id) else {
+            return false;
+        };
+        self.resolve_file(agent, session_id, &resolved).is_some()
+    }
+
     /// Lists trace sessions for every declared agent (or one agent), newest first.
     pub fn list(&self, agent_filter: Option<&AgentRef>) -> Vec<TraceEntryMeta> {
         let mut entries: Vec<TraceEntryMeta> = Vec::new();
