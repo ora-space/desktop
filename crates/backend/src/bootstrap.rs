@@ -13,6 +13,8 @@ use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::spec::SpecApi;
 use crate::task::TaskApi;
+use crate::trace_bindings::TraceBindingRegistry;
+use crate::trace_host::TraceSessionBinding;
 use crate::user_config::{BackendPreferredLogLevelStore, UserConfigApi};
 use crate::workflow::WorkflowApi;
 use crate::workflow::run::WorkflowRunApi;
@@ -25,6 +27,7 @@ use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_domain::AgentRef;
 use ora_logging::{ora_error, ora_warn};
 use ora_scheduler::Scheduler;
 use std::fs;
@@ -113,6 +116,8 @@ pub struct Backend {
     app_events: Arc<AppEventHub>,
     git_cleanup: crate::git_cleanup::GitCleanupHandle,
     relative_path_base: PathBuf,
+    /// Binds surface instances to the agent session they were opened for (`session.trace`).
+    trace_bindings: Arc<TraceBindingRegistry>,
 }
 
 impl Backend {
@@ -248,6 +253,7 @@ impl Backend {
             pool,
             worktree_root,
             relative_path_base,
+            trace_bindings: Arc::new(TraceBindingRegistry::new()),
         })
     }
 
@@ -1161,6 +1167,42 @@ impl Backend {
         session_id: &str,
     ) -> Result<SessionLocator, BackendError> {
         self.agent_runtime.resolve_session_locator(session_id)
+    }
+
+    /// Binds one opened surface instance to the agent session it was opened for.
+    ///
+    /// The agent session id is resolved from the Ora session here and never leaves the backend;
+    /// the dashboard page later reads the trace through the host methods keyed by its surface.
+    pub fn register_trace_binding(
+        &self,
+        instance_id: u64,
+        session_id: &str,
+    ) -> Result<(), BackendError> {
+        let locator = self.resolve_session_locator(session_id)?;
+        let agent_ref = AgentRef::parse(&locator.agent_ref).map_err(|error| {
+            BackendError::internal(
+                "failed to parse the agent reference of the bound session",
+                error,
+            )
+        })?;
+        self.trace_bindings.register(
+            instance_id,
+            TraceSessionBinding {
+                agent_ref,
+                agent_session_id: locator.agent_session_id,
+            },
+        );
+        Ok(())
+    }
+
+    /// Drops one surface's session binding; idempotent when none exists.
+    pub fn unregister_trace_binding(&self, instance_id: u64) {
+        self.trace_bindings.unregister(instance_id);
+    }
+
+    /// Returns the binding table, for composing the trace host handler at launch.
+    pub fn trace_bindings(&self) -> Arc<TraceBindingRegistry> {
+        Arc::clone(&self.trace_bindings)
     }
 
     // =============================================================================

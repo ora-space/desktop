@@ -15,6 +15,9 @@ pub struct OpenSurfaceRequest {
     /// Canonical `<namespace>/<name>`; a malformed id is rejected during argument parsing.
     plugin_id: PluginId,
     target: MountTarget,
+    /// Optional Ora session this panel is opened for; binds the surface so the page may read
+    /// that session's trace through the `session.trace` host capability.
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +121,14 @@ pub async fn surface_open(
     request: OpenSurfaceRequest,
 ) -> Result<SurfaceRecordDto, CommandError> {
     let record = state.surfaces.open(&request.plugin_id, request.target)?;
+    if let Some(session_id) = &request.session_id {
+        // The binding resolves the Ora session to the agent session id inside the backend; the
+        // page later reads the trace keyed by its surface identity, never by a path or id.
+        state
+            .backend
+            .register_trace_binding(record.instance.value(), session_id)
+            .map_err(CommandError::from)?;
+    }
     Ok(SurfaceRecordDto::from(&record))
 }
 
@@ -126,9 +137,11 @@ pub async fn surface_close(
     state: State<'_, DesktopState>,
     request: SurfaceInstanceRequest,
 ) -> Result<(), CommandError> {
-    Ok(state
+    state
         .surfaces
-        .close(SurfaceInstanceId::new(request.instance))?)
+        .close(SurfaceInstanceId::new(request.instance))?;
+    state.backend.unregister_trace_binding(request.instance);
+    Ok(())
 }
 
 #[tauri::command]
