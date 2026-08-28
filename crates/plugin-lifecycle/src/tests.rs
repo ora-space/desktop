@@ -409,6 +409,7 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
                 .join("data")
                 .join("official")
                 .join("ora.example"),
+            generation: 1,
         }),
     );
 

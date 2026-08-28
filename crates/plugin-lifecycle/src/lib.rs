@@ -23,7 +23,10 @@ pub use ports::{
     PluginRuntimeLauncher, PluginStatusPublisher,
 };
 pub use registration::validate_registration;
-pub use runtime::{DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginRuntimeTimeouts};
+pub use runtime::{
+    DenoPluginRuntime, DenoPluginRuntimeLauncher, HostRequestExtensionFactory,
+    PluginRuntimeTimeouts,
+};
 pub use storage::{
     MAX_STORAGE_FILE_BYTES, PluginStorage, STORAGE_LIST_METHOD, STORAGE_READ_METHOD,
     STORAGE_REMOVE_METHOD, STORAGE_WRITE_METHOD, StorageEntry, StorageEntryKind, StorageError,

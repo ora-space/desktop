@@ -3,13 +3,15 @@ use crate::ports::{
     PluginRuntimeFailure, PluginRuntimeLauncher,
 };
 use crate::storage::PluginStorage;
+use ora_domain::PluginId;
 use ora_plugin_runtime::{
-    PluginProcessExit, PluginRegistration, PluginRuntime as ProcessPluginRuntime,
-    PluginRuntimeConfig, PluginRuntimeError,
+    CompositeHostRequests, HostRequestHandler, PluginProcessExit, PluginRegistration,
+    PluginRuntime as ProcessPluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
 };
 use ora_process::TokioProcessSpawner;
 use serde_json::Value;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Configures bounded startup, invocation, and shutdown waits for real plugin processes.
@@ -30,16 +32,36 @@ impl Default for PluginRuntimeTimeouts {
     }
 }
 
+/// Produces the extra host-request handlers one launch serves on top of `ora/storage/*`.
+///
+/// The factory runs per launch attempt and receives the plugin id and the attempt number, which
+/// lets a handler pin its identity checks to the process generation it was built for.
+pub type HostRequestExtensionFactory =
+    dyn Fn(&PluginId, u64) -> Vec<Arc<dyn HostRequestHandler>> + Send + Sync;
+
 /// Launches production Deno plugin processes through Ora's process-tree supervisor.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct DenoPluginRuntimeLauncher {
     timeouts: PluginRuntimeTimeouts,
+    host_request_extensions: Option<Arc<HostRequestExtensionFactory>>,
 }
 
 impl DenoPluginRuntimeLauncher {
     /// Creates a launcher with explicit process lifecycle timeouts.
     pub fn new(timeouts: PluginRuntimeTimeouts) -> Self {
-        Self { timeouts }
+        Self {
+            timeouts,
+            host_request_extensions: None,
+        }
+    }
+
+    /// Attaches the factory that supplies extra host-request handlers per launch attempt.
+    pub fn with_host_request_extensions(
+        mut self,
+        factory: Arc<HostRequestExtensionFactory>,
+    ) -> Self {
+        self.host_request_extensions = Some(factory);
+        self
     }
 }
 
@@ -84,6 +106,19 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                         .map_err(|error| PluginRuntimeFailure::new(error.to_string()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let storage = Arc::new(PluginStorage::new(request.data_dir));
+            let extensions = self
+                .host_request_extensions
+                .as_ref()
+                .map(|factory| factory(&request.plugin_id, request.generation))
+                .unwrap_or_default();
+            let host_requests = {
+                let mut handlers: Vec<Arc<dyn HostRequestHandler>> =
+                    Vec::with_capacity(extensions.len() + 1);
+                handlers.push(storage);
+                handlers.extend(extensions);
+                CompositeHostRequests::new(handlers)
+            };
             let (runtime, notifications) = ProcessPluginRuntime::launch(
                 &TokioProcessSpawner::new(),
                 PluginRuntimeConfig {
@@ -96,7 +131,7 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,
                 },
-                PluginStorage::new(request.data_dir),
+                host_requests,
             )
             .await
             .map_err(|error| PluginRuntimeFailure::new(error.to_string()))?;

@@ -25,6 +25,9 @@ pub struct PluginLaunchRequest {
     /// The plugin's private data directory, already created; the launcher binds the
     /// `ora/storage/*` handler to it so the process can only ever reach its own data.
     pub data_dir: PathBuf,
+    /// The lifecycle attempt this launch belongs to; host request extensions use it to pin
+    /// identity checks (a surface's generation must equal the process generation that serves it).
+    pub generation: u64,
 }
 
 /// Preserves the reason a plugin process could not start or stopped unexpectedly.

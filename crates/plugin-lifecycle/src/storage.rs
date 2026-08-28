@@ -295,44 +295,52 @@ impl PluginStorage {
 impl HostRequestHandler for PluginStorage {
     /// Parses params, runs the blocking filesystem work off the async executor, and renders the
     /// documented result shapes.
-    async fn handle(&self, method: &str, params: Value) -> Result<Value, HostRequestError> {
-        let operation = match method {
-            STORAGE_LIST_METHOD => StorageOperation::List,
-            STORAGE_READ_METHOD => StorageOperation::Read,
-            STORAGE_WRITE_METHOD => StorageOperation::Write,
-            STORAGE_REMOVE_METHOD => StorageOperation::Remove,
-            other => return Err(HostRequestError::method_not_found(other)),
-        };
-        let path = logical_path(&params)?;
-        let bytes = match operation {
-            StorageOperation::Write => Some(decode_bytes(&params)?),
-            StorageOperation::List | StorageOperation::Read | StorageOperation::Remove => None,
-        };
+    fn handle(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> ora_plugin_runtime::BoxFuture<'static, Result<Value, HostRequestError>> {
         let storage = self.clone();
-        let result = tokio::task::spawn_blocking(move || match operation {
-            StorageOperation::List => storage.list(&path).map(|entries| {
-                json!({
-                    "entries": entries
-                        .iter()
-                        .map(|entry| json!({
-                            "name": entry.name,
-                            "kind": entry.kind.as_str(),
-                            "size_bytes": entry.size_bytes,
-                        }))
-                        .collect::<Vec<_>>(),
-                })
-            }),
-            StorageOperation::Read => storage
-                .read(&path)
-                .map(|bytes| json!({ "bytes_base64": BASE64.encode(bytes) })),
-            StorageOperation::Write => storage
-                .write(&path, &bytes.unwrap_or_default())
-                .map(|()| json!({})),
-            StorageOperation::Remove => storage.remove(&path).map(|()| json!({})),
+        let method = method.to_owned();
+        Box::pin(async move {
+            let operation = match method.as_str() {
+                STORAGE_LIST_METHOD => StorageOperation::List,
+                STORAGE_READ_METHOD => StorageOperation::Read,
+                STORAGE_WRITE_METHOD => StorageOperation::Write,
+                STORAGE_REMOVE_METHOD => StorageOperation::Remove,
+                other => return Err(HostRequestError::method_not_found(other)),
+            };
+            let path = logical_path(&params)?;
+            let bytes = match operation {
+                StorageOperation::Write => Some(decode_bytes(&params)?),
+                StorageOperation::List | StorageOperation::Read | StorageOperation::Remove => None,
+            };
+            let storage = storage.clone();
+            let result = tokio::task::spawn_blocking(move || match operation {
+                StorageOperation::List => storage.list(&path).map(|entries| {
+                    json!({
+                        "entries": entries
+                            .iter()
+                            .map(|entry| json!({
+                                "name": entry.name,
+                                "kind": entry.kind.as_str(),
+                                "size_bytes": entry.size_bytes,
+                            }))
+                            .collect::<Vec<_>>(),
+                    })
+                }),
+                StorageOperation::Read => storage
+                    .read(&path)
+                    .map(|bytes| json!({ "bytes_base64": BASE64.encode(bytes) })),
+                StorageOperation::Write => storage
+                    .write(&path, &bytes.unwrap_or_default())
+                    .map(|()| json!({})),
+                StorageOperation::Remove => storage.remove(&path).map(|()| json!({})),
+            })
+            .await
+            .map_err(|error| StorageError::new(StorageErrorKind::Io, error.to_string()))?;
+            result.map_err(HostRequestError::from)
         })
-        .await
-        .map_err(|error| StorageError::new(StorageErrorKind::Io, error.to_string()))?;
-        result.map_err(HostRequestError::from)
     }
 }
 

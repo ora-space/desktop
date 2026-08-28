@@ -21,6 +21,7 @@ mod skill_reconciliation;
 mod source_boundary;
 mod spec;
 mod task;
+mod trace_host;
 mod trace_registry;
 mod trace_service;
 mod user_config;
@@ -34,6 +35,11 @@ pub use error::{BackendError, ErrorClassification};
 pub use plugin_gateway::{GatewayError, PluginGateway};
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};
 pub use skill_reconciliation::SkillStorageReconciliationError;
+pub use trace_host::{
+    CAPABILITY_DENIED_CODE, SESSION_NOT_BOUND_CODE, SURFACE_MISMATCH_CODE, TRACE_LIST_METHOD,
+    TRACE_READ_METHOD, TRACE_STAT_METHOD, TRACE_UNAVAILABLE_CODE, TraceHost, TraceSessionBinding,
+    TraceSessionBindingLookup,
+};
 pub use trace_registry::{ResolvedTrace, TraceRegistry};
 pub use trace_service::{
     TRACE_CHUNK_MAX_BYTES, TraceChunk, TraceEntryMeta, TraceService, TraceStat,

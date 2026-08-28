@@ -75,6 +75,7 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
             package_root: plugin.package_root.clone(),
             permissions: permissions_for(&plugin.contributes),
             data_dir,
+            generation: attempt,
         })
         .await;
 

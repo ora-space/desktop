@@ -12,7 +12,7 @@ use tokio::io::duplex;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::host_requests::{HostRequestError, HostRequestHandler, NoHostRequests};
+use crate::host_requests::{BoxFuture, HostRequestError, HostRequestHandler, NoHostRequests};
 use crate::protocol::{PluginNotification, PluginRegistration, handle_message as handle};
 use crate::state::{PendingRequests, RuntimeInner, RuntimeStatus};
 use crate::tasks::{run_supervisor, run_writer};
@@ -226,30 +226,32 @@ async fn rejects_undeclared_notifications() {
 /// Echoes params back, but holds the response of any request whose params ask for a gate until
 /// that gate opens, so tests can force answers to complete out of arrival order.
 struct GatedEcho {
-    gate: Mutex<Option<oneshot::Receiver<()>>>,
+    gate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
 }
 
 impl HostRequestHandler for GatedEcho {
-    async fn handle(
+    fn handle(
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, HostRequestError> {
-        match method {
-            "host/echo" => {
-                if params.get("wait").is_some()
-                    && let Some(gate) = self.gate.lock().await.take()
-                {
-                    let _ = gate.await;
+    ) -> BoxFuture<'static, Result<serde_json::Value, HostRequestError>> {
+        let gate = self.gate.clone();
+        let method = method.to_owned();
+        Box::pin(async move {
+            match method.as_str() {
+                "host/echo" => {
+                    if params.get("wait").is_some()
+                        && let Some(gate) = gate.lock().await.take()
+                    {
+                        let _ = gate.await;
+                    }
+                    Ok(params)
                 }
-                Ok(params)
+                "host/fail" => Err(HostRequestError::new(-32000, "storage failed")
+                    .with_data(json!({ "kind": "io" }))),
+                other => Err(HostRequestError::method_not_found(other)),
             }
-            "host/fail" => {
-                Err(HostRequestError::new(-32000, "storage failed")
-                    .with_data(json!({ "kind": "io" })))
-            }
-            other => Err(HostRequestError::method_not_found(other)),
-        }
+        })
     }
 }
 
@@ -296,7 +298,7 @@ async fn answers_plugin_requests_by_id_independently_of_completion_order() {
     register(&inner, "example.echo", "example.tick").await;
     let (open_gate, gate) = oneshot::channel();
     let handler = Arc::new(GatedEcho {
-        gate: Mutex::new(Some(gate)),
+        gate: Arc::new(Mutex::new(Some(gate))),
     });
 
     for message in [

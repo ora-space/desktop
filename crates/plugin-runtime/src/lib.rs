@@ -10,7 +10,8 @@ mod tasks;
 mod tests;
 
 pub use host_requests::{
-    HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
+    BoxFuture, CompositeHostRequests, HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE,
+    NoHostRequests,
 };
 pub use protocol::{
     PluginEffectCoordination, PluginEffectSurface, PluginNotification, PluginRegistration,
