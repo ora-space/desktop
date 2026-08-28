@@ -4,7 +4,7 @@ use crate::webview::{InstalledWebviewDescriptor, validate_webview};
 use crate::workbench::{InstalledWorkbenchDescriptor, validate_workbench};
 use ora_domain::PluginId;
 use ora_plugin_config::{CompiledConfigurationFile, ConfigurationError, ConfigurationService};
-use ora_plugin_manifest::{PluginKind, PluginManifest};
+use ora_plugin_manifest::{PluginAgentTrace, PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::path::{Path, PathBuf};
@@ -59,6 +59,8 @@ pub struct InstalledPluginAgent {
     pub display_name: String,
     /// `main.js` relative to the package root.
     pub entrypoint: PortableRelativePath,
+    /// The optional `[agent.trace]` declaration: where this agent's runtime writes trace files.
+    pub trace: Option<PluginAgentTrace>,
 }
 
 /// Holds one fully validated plugin package.
@@ -160,6 +162,7 @@ pub(crate) fn validate(
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
             display_name: name.to_owned(),
             entrypoint: validate_entrypoint(package_root)?,
+            trace: manifest.agent().and_then(|agent| agent.trace().cloned()),
         }),
         PluginKind::Workbench => {
             PluginContribution::Workbench(validate_workbench(package_root, manifest.workbench())?)

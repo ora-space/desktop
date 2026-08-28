@@ -43,6 +43,37 @@ pub struct PluginAgentTrace {
 }
 
 impl PluginAgentTrace {
+    /// Validates and builds the exact-file locator form.
+    pub fn file(format: &str, template: &str) -> Result<Self, ManifestError> {
+        let format =
+            AgentTraceFormat::parse(format).map_err(|reason| ManifestError::InvalidField {
+                field: ManifestField::AgentTraceFormat,
+                reason: reason.into(),
+            })?;
+        validate_file_template(template)?;
+        Ok(Self {
+            format,
+            locator: AgentTraceLocatorTemplate::File {
+                template: TraceFileTemplate(template.to_owned()),
+            },
+        })
+    }
+
+    /// Validates and builds the rooted-search locator form.
+    pub fn search(format: &str, root: &str, pattern: &str) -> Result<Self, ManifestError> {
+        let format =
+            AgentTraceFormat::parse(format).map_err(|reason| ManifestError::InvalidField {
+                field: ManifestField::AgentTraceFormat,
+                reason: reason.into(),
+            })?;
+        let root = validate_root_template(root)?;
+        let pattern = validate_search_pattern(pattern)?;
+        Ok(Self {
+            format,
+            locator: AgentTraceLocatorTemplate::Search { root, pattern },
+        })
+    }
+
     /// Returns the passthrough format identifier (for example `claude_code` or `opencode`).
     pub fn format(&self) -> &str {
         self.format.as_str()

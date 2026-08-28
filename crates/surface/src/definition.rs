@@ -193,6 +193,7 @@ mod tests {
             PluginContribution::Agent(InstalledPluginAgent {
                 display_name: "Claude".to_owned(),
                 entrypoint: PortableRelativePath::parse("main.js").expect("entrypoint"),
+                trace: None,
             }),
         );
         let skill = installed("acme.skill", PluginContribution::Skill(Default::default()));

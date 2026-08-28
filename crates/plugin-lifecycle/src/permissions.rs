@@ -139,6 +139,7 @@ mod tests {
         let contribution = PluginContribution::Agent(InstalledPluginAgent {
             display_name: "Agent".to_string(),
             entrypoint: PortableRelativePath::parse("main.js").expect("entrypoint"),
+            trace: None,
         });
         let permissions = permissions_for(&contribution);
         let flags = permissions

@@ -147,6 +147,7 @@ mod tests {
         let contribution = PluginContribution::Agent(InstalledPluginAgent {
             display_name: "Agent".to_string(),
             entrypoint: PortableRelativePath::parse("main.js").expect("entrypoint"),
+            trace: None,
         });
         assert_eq!(
             validate_registration(&contribution, &PluginRegistration::default()),

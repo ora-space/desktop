@@ -37,6 +37,7 @@ fn discovers_complete_manifest() {
             contributes: PluginContribution::Agent(InstalledPluginAgent {
                 display_name: NAME.to_string(),
                 entrypoint: PortableRelativePath::parse("main.js").unwrap(),
+                trace: None,
             }),
             logo: None,
             configuration_declaration: crate::PluginConfigurationDeclarationValidity::NotDeclared,
