@@ -747,37 +747,29 @@ impl PluginApi {
         })
     }
 
-    /// Refreshes the installed-plugin snapshot after a new package lands, then attempts the
-    /// default automatic enable, and reports the typed installation outcome. A conflict-free
-    /// install yields `installed_and_enabled` (a processless Hook records global eligibility
-    /// with a `stopped` runtime). A Hook whose command alias collides with an already-enabled
-    /// Hook yields `installed_but_disabled` carrying the conflicting plugin identity: the new
-    /// Hook stays ineligible so PATH resolution can never silently select the wrong Hook, while
-    /// the installation is preserved for the user to inspect and resolve deliberately.
+    /// Refreshes the installed-plugin snapshot after a new package lands and reports the typed
+    /// installation outcome. Every installed package is available; a Hook command-alias conflict
+    /// still returns `InstalledWithCommandConflict` so callers can surface the colliding identity
+    /// instead of silently sharing a PATH alias. Both packages remain installed and available;
+    /// uniqueness is deferred to a future consumer.
     async fn finalize_new_install(&self, plugin_id: &str) -> Result<InstallOutcome, BackendError> {
         self.sync_plugin_skills(plugin_id)?;
         if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
             ora_warn!(plugin_id = %plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
         }
-        // Detect a Hook command-alias conflict before enabling: another Enabled Hook owning the
-        // same bare command would make PATH resolution ambiguous, so the new Hook stays disabled
-        // and the conflicting identity is returned to the caller.
+        // A second Hook with the same bare command still makes PATH resolution ambiguous, so the
+        // typed outcome carries the colliding identity instead of looking like an ordinary success.
         if let Some(conflict) = self.detect_hook_command_conflict(plugin_id) {
             ora_warn!(
                 plugin_id = %plugin_id,
                 conflict_plugin_id = %conflict,
-                "installed hook plugin stays disabled due to a command conflict"
+                "installed hook plugin reports a command conflict"
             );
-            return Ok(InstallOutcome::InstalledButDisabled {
+            return Ok(InstallOutcome::InstalledWithCommandConflict {
                 conflict_plugin_id: conflict,
             });
         }
-        // The merged host model treats an installed valid Hook as globally available (the
-        // `remove enable state` refactor replaced persisted eligibility with install-time
-        // availability plus activate/stop runtime control). A processless Hook is therefore
-        // "installed-and-enabled" the moment its static validation succeeds, with a `stopped`
-        // runtime; no separate enable call is needed or available.
-        Ok(InstallOutcome::InstalledAndEnabled)
+        Ok(InstallOutcome::Installed)
     }
 
     /// Returns the canonical plugin id of another installed Hook that owns the same command
@@ -989,8 +981,9 @@ mod tests {
     /// Clean-data-directory E2E for the RTK Hook Plugin milestone: marketplace index build
     /// (local checkout) -> compatible display -> install the verified release artifact through
     /// the real installer -> static Hook validation (no payload execution) -> discovery ->
-    /// automatic enable -> disable -> uninstall. The release artifact path comes from
-    /// `RTK_RELEASE_ORAX`; when unset the test is skipped so CI without the asset does not fail.
+    /// uninstall. The release artifact path comes from `RTK_RELEASE_ORAX`; when unset the test
+    /// is skipped so CI without the asset does not fail. There is no enable/disable step: every
+    /// installed valid Hook is available and processless, so runtime stays `stopped`.
     #[tokio::test]
     async fn rtk_hook_plugin_clean_data_directory_e2e() {
         let Some(orax_path) = std::env::var("RTK_RELEASE_ORAX")
@@ -1128,13 +1121,10 @@ mod tests {
             ora_contracts::PluginRuntimeStatus::Stopped,
             "a processless Hook reports stopped once discovered"
         );
-        // The merged host model (after `remove enable state`) treats an installed valid Hook as
-        // globally available with a `stopped` runtime; the typed install outcome distinguishes a
-        // conflict-free install (`installed_and_enabled`) from a command-conflict install
-        // (`installed_but_disabled`) so PATH resolution can never silently select the wrong Hook.
-        // Auto-enable/disable runtime control is exercised through the outcome contract above.
+        // Every installed valid Hook is available and processless. Command-alias uniqueness is
+        // not resolved here; a future consumer refuses ambiguous PATH resolution.
 
-        // 7. Uninstall: removes the installed package and the global eligibility state.
+        // 7. Uninstall: removes the installed package so the Hook is no longer available.
         lifecycle
             .uninstall_plugin(ora_contracts::UninstallPluginRequest {
                 plugin_id: "official/rtk-ai.rtk".to_string(),

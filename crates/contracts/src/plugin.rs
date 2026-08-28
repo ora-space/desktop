@@ -453,12 +453,11 @@ pub struct InstallPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct InstallPluginResponse {
     pub plugin_id: String,
-    /// The typed installation outcome. Installation always retains the package. After install
-    /// the host attempts automatic enable; a conflict-free install reports
-    /// `installed_and_enabled` (a processless Hook records global eligibility with a `stopped`
-    /// runtime). A Hook whose command alias collides with an already-enabled Hook reports
-    /// `installed_but_disabled` carrying the conflicting plugin identity, so the new Hook stays
-    /// ineligible until the conflict is resolved.
+    /// The typed installation outcome. Installation always retains the package. A conflict-free
+    /// install reports `installed`; a Hook whose command alias collides with another installed
+    /// Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
+    /// packages remain available: the host has no enablement state, and uniqueness is deferred
+    /// to a future consumer.
     pub outcome: InstallOutcome,
 }
 
@@ -476,16 +475,12 @@ pub struct InstallPluginResponse {
 )]
 #[ts(export_to = "plugin.ts")]
 pub enum InstallOutcome {
-    /// The package was installed and automatically enabled because no command conflict
-    /// existed. A processless Hook reports global eligibility with a `stopped` runtime (no
-    /// process is launched); the outcome still distinguishes "installed-and-enabled" from a
-    /// conflict-disabled install so callers can never observe contradictory success flags.
-    InstalledAndEnabled,
-    /// The package was installed but left disabled because another already-enabled Hook owns
-    /// the same command alias. The installation is preserved (so the user can inspect and
-    /// resolve the conflict deliberately) while the new Hook stays ineligible; the colliding
-    /// plugin identity is carried so PATH resolution can never silently select the wrong Hook.
-    InstalledButDisabled { conflict_plugin_id: String },
+    /// The package was installed and is available.
+    Installed,
+    /// The package was installed and remains available, but another installed Hook already owns
+    /// the same command alias. The colliding plugin identity is carried so a future consumer can
+    /// refuse ambiguous PATH resolution instead of silently selecting the wrong Hook.
+    InstalledWithCommandConflict { conflict_plugin_id: String },
 }
 
 /// Requests updating one installed marketplace plugin to the version its source publishes.
@@ -1006,10 +1001,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
                 plugin_id: "official/weather".to_string(),
-                outcome: InstallOutcome::InstalledAndEnabled,
+                outcome: InstallOutcome::Installed,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
         );
     }
 
@@ -1045,10 +1040,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ImportPluginResponse {
                 plugin_id: "official/weather".to_string(),
-                outcome: InstallOutcome::InstalledAndEnabled,
+                outcome: InstallOutcome::Installed,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
         );
     }
 

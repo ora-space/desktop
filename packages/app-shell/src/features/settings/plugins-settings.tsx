@@ -432,7 +432,7 @@ function installOutcomeMessage(
   successKey:
     "settings.plugins.installSuccess" | "settings.plugins.importSuccess",
 ): string {
-  if (outcome.state === "installed_but_disabled") {
+  if (outcome.state === "installed_with_command_conflict") {
     return t("settings.plugins.installCommandConflict", {
       pluginId: outcome.conflictPluginId,
     });

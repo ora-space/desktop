@@ -573,7 +573,7 @@ it("reports a command-alias conflict after a successful install", async () => {
   const user = userEvent.setup();
   const { state, client } = clientWithWeather();
   state.installOutcome = {
-    state: "installed_but_disabled",
+    state: "installed_with_command_conflict",
     conflictPluginId: "official/other-rtk",
   };
   const successToast = vi
