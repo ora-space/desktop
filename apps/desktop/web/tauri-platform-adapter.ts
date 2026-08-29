@@ -92,11 +92,16 @@ function createTauriSurfaces(): SurfaceCapability {
   return {
     capabilities: () => invoke<{ embedded: boolean }>("surface_capabilities"),
     list: () => invoke<SurfaceRecord[]>("surface_list"),
-    open: (target: SurfaceOpenTarget, mount: SurfaceTarget) =>
+    open: (
+      target: SurfaceOpenTarget,
+      mount: SurfaceTarget,
+      sessionId?: string,
+    ) =>
       invoke<SurfaceRecord>("surface_open", {
         request: {
           pluginId: target.pluginId,
           target: mount,
+          ...(sessionId !== undefined ? { sessionId } : {}),
         },
       }),
     close: (instance: number) =>

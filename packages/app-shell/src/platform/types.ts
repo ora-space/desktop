@@ -166,7 +166,15 @@ export interface SurfaceOpenTarget {
 export interface SurfaceCapability {
   capabilities(): Promise<{ embedded: boolean }>;
   list(): Promise<SurfaceRecord[]>;
-  open(target: SurfaceOpenTarget, mount: SurfaceTarget): Promise<SurfaceRecord>;
+  /**
+   * `sessionId` binds the opened surface to that Ora session, so the page may
+   * read the session's trace through the `session.trace` host capability.
+   */
+  open(
+    target: SurfaceOpenTarget,
+    mount: SurfaceTarget,
+    sessionId?: string,
+  ): Promise<SurfaceRecord>;
   close(instance: number): Promise<void>;
   setBounds(instance: number, bounds: SurfaceBounds): Promise<void>;
   setVisible(instance: number, visible: boolean): Promise<void>;

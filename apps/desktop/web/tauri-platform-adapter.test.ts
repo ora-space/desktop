@@ -34,6 +34,7 @@ describe("TauriPlatformAdapter", () => {
     invokeMock.mockResolvedValueOnce({ embedded: true });
     invokeMock.mockResolvedValueOnce([record]);
     invokeMock.mockResolvedValueOnce(record);
+    invokeMock.mockResolvedValueOnce(record);
     const adapter = createTauriPlatformAdapter();
     const surfaces = adapter.surfaces;
 
@@ -41,6 +42,9 @@ describe("TauriPlatformAdapter", () => {
     await expect(surfaces.list()).resolves.toEqual([record]);
     await expect(
       surfaces.open({ pluginId: "ora.skill-hub" }, "embedded"),
+    ).resolves.toEqual(record);
+    await expect(
+      surfaces.open({ pluginId: "ora.skill-hub" }, "embedded", "sess-42"),
     ).resolves.toEqual(record);
     await surfaces.setBounds(7, { x: 1, y: 2, width: 3, height: 4, scale: 2 });
     await surfaces.setVisible(7, false);
@@ -58,6 +62,16 @@ describe("TauriPlatformAdapter", () => {
           request: {
             pluginId: "ora.skill-hub",
             target: "embedded",
+          },
+        },
+      ],
+      [
+        "surface_open",
+        {
+          request: {
+            pluginId: "ora.skill-hub",
+            target: "embedded",
+            sessionId: "sess-42",
           },
         },
       ],

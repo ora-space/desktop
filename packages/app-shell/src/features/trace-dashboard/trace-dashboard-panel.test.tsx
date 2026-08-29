@@ -1,23 +1,57 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { createChatStore } from "@ora/chat";
+import type { InstalledPlugin } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
-import { createStubPlatform } from "../../test/stub-platform";
-import { PlatformProvider } from "../../platform";
+import {
+  createHookWrapper,
+  createTestQueryClient,
+} from "../../test/hook-harness";
+import {
+  createMockClient,
+  createMockClientState,
+} from "../../test/mock-client";
+import { createSurfaceTestPlatform } from "../../test/surface-test-platform";
+import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../../state/stores/ui-store";
+import { useSurfaceStore } from "../../state/stores/surface-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { TraceDashboardPanel } from "./trace-dashboard-panel";
 import type { DashboardCompareResolver, DashboardResolver } from "./types";
 
+const TRACE_DASHBOARD_PLUGIN_ID = "ora-space.agent-trace-visualizer";
+
+function traceDashboardPlugin(): InstalledPlugin {
+  return {
+    id: TRACE_DASHBOARD_PLUGIN_ID,
+    namespace: "official",
+    name: "agent-trace-visualizer",
+    displayName: "Agent Trace Visualizer",
+    description: "Agent trace visualization dashboard",
+    homepage: null,
+    license: null,
+    version: "0.1.0",
+    kind: "workbench",
+    title: "Agent Trace Visualizer",
+    logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
+    runtime: "stopped",
+  };
+}
+
 function PanelShell({
   resolve,
   resolveCompare = null,
+  platform,
 }: {
   resolve: DashboardResolver;
   resolveCompare?: DashboardCompareResolver | null;
+  platform: PlatformAdapter;
 }) {
   return (
-    <PlatformProvider adapter={createStubPlatform()}>
+    <PlatformProvider adapter={platform}>
       <AppI18nProvider>
         <TooltipProvider>
           <TraceDashboardPanel
@@ -33,9 +67,27 @@ function PanelShell({
 function renderPanel(
   resolve: DashboardResolver,
   resolveCompare?: DashboardCompareResolver | null,
+  installedPlugins: InstalledPlugin[] = [],
+  surfaceHost: ReturnType<
+    typeof createSurfaceTestPlatform
+  > = createSurfaceTestPlatform({ embedded: true }),
 ) {
+  const state = createMockClientState();
+  state.installedPlugins = installedPlugins;
+  const client = createMockClient(state);
+  const Wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
   return render(
-    <PanelShell resolve={resolve} resolveCompare={resolveCompare} />,
+    <Wrapper>
+      <PanelShell
+        resolve={resolve}
+        resolveCompare={resolveCompare}
+        platform={surfaceHost.platform}
+      />
+    </Wrapper>,
   );
 }
 
@@ -136,5 +188,31 @@ describe("TraceDashboardPanel", () => {
     const style = content?.getAttribute("style") ?? "";
     expect(style).toContain("width: 900px");
     expect(style).toContain("max-width: none");
+  });
+
+  it("opens the plugin surface bound to the session when the trace-visualizer plugin is installed", async () => {
+    useUiStore.getState().setDashboardOpen(true);
+    useSurfaceStore.getState().setEmbeddedSupported(true);
+    useWorkspaceSelectionStore.getState().selectSession("sess-3", "t1", "p1");
+    const resolve = vi.fn(async () => ({
+      host: "127.0.0.1",
+      port: 8601,
+      url: "http://127.0.0.1:8601/?session_id=sess-3",
+      serverReachable: true,
+    })) as unknown as DashboardResolver;
+    const host = createSurfaceTestPlatform({ embedded: true });
+    renderPanel(resolve, null, [traceDashboardPlugin()], host);
+
+    await waitFor(() => {
+      expect(host.surfaces.open).toHaveBeenCalledWith(
+        { pluginId: TRACE_DASHBOARD_PLUGIN_ID },
+        "embedded",
+        "sess-3",
+      );
+    });
+    // The sheet hands the slot over to the native surface and closes.
+    expect(useUiStore.getState().dashboardOpen).toBe(false);
+    // The legacy endpoint resolver is never consulted.
+    expect(resolve).not.toHaveBeenCalled();
   });
 });

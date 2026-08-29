@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn, Sheet, SheetContent, SheetHeader, SheetTitle } from "@ora/ui";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
+import { listSurfaceDefinitions } from "../surface/surface-definitions";
+import { useOpenSurface } from "../surface/use-open-surface";
 import { useDashboardEndpoint } from "./use-dashboard-endpoint";
 import type {
   DashboardCompareResolver,
   DashboardEndpoint,
   DashboardResolver,
 } from "./types";
+
+/** The plugin-ized trace dashboard; its workbench surface replaces the legacy iframe. */
+const TRACE_DASHBOARD_PLUGIN_ID = "ora-space.agent-trace-visualizer";
 
 interface TraceDashboardPanelProps {
   /** Injected by the Desktop app via Tauri invoke; null in non-Desktop builds/tests. */
@@ -48,10 +54,39 @@ export function TraceDashboardPanel({
   const setWidth = useUiStore((s) => s.setDashboardWidth);
   const sessionId = useWorkspaceSelectionStore((s) => s.selection.sessionId);
 
+  // The plugin-ized dashboard takes over trace mode: instead of probing the
+  // Streamlit server, the panel opens the plugin's workbench surface bound to
+  // the current session and hands the slot over to it. The legacy iframe stays
+  // as the fallback for installs without the plugin.
+  const installedPluginsQuery = useInstalledPlugins();
+  const installedPlugins = useMemo(
+    () => installedPluginsQuery.data ?? [],
+    [installedPluginsQuery.data],
+  );
+  const pluginSurfaceAvailable = useMemo(
+    () =>
+      listSurfaceDefinitions(installedPlugins).some(
+        (definition) => definition.pluginId === TRACE_DASHBOARD_PLUGIN_ID,
+      ),
+    [installedPlugins],
+  );
+  // The legacy resolver only probes once the plugin snapshot has settled, so a
+  // slow query cannot fire a Streamlit probe that a plugin-routed open would
+  // render moot (nor race the sheet handoff below).
+  const pluginsResolved =
+    installedPluginsQuery.data !== undefined || installedPluginsQuery.isError;
+  const openSurface = useOpenSurface();
+  useEffect(() => {
+    if (open && mode === "trace" && sessionId && pluginSurfaceAvailable) {
+      setOpen(false);
+      void openSurface({ pluginId: TRACE_DASHBOARD_PLUGIN_ID }, sessionId);
+    }
+  }, [open, mode, sessionId, pluginSurfaceAvailable, openSurface, setOpen]);
+
   const { endpoint, isLoading, error } = useDashboardEndpoint(
     sessionId,
     resolveDashboardUrl,
-    open && mode === "trace",
+    open && mode === "trace" && pluginsResolved && !pluginSurfaceAvailable,
   );
   const compareEndpoint = useDashboardCompareEndpoint(
     resolveDashboardCompareUrl,

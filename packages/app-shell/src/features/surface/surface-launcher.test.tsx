@@ -90,6 +90,7 @@ describe("SurfaceLauncher", () => {
     expect(host.surfaces.open).toHaveBeenCalledWith(
       { pluginId: "official/ora.hub" },
       "embedded",
+      undefined,
     );
     await waitFor(() =>
       expect(useSurfaceStore.getState().sidePanelInstance).toBe(1),
@@ -116,6 +117,7 @@ describe("SurfaceLauncher", () => {
     expect(host.surfaces.open).toHaveBeenCalledWith(
       { pluginId: "official/ora.hub" },
       "windowed",
+      undefined,
     );
     await waitFor(() => expect(host.surfaces.open).toHaveResolved());
     expect(useSurfaceStore.getState().sidePanelInstance).toBeNull();
