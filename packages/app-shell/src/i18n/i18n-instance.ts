@@ -533,7 +533,7 @@ export const translationResources = {
     "settings.workflow.publishDraft": "发布当前草稿",
     "settings.workflow.publishTitle": "发布工作流",
     "settings.workflow.publishDescription":
-      "发布会把当前草稿保存为一个不可变的版本。",
+      "发布后，当前草稿将固化为可运行的工作流版本。",
     "settings.workflow.publishVersionPlaceholder":
       "版本名（可选，留空自动生成）",
     "settings.workflow.publishError": "发布工作流失败。",
@@ -2061,7 +2061,7 @@ export const translationResources = {
     "settings.workflow.publishDraft": "Publish this draft",
     "settings.workflow.publishTitle": "Publish workflow",
     "settings.workflow.publishDescription":
-      "Publishing saves the current draft as an immutable version.",
+      "Publishing freezes the current draft into a runnable workflow version.",
     "settings.workflow.publishVersionPlaceholder":
       "Version name (optional; auto-generated when empty)",
     "settings.workflow.publishError": "Failed to publish the workflow.",
