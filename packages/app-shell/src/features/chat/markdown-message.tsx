@@ -47,6 +47,10 @@ import {
   remarkComposerFileQuote,
   remarkComposerFileReference,
 } from "./user-message-file-quotes";
+import {
+  promptTokenMarkdownComponents,
+  remarkComposerPromptTokens,
+} from "./user-message-prompt-tokens";
 
 interface MarkdownMessageProps {
   content: string;
@@ -324,15 +328,17 @@ function createMarkdownComponents(density: MarkdownDensity): Components {
 
 const markdownComponents = createMarkdownComponents("default");
 // Only the compact surface renders sent prompts, so only it turns quote fences
-// back into chips.
+// and skill/command/role tokens back into chips.
 const compactMarkdownComponents = {
   ...createMarkdownComponents("compact"),
   ...fileQuoteMarkdownComponents,
+  ...promptTokenMarkdownComponents,
 };
 const compactRemarkPlugins = [
   ...markdownRemarkPlugins,
   remarkComposerHighlight,
   remarkComposerFileReference,
+  remarkComposerPromptTokens,
   remarkComposerFileQuote,
 ];
 

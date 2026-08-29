@@ -249,6 +249,12 @@ pub struct PromptSessionRequest {
     pub session_id: String,
     #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").ContentBlock>")]
     pub prompt: Vec<ContentBlock>,
+    /// What Ora records as the user turn, when it differs from the prompt the
+    /// agent actually receives (e.g. a role/skill expansion the user should not
+    /// see echoed back). Defaults to `prompt` when omitted.
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").ContentBlock>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_prompt: Option<Vec<ContentBlock>>,
 }
 
 /// Exposes an opaque permission request while preserving the agent's typed option payload.
@@ -518,6 +524,7 @@ mod tests {
         let request = PromptSessionRequest {
             session_id: "session-1".to_string(),
             prompt: vec![ContentBlock::Text(TextContent::new("hello").meta(metadata))],
+            record_prompt: None,
         };
 
         assert_eq!(

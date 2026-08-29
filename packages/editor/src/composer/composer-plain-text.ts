@@ -10,7 +10,8 @@ function leafPlainText(node: PmNode): string {
     case "hardBreak":
       return "\n";
     case "promptToken": {
-      const prefix = node.attrs.kind === "command" ? "/" : "$";
+      const kind = node.attrs.kind;
+      const prefix = kind === "command" ? "/" : kind === "role" ? "@" : "$";
       return `${prefix}${String(node.attrs.name)}`;
     }
     case "composerFile":

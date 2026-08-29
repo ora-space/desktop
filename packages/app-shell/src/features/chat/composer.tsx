@@ -21,6 +21,7 @@ import {
   ComposerEditor,
   type ComposerEditorHandle,
 } from "../editor/composer-editor";
+import type { PromptTokenKind } from "@ora/editor/composer";
 import {
   EMPTY_COMPOSER_QUERY,
   queryStateFromText,
@@ -28,7 +29,7 @@ import {
   type ComposerQueryState,
 } from "../editor/composer-query";
 import type { JSONContent } from "@tiptap/core";
-import type { Skill } from "@ora/contracts";
+import type { Agent, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { PermissionSelector } from "./permission-selector";
@@ -97,6 +98,7 @@ interface ComposerProps {
   placeholder?: string;
   autoFocus?: boolean;
   skills?: Skill[];
+  roles?: Agent[];
   availableCommands?: acp.AvailableCommand[];
 }
 
@@ -137,6 +139,7 @@ export function Composer({
   placeholder,
   autoFocus = false,
   skills = [],
+  roles = [],
   availableCommands = [],
 }: ComposerProps) {
   const { t } = useTranslation();
@@ -444,13 +447,14 @@ export function Composer({
       buildComposerActions({
         skills,
         commands: availableCommands,
+        roles,
         plugins: composerPlugins,
         translatePluginSummary: (summaryKey) => t(summaryKey),
         includeAttachments: true,
         attachmentLabel: t("chat.actionMenu.addImages"),
         attachmentDescription: t("chat.actionMenu.addImagesDescription"),
       }),
-    [availableCommands, composerPlugins, skills, t],
+    [availableCommands, composerPlugins, roles, skills, t],
   );
   const filteredActions = useMemo(() => {
     if (plusMenuOpen) return filterComposerActions(allActions, "");
@@ -598,8 +602,8 @@ export function Composer({
     })();
   };
 
-  /** Inserts a skill or command mention so the token stays distinct from body text. */
-  const insertPromptToken = (kind: "skill" | "command", name: string) => {
+  /** Inserts a skill, command, or role mention so the token stays distinct from body text. */
+  const insertPromptToken = (kind: PromptTokenKind, name: string) => {
     editorRef.current?.insertPromptToken(kind, name);
     closeActionMenu();
     requestAnimationFrame(() => editorRef.current?.focus());
@@ -631,6 +635,9 @@ export function Composer({
         return;
       case "commands":
         insertPromptToken("command", action.command.name);
+        return;
+      case "roles":
+        insertPromptToken("role", action.role.name);
         return;
       case "plugins":
         applyPlugin(action.plugin);

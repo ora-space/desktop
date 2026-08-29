@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Expands the shared command registry (`app_commands.rs`) into the Tauri invoke handler.
 ///
@@ -44,21 +44,48 @@ const PLUGIN_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = surface::register_workbench_protocol(tauri::Builder::default());
+    let builder = surface::register_workbench_protocol(tauri::Builder::default())
+        // Reveal the main window only once its splash has painted, so the logo is
+        // centered from the moment the interface opens instead of showing a blank
+        // window while the shell (and backend) initialize.
+        .on_page_load(|webview, _payload| {
+            if webview.label() == "main" {
+                let _ = webview.window().show();
+            }
+        });
     let run_result = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let (state, guard) = bootstrap_desktop(app)?;
-            surface::install(app.handle(), &state.surfaces, &state.backend);
-            ora_info!(
-                message = "bundled binary paths registered",
-                ripgrep_path = %state.binary_paths.ripgrep_path().display(),
-                deno_path = %state.binary_paths.deno_path().display(),
-                reaper_path = %state.binary_paths.reaper_path().display(),
-            );
-            app.manage(state);
-            app.manage(guard);
+            // Defer the heavy bootstrap (Backend open, SQLite, migrations) to a
+            // background thread so `setup` returns immediately. The WebView then
+            // paints the inline splash right away instead of holding a blank
+            // window while the database initializes. The shell is revealed only
+            // once the backend is ready (`ora-app-ready`), so there is no white
+            // gap before or after the logo either.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || match bootstrap_desktop(&handle) {
+                Ok((state, guard)) => {
+                    ora_info!(
+                        message = "bundled binary paths registered",
+                        ripgrep_path = %state.binary_paths.ripgrep_path().display(),
+                        deno_path = %state.binary_paths.deno_path().display(),
+                        reaper_path = %state.binary_paths.reaper_path().display(),
+                    );
+                    surface::install(&handle, &state.surfaces, &state.backend);
+                    handle.manage(state);
+                    handle.manage(guard);
+                    let _ = handle.emit_to("main", "ora-app-ready", ());
+                }
+                Err(error) => {
+                    ora_error!(
+                        message = "desktop bootstrap failed",
+                        error = %error,
+                    );
+                    // Let the shell stop waiting even when startup failed.
+                    let _ = handle.emit_to("main", "ora-app-ready", ());
+                }
+            });
             Ok(())
         })
         .invoke_handler(include!("app_commands.rs"))
@@ -76,7 +103,7 @@ pub fn run() {
 
 /// Resolves Desktop paths and constructs configuration, logging, and Backend state.
 fn bootstrap_desktop(
-    app: &mut tauri::App,
+    app: &tauri::AppHandle,
 ) -> Result<(DesktopState, DesktopRuntimeGuard), DesktopBootstrapError> {
     let app_data_directory = desktop_data_directory(app)?;
     let home_directory = app
@@ -153,9 +180,9 @@ fn bootstrap_desktop(
         log_level_source = resolved_log_level.source.as_str(),
     );
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
-    let surfaces = surface::SurfaceService::new(app.handle().clone(), backend.plugin_gateway());
+    let surfaces = surface::SurfaceService::new(app.clone(), backend.plugin_gateway());
     let update = update::UpdateService::start(
-        app.handle().clone(),
+        app.clone(),
         backend.clone(),
         &home_directory,
         resolved_timezone.timezone,
@@ -189,7 +216,9 @@ fn bootstrap_desktop(
 }
 
 /// Resolves the configured Desktop data root or falls back to Tauri's application data directory.
-fn desktop_data_directory(app: &tauri::App) -> Result<std::path::PathBuf, DesktopBootstrapError> {
+fn desktop_data_directory(
+    app: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, DesktopBootstrapError> {
     if let Some(configured) = std::env::var_os("ORA_DATA_DIR") {
         let configured = std::path::PathBuf::from(configured);
         if configured.is_absolute() {

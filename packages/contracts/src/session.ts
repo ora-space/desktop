@@ -146,6 +146,12 @@ export type PromptSessionEvent =
 export type PromptSessionRequest = {
   sessionId: string;
   prompt: Array<import("@agentclientprotocol/sdk").ContentBlock>;
+  /**
+   * What Ora records as the user turn, when it differs from the prompt the
+   * agent actually receives (e.g. a role/skill expansion the user should not
+   * see echoed back). Defaults to `prompt` when omitted.
+   */
+  recordPrompt?: Array<import("@agentclientprotocol/sdk").ContentBlock>;
 };
 
 /**

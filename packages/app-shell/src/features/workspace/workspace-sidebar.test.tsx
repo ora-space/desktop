@@ -84,7 +84,7 @@ function renderSidebar(
         <AppI18nProvider>
           <PlatformProvider adapter={createStubPlatform()}>
             <TooltipProvider>
-              <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
+              <WorkspaceSidebar user={USER} />
             </TooltipProvider>
           </PlatformProvider>
         </AppI18nProvider>
@@ -1658,7 +1658,9 @@ describe("WorkspaceSidebar", () => {
     renderSidebar(workspaceWithOneSession());
 
     await user.click(
-      await screen.findByRole("button", { name: /^工作流$|^Workflows$/ }),
+      await screen.findByRole("button", {
+        name: /^工作流( Alpha)?$|^Workflows( Alpha)?$/,
+      }),
     );
 
     expect(useUiStore.getState().workflowEditorOpen).toBe(true);
@@ -1711,7 +1713,9 @@ describe("WorkspaceSidebar", () => {
     expect(await screen.findByText("桌面命令调用失败。")).toBeInTheDocument();
 
     await user.click(
-      await screen.findByRole("button", { name: /^工作流$|^Workflows$/ }),
+      await screen.findByRole("button", {
+        name: /^工作流( Alpha)?$|^Workflows( Alpha)?$/,
+      }),
     );
 
     expect(screen.queryByText("桌面命令调用失败。")).not.toBeInTheDocument();
@@ -1726,7 +1730,9 @@ describe("WorkspaceSidebar", () => {
     renderSidebar(workspaceWithOneSession());
 
     await user.click(
-      await screen.findByRole("button", { name: /^工作流$|^Workflows$/ }),
+      await screen.findByRole("button", {
+        name: /^工作流( Alpha)?$|^Workflows( Alpha)?$/,
+      }),
     );
     expect(useUiStore.getState().workflowEditorOpen).toBe(true);
     const selection = useWorkspaceSelectionStore.getState().selection;

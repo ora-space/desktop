@@ -1,10 +1,10 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import type { Skill } from "@ora/contracts";
+import type { Agent, Skill } from "@ora/contracts";
 import type { PluginEntry } from "../settings/plugin-catalog";
 import { availableSkills } from "../../state/hooks/use-skills";
 
 export type ComposerActionGroup =
-  "files" | "skills" | "commands" | "plugins" | "actions";
+  "files" | "skills" | "commands" | "roles" | "plugins" | "actions";
 
 export type ComposerAction =
   | {
@@ -33,6 +33,13 @@ export type ComposerAction =
     }
   | {
       id: string;
+      group: "roles";
+      label: string;
+      description: string;
+      role: Agent;
+    }
+  | {
+      id: string;
       group: "plugins";
       label: string;
       description: string;
@@ -49,6 +56,7 @@ export const COMPOSER_ACTION_GROUPS: readonly ComposerActionGroup[] = [
   "files",
   "skills",
   "commands",
+  "roles",
   "plugins",
   "actions",
 ];
@@ -56,10 +64,11 @@ export const COLLAPSED_ACTION_GROUP_SIZE = 5;
 /** Caps @-mention file rows so the palette stays compact and scrollable. */
 export const MAX_COMPOSER_FILE_ACTIONS = 12;
 
-/** Builds searchable actions from provider capabilities, Ora's configured skills, and the plugin catalog. */
+/** Builds searchable actions from provider capabilities, Ora's configured skills and roles, and the plugin catalog. */
 export function buildComposerActions({
   skills,
   commands,
+  roles,
   plugins,
   translatePluginSummary,
   includeAttachments,
@@ -68,6 +77,7 @@ export function buildComposerActions({
 }: {
   skills: Skill[];
   commands: acp.AvailableCommand[];
+  roles: Agent[];
   plugins: PluginEntry[];
   translatePluginSummary: (summaryKey: string) => string;
   includeAttachments: boolean;
@@ -89,6 +99,13 @@ export function buildComposerActions({
       description: command.description,
       ...(command.input == null ? {} : { hint: command.input.hint }),
       command,
+    })),
+    ...roles.map((role): ComposerAction => ({
+      id: `role:${role.id}`,
+      group: "roles",
+      label: role.name,
+      description: role.description,
+      role,
     })),
     ...plugins.map((plugin): ComposerAction => ({
       id: `plugin:${plugin.id}`,

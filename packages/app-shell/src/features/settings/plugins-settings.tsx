@@ -246,9 +246,6 @@ export function PluginsSettings({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-          {t("settings.plugins.description")}
-        </p>
       </header>
 
       <div className="space-y-3">

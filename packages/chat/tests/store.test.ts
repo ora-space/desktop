@@ -5,6 +5,7 @@ import {
   type LoadSessionEvent,
   type PromptSessionEvent,
   type PromptSessionRequest,
+  LocalTransportError,
   RemoteContractError,
 } from "@ora/contracts";
 import { createChatStore, type ChatSessionClient } from "../src/index.js";
@@ -923,6 +924,42 @@ test("sends structured image prompts", async () => {
   );
 });
 
+test("records the displayed prompt separately when the agent receives injected text", async () => {
+  let promptRequest: PromptSessionRequest | undefined;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+    prompt: (request) => {
+      promptRequest = request;
+      return events<PromptSessionEvent>([
+        { type: "completed", stopReason: "end_turn" },
+      ]);
+    },
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "local",
+    now: () => 42,
+  });
+
+  await store.getState().loadSession("ora-1");
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "$test @role 原样输出",
+    agentText: "$test @role 原样输出\n\n【角色：role】完整内容",
+  });
+
+  // The agent sees the injected expansion; the backend records the user's own
+  // text so history keeps the skill/role tokens (and re-renders them as chips).
+  assert.deepEqual(promptRequest, {
+    sessionId: "ora-1",
+    prompt: [
+      { type: "text", text: "$test @role 原样输出\n\n【角色：role】完整内容" },
+    ],
+    recordPrompt: [{ type: "text", text: "$test @role 原样输出" }],
+  });
+});
+
 test("aborting a prompt retains the partial response and marks the turn cancelled", async () => {
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -1015,6 +1052,55 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
   ]);
   assert.equal(conversation?.isResponding, false);
   assert.deepEqual(conversation?.pendingPermissions, []);
+});
+
+test("a transport-level cancelled error is treated as a graceful cancel, not a failure", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: (_request, options) => ({
+      async *[Symbol.asyncIterator]() {
+        yield textEvent(
+          "agent_message_chunk",
+          "partial",
+          "agent-1",
+        ) as PromptSessionEvent;
+        await new Promise<void>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              // The Desktop stream surfaces a stop as a LocalTransportError of
+              // kind "cancelled", not as a DOMException AbortError.
+              reject(
+                new LocalTransportError(
+                  "cancelled",
+                  "Desktop stream was cancelled",
+                ),
+              );
+            },
+            { once: true },
+          );
+        });
+      },
+    }),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "id-1",
+    now: () => 42,
+  });
+  const sending = store
+    .getState()
+    .sendMessage({ oraSessionId: "ora-1", text: " hello " });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  store.getState().stopGeneration("ora-1");
+  await sending;
+
+  const conversation = store.getState().conversations["ora-1"];
+  assert.equal(conversation?.turns[0]?.status, "cancelled");
+  assert.equal(conversation?.turns[0]?.error, null);
+  assert.equal(conversation?.error, null);
 });
 
 test("settles active tools when the provider completes with a cancelled stop reason", async () => {

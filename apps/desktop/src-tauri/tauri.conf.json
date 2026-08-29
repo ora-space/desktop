@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Ora",
         "width": 1280,
         "height": 832,
@@ -20,7 +21,9 @@
         "center": true,
         "resizable": true,
         "decorations": false,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false,
+        "backgroundColor": "#fdfdfe"
       }
     ],
     "security": {

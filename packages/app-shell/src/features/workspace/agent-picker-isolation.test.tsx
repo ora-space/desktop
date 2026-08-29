@@ -62,7 +62,7 @@ function renderWorkspace() {
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
+            <WorkspaceSidebar user={USER} />
             <WorkspaceView userName={USER.name} />
           </TooltipProvider>
         </PlatformProvider>

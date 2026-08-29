@@ -5,7 +5,6 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
-import { OraMark } from "../../components/ora-mark";
 import { ActivityPhase } from "./activity-phase";
 import { MessageBubble } from "./message-bubble";
 import { ContentBlock } from "./content-block";
@@ -22,12 +21,8 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
   const displayItems = buildTurnDisplayItems(turn.items, turn.status);
   return (
-    <section
-      className="flex gap-3 py-3"
-      aria-label={t("chat.assistantReplied")}
-    >
-      <OraMark size="sm" />
-      <div className="min-w-0 flex-1 space-y-2.5">
+    <section className="py-3" aria-label={t("chat.assistantReplied")}>
+      <div className="min-w-0 space-y-2.5">
         {displayItems.map((item, index) => {
           switch (item.kind) {
             case "activityPhase":

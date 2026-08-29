@@ -20,6 +20,12 @@
   font-size: inherit;
   font-weight: 500;
   line-height: inherit;
+  /* Read-only history chips are selectable text, including the navigable
+     <button> (which the UA otherwise makes unselectable). Inside the editor
+     shell the `.composer-editor-shell .composer-file-ref` rule re-applies
+     `user-select: none` for ProseMirror. */
+  user-select: text;
+  -webkit-user-select: text;
   /* Reset UA <button> chrome so a navigable chip stays visually identical to
    * the inert <span> it replaces. */
   border: 0;

@@ -1,12 +1,5 @@
-import { IconChevronDown, IconLogout, IconSettings } from "@tabler/icons-react";
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@ora/ui";
+import { IconChevronDown } from "@tabler/icons-react";
+import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { InitialsAvatar } from "../../components/initials-avatar";
 import type { CurrentUser } from "../../lib/types";
@@ -15,37 +8,42 @@ interface UserProfileProps {
   user: CurrentUser;
   /** Renders only the avatar - used when the sidebar is collapsed. */
   compact?: boolean;
-  onOpenSettings?: () => void;
-  onSignOut?: () => void;
+  /** Opens the settings dialog; account sign-out is not implemented yet. */
+  onOpenSettings: () => void;
 }
 
 /**
- * The sidebar footer user chip. Expanded it shows the colored avatar, name,
- * and email; collapsed it shows just the avatar. Both open a small account
- * menu for application settings and sign-out.
+ * The sidebar footer user chip. Clicking it opens the settings dialog. Expanded
+ * it shows the colored avatar, name, and email; collapsed it shows the avatar.
  */
 export function UserProfile({
   user,
   compact = false,
   onOpenSettings,
-  onSignOut,
 }: UserProfileProps) {
   const { t } = useTranslation();
   const accountLabel = t("account.label", { name: user.name });
-  const trigger = compact ? (
-    <Button
-      variant="ghost"
-      size="icon"
-      aria-label={accountLabel}
-      className="rounded-full"
-    >
-      <InitialsAvatar name={user.name} size="sm" />
-    </Button>
-  ) : (
+
+  if (compact) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={accountLabel}
+        onClick={onOpenSettings}
+        className="rounded-full"
+      >
+        <InitialsAvatar name={user.name} size="sm" />
+      </Button>
+    );
+  }
+
+  return (
     <Button
       variant="ghost"
       size="sm"
       aria-label={accountLabel}
+      onClick={onOpenSettings}
       className="h-auto w-full justify-start gap-2.5 px-2 py-2"
     >
       <InitialsAvatar name={user.name} size="default" />
@@ -56,31 +54,10 @@ export function UserProfile({
         {/* Always render the second row so the profile keeps its two-line layout even
             when no email is configured; a non-breaking space preserves the line box. */}
         <span className="truncate text-[13px] text-muted-foreground">
-          {user.email || " "}
+          {user.email || "\u00a0"}
         </span>
       </span>
       <IconChevronDown className="size-[18px] shrink-0 text-muted-foreground" />
     </Button>
-  );
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={trigger} />
-      <DropdownMenuContent className="w-60" align="start" side="top">
-        {onOpenSettings && (
-          <>
-            <DropdownMenuItem onClick={onOpenSettings}>
-              <IconSettings />
-              {t("common.settings")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem onClick={onSignOut}>
-          <IconLogout />
-          {t("account.logout")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

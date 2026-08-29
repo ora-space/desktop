@@ -9,7 +9,6 @@ import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatMessage } from "@ora/chat";
 import type * as acp from "@agentclientprotocol/sdk";
-import { OraMark } from "../../components/ora-mark";
 import { formatClock } from "../../lib/format";
 import { AnchorHighlight } from "./anchor-highlight";
 import { ContentBlock } from "./content-block";
@@ -102,8 +101,6 @@ export function MessageBubble({
     <div
       className={`group/message flex gap-3 ${compact || embeddedAssistant ? "py-1.5" : "py-5"} ${isUser ? "justify-end" : "justify-start"}`}
     >
-      {!isUser && !embeddedAssistant && <OraMark size="sm" />}
-
       <div
         className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}
       >

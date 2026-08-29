@@ -4,14 +4,16 @@ export function SettingsHeading({
   description,
 }: {
   title: string;
-  description: string;
+  description?: string;
 }) {
   return (
     <header>
       <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-        {description}
-      </p>
+      {description && (
+        <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+      )}
     </header>
   );
 }

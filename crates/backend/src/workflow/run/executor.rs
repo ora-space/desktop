@@ -427,6 +427,7 @@ async fn drive_agent_node(
             .prompt_session(PromptSessionRequest {
                 session_id: warm.session_id.clone(),
                 prompt,
+                record_prompt: None,
             })
             .await?;
 

@@ -7,7 +7,7 @@ import { MessageList } from "./message-list";
 import type { ConversationNavigationPresentation } from "./conversation-navigator";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
-import type { SessionPermissionRequest, Skill } from "@ora/contracts";
+import type { Agent, SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 
 interface ChatViewProps {
@@ -67,6 +67,7 @@ interface ChatViewProps {
    */
   disabledHint?: string;
   skills?: Skill[];
+  roles?: Agent[];
   availableCommands?: acp.AvailableCommand[];
 }
 
@@ -109,6 +110,7 @@ export function ChatView({
   conversationNavigation,
   disabledHint,
   skills = [],
+  roles = [],
   availableCommands = [],
 }: ChatViewProps) {
   const { t } = useTranslation();
@@ -290,6 +292,7 @@ export function ChatView({
                   modelSelectorDisabled={modelSelectorDisabled}
                   modelSelectorSessionId={modelSelectorSessionId}
                   skills={skills}
+                  roles={roles}
                   availableCommands={availableCommands}
                 />
               </TooltipTrigger>

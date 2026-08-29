@@ -316,6 +316,37 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("offers roles from the slash palette and inserts them as @ tokens", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        roles={[
+          {
+            id: "designer",
+            namespace: "ora",
+            name: "designer",
+            description: "Design roles",
+          },
+        ]}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/");
+    expect(
+      await screen.findByRole("listbox", { name: "快捷操作" }),
+    ).toBeVisible();
+    expect(screen.getByRole("option", { name: "designer" })).toBeVisible();
+
+    await user.click(screen.getByRole("option", { name: "designer" }));
+
+    expect(composerText(textarea)).toBe("@designer ");
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
   it("opens the slash menu after existing prompt text", async () => {
     const user = userEvent.setup();
     renderWithI18n(

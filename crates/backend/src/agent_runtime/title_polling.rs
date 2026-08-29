@@ -65,11 +65,11 @@ impl RuntimeActor {
                             self.run_load(operation_id, events, accepted).await;
                             return;
                         }
-                        RuntimeCommand::Prompt { operation_id, prompt, events, accepted } => {
+                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             let _ = accepted.send(Ok(()));
-                            self.run_prompt(operation_id, prompt, events).await;
+                            self.run_prompt(operation_id, prompt, record_prompt, events).await;
                             return;
                         }
                         RuntimeCommand::Stop { response } => {

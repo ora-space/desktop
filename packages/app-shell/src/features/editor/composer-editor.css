@@ -450,6 +450,15 @@
   text-shadow: none;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+
+/*
+ * Editing behaviour only. The pill's colours/layout are shared with read-only
+ * history (PromptTokenChip), so the selection rules stay inside the editor
+ * shell: outside it the chip is plain, selectable text and the marquee
+ * selection must show on it.
+ */
+.composer-editor-shell .composer-mention {
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
@@ -462,7 +471,7 @@
   text-shadow: none;
 }
 
-.composer-mention::selection {
+.composer-editor-shell .composer-mention::selection {
   background: transparent;
   color: inherit;
 }

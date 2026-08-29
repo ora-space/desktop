@@ -1,13 +1,11 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 export type ThemeMode = "system" | "light" | "dark";
-export type InterfaceDensity = "comfortable" | "compact";
 export type ApprovalPolicy = "always" | "risky" | "trusted";
 export type HistoryRetention = "30-days" | "90-days" | "forever";
 
 export interface SettingsPreferences {
   theme: ThemeMode;
-  density: InterfaceDensity;
   /**
    * Persisted namespaced identity of the agent the next untouched chat surface opens on.
    *
@@ -29,7 +27,6 @@ const SETTINGS_STORAGE_KEY = "ora.settings.v1";
 
 export const DEFAULT_SETTINGS: SettingsPreferences = {
   theme: "system",
-  density: "comfortable",
   agentCli: null,
   approvalPolicy: "trusted",
   terminalAccess: true,
@@ -91,7 +88,7 @@ export const useSettingsStore = create<SettingsState>()(
   ),
 );
 
-/** Applies the active theme/density to <html> so Tailwind variant classes resolve correctly. */
+/** Applies the active theme to <html> so Tailwind variant classes resolve correctly. */
 export type ThemeApplier = (settings: SettingsPreferences) => void;
 
 let themeApplier: ThemeApplier = defaultThemeApplier;
@@ -102,13 +99,12 @@ function defaultThemeApplier(settings: SettingsPreferences): void {
     settings.theme === "dark" || (settings.theme === "system" && media.matches);
   document.documentElement.classList.toggle("dark", dark);
   document.documentElement.dataset.theme = settings.theme;
-  document.documentElement.dataset.density = settings.density;
 }
 
 let themeSubscriptionCleanup: (() => void) | null = null;
 
 /**
- * Starts a module-level subscription that mirrors settings.theme/density onto the document.
+ * Starts a module-level subscription that mirrors settings.theme onto the document.
  * Returns a cleanup function that tears down both the store listener and the matchMedia listener.
  */
 export function startThemeSubscription(): () => void {

@@ -397,10 +397,7 @@ function AtomManager({
   if (editing !== null) {
     return (
       <div className="space-y-5">
-        <SettingsHeading
-          title={t(`${tPrefix}.title`)}
-          description={t(`${tPrefix}.description`)}
-        />
+        <SettingsHeading title={t(`${tPrefix}.title`)} />
         <AtomEditor
           key={editing.item?.id ?? "new"}
           tPrefix={tPrefix}
@@ -416,10 +413,7 @@ function AtomManager({
 
   return (
     <div className="space-y-5">
-      <SettingsHeading
-        title={t(`${tPrefix}.title`)}
-        description={t(`${tPrefix}.description`)}
-      />
+      <SettingsHeading title={t(`${tPrefix}.title`)} />
 
       {notice}
 

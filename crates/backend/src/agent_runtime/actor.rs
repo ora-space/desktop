@@ -111,6 +111,7 @@ impl RuntimeActor {
                 RuntimeCommand::Prompt {
                     operation_id,
                     prompt,
+                    record_prompt,
                     events,
                     accepted,
                 } => {
@@ -118,7 +119,8 @@ impl RuntimeActor {
                         let _ = accepted.send(Err(session_stopped()));
                     } else {
                         let _ = accepted.send(Ok(()));
-                        self.run_prompt(operation_id, prompt, events).await;
+                        self.run_prompt(operation_id, prompt, record_prompt, events)
+                            .await;
                     }
                 }
                 RuntimeCommand::AgentProcessReplaced { agent } => {
@@ -419,6 +421,7 @@ impl RuntimeActor {
         &mut self,
         operation_id: u64,
         prompt: Vec<ContentBlock>,
+        record_prompt: Option<Vec<ContentBlock>>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
     ) {
         let Some(mut channel) = self.channel.take() else {
@@ -463,7 +466,9 @@ impl RuntimeActor {
             blocks,
             settles_handoff,
         } = prompt_for_agent(self, &prompt);
-        let outcome = self.recorder.record_prompt(&prompt);
+        let outcome = self
+            .recorder
+            .record_prompt(record_prompt.as_deref().unwrap_or(&prompt));
         let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
         if stopped_recording {

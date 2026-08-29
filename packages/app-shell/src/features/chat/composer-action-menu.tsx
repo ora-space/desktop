@@ -10,6 +10,7 @@ import {
   IconLoader2,
   IconPhoto,
   IconPlug,
+  IconRobot,
   IconSparkles,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -339,6 +340,8 @@ function actionIcon(
       return <IconSparkles className={commonClassName} aria-hidden="true" />;
     case "commands":
       return <IconBolt className={commonClassName} aria-hidden="true" />;
+    case "roles":
+      return <IconRobot className={commonClassName} aria-hidden="true" />;
     case "plugins":
       return <IconPlug className={commonClassName} aria-hidden="true" />;
     case "actions":

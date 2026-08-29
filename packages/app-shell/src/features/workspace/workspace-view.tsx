@@ -16,6 +16,7 @@ import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useSkills } from "../../state/hooks/use-skills";
+import { useAgents } from "../../state/hooks/use-agents";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import {
@@ -49,6 +50,7 @@ import { useChatStore } from "../../chat-store-context";
 import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
+import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
 import { SessionHistoryBanner } from "../chat/session-history-banner";
@@ -155,6 +157,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const { data: workspaces = [] } = useWorkspaces();
   const sessionsQuery = useSessions();
   const skillsQuery = useSkills();
+  const agentsQuery = useAgents();
   const sessions = sessionsQuery.data ?? [];
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -167,6 +170,15 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const chatStore = useChatStore();
   useWorkspaceDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
+  // Fetches one role's persona content for prompt expansion; a miss is ordinary
+  // (the role may have been created before content was required).
+  const resolveAgentContent = async (agentId: string) => {
+    try {
+      return (await client.agent.get({ agentId })).agent;
+    } catch {
+      return undefined;
+    }
+  };
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
   // model picker has real options and the send path skips the agent handshake.
@@ -563,6 +575,19 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       useWorkflowStore.getState().launchNode(key, nodeId);
       agentText = `${buildWorkflowReminder(nodeId, skillsDir)}\n\n${text}`;
     }
+    // The transcript keeps the `@role` chip while the agent reads the role's
+    // title, description, and persona content from `agentText`. The user's own
+    // message must stay first in `agentText`: the backend records the prompt as
+    // the user turn, so leading with the tokens is what lets history re-render
+    // the skill/role chips after a restart.
+    const roleExpansion = await expandPromptRoleTokens(
+      text,
+      agentsQuery.data ?? [],
+      resolveAgentContent,
+    );
+    if (roleExpansion !== null) {
+      agentText = `${agentText ?? text}\n\n${roleExpansion}`;
+    }
     await dispatchSend(text, agentText, images);
   };
 
@@ -684,6 +709,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
             skills={skillsQuery.data ?? []}
+            roles={agentsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
             disabled={!canChat}
             // An untouched chat cannot send yet, but disabling this picker as

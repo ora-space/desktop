@@ -14,7 +14,9 @@ import type { GraphWorkflowNodeStatus } from "@ora/workflow-runtime";
 import { useChatStore } from "../../chat-store-context";
 import { useContractsClient } from "../../contracts-client-context";
 import { useCompleteWorkflowNode } from "../../state/hooks/use-workflow-runs";
+import { useAgents } from "../../state/hooks/use-agents";
 import { ChatView } from "../chat/chat-view";
+import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
 
 const RUNNING_SESSION_RELOAD_DELAY_MS = 250;
 const NODE_SESSION_CONVERSATION_NAVIGATION = {
@@ -50,6 +52,15 @@ export function RunNodeSessionChat({
   const { t } = useTranslation();
   const chatStore = useChatStore();
   const client = useContractsClient();
+  const agentsQuery = useAgents();
+  // Fetches one role's persona content for prompt expansion; a miss is ordinary.
+  const resolveAgentContent = async (agentId: string) => {
+    try {
+      return (await client.agent.get({ agentId })).agent;
+    } catch {
+      return undefined;
+    }
+  };
   const conversation = useStore(
     chatStore,
     (state) => state.conversations[sessionId],
@@ -122,11 +133,29 @@ export function RunNodeSessionChat({
     !isResponding &&
     !complete.isPending;
 
-  const handleSend = (text: string, images?: acp.ImageContent[]) => {
-    void chatStore
-      .getState()
-      .sendMessage({ oraSessionId: sessionId, text, images })
-      .catch(() => {});
+  const handleSend = async (text: string, images?: acp.ImageContent[]) => {
+    // The transcript keeps the `@role` chip while the agent reads the role's
+    // title, description, and persona content from `agentText`. The user's own
+    // message stays first so the recorded prompt retains the tokens and history
+    // re-renders the chips after a restart.
+    const roleExpansion = await expandPromptRoleTokens(
+      text,
+      agentsQuery.data ?? [],
+      resolveAgentContent,
+    );
+    const agentText =
+      roleExpansion === null ? undefined : `${text}\n\n${roleExpansion}`;
+    try {
+      await chatStore.getState().sendMessage({
+        oraSessionId: sessionId,
+        text,
+        images,
+        ...(agentText === undefined ? {} : { agentText }),
+      });
+    } catch {
+      // The send path already recovers the draft; a rejected promise is surfaced
+      // by the chat store, so an unhandled rejection must not escape here.
+    }
   };
   const handleStop = () => {
     void client.session.cancelPrompt({ sessionId }).catch(() => {});
@@ -147,6 +176,7 @@ export function RunNodeSessionChat({
         }
         error={conversation?.error ?? null}
         pendingPermissions={conversation?.pendingPermissions ?? []}
+        roles={agentsQuery.data ?? []}
         availableCommands={conversation?.availableCommands ?? []}
         conversationNavigation={NODE_SESSION_CONVERSATION_NAVIGATION}
         disabled={composerDisabled}

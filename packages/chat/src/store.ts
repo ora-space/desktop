@@ -2,6 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import {
   type ContractsClient,
   type PromptSessionEvent,
+  LocalTransportError,
   RemoteContractError,
   type SessionHistoryNotice,
   type SessionPermissionRequest,
@@ -367,6 +368,19 @@ export function createChatStore(
           : [{ type: "text" as const, text: promptContent }]),
         ...images.map((image) => ({ type: "image" as const, ...image })),
       ];
+      // What Ora records as the user turn. When injected material (a workflow
+      // reminder or role/skill expansion) differs from the displayed text, the
+      // backend records this clean copy so history keeps the user's own chips;
+      // otherwise it is omitted and the prompt is recorded verbatim.
+      const recordPrompt: acp.ContentBlock[] | undefined =
+        promptContent === content
+          ? undefined
+          : [
+              ...(content === ""
+                ? []
+                : [{ type: "text" as const, text: content }]),
+              ...images.map((image) => ({ type: "image" as const, ...image })),
+            ];
 
       const key = oraSessionId;
       if (operations.has(key)) {
@@ -518,6 +532,7 @@ export function createChatStore(
           client,
           key,
           prompt,
+          recordPrompt,
           controller.signal,
         )) {
           if (event.type === "session_update") {
@@ -1332,12 +1347,17 @@ async function* promptWithReattach(
   client: ChatSessionClient,
   sessionId: string,
   prompt: acp.ContentBlock[],
+  recordPrompt: acp.ContentBlock[] | undefined,
   signal: AbortSignal,
 ): AsyncGenerator<PromptSessionEvent> {
   let delivered = false;
   try {
     for await (const event of client.prompt(
-      { sessionId, prompt },
+      {
+        sessionId,
+        prompt,
+        ...(recordPrompt === undefined ? {} : { recordPrompt }),
+      },
       { signal },
     )) {
       delivered = true;
@@ -1348,9 +1368,15 @@ async function* promptWithReattach(
     if (delivered || !isSessionStoppedError(error)) throw error;
   }
   await loadSessionConversation(client, sessionId, signal);
-  yield* client.prompt({ sessionId, prompt }, { signal });
+  yield* client.prompt(
+    {
+      sessionId,
+      prompt,
+      ...(recordPrompt === undefined ? {} : { recordPrompt }),
+    },
+    { signal },
+  );
 }
-
 /** Reports whether a failure is the backend refusing a session that holds no live route. */
 function isSessionStoppedError(error: unknown): boolean {
   return (
@@ -1432,7 +1458,14 @@ function updateConversation(
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
+  // A user-facing stop surfaces through the Desktop transport as a `cancelled`
+  // LocalTransportError rather than a DOMException AbortError; both mean the
+  // caller asked to stop, so they must share the graceful-cancel path and never
+  // surface the transport's technical English message into the conversation.
+  return (
+    (error instanceof Error && error.name === "AbortError") ||
+    (error instanceof LocalTransportError && error.kind === "cancelled")
+  );
 }
 
 function errorMessage(error: unknown): string {

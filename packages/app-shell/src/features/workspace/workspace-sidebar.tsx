@@ -99,11 +99,10 @@ function draftSearchEntriesEqual(
 
 interface WorkspaceSidebarProps {
   user: CurrentUser;
-  onSignOut: () => void;
 }
 
 /** Renders projects, direct-chat/worktree tasks, and agent sessions as a dense three-level navigation tree. */
-export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -473,6 +472,12 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
               >
                 <IconRoute className="size-4 text-muted-foreground" />
                 {t("sidebar.workflows")}
+                {/* Stage marker kept locale-independent; muted pill so the entry stays quiet.
+                    The explicit space keeps it in the accessible name; as a whitespace-only
+                    text run inside this flex button it renders nothing. */}{" "}
+                <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                  Alpha
+                </span>
               </Button>
               <div className="relative min-w-0">
                 <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -570,7 +575,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           <UserProfile
             user={user}
             onOpenSettings={() => setSettingsOpen(true)}
-            onSignOut={onSignOut}
           />
         </div>
       </aside>

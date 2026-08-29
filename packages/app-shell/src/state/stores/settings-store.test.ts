@@ -145,7 +145,6 @@ describe("startThemeSubscription", () => {
         (settings.theme === "system" && media.matches);
       document.documentElement.classList.toggle("dark", dark);
       document.documentElement.dataset.theme = settings.theme;
-      document.documentElement.dataset.density = settings.density;
     });
   });
 

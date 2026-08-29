@@ -1,23 +1,25 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
-export type PromptTokenKind = "skill" | "command";
+export type PromptTokenKind = "skill" | "command" | "role";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     promptToken: {
-      /** Inserts a skill or slash-command mention at the caret. */
+      /** Inserts a skill, slash-command, or role mention at the caret. */
       setPromptToken: (kind: PromptTokenKind, name: string) => ReturnType;
     };
   }
 }
 
 function tokenText(kind: PromptTokenKind, name: string): string {
-  return `${kind === "command" ? "/" : "$"}${name}`;
+  if (kind === "command") return `/${name}`;
+  if (kind === "role") return `@${name}`;
+  return `$${name}`;
 }
 
 /**
- * Inline mention for `$skill` / `/command`. Atom so the token deletes as one
- * unit. Color comes from soft mint wash + forest ink in app-shell CSS
+ * Inline mention for `$skill` / `/command` / `@role`. Atom so the token deletes
+ * as one unit. Color comes from soft mint wash + forest ink in app-shell CSS
  * (Cursor-style), not `--primary` (Ora primary is grayscale).
  */
 export const PromptToken = Node.create({
