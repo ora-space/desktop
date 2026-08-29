@@ -17,7 +17,6 @@ and **run** cards (overview / theater).
 
 - Not a React Flow node by itself (callers own Handles / selection / drag).
 - Does not encode run execution status (run feature overlays status via slots).
-- Does not own OpenSpec stepper UI.
 
 ## Adaptation rule
 

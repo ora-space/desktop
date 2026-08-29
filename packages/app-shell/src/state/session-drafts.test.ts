@@ -12,7 +12,6 @@ import { useComposerInputStore } from "./stores/composer-input-store";
 import { useComposerPluginSelectionStore } from "./stores/composer-plugin-selection-store";
 import { useDraftSessionsStore } from "./stores/draft-sessions-store";
 import { useUiStore } from "./stores/ui-store";
-import { useWorkflowStore } from "./stores/workflow-store";
 import { useWorkspaceSelectionStore } from "./stores/workspace-selection-store";
 
 beforeEach(() => {
@@ -20,7 +19,6 @@ beforeEach(() => {
   useDraftSessionsStore.getState().clear();
   useComposerInputStore.getState().reset();
   useComposerPluginSelectionStore.setState({ selectedIdsByConversation: {} });
-  useWorkflowStore.setState({ runs: {} });
   useWorkspaceSelectionStore.getState().clearSelection();
   useUiStore.setState({
     expandedProjects: new Set(),
@@ -331,12 +329,11 @@ describe("recoverFailedDraftSend", () => {
     expect(useComposerInputStore.getState().byKey["warm-dead"]).toBeUndefined();
   });
 
-  it("moves plugin picks and workflow state back onto the draft key", () => {
+  it("moves plugin picks back onto the draft key", () => {
     const id = startSessionDraft({ projectId: "p1", taskId: null });
     useComposerPluginSelectionStore
       .getState()
       .addPlugin("warm-dead", "plugin-a");
-    useWorkflowStore.getState().toggleVisible("warm-dead");
     useWorkspaceSelectionStore
       .getState()
       .selectSessionBeforeTask("warm-dead", "p1");
@@ -361,8 +358,6 @@ describe("recoverFailedDraftSend", () => {
         "warm-dead"
       ],
     ).toBeUndefined();
-    expect(useWorkflowStore.getState().runs[draftKey]?.visible).toBe(true);
-    expect(useWorkflowStore.getState().runs["warm-dead"]).toBeUndefined();
   });
 
   it("rekeys from the bound warm id even when selection already moved elsewhere", () => {
@@ -370,7 +365,6 @@ describe("recoverFailedDraftSend", () => {
     useComposerPluginSelectionStore
       .getState()
       .addPlugin("warm-bound", "plugin-a");
-    useWorkflowStore.getState().toggleVisible("warm-bound");
     useDraftSessionsStore.getState().bindToSession(id, "warm-bound");
     // User left the in-flight chat for another session before attach failed.
     useWorkspaceSelectionStore.getState().selectSession("other-s", "t1", "p1");
@@ -402,8 +396,6 @@ describe("recoverFailedDraftSend", () => {
         "other-s"
       ],
     ).toEqual(["plugin-other"]);
-    expect(useWorkflowStore.getState().runs[draftKey]?.visible).toBe(true);
-    expect(useWorkflowStore.getState().runs["warm-bound"]).toBeUndefined();
   });
 });
 

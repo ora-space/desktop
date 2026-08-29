@@ -153,23 +153,6 @@ describe("createMockWorkflowNode", () => {
         { value: "Documentation Agent", label: "文档专员" },
       ],
       skills: [
-        { value: "openspec-apply-change", label: "openspec-apply-change" },
-        { value: "openspec-archive-change", label: "openspec-archive-change" },
-        {
-          value: "openspec-bulk-archive-change",
-          label: "openspec-bulk-archive-change",
-        },
-        {
-          value: "openspec-continue-change",
-          label: "openspec-continue-change",
-        },
-        { value: "openspec-explore", label: "openspec-explore" },
-        { value: "openspec-ff-change", label: "openspec-ff-change" },
-        { value: "openspec-new-change", label: "openspec-new-change" },
-        { value: "openspec-onboard", label: "openspec-onboard" },
-        { value: "openspec-propose", label: "openspec-propose" },
-        { value: "openspec-sync-specs", label: "openspec-sync-specs" },
-        { value: "openspec-verify-change", label: "openspec-verify-change" },
         { value: "cdase:sfmea_review", label: "cdase:sfmea_review" },
         { value: "code-defect-scan", label: "code-defect-scan" },
       ],

@@ -97,17 +97,6 @@ const MOCK_AGENT_ROLES: WorkflowChoice[] = [
 ];
 
 const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
-  "openspec-apply-change",
-  "openspec-archive-change",
-  "openspec-bulk-archive-change",
-  "openspec-continue-change",
-  "openspec-explore",
-  "openspec-ff-change",
-  "openspec-new-change",
-  "openspec-onboard",
-  "openspec-propose",
-  "openspec-sync-specs",
-  "openspec-verify-change",
   "cdase:sfmea_review",
   "code-defect-scan",
 ].map((value) => ({ value, label: value }));

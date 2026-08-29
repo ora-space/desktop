@@ -33,7 +33,6 @@ import type { Agent, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { PermissionSelector } from "./permission-selector";
-import { WorkflowToggle } from "../workflow/workflow-toggle";
 import { ComposerActionMenu } from "./composer-action-menu";
 import { ImagePreviewDialog } from "./image-preview-dialog";
 import {
@@ -75,11 +74,6 @@ interface ComposerProps {
   /** Project checkout used for @ mentions when no task is selected yet. */
   projectId?: string;
   onSend: (text: string, images?: acp.ImageContent[]) => void | Promise<void>;
-  /**
-   * Invoked when Enter (or send) is pressed with an empty input. Used in Spec mode
-   * to run the highlighted stage directly; absent when there is nothing to launch.
-   */
-  onEmptySubmit?: () => void;
   onStop?: () => void;
   isResponding: boolean;
   /**
@@ -129,7 +123,6 @@ export function Composer({
   taskId,
   projectId,
   onSend,
-  onEmptySubmit,
   onStop,
   isResponding,
   isStreaming = false,
@@ -492,20 +485,12 @@ export function Composer({
     (visibleActions.length > 0 || fileMentionActive);
 
   const hasText = !query.isBlank;
-  // With an empty input the send affordance still fires when there is a stage to
-  // launch, so pressing Enter runs the highlighted step.
   const canSend =
-    (hasText || attachments.length > 0 || onEmptySubmit !== undefined) &&
-    !isResponding &&
-    !disabled;
+    (hasText || attachments.length > 0) && !isResponding && !disabled;
 
   const submit = () => {
     if (isResponding || disabled) return;
     const text = (editorRef.current?.getText() ?? "").trim();
-    if (text === "" && attachments.length === 0) {
-      onEmptySubmit?.();
-      return;
-    }
     const sentAttachments = attachments;
     const sentDoc = editorRef.current?.getJSON();
     const sentImages =
@@ -1001,7 +986,6 @@ export function Composer({
               />
             )}
             <PermissionSelector disabled={disabled} />
-            <WorkflowToggle disabled={disabled} />
             {selectedPlugins.length > 0 && (
               <SelectedPluginsButton
                 selected={selectedPlugins}

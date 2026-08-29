@@ -4,23 +4,21 @@ Product UI for **graph workflow runs** executed inside project Workspaces
 (sibling to task projections in the workspace tree). Host/Run ports and the memory mock engine live in
 [`@ora/workflow-runtime`](../../../../workflow-runtime/README.md).
 
-## Three surfaces (D5.2 boundaries)
+## Two surfaces (D5.2 boundaries)
 
 Keep these stacks separate — shared chrome only where noted.
 
 1. **Workflow editor** — definition authoring and publishing only.
    Owns catalog / reconnect / delete and the library graph (sidebar list +
    canvas). It does not choose execution location or create runs.
-2. **OpenSpec stepper + `workflow-store`** — Spec-mode composer workflow.
-   Must **not** write `GraphWorkflowRun` or share run state with Theater.
-3. **This module (`GraphWorkflowRun` Theater / Overview)** — a run bound to the
+2. **This module (`GraphWorkflowRun` Theater / Overview)** — a run bound to the
    Workspace selected from a project or Task row. Consumes `@ora/workflow-runtime` via React
    context; owns Theater / Overview / hooks only.
 
-|          | Workflow editor             | OpenSpec / `workflow-store` | `workflow-run`                 | `@ora/workflow-runtime`      |
-| -------- | --------------------------- | --------------------------- | ------------------------------ | ---------------------------- |
-| Owns     | Definition edit and publish | Spec stepper state          | Run creation + Theater context | Ports, memory engine, events |
-| Must not | Drive live run Theater      | Mutate `GraphWorkflowRun`   | Reuse editor `WorkflowCanvas`  | Own React / Theater          |
+|          | Workflow editor             | `workflow-run`                 | `@ora/workflow-runtime`      |
+| -------- | --------------------------- | ------------------------------ | ---------------------------- |
+| Owns     | Definition edit and publish | Run creation + Theater context | Ports, memory engine, events |
+| Must not | Drive live run Theater      | Reuse editor `WorkflowCanvas`  | Own React / Theater          |
 
 ## Responsibilities
 
@@ -78,15 +76,14 @@ Keep these stacks separate — shared chrome only where noted.
       color, no pulse, no spinner (except partial quiet triangle).
     - Progress track picks a terminal tint (emerald / rose / muted); sheen is
       the only ambient motion while live.
-- Keep OpenSpec composer stepper (`features/workflow` + `workflow-store`) and
-  settings React Flow editor interaction out of this module (shared chrome only).
+- Keep settings React Flow editor interaction out of this module (shared chrome
+  only).
 
 ## Non-responsibilities
 
 - Does not own Host/Run repository implementations (see `@ora/workflow-runtime`).
 - Does not persist definitions in `@ora/workflow-mock` (that package stays
   session-demo + validation).
-- Does not own OpenSpec Spec-mode state.
 - Does not own Task Diff rendering (reuses `WorkspaceReviewLayout` /
   `TaskDiffView` from chat); the run review surface is scoped to its Workspace
   and does not infer ownership through a Task.

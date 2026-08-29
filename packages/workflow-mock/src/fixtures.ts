@@ -44,16 +44,6 @@ function createAgentConfig(
   };
 }
 
-const OPENCODE_DEEPSEEK_V4_FLASH = {
-  agentCli: "ora-space.opencode",
-  modelId: "deepseek/deepseek-v4-flash",
-};
-
-const OPENCODE_DEEPSEEK_V4_PRO = {
-  agentCli: "ora-space.opencode",
-  modelId: "deepseek/deepseek-v4-pro",
-};
-
 export const MOCK_WORKFLOW: DemoWorkflow = {
   id: "code-review",
   name: "代码审查工作流",
@@ -135,7 +125,7 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         agentConfig: createAgentConfig(
           "Reviewer",
           "按严重程度整理问题，并给出定位与修复建议。",
-          { skillIds: ["openspec-verify-change"] },
+          { skillIds: ["code-defect-scan"] },
         ),
       },
     },
@@ -316,7 +306,6 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
 export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
   const staggered = createStaggeredParallelMockWorkflow(locale);
   const parallel = createParallelMockWorkflow(locale);
-  const openSpec = createOpenSpecMockWorkflow(locale);
   const review = createMockWorkflow(locale);
   const release = structuredClone(review);
   release.id = "release-readiness";
@@ -336,249 +325,7 @@ export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
       : "Analyze issue reports and assign priority and ownership.";
   triage.updatedAt = "2026-07-25T09:20:00+08:00";
 
-  return [staggered, parallel, review, release, triage, openSpec];
-}
-
-/**
- * Creates a seven-stage Agent workflow that demonstrates reusable OpenSpec-like
- * behavior without treating any particular methodology as a node type.
- */
-export function createOpenSpecMockWorkflow(
-  locale: "zh-CN" | "en-US",
-): DemoWorkflow {
-  const zh = locale === "zh-CN";
-  const workflow: DemoWorkflow = {
-    id: "spec-change-lifecycle",
-    name: zh ? "工作流演示" : "OpenSpec workflow demo",
-    description: zh
-      ? "依次探索、检查、提案、实施、扫描、修复和归档变更；七步均使用可配置的 Agent 执行契约。"
-      : "Explore, review, propose, apply, scan, repair, and archive a change with seven configurable Agent execution contracts.",
-    updatedAt: "2026-08-03T10:00:00+08:00",
-    viewport: { x: 28, y: 110, zoom: 0.82 },
-    nodes: [
-      {
-        id: "start",
-        type: "workflow",
-        deletable: false,
-        position: { x: 40, y: 280 },
-        data: {
-          kind: "start",
-          title: zh ? "开始" : "Start",
-          description: zh
-            ? "接收变更目标和项目上下文"
-            : "Receive the change goal and project context",
-          instruction: zh
-            ? "提取要解决的问题、约束和验收目标。"
-            : "Extract the problem, constraints, and acceptance goals.",
-        },
-      },
-      {
-        id: "explore",
-        type: "workflow",
-        position: { x: 320, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "探索" : "Explore",
-          description: zh
-            ? "只读探索项目现状和影响范围"
-            : "Read-only exploration of the current project and impact",
-          agentConfig: createAgentConfig(
-            "Researcher",
-            zh
-              ? "阅读相关代码、文档和现有规范，归纳现状、约束、风险与可选路径。不要修改项目文件。"
-              : "Read relevant code, docs, and current specifications. Summarize the state, constraints, risks, and options without modifying project files.",
-            {
-              skillIds: ["openspec-explore"],
-              executor: OPENCODE_DEEPSEEK_V4_PRO,
-            },
-          ),
-        },
-      },
-      {
-        id: "sfmea-review",
-        type: "workflow",
-        position: { x: 600, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "SFMEA检查" : "SFMEA review",
-          description: zh
-            ? "检查当前方案的失效模式与风险"
-            : "Review the current plan for failure modes and risks",
-          agentConfig: createAgentConfig(
-            "Reviewer",
-            zh
-              ? "检查上游探索产出的当前方案，识别潜在失效模式、影响、风险和需要补充的控制措施。不要修改项目文件。"
-              : "Review the current plan from upstream exploration. Identify potential failure modes, impacts, risks, and needed controls without modifying project files.",
-            {
-              skillIds: ["cdase:sfmea_review"],
-              executor: OPENCODE_DEEPSEEK_V4_PRO,
-            },
-          ),
-        },
-      },
-      {
-        id: "propose",
-        type: "workflow",
-        position: { x: 880, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "提案" : "Propose",
-          description: zh
-            ? "将检查结论组织为可评审方案"
-            : "Turn review findings into a reviewable proposal",
-          agentConfig: createAgentConfig(
-            "Planner",
-            zh
-              ? "基于上游探索和 SFMEA 检查结论，提出范围明确的变更方案、任务拆分、风险和验收标准。不要修改项目文件。"
-              : "Use the upstream exploration and SFMEA review to propose a scoped change plan, task breakdown, risks, and acceptance criteria without modifying project files.",
-            {
-              skillIds: ["openspec-propose"],
-              executor: OPENCODE_DEEPSEEK_V4_PRO,
-            },
-          ),
-        },
-      },
-      {
-        id: "apply",
-        type: "workflow",
-        position: { x: 1160, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "实施" : "Apply",
-          description: zh
-            ? "按批准方案实现并验证变更"
-            : "Implement and verify the approved change",
-          agentConfig: createAgentConfig(
-            "Implementer",
-            zh
-              ? "按照上游方案修改项目文件，运行与改动匹配的验证，并记录实际偏差。"
-              : "Modify project files according to the upstream plan, run proportionate validation, and record any implementation deviations.",
-            {
-              skillIds: ["openspec-apply-change"],
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
-            },
-          ),
-        },
-      },
-      {
-        id: "code-defect-scan",
-        type: "workflow",
-        position: { x: 1440, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "代码缺陷扫描" : "Code defect scan",
-          description: zh
-            ? "扫描实施后的代码缺陷"
-            : "Scan the implementation for code defects",
-          agentConfig: createAgentConfig(
-            "Reviewer",
-            zh
-              ? "扫描上游实施结果中的代码缺陷，记录问题、影响范围和修复建议。"
-              : "Scan the upstream implementation for code defects and record issues, impact, and remediation advice.",
-            {
-              skillIds: ["code-defect-scan"],
-              executor: OPENCODE_DEEPSEEK_V4_PRO,
-            },
-          ),
-        },
-      },
-      {
-        id: "defect-repair",
-        type: "workflow",
-        position: { x: 1720, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "缺陷修复" : "Defect repair",
-          description: zh
-            ? "根据扫描结果修复并验证缺陷"
-            : "Fix and verify defects found by the scan",
-          agentConfig: createAgentConfig(
-            "Implementer",
-            zh
-              ? "根据上游扫描结果修复确认的代码缺陷，运行必要验证，并记录未修复项及原因。"
-              : "Fix confirmed code defects from the upstream scan, run necessary validation, and record unresolved items with their rationale.",
-            {
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
-            },
-          ),
-        },
-      },
-      {
-        id: "archive",
-        type: "workflow",
-        position: { x: 2000, y: 280 },
-        data: {
-          kind: "agent",
-          title: zh ? "归档" : "Archive",
-          description: zh
-            ? "沉淀变更决策、验证结果和后续事项"
-            : "Record the decision, validation, and follow-ups",
-          agentConfig: createAgentConfig(
-            "Documentation Agent",
-            zh
-              ? "更新规范和变更记录，归档验证结果，并明确未完成的后续事项。"
-              : "Update specifications and change records, archive validation results, and record any remaining follow-ups.",
-            {
-              skillIds: ["openspec-archive-change"],
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
-            },
-          ),
-        },
-      },
-    ],
-    edges: [
-      {
-        id: "e-start-explore",
-        source: "start",
-        target: "explore",
-        type: "workflow",
-      },
-      {
-        id: "e-explore-sfmea",
-        source: "explore",
-        target: "sfmea-review",
-        type: "workflow",
-      },
-      {
-        id: "e-sfmea-propose",
-        source: "sfmea-review",
-        target: "propose",
-        type: "workflow",
-      },
-      {
-        id: "e-propose-apply",
-        source: "propose",
-        target: "apply",
-        type: "workflow",
-      },
-      {
-        id: "e-apply-scan",
-        source: "apply",
-        target: "code-defect-scan",
-        type: "workflow",
-      },
-      {
-        id: "e-scan-repair",
-        source: "code-defect-scan",
-        target: "defect-repair",
-        type: "workflow",
-      },
-      {
-        id: "e-repair-archive",
-        source: "defect-repair",
-        target: "archive",
-        type: "workflow",
-      },
-    ],
-  };
-
-  workflow.nodes = workflow.nodes.map((node) => ({
-    ...node,
-    initialWidth: WORKFLOW_NODE_WIDTH,
-    initialHeight: WORKFLOW_NODE_INITIAL_HEIGHT,
-    handles: WORKFLOW_NODE_INITIAL_HANDLES.map((handle) => ({ ...handle })),
-  }));
-  return workflow;
+  return [staggered, parallel, review, release, triage];
 }
 
 /**
@@ -640,7 +387,7 @@ export function createParallelMockWorkflow(
             zh
               ? "检查注入、权限与密钥泄露风险。"
               : "Check for injection, auth, and secret-leak risks.",
-            { skillIds: ["openspec-verify-change"] },
+            { skillIds: ["code-defect-scan"] },
           ),
         },
       },
@@ -686,7 +433,7 @@ export function createParallelMockWorkflow(
             zh
               ? "按严重程度合并安全、质量与文档发现。"
               : "Merge security, quality, and docs findings by severity.",
-            { skillIds: ["openspec-verify-change"] },
+            { skillIds: ["code-defect-scan"] },
           ),
         },
       },
@@ -831,7 +578,7 @@ export function createStaggeredParallelMockWorkflow(
             zh
               ? "在快速扫描之后做深度安全分析。"
               : "Follow the quick scan with a deep security analysis.",
-            { skillIds: ["openspec-verify-change"] },
+            { skillIds: ["code-defect-scan"] },
           ),
           mockStepMs: 6_000,
         },

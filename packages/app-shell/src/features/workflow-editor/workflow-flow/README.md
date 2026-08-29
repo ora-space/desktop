@@ -20,7 +20,6 @@ React Flow–based canvas for the workspace workflow editor.
 
 - Does not load, save, version, or otherwise persist workflows.
 - Does not own the sidebar library list or the right inspector.
-- Does not own OpenSpec composer stepper state (`workflow-store`).
 
 ## Public boundary
 

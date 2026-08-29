@@ -5,7 +5,6 @@ import type { DraftScope } from "./stores/draft-sessions-store";
 import { useComposerInputStore } from "./stores/composer-input-store";
 import { useComposerPluginSelectionStore } from "./stores/composer-plugin-selection-store";
 import { useUiStore } from "./stores/ui-store";
-import { useWorkflowStore } from "./stores/workflow-store";
 import { useWorkspaceSelectionStore } from "./stores/workspace-selection-store";
 import type { WorkspaceCreateFocus } from "./stores/workspace-selection-store";
 import type { WorkspaceSelection } from "./stores/sanitize-workspace-selection";
@@ -280,11 +279,10 @@ export function recoverFailedDraftSend(args: {
     taskId,
   });
   reparkDraftComposerContent({ draftId, text, images, doc });
-  // Plugin picks and workflow state were rekeyed onto the warm id; move them
-  // back so a retry on the draft surface keeps the same constellation.
+  // Plugin picks were rekeyed onto the warm id; move them back so a retry on
+  // the draft surface keeps the same constellation.
   const draftKey = `draft:${draftId}`;
   useComposerPluginSelectionStore.getState().rekey(boundSessionId, draftKey);
-  useWorkflowStore.getState().rekey(boundSessionId, draftKey);
   useComposerInputStore.getState().clear(boundSessionId);
   useWorkspaceSelectionStore.getState().selectDraft(draftId, taskId, projectId);
   expandDraftScope({ projectId, taskId });

@@ -252,7 +252,6 @@ export type WorkflowNodeConversationItem =
 
 /**
  * A project-scoped execution of a mounted workflow definition.
- * Named GraphWorkflowRun so it never collides with OpenSpec WorkflowRun.
  */
 export interface GraphWorkflowRun {
   id: string;

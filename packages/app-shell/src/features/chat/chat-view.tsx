@@ -39,8 +39,6 @@ interface ChatViewProps {
   /** Hides message composition while retaining the ordinary transcript and trailing actions. */
   composerVisible?: boolean;
   onSend: (text: string, images?: acp.ImageContent[]) => void;
-  /** Fired on Enter with an empty input; used in Spec mode to run the highlighted stage. */
-  onEmptySubmit?: () => void;
   onStop?: () => void;
   onRespondToPermission?: (
     permissionRequestId: string,
@@ -51,12 +49,6 @@ interface ChatViewProps {
    * built here so the chat pane stays unaware of workspace entities.
    */
   contextBar?: ReactNode;
-  /**
-   * Optional strip rendered directly above the composer (the spec-driven workflow
-   * stepper). Passed in rather than built here so the chat pane stays unaware of
-   * workflow state, mirroring `contextBar`.
-   */
-  workflowBar?: ReactNode;
   /** Actions overlaid at the lower-right of the composer slot so the composer stays centered. */
   composerActions?: ReactNode;
   /** Optional placement and visibility threshold for the shared conversation navigator. */
@@ -101,11 +93,9 @@ export function ChatView({
   modelSelectorSessionId,
   composerVisible = true,
   onSend,
-  onEmptySubmit,
   onStop,
   onRespondToPermission,
   contextBar,
-  workflowBar,
   composerActions,
   conversationNavigation,
   disabledHint,
@@ -262,7 +252,6 @@ export function ChatView({
               {contextBar}
             </div>
           )}
-          {workflowBar}
           {/* The hint hangs off a wrapper because a disabled composer swallows the
               pointer events a trigger needs. The wrapper stays mounted whether or not
               there is a hint: swapping it out would remount the composer and throw
@@ -284,7 +273,6 @@ export function ChatView({
                   projectId={projectId}
                   autoFocus
                   onSend={onSend}
-                  onEmptySubmit={onEmptySubmit}
                   onStop={onStop}
                   isResponding={isResponding}
                   isStreaming={isStreaming}

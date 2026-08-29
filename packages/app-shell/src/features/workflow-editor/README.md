@@ -16,7 +16,6 @@ category.
 ## Non-responsibilities
 
 - Does not choose a run Workspace or create `GraphWorkflowRun` rows.
-- Does not own OpenSpec composer stepper state (`workflow-store`).
 - Does not own Theater / Overview (`workflow-run`).
 
 ## Public boundary

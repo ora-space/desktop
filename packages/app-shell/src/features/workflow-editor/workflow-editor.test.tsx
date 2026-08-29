@@ -930,9 +930,7 @@ describe("WorkflowEditor", () => {
     expect(configuredParameters).toHaveTextContent(
       "ora-space.codeagentcli · opencode/big-pickle",
     );
-    expect(configuredParameters).toHaveTextContent(
-      "Skillsopenspec-verify-change",
-    );
+    expect(configuredParameters).toHaveTextContent("Skillscode-defect-scan");
     expect(configuredParameters).not.toHaveTextContent(
       "按严重程度整理问题，并给出定位与修复建议。",
     );
@@ -1088,7 +1086,7 @@ describe("WorkflowEditor", () => {
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
     await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
     const existingSkillSwitch = screen.getByRole("switch", {
-      name: "启用或禁用 openspec-verify-change",
+      name: "启用或禁用 code-defect-scan",
     });
     expect(existingSkillSwitch).toBeChecked();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
