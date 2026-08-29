@@ -26,11 +26,6 @@ pub trait HostProductVersion {
 pub struct DesktopProductVersion(Version);
 
 impl DesktopProductVersion {
-    /// Wraps an already-parsed Desktop product version.
-    pub fn new(version: Version) -> Self {
-        Self(version)
-    }
-
     /// Parses a Desktop product version string supplied by the application crate.
     pub fn parse(value: &str) -> Result<Self, semver::Error> {
         Version::parse(value).map(Self)

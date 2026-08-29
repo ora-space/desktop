@@ -683,29 +683,29 @@ fn parses_only_the_ora_dependency() {
 #[test]
 fn rejects_malformed_ora_requirement_as_invalid_manifest_field() {
     let source = format!("{MINIMAL_MANIFEST}\n[dependencies]\nora = \"not-a-version\"\n");
+    let expected = ManifestError::InvalidField {
+        field: ManifestField::DependenciesOra,
+        reason: InvalidFieldReason::InvalidVersionRequirement(
+            VersionReq::parse("not-a-version").expect_err("malformed constraint"),
+        ),
+    };
 
-    assert!(matches!(
-        PluginManifest::parse(&source),
-        Err(ManifestError::InvalidField {
-            field: ManifestField::DependenciesOra,
-            reason: InvalidFieldReason::InvalidVersionRequirement(_),
-        })
-    ));
+    assert_eq!(
+        PluginManifest::parse(&source)
+            .expect_err("malformed Ora requirement")
+            .to_string(),
+        expected.to_string()
+    );
 }
 
-/// Parses a manifest whose only varying field is the Ora host requirement.
-fn manifest_requiring(requirement: &str) -> PluginManifest {
+/// Compares a requirement against an injected host version without touching process environment.
+fn host_match(requirement: &str, host_version: &str) -> OraHostDependencyMatch {
     let source = format!("{MINIMAL_MANIFEST}\n[dependencies]\nora = \"{requirement}\"\n");
     success(
         PluginManifest::parse(&source),
         "manifest with Ora host requirement",
     )
-}
-
-/// Compares a requirement against an injected host version without touching process environment.
-fn host_match(requirement: &str, host_version: &str) -> OraHostDependencyMatch {
-    manifest_requiring(requirement)
-        .ora_host_compatibility(&success(Version::parse(host_version), "host version"))
+    .ora_host_compatibility(&success(Version::parse(host_version), "host version"))
 }
 
 /// Verifies an omitted `[dependencies].ora` remains compatible with any injected host version.

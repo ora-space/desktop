@@ -1649,8 +1649,9 @@ mod tests {
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
         DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListInstalledPluginsRequest, ListProjectsRequest,
-        ListSkillsRequest, UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
+        GetTaskRequest, ListAgentsRequest, ListInstalledPluginsRequest,
+        ListInstalledPluginsResponse, ListProjectsRequest, ListSkillsRequest, UpdateAgentRequest,
+        UpdateProjectRequest, UpdateSkillRequest,
     };
     use ora_logging::LogLevel;
     use ora_test_support::GitTestScaffold;
@@ -1898,9 +1899,10 @@ mod tests {
         assert_eq!(
             backend
                 .list_installed_plugins(ListInstalledPluginsRequest {})
-                .expect("list installed plugins")
-                .plugins,
-            Vec::new()
+                .expect("list installed plugins"),
+            ListInstalledPluginsResponse {
+                plugins: Vec::new(),
+            }
         );
     }
 

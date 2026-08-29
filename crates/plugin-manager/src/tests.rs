@@ -856,7 +856,7 @@ fn discovery_accepts_exact_and_newer_injected_host_versions() {
 #[test]
 fn discovery_applies_compound_range_against_injected_host() {
     let temp_dir = TempDir::new().unwrap();
-    write_manifest(
+    let package_root = write_manifest(
         temp_dir.path(),
         NAME,
         agent_manifest_requiring("^0.1, <0.2"),
@@ -866,11 +866,20 @@ fn discovery_applies_compound_range_against_injected_host() {
     assert_eq!(compatible.installed_plugins().len(), 1);
 
     let incompatible_host = DesktopProductVersion::parse("0.2.0").expect("host above range");
+    let incompatibility = HostVersionIncompatibility::new(
+        Version::parse("0.2.0").expect("actual host"),
+        VersionReq::parse("^0.1, <0.2").expect("compound constraint"),
+    );
     let incompatible = PluginManager::discover(temp_dir.path(), &incompatible_host);
     assert_eq!(incompatible.installed_plugins(), &[]);
     assert_eq!(
-        incompatible.discovery_issues()[0].kind(),
-        PluginDiscoveryIssueKind::HostVersionIncompatible
+        incompatible.discovery_issues(),
+        &[PluginDiscoveryIssue::new(
+            package_root.join("orax.toml"),
+            PluginDiscoveryIssueKind::HostVersionIncompatible,
+            Some("dependencies.ora".to_string()),
+            incompatibility.to_string(),
+        )]
     );
 }
 
@@ -878,24 +887,23 @@ fn discovery_applies_compound_range_against_injected_host() {
 #[test]
 fn discovery_reports_malformed_ora_requirement_as_invalid_manifest() {
     let temp_dir = TempDir::new().unwrap();
-    write_manifest(
+    let package_root = write_manifest(
         temp_dir.path(),
         NAME,
         agent_manifest_requiring("not-a-version"),
     );
+    let expected_reason = VersionReq::parse("not-a-version").expect_err("malformed constraint");
 
     let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
-        manager
-            .discovery_issues()
-            .iter()
-            .map(|issue| (issue.kind(), issue.field_path()))
-            .collect::<Vec<_>>(),
-        vec![(
+        manager.discovery_issues(),
+        &[PluginDiscoveryIssue::new(
+            package_root.join("orax.toml"),
             PluginDiscoveryIssueKind::InvalidManifest,
-            Some("dependencies.ora")
+            Some("dependencies.ora".to_string()),
+            format!("invalid Ora version requirement: {expected_reason}"),
         )]
     );
 }

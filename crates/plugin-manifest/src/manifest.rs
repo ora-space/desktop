@@ -224,10 +224,21 @@ impl PluginManifest {
 
     /// Evaluates `[dependencies].ora` against the running Desktop product version.
     ///
-    /// Every plugin entry point must call this with the same injected product version so a package
-    /// cannot pass marketplace install and later fail startup discovery, or the reverse.
+    /// Matching stays on this method so every plugin entry point shares one decision: a package
+    /// cannot pass marketplace install and later fail startup discovery, or the reverse. The SemVer
+    /// grammar is the one `PluginManifest` parse already accepted; omitting the field stays
+    /// compatible so existing packages keep their current install and discovery behavior.
     pub fn ora_host_compatibility(&self, host_version: &Version) -> OraHostDependencyMatch {
-        crate::evaluate_ora_host_dependency(self.dependencies.as_ref(), host_version)
+        match self.dependencies.as_ref() {
+            None => OraHostDependencyMatch::Satisfied,
+            Some(dependencies) if dependencies.ora().matches(host_version) => {
+                OraHostDependencyMatch::Satisfied
+            }
+            Some(dependencies) => OraHostDependencyMatch::Unsatisfied {
+                actual: host_version.clone(),
+                required: dependencies.ora().clone(),
+            },
+        }
     }
 
     /// Returns the `[workbench]` section; only a workbench-kind manifest may carry one.

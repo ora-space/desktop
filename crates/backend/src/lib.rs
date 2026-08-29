@@ -12,6 +12,7 @@ mod marketplace_sources;
 mod plugin;
 mod plugin_configuration;
 mod plugin_gateway;
+mod plugin_package_error;
 mod project;
 mod proxy;
 mod request_lifecycle;

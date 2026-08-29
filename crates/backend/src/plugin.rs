@@ -3,6 +3,7 @@ use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
+use crate::plugin_package_error::{map_install_error, map_update_error};
 use crate::proxy;
 use crate::user_config::UserConfigApi;
 use gitlancer::{CliGitRunner, Git};
@@ -13,11 +14,11 @@ use ora_contracts::{
     EmptyErrorParams, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest,
     InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
     ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
-    ListMarketplaceSourcesResponse, PluginHostVersionIncompatibleParams, PublicError,
-    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
-    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
-    UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
-    UpdatePluginRequest, UpdatePluginResponse,
+    ListMarketplaceSourcesResponse, PublicError, ScanPluginsRequest, ScanPluginsResponse,
+    StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
+    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
+    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
+    UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -32,10 +33,7 @@ use ora_plugin_lifecycle::{
     PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
-use ora_plugin_manager::{
-    DesktopProductVersion, HostVersionIncompatibility, InstallError, Installer, PluginContribution,
-    PluginManager, UpdateError,
-};
+use ora_plugin_manager::{DesktopProductVersion, Installer, PluginContribution, PluginManager};
 use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
@@ -785,38 +783,6 @@ impl PluginApi {
             )
             .map_err(|error| BackendError::internal("failed to persist plugin Skills", error))
     }
-}
-
-/// Maps an install/import failure, keeping host incompatibility as a bounded public error.
-fn map_install_error(error: InstallError) -> BackendError {
-    match error {
-        InstallError::HostVersionIncompatible(incompatibility) => {
-            host_version_incompatible_error(incompatibility)
-        }
-        other => BackendError::internal("failed to install plugin", other),
-    }
-}
-
-/// Maps an update failure, keeping host incompatibility as a bounded public error.
-fn map_update_error(error: UpdateError) -> BackendError {
-    match error {
-        UpdateError::Install(InstallError::HostVersionIncompatible(incompatibility)) => {
-            host_version_incompatible_error(incompatibility)
-        }
-        other => BackendError::internal("failed to update plugin", other),
-    }
-}
-
-/// Projects a host-version mismatch into the stable public error with only actual/required params.
-fn host_version_incompatible_error(incompatibility: HostVersionIncompatibility) -> BackendError {
-    BackendError::new(
-        ErrorClassification::Unprocessable,
-        PublicError::PluginHostVersionIncompatible(PluginHostVersionIncompatibleParams {
-            actual_host_version: incompatibility.actual_host_version(),
-            required_version_constraint: incompatibility.required_version_constraint(),
-        }),
-        "plugin requires an incompatible Ora Desktop version",
-    )
 }
 
 /// Injected Desktop product version for backend tests that do not exercise host incompatibility.

@@ -1,11 +1,11 @@
-//! Evaluates a plugin's optional `[dependencies].ora` requirement against a host version.
+//! Names the outcome of comparing a plugin's optional `[dependencies].ora` with a host version.
 //!
-//! Parsing and matching live here so marketplace install, local import, update preparation, and
-//! startup discovery share one decision. Callers must supply the running Desktop product version;
-//! a workspace crate version such as `0.0.0` would accept or reject packages independently of the
-//! product the user actually runs.
+//! Matching itself lives on `PluginManifest::ora_host_compatibility` so marketplace install,
+//! local import, update preparation, and startup discovery cannot call a second helper that
+//! drifts. Callers must supply the running Desktop product version; a workspace crate version
+//! such as `0.0.0` would accept or reject packages independently of the product the user actually
+//! runs.
 
-use crate::PluginDependencies;
 use semver::{Version, VersionReq};
 
 /// Outcome of comparing a parsed `[dependencies].ora` requirement with a Desktop product version.
@@ -20,22 +20,4 @@ pub enum OraHostDependencyMatch {
         actual: Version,
         required: VersionReq,
     },
-}
-
-/// Compares `dependencies` with `host_version` using the same SemVer requirement grammar the
-/// manifest parser already accepted.
-pub fn evaluate_ora_host_dependency(
-    dependencies: Option<&PluginDependencies>,
-    host_version: &Version,
-) -> OraHostDependencyMatch {
-    match dependencies {
-        None => OraHostDependencyMatch::Satisfied,
-        Some(dependencies) if dependencies.ora().matches(host_version) => {
-            OraHostDependencyMatch::Satisfied
-        }
-        Some(dependencies) => OraHostDependencyMatch::Unsatisfied {
-            actual: host_version.clone(),
-            required: dependencies.ora().clone(),
-        },
-    }
 }

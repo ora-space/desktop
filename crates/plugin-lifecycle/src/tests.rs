@@ -121,7 +121,21 @@ fn opens_with_discovered_plugins_stopped() {
 fn startup_discovery_refuses_incompatible_host_before_activation() {
     with_trace_logging(|| {
         let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-        write_plugin_package_requiring(temp_dir.path(), "ora.example", ">=2.0.0");
+        write_plugin_package(temp_dir.path(), "ora.example");
+        fs::write(
+            package_version_root(temp_dir.path(), "ora.example").join("orax.toml"),
+            r#"resolver = 1
+identifier = "ora.example"
+namespace = "official"
+kind = "agent"
+version = "1.0.0"
+description = "Example plugin"
+
+[dependencies]
+ora = ">=2.0.0"
+"#,
+        )
+        .expect("write incompatible host requirement");
         let lifecycle = open_without_runtime(temp_dir.path());
 
         assert_eq!(
@@ -1206,26 +1220,4 @@ description = "Example plugin"
         ),
     )
     .expect("write plugin manifest");
-}
-
-/// Writes one agent package that declares an Ora host requirement.
-fn write_plugin_package_requiring(data_dir: &std::path::Path, name: &str, requirement: &str) {
-    write_plugin_package(data_dir, name);
-    let package_root = package_version_root(data_dir, name);
-    fs::write(
-        package_root.join("orax.toml"),
-        format!(
-            r#"resolver = 1
-identifier = "{name}"
-namespace = "official"
-kind = "agent"
-version = "1.0.0"
-description = "Example plugin"
-
-[dependencies]
-ora = "{requirement}"
-"#
-        ),
-    )
-    .expect("write plugin manifest with host requirement");
 }

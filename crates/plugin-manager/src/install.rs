@@ -442,7 +442,7 @@ mod tests {
     use super::{InstallError, InstalledPackage, Installer, UpdateError};
     use crate::{DesktopProductVersion, HostVersionIncompatibility};
     use futures::executor::block_on;
-    use ora_plugin_manifest::PluginManifest;
+    use ora_plugin_manifest::{InvalidFieldReason, ManifestError, ManifestField, PluginManifest};
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
     use pretty_assertions::assert_eq;
     use semver::{Version, VersionReq};
@@ -454,14 +454,9 @@ mod tests {
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
 
-    /// Injected Desktop product version used by existing install fixtures that omit `[dependencies].ora`.
-    fn test_host() -> DesktopProductVersion {
-        DesktopProductVersion::parse("0.1.0").expect("test host version")
-    }
-
     /// Builds an installer that uses the default injected test host version.
     fn installer() -> Installer<LocalFileDownloader> {
-        Installer::new(LocalFileDownloader, test_host())
+        Installer::new(LocalFileDownloader, crate::tests::test_host_version())
     }
 
     /// Builds an installer whose host version is injected without mutating process environment.
@@ -982,16 +977,6 @@ mod tests {
         }
     }
 
-    /// Unwraps the update error as a host incompatibility for complete-object comparison.
-    fn host_update_error(error: UpdateError) -> HostVersionIncompatibility {
-        match error {
-            UpdateError::Install(InstallError::HostVersionIncompatible(incompatibility)) => {
-                incompatibility
-            }
-            other => panic!("expected host incompatibility, got {other:?}"),
-        }
-    }
-
     /// Marketplace install consults the injected Desktop product version before writing a package.
     #[test]
     fn marketplace_install_uses_injected_host_version() {
@@ -1132,14 +1117,16 @@ mod tests {
         let error = installer()
             .install_local(&release_path, temp_dir.path())
             .unwrap_err();
-
-        assert!(matches!(
-            error,
-            InstallError::InvalidManifest(ora_plugin_manifest::ManifestError::InvalidField {
-                field: ora_plugin_manifest::ManifestField::DependenciesOra,
-                reason: ora_plugin_manifest::InvalidFieldReason::InvalidVersionRequirement(_),
-            })
-        ));
+        let expected = ManifestError::InvalidField {
+            field: ManifestField::DependenciesOra,
+            reason: InvalidFieldReason::InvalidVersionRequirement(
+                VersionReq::parse("not-a-version").expect_err("malformed constraint"),
+            ),
+        };
+        let InstallError::InvalidManifest(manifest_error) = error else {
+            panic!("expected invalid manifest, got {error:?}");
+        };
+        assert_eq!(manifest_error.to_string(), expected.to_string());
     }
 
     /// Update preparation uses the same injected host version before replacing the installed package.
@@ -1182,7 +1169,10 @@ mod tests {
         ))
         .unwrap_err();
 
-        assert_eq!(host_update_error(error), expected);
+        let UpdateError::Install(install_error) = error else {
+            panic!("expected host incompatibility, got {error:?}");
+        };
+        assert_eq!(host_install_error(install_error), expected);
         assert!(installed.exists());
         assert!(
             !temp_dir
