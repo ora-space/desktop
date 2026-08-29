@@ -32,10 +32,3 @@ packages/contracts/.test-dist/
 /specs
 /memories
 
-# Local Agent MCP design notes used during development; do not commit
-CONTEXT.md
-docs/adr/
-docs/agents/
-docs/agent-mcp-config-research.md
-docs/agent-mcp-configuration-spec.md
-
