@@ -137,50 +137,64 @@ GROUP BY surfaces.workspace_id, consumers.consumer_id;
 "#,
     r#"
 -- Clamp independently maximized generations so Expand rows always satisfy ordering CHECKs.
+-- Current is the caught-up state; a target whose ready generation lags desired stays Pending.
 INSERT INTO effect_agent_target_status (
     agent_target_id, desired_generation, observed_generation, applied_generation,
     ready_generation, phase, status_version, created_at, updated_at
 )
 SELECT
-    targets.id,
-    MAX(COALESCE(surface_status.desired_generation, 0)),
-    MIN(
-        MAX(COALESCE(surface_status.desired_generation, 0)),
-        MAX(COALESCE(surface_status.observed_generation, 0))
-    ),
-    MIN(
+    agent_target_id,
+    desired_generation,
+    observed_generation,
+    applied_generation,
+    ready_generation,
+    CASE
+        WHEN ready_generation = desired_generation THEN 'current'
+        ELSE 'pending'
+    END,
+    1,
+    created_at,
+    updated_at
+FROM (
+    SELECT
+        targets.id AS agent_target_id,
+        MAX(COALESCE(surface_status.desired_generation, 0)) AS desired_generation,
         MIN(
             MAX(COALESCE(surface_status.desired_generation, 0)),
             MAX(COALESCE(surface_status.observed_generation, 0))
-        ),
-        MAX(COALESCE(surface_status.applied_generation, 0))
-    ),
-    MIN(
+        ) AS observed_generation,
         MIN(
             MIN(
                 MAX(COALESCE(surface_status.desired_generation, 0)),
                 MAX(COALESCE(surface_status.observed_generation, 0))
             ),
             MAX(COALESCE(surface_status.applied_generation, 0))
-        ),
-        MAX(COALESCE(consumer_status.ready_generation, 0))
-    ),
-    'current',
-    1,
-    targets.created_at,
-    targets.updated_at
-FROM effect_agent_targets targets
-JOIN effect_surfaces surfaces
-    ON surfaces.workspace_id = targets.workspace_id
-JOIN effect_surface_consumers consumers
-    ON consumers.surface_id = surfaces.id
-   AND consumers.consumer_id = targets.agent_plugin_id
-LEFT JOIN effect_surface_status surface_status
-    ON surface_status.surface_id = surfaces.id
-LEFT JOIN effect_consumer_status consumer_status
-    ON consumer_status.surface_id = surfaces.id
-   AND consumer_status.consumer_id = consumers.consumer_id
-GROUP BY targets.id;
+        ) AS applied_generation,
+        MIN(
+            MIN(
+                MIN(
+                    MAX(COALESCE(surface_status.desired_generation, 0)),
+                    MAX(COALESCE(surface_status.observed_generation, 0))
+                ),
+                MAX(COALESCE(surface_status.applied_generation, 0))
+            ),
+            MAX(COALESCE(consumer_status.ready_generation, 0))
+        ) AS ready_generation,
+        targets.created_at AS created_at,
+        targets.updated_at AS updated_at
+    FROM effect_agent_targets targets
+    JOIN effect_surfaces surfaces
+        ON surfaces.workspace_id = targets.workspace_id
+    JOIN effect_surface_consumers consumers
+        ON consumers.surface_id = surfaces.id
+       AND consumers.consumer_id = targets.agent_plugin_id
+    LEFT JOIN effect_surface_status surface_status
+        ON surface_status.surface_id = surfaces.id
+    LEFT JOIN effect_consumer_status consumer_status
+        ON consumer_status.surface_id = surfaces.id
+       AND consumer_status.consumer_id = consumers.consumer_id
+    GROUP BY targets.id
+);
 "#,
     r#"
 -- Merge every surface request that touches a target into one pending target request.
@@ -212,6 +226,7 @@ GROUP BY targets.id;
 "#,
     r#"
 -- Consumer-scoped surface conditions become Blocking target conditions on that plugin.
+-- Preserve the stored subject so desired_item / managed_item identities survive upgrade.
 INSERT INTO effect_agent_target_conditions (
     id, agent_target_id, surface_id, consumer_id, subject_kind, subject_id, reason, impact,
     failed_generation, message, first_observed_at, last_observed_at
@@ -220,8 +235,8 @@ SELECT lower(hex(randomblob(16))),
        targets.id,
        conditions.surface_id,
        conditions.consumer_id,
-       'consumer',
-       json_object('kind', 'consumer', 'consumer_id', conditions.consumer_id),
+       conditions.subject_kind,
+       conditions.subject_id,
        conditions.reason,
        'blocking',
        conditions.failed_generation,
@@ -245,8 +260,8 @@ SELECT lower(hex(randomblob(16))),
        targets.id,
        conditions.surface_id,
        consumers.consumer_id,
-       'surface',
-       json_object('kind', 'surface', 'surface_key', conditions.surface_id),
+       conditions.subject_kind,
+       conditions.subject_id,
        conditions.reason,
        'blocking',
        conditions.failed_generation,

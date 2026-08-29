@@ -91,11 +91,6 @@ pub trait AgentTargetRepository {
 pub enum AgentTargetRepositoryError {
     #[error("agent target repository error: {0}")]
     Storage(String),
-    #[error("agent target not found for workspace `{workspace_id}` and plugin `{agent_plugin_id}`")]
-    NotFound {
-        workspace_id: String,
-        agent_plugin_id: String,
-    },
     #[error("corrupt agent target state: {0}")]
     Corrupt(String),
 }

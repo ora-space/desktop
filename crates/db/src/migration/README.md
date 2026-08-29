@@ -23,7 +23,9 @@ This module owns Ora's linear, reversible SQLite schema history and reconciles a
   desired/observed/applied/ready generations and phase; target-keyed reconcile requests; and
   target-owned conditions with Blocking/NonBlocking impact. Existing surface request rows are
   deterministically backfilled into one target request using the maximum requested generation and
-  earliest due time. Production workers continue to claim only surface-keyed requests.
+  earliest due time. Status phase is `current` only when ready generation equals desired generation;
+  otherwise it is `pending`. Condition backfill preserves stored subject identity and records
+  existing rows as Blocking. Production workers continue to claim only surface-keyed requests.
 - A reconcile request carries its own scheduling state: `pending`, `claimed`, `blocked`, or
   `retry_scheduled`, plus the lease that proves who currently owns the surface and the
   `request_token` that fences that owner's writes. Only one worker can hold a surface, an expired

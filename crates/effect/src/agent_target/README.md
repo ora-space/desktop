@@ -8,7 +8,10 @@ by a physical Skill surface.
 ## Responsibilities
 
 - Strong identities for Agent Targets, capability revisions, and target-owned conditions.
-- Closed enums for target phase, condition impact, reconcile state, and wake reason.
+- Closed enums for target phase, condition impact, reconcile progress, and wake reason.
+- Reconcile progress as a state machine (`Pending` / `Claimed` / `Blocked` / `RetryScheduled`) so
+  lease and blocked-reason data cannot appear on the wrong state.
+- Optional condition attachments as `surface + optional consumer`, never a consumer without a surface.
 - The `AgentTargetRepository` port for typed persistence without activating target-keyed workers.
 - Complete record shapes suitable for whole-object repository round-trips.
 

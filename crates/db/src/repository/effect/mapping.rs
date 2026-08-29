@@ -842,17 +842,17 @@ pub(super) fn parse_surface_phase(value: &str) -> Result<SurfacePhase, DatabaseE
 }
 
 /// Converts the unsigned domain value into SQLite's signed integer without truncation.
-pub(super) fn generation_to_sql(generation: Generation) -> Result<i64, DatabaseError> {
+pub(crate) fn generation_to_sql(generation: Generation) -> Result<i64, DatabaseError> {
     u64_to_sql(generation.value(), "generation")
 }
 
-pub(super) fn u64_to_sql(value: u64, field: &str) -> Result<i64, DatabaseError> {
+pub(crate) fn u64_to_sql(value: u64, field: &str) -> Result<i64, DatabaseError> {
     i64::try_from(value).map_err(|_| {
         DatabaseError::CorruptEffectState(format!("{field} exceeds SQLite integer range"))
     })
 }
 
-pub(super) fn generation_from_sql(value: i64) -> Result<Generation, DatabaseError> {
+pub(crate) fn generation_from_sql(value: i64) -> Result<Generation, DatabaseError> {
     u64::try_from(value)
         .map(Generation::new)
         .map_err(|_| DatabaseError::CorruptEffectState("negative generation".to_string()))

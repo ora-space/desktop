@@ -1,10 +1,17 @@
-//! Enum and numeric encodings shared by Agent Target SQLite persistence.
+//! Enum encodings shared by Agent Target SQLite persistence.
+//!
+//! Generation and unsigned integer conversions live in `mapping` so Skill and Agent Target rows
+//! cannot drift onto different overflow rules.
 
 use crate::DatabaseError;
 use ora_effect::{
     AgentTargetConditionReason, AgentTargetLifecycle, AgentTargetPhase, AgentTargetReconcileState,
     AgentTargetRepositoryError, AgentTargetWakeReason, ConditionImpact, Generation,
 };
+
+pub(super) use super::super::mapping::{generation_from_sql, generation_to_sql, u64_to_sql};
+
+/// Maps repository-facing failures without leaking rusqlite types across the Effect port.
 pub(super) fn map_db_error(error: DatabaseError) -> AgentTargetRepositoryError {
     match error {
         DatabaseError::CorruptEffectState(message) => AgentTargetRepositoryError::corrupt(message),
@@ -12,18 +19,7 @@ pub(super) fn map_db_error(error: DatabaseError) -> AgentTargetRepositoryError {
     }
 }
 
-pub(super) fn generation_to_sql(generation: Generation) -> Result<i64, DatabaseError> {
-    i64::try_from(generation.value()).map_err(|_| {
-        DatabaseError::CorruptEffectState("generation exceeds SQLite integer range".to_string())
-    })
-}
-
-pub(super) fn generation_from_sql(value: i64) -> Result<Generation, DatabaseError> {
-    u64::try_from(value)
-        .map(Generation::new)
-        .map_err(|_| DatabaseError::CorruptEffectState("negative generation".to_string()))
-}
-
+/// Reads a generation by ordinal so Agent Target SELECT lists can stay positional.
 pub(super) fn generation_from_row(
     row: &rusqlite::Row<'_>,
     index: usize,
@@ -38,12 +34,7 @@ pub(super) fn generation_from_row(
     })
 }
 
-pub(super) fn u64_to_sql(value: u64, field: &str) -> Result<i64, DatabaseError> {
-    i64::try_from(value).map_err(|_| {
-        DatabaseError::CorruptEffectState(format!("{field} exceeds SQLite integer range"))
-    })
-}
-
+/// Reads an unsigned counter by ordinal; SQLite cannot store the domain's unsigned type.
 pub(super) fn u64_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<u64, rusqlite::Error> {
     let value: i64 = row.get(index)?;
     u64::try_from(value).map_err(|_| {
@@ -57,6 +48,7 @@ pub(super) fn u64_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<u64,
     })
 }
 
+/// Reads an attempt counter by ordinal; negative values cannot be a legal retry count.
 pub(super) fn u32_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<u32, rusqlite::Error> {
     let value: i64 = row.get(index)?;
     u32::try_from(value).map_err(|_| {
@@ -70,6 +62,7 @@ pub(super) fn u32_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<u32,
     })
 }
 
+/// Writes the CHECK-accepted lifecycle token so domain and schema cannot drift.
 pub(super) fn lifecycle_value(lifecycle: AgentTargetLifecycle) -> &'static str {
     match lifecycle {
         AgentTargetLifecycle::Active => "active",
@@ -77,6 +70,7 @@ pub(super) fn lifecycle_value(lifecycle: AgentTargetLifecycle) -> &'static str {
     }
 }
 
+/// Rejects lifecycle strings the CHECK constraint should already have excluded.
 pub(super) fn parse_lifecycle(value: &str) -> Result<AgentTargetLifecycle, DatabaseError> {
     match value {
         "active" => Ok(AgentTargetLifecycle::Active),
@@ -87,6 +81,7 @@ pub(super) fn parse_lifecycle(value: &str) -> Result<AgentTargetLifecycle, Datab
     }
 }
 
+/// Writes the CHECK-accepted phase token so domain and schema cannot drift.
 pub(super) fn phase_value(phase: AgentTargetPhase) -> &'static str {
     match phase {
         AgentTargetPhase::Pending => "pending",
@@ -102,6 +97,7 @@ pub(super) fn phase_value(phase: AgentTargetPhase) -> &'static str {
     }
 }
 
+/// Rejects phase strings the CHECK constraint should already have excluded.
 pub(super) fn parse_phase(value: &str) -> Result<AgentTargetPhase, DatabaseError> {
     match value {
         "pending" => Ok(AgentTargetPhase::Pending),
@@ -120,6 +116,7 @@ pub(super) fn parse_phase(value: &str) -> Result<AgentTargetPhase, DatabaseError
     }
 }
 
+/// Writes the CHECK-accepted impact token so domain and schema cannot drift.
 pub(super) fn impact_value(impact: ConditionImpact) -> &'static str {
     match impact {
         ConditionImpact::Blocking => "blocking",
@@ -127,6 +124,7 @@ pub(super) fn impact_value(impact: ConditionImpact) -> &'static str {
     }
 }
 
+/// Rejects impact strings the CHECK constraint should already have excluded.
 pub(super) fn parse_impact(value: &str) -> Result<ConditionImpact, DatabaseError> {
     match value {
         "blocking" => Ok(ConditionImpact::Blocking),
@@ -137,29 +135,52 @@ pub(super) fn parse_impact(value: &str) -> Result<ConditionImpact, DatabaseError
     }
 }
 
-pub(super) fn reconcile_state_value(state: AgentTargetReconcileState) -> &'static str {
+/// Splits the state machine into the four columns SQLite CHECKs as functions of `state`.
+pub(super) fn reconcile_state_sql(
+    state: &AgentTargetReconcileState,
+) -> (&'static str, Option<&str>, Option<&str>, Option<i64>) {
     match state {
-        AgentTargetReconcileState::Pending => "pending",
-        AgentTargetReconcileState::Claimed => "claimed",
-        AgentTargetReconcileState::Blocked => "blocked",
-        AgentTargetReconcileState::RetryScheduled => "retry_scheduled",
+        AgentTargetReconcileState::Pending => ("pending", None, None, None),
+        AgentTargetReconcileState::RetryScheduled => ("retry_scheduled", None, None, None),
+        AgentTargetReconcileState::Claimed {
+            lease_owner,
+            lease_expires_at,
+        } => (
+            "claimed",
+            None,
+            Some(lease_owner.as_str()),
+            Some(*lease_expires_at),
+        ),
+        AgentTargetReconcileState::Blocked { reason } => {
+            ("blocked", Some(reason.as_str()), None, None)
+        }
     }
 }
 
+/// Rebuilds the domain state machine so illegal column combinations cannot enter memory.
 pub(super) fn parse_reconcile_state(
     value: &str,
+    blocked_reason: Option<String>,
+    lease_owner: Option<String>,
+    lease_expires_at: Option<i64>,
 ) -> Result<AgentTargetReconcileState, DatabaseError> {
-    match value {
-        "pending" => Ok(AgentTargetReconcileState::Pending),
-        "claimed" => Ok(AgentTargetReconcileState::Claimed),
-        "blocked" => Ok(AgentTargetReconcileState::Blocked),
-        "retry_scheduled" => Ok(AgentTargetReconcileState::RetryScheduled),
+    match (value, blocked_reason, lease_owner, lease_expires_at) {
+        ("pending", None, None, None) => Ok(AgentTargetReconcileState::Pending),
+        ("retry_scheduled", None, None, None) => Ok(AgentTargetReconcileState::RetryScheduled),
+        ("claimed", None, Some(lease_owner), Some(lease_expires_at)) => {
+            Ok(AgentTargetReconcileState::Claimed {
+                lease_owner,
+                lease_expires_at,
+            })
+        }
+        ("blocked", Some(reason), None, None) => Ok(AgentTargetReconcileState::Blocked { reason }),
         _ => Err(DatabaseError::CorruptEffectState(
-            "unknown agent target reconcile state".to_string(),
+            "agent target reconcile state columns are inconsistent".to_string(),
         )),
     }
 }
 
+/// Writes the CHECK-accepted wake-reason token so domain and schema cannot drift.
 pub(super) fn wake_reason_value(reason: AgentTargetWakeReason) -> &'static str {
     match reason {
         AgentTargetWakeReason::DesiredChanged => "desired_changed",
@@ -170,6 +191,7 @@ pub(super) fn wake_reason_value(reason: AgentTargetWakeReason) -> &'static str {
     }
 }
 
+/// Rejects wake-reason strings the CHECK constraint should already have excluded.
 pub(super) fn parse_wake_reason(value: &str) -> Result<AgentTargetWakeReason, DatabaseError> {
     match value {
         "desired_changed" => Ok(AgentTargetWakeReason::DesiredChanged),
@@ -183,6 +205,7 @@ pub(super) fn parse_wake_reason(value: &str) -> Result<AgentTargetWakeReason, Da
     }
 }
 
+/// Writes the CHECK-accepted condition-reason token so domain and schema cannot drift.
 pub(super) fn condition_reason_value(reason: AgentTargetConditionReason) -> &'static str {
     match reason {
         AgentTargetConditionReason::NoConsumers => "no_consumers",
@@ -206,6 +229,7 @@ pub(super) fn condition_reason_value(reason: AgentTargetConditionReason) -> &'st
     }
 }
 
+/// Rejects condition-reason strings the CHECK constraint should already have excluded.
 pub(super) fn parse_condition_reason(
     value: &str,
 ) -> Result<AgentTargetConditionReason, DatabaseError> {

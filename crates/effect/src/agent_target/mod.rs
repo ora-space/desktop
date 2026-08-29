@@ -129,7 +129,9 @@ pub struct AgentTarget {
 
 /// High-level progression of one Agent Target reconciliation state machine.
 ///
-/// ReadyWithIssues is target-owned: Skill surfaces never express that phase.
+/// `ReadyWithIssues` is the caught-up state that still exposes NonBlocking conditions. `Degraded`
+/// is the spec's distinct retryable-failure phase (Ready Generation is kept, backoff continues);
+/// it is not a synonym for Ready with Issues. Skill surfaces never express ReadyWithIssues.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentTargetPhase {
@@ -162,10 +164,13 @@ pub enum AgentTargetConditionSubject {
     Consumer { consumer_id: ConsumerId },
     DesiredSkill { selection_key: SkillSelectionKey },
     ManagedSkill { managed_identity: ManagedIdentity },
-    Mcp { managed_identity: String },
+    Mcp { managed_identity: ManagedIdentity },
 }
 
 /// Stable machine-readable reasons for an Agent Target not being fully ready.
+///
+/// `UnsupportedByAgent` is a NonBlocking, target-specific transport issue (ADR 0003). It is not
+/// a synonym for plugin-level Needs Configuration, which never reaches this table.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentTargetConditionReason {
@@ -187,6 +192,17 @@ pub enum AgentTargetConditionReason {
     CapabilityInvalid,
 }
 
+/// Optional Skill-surface attachment for diagnostics.
+///
+/// A consumer id without a surface is unrepresentable because the SQLite foreign key names the
+/// `(surface, consumer)` pair. Subject identity stays in `AgentTargetConditionSubject`; this
+/// attachment is the optional physical association the spec allows beside that subject.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentTargetConditionAttachment {
+    pub surface_key: SurfaceKey,
+    pub consumer_id: Option<ConsumerId>,
+}
+
 /// A current, structured explanation owned by one Agent Target.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AgentTargetCondition {
@@ -198,10 +214,7 @@ pub struct AgentTargetCondition {
     pub first_observed_at: i64,
     pub last_observed_at: i64,
     pub failed_generation: Option<Generation>,
-    /// Optional physical surface association retained for Skill diagnostics.
-    pub surface_key: Option<SurfaceKey>,
-    /// Optional consumer association retained when the condition is consumer-scoped.
-    pub consumer_id: Option<ConsumerId>,
+    pub attachment: Option<AgentTargetConditionAttachment>,
 }
 
 /// Current status of one Agent Target, including readiness generations and conditions.
@@ -221,12 +234,20 @@ pub struct AgentTargetStatus {
 }
 
 /// Scheduling state for a durable Agent Target reconcile request.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// Associated data matches the SQLite CHECK constraints: a claim always carries its lease, a
+/// blocked row always carries a reason, and the other states carry neither.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentTargetReconcileState {
     Pending,
-    Claimed,
-    Blocked,
+    Claimed {
+        lease_owner: String,
+        lease_expires_at: i64,
+    },
+    Blocked {
+        reason: String,
+    },
     RetryScheduled,
 }
 
@@ -250,9 +271,6 @@ pub struct AgentTargetReconcileRequest {
     pub request_token: String,
     pub state: AgentTargetReconcileState,
     pub wake_reason: AgentTargetWakeReason,
-    pub blocked_reason: Option<String>,
-    pub lease_owner: Option<String>,
-    pub lease_expires_at: Option<i64>,
     pub attempt_count: u32,
     pub requested_at: i64,
     pub not_before_at: i64,

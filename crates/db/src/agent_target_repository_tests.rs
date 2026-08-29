@@ -2,16 +2,20 @@ use crate::{
     DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, RepositoryPool,
     SqliteEffectRepository, TimestampSource, default_migration_catalog,
 };
-use ora_domain::WorkspaceId;
+use ora_domain::{Namespace, WorkspaceId};
 use ora_effect::{
-    AgentCapabilityRevision, AgentPluginId, AgentTargetCondition, AgentTargetConditionReason,
-    AgentTargetConditionSubject, AgentTargetIdentity, AgentTargetLifecycle, AgentTargetPhase,
-    AgentTargetRepository, AgentTargetWakeReason, ConditionImpact, EffectRepository, Generation,
+    AgentCapabilityRevision, AgentPluginId, AgentTargetCondition, AgentTargetConditionAttachment,
+    AgentTargetConditionReason, AgentTargetConditionSubject, AgentTargetIdentity,
+    AgentTargetLifecycle, AgentTargetPhase, AgentTargetReconcileRequest, AgentTargetReconcileState,
+    AgentTargetRecord, AgentTargetRepository, AgentTargetStatus, AgentTargetWakeReason,
+    ConditionImpact, ConsumerId, EffectRepository, Generation, ManagedIdentity, SkillName,
+    SkillSelectionKey, SourceKind, SurfaceKey, WorkspaceEffect, WorkspaceEffectSpec,
     initial_agent_target_status,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use rusqlite::{Connection, params};
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 #[derive(Clone, Copy, Debug)]
@@ -139,10 +143,18 @@ fn seed_surface_requests(connection: &Connection, workspace_id: &WorkspaceId) {
                  id, surface_id, consumer_id, subject_kind, subject_id, reason,
                  failed_generation, message, first_observed_at, last_observed_at
              ) VALUES
-             ('cond-surface', 'surface-a', NULL, 'surface', '{\"kind\":\"surface\"}',
+             ('cond-surface', 'surface-a', NULL, 'surface',
+              '{\"kind\":\"surface\",\"surface_key\":\"surface-a\"}',
               'path_unsafe', 3, 'unsafe path', 10, 20),
-             ('cond-consumer', 'surface-b', 'opencode', 'consumer', '{\"kind\":\"consumer\"}',
-              'waiting_for_idle', 5, 'waiting', 30, 40)",
+             ('cond-desired', 'surface-a', NULL, 'desired_item',
+              '{\"kind\":\"desired_skill\",\"selection_key\":{\"source_kind\":\"plugin\",\"namespace\":\"ora\",\"name\":\"demo\"}}',
+              'desired_collision', 4, 'collision', 11, 21),
+             ('cond-consumer', 'surface-b', 'opencode', 'consumer',
+              '{\"kind\":\"consumer\",\"consumer_id\":\"opencode\"}',
+              'waiting_for_idle', 5, 'waiting', 30, 40),
+             ('cond-managed', 'surface-b', 'opencode', 'managed_item',
+              '{\"kind\":\"managed_skill\",\"managed_identity\":\"managed-1\"}',
+              'ownership_conflict', 6, 'owned', 31, 41)",
             [],
         )
         .unwrap_or_else(|error| panic!("insert conditions: {error}"));
@@ -257,7 +269,7 @@ fn upgrades_old_schema_and_backfills_target_requests_deterministically() {
         .connection()
         .query_row(
             "SELECT requests.requested_generation, requests.not_before_at, requests.requested_at,
-                    status.desired_generation, status.ready_generation
+                    status.desired_generation, status.ready_generation, status.phase
              FROM effect_agent_targets targets
              JOIN effect_agent_target_reconcile_requests requests
                ON requests.agent_target_id = targets.id
@@ -272,11 +284,12 @@ fn upgrades_old_schema_and_backfills_target_requests_deterministically() {
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             },
         )
         .unwrap_or_else(|error| panic!("load opencode backfill: {error}"));
-    assert_eq!(opencode, (9, 200, 100, 7, 4));
+    assert_eq!(opencode, (9, 200, 100, 7, 4, "pending".to_string()));
 
     let condition_count: i64 = upgraded
         .connection()
@@ -287,8 +300,9 @@ fn upgrades_old_schema_and_backfills_target_requests_deterministically() {
             |row| row.get(0),
         )
         .unwrap();
-    // surface-scoped fans out to opencode on surface-a; consumer-scoped keeps opencode on surface-b.
-    assert_eq!(condition_count, 2);
+    // surface-scoped fans out to opencode on surface-a (surface + desired_item);
+    // consumer-scoped keeps opencode on surface-b (consumer + managed_item).
+    assert_eq!(condition_count, 4);
     drop(upgraded);
 
     let pool = RepositoryPool::new(&location)
@@ -299,13 +313,95 @@ fn upgrades_old_schema_and_backfills_target_requests_deterministically() {
         .load_agent_target_status(&identity)
         .unwrap_or_else(|error| panic!("load backfilled status: {error}"))
         .expect("opencode target status");
-    assert_eq!(status.conditions.len(), 2);
-    assert!(
-        status
-            .conditions
-            .iter()
-            .all(|condition| condition.impact == ConditionImpact::Blocking)
-    );
+    let mut actual = status;
+    actual
+        .conditions
+        .sort_by_key(|condition| format!("{:?}", condition.subject));
+    for condition in &mut actual.conditions {
+        condition.id.clear();
+    }
+    let surface_a = AgentTargetConditionAttachment {
+        surface_key: SurfaceKey::new("surface-a"),
+        consumer_id: Some(ConsumerId::new("opencode")),
+    };
+    let surface_b = AgentTargetConditionAttachment {
+        surface_key: SurfaceKey::new("surface-b"),
+        consumer_id: Some(ConsumerId::new("opencode")),
+    };
+    let mut expected = AgentTargetStatus {
+        agent_target_id: actual.agent_target_id.clone(),
+        identity: identity.clone(),
+        desired_generation: Generation::new(7),
+        observed_generation: Generation::new(6),
+        applied_generation: Generation::new(5),
+        ready_generation: Generation::new(4),
+        phase: AgentTargetPhase::Pending,
+        status_version: 1,
+        created_at: 10,
+        updated_at: 11,
+        conditions: vec![
+            AgentTargetCondition {
+                id: String::new(),
+                subject: AgentTargetConditionSubject::Consumer {
+                    consumer_id: ConsumerId::new("opencode"),
+                },
+                reason: AgentTargetConditionReason::WaitingForIdle,
+                impact: ConditionImpact::Blocking,
+                message: "waiting".to_string(),
+                first_observed_at: 30,
+                last_observed_at: 40,
+                failed_generation: Some(Generation::new(5)),
+                attachment: Some(surface_b.clone()),
+            },
+            AgentTargetCondition {
+                id: String::new(),
+                subject: AgentTargetConditionSubject::DesiredSkill {
+                    selection_key: SkillSelectionKey::new(
+                        SourceKind::Plugin,
+                        Namespace::new("ora").expect("namespace"),
+                        SkillName::parse("demo").expect("skill name"),
+                    ),
+                },
+                reason: AgentTargetConditionReason::DesiredCollision,
+                impact: ConditionImpact::Blocking,
+                message: "collision".to_string(),
+                first_observed_at: 11,
+                last_observed_at: 21,
+                failed_generation: Some(Generation::new(4)),
+                attachment: Some(surface_a.clone()),
+            },
+            AgentTargetCondition {
+                id: String::new(),
+                subject: AgentTargetConditionSubject::ManagedSkill {
+                    managed_identity: ManagedIdentity::new("managed-1"),
+                },
+                reason: AgentTargetConditionReason::OwnershipConflict,
+                impact: ConditionImpact::Blocking,
+                message: "owned".to_string(),
+                first_observed_at: 31,
+                last_observed_at: 41,
+                failed_generation: Some(Generation::new(6)),
+                attachment: Some(surface_b),
+            },
+            AgentTargetCondition {
+                id: String::new(),
+                subject: AgentTargetConditionSubject::Surface {
+                    surface_key: SurfaceKey::new("surface-a"),
+                },
+                reason: AgentTargetConditionReason::PathUnsafe,
+                impact: ConditionImpact::Blocking,
+                message: "unsafe path".to_string(),
+                first_observed_at: 10,
+                last_observed_at: 20,
+                failed_generation: Some(Generation::new(3)),
+                attachment: Some(surface_a),
+            },
+        ],
+    };
+    expected
+        .conditions
+        .sort_by_key(|condition| format!("{:?}", condition.subject));
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -391,11 +487,12 @@ fn typed_repository_round_trips_complete_agent_target_record() {
             &identity,
             &AgentCapabilityRevision::new("cap-1"),
             AgentTargetLifecycle::Active,
-            50,
+            /*updated_at*/ 50,
         )
         .unwrap_or_else(|error| panic!("upsert target: {error}"));
 
-    let mut status = initial_agent_target_status(target.id.clone(), identity.clone(), 50);
+    let mut status =
+        initial_agent_target_status(target.id.clone(), identity.clone(), /*now*/ 50);
     status.desired_generation = Generation::new(4);
     status.observed_generation = Generation::new(3);
     status.applied_generation = Generation::new(2);
@@ -405,15 +502,16 @@ fn typed_repository_round_trips_complete_agent_target_record() {
     status.updated_at = 60;
     status.conditions = vec![AgentTargetCondition {
         id: "condition-1".to_string(),
-        subject: AgentTargetConditionSubject::AgentTarget,
+        subject: AgentTargetConditionSubject::Mcp {
+            managed_identity: ManagedIdentity::new("mcp-1"),
+        },
         reason: AgentTargetConditionReason::UnsupportedByAgent,
         impact: ConditionImpact::NonBlocking,
         message: "stdio unsupported".to_string(),
         first_observed_at: 55,
         last_observed_at: 60,
         failed_generation: Some(Generation::new(4)),
-        surface_key: None,
-        consumer_id: None,
+        attachment: None,
     }];
     repository
         .save_agent_target_status(&status)
@@ -424,35 +522,44 @@ fn typed_repository_round_trips_complete_agent_target_record() {
             &identity,
             Generation::new(4),
             AgentTargetWakeReason::DesiredChanged,
-            80,
-            70,
+            /*not_before_at*/ 80,
+            /*updated_at*/ 70,
         )
         .unwrap_or_else(|error| panic!("upsert request: {error}"));
+    let expected_request = AgentTargetReconcileRequest {
+        agent_target_id: target.id.clone(),
+        identity: identity.clone(),
+        requested_generation: Generation::new(6),
+        request_token: request.request_token.clone(),
+        state: AgentTargetReconcileState::Pending,
+        wake_reason: AgentTargetWakeReason::CapabilityChanged,
+        attempt_count: 0,
+        requested_at: 65,
+        not_before_at: 65,
+        updated_at: 90,
+    };
     let coalesced = repository
         .upsert_agent_target_reconcile_request(
             &identity,
             Generation::new(6),
             AgentTargetWakeReason::CapabilityChanged,
-            65,
-            90,
+            /*not_before_at*/ 65,
+            /*updated_at*/ 90,
         )
         .unwrap_or_else(|error| panic!("coalesce request: {error}"));
-    assert_eq!(coalesced.requested_generation, Generation::new(6));
-    assert_eq!(coalesced.not_before_at, 65);
-    assert_eq!(coalesced.request_token, request.request_token);
+    assert_eq!(coalesced, expected_request);
 
     let loaded = repository
         .load_agent_target_record(&identity)
         .unwrap_or_else(|error| panic!("load record: {error}"))
         .expect("record present");
-    assert_eq!(loaded.target, target);
-    assert_eq!(loaded.status, status);
     assert_eq!(
-        loaded
-            .reconcile_request
-            .expect("request present")
-            .requested_generation,
-        Generation::new(6)
+        loaded,
+        AgentTargetRecord {
+            target,
+            status,
+            reconcile_request: Some(expected_request),
+        }
     );
 }
 
@@ -463,8 +570,16 @@ fn surface_keyed_skill_effect_apis_remain_available() {
     let effect = repository
         .load_workspace_effect(&workspace_id)
         .unwrap_or_else(|error| panic!("load workspace effect: {error}"));
-    assert_eq!(effect.workspace_id, workspace_id);
-    assert_eq!(effect.generation, Generation::default());
+    assert_eq!(
+        effect,
+        WorkspaceEffect {
+            workspace_id,
+            generation: Generation::default(),
+            spec: WorkspaceEffectSpec {
+                skills: BTreeMap::new(),
+            },
+        }
+    );
 
     let surface_table_exists: i64 = pool
         .with_connection(|connection| {

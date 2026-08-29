@@ -14,10 +14,11 @@ mod tests;
 
 pub use agent_target::{
     AgentCapabilityRevision, AgentPluginId, AgentTarget, AgentTargetCondition,
-    AgentTargetConditionReason, AgentTargetConditionSubject, AgentTargetId, AgentTargetIdentity,
-    AgentTargetLifecycle, AgentTargetPhase, AgentTargetReconcileRequest, AgentTargetReconcileState,
-    AgentTargetRecord, AgentTargetRepository, AgentTargetRepositoryError, AgentTargetStatus,
-    AgentTargetWakeReason, ConditionImpact, initial_agent_target_status,
+    AgentTargetConditionAttachment, AgentTargetConditionReason, AgentTargetConditionSubject,
+    AgentTargetId, AgentTargetIdentity, AgentTargetLifecycle, AgentTargetPhase,
+    AgentTargetReconcileRequest, AgentTargetReconcileState, AgentTargetRecord,
+    AgentTargetRepository, AgentTargetRepositoryError, AgentTargetStatus, AgentTargetWakeReason,
+    ConditionImpact, initial_agent_target_status,
 };
 pub use filesystem::{
     FilesystemEffectError, FilesystemSurfaceAdapter, MARKER_FILE_NAME, ManagedSkillMarker,
