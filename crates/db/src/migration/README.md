@@ -7,7 +7,7 @@ This module owns Ora's linear, reversible SQLite schema history and reconciles a
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains six dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, and durable plugin marketplace source configuration.
+- The default catalog contains seven dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, durable plugin marketplace source configuration, and Agent Target Effect Expand persistence.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
@@ -18,6 +18,12 @@ This module owns Ora's linear, reversible SQLite schema history and reconciles a
   Artifacts; and append-only Audit events.
 - Migration `0006` stores plugin marketplace source configuration in SQLite: the duplicate-free
   URL, tracked branch, per-source `use_proxy` policy, and stable precedence position.
+- Migration `0007` expands Agent Target Effect persistence beside the surface-keyed Skill model:
+  `effect_agent_targets` uniquely keyed by Workspace plus Agent Plugin; target status with
+  desired/observed/applied/ready generations and phase; target-keyed reconcile requests; and
+  target-owned conditions with Blocking/NonBlocking impact. Existing surface request rows are
+  deterministically backfilled into one target request using the maximum requested generation and
+  earliest due time. Production workers continue to claim only surface-keyed requests.
 - A reconcile request carries its own scheduling state: `pending`, `claimed`, `blocked`, or
   `retry_scheduled`, plus the lease that proves who currently owns the surface and the
   `request_token` that fences that owner's writes. Only one worker can hold a surface, an expired

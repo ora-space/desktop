@@ -9,7 +9,9 @@ This module implements `ora-application` persistence ports on SQLite and exposes
   between SQL rows and application values.
 - `SqliteEffectRepository` stores normalized Desired selections, source state, surface descriptors,
   ownership ledgers, status, and durable operations. Desired replacement uses generation CAS;
-  operation finalization changes its ledger and journal phase in one immediate transaction.
+  operation finalization changes its ledger and journal phase in one immediate transaction. It also
+  implements the Expand-phase `AgentTargetRepository` port for target-keyed status and requests
+  without activating target claim loops.
 - Normal reads exclude soft-deleted rows. Soft deletion records timestamps rather than removing individual domain records physically.
 - `RepositoryPool` serializes access to its connection and gives repository operations a consistent error boundary.
 

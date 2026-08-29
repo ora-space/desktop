@@ -1,5 +1,6 @@
 //! Workspace-scoped declarative Skill State and safe filesystem reconciliation.
 
+mod agent_target;
 mod filesystem;
 mod identity;
 mod planner;
@@ -11,6 +12,13 @@ mod surface;
 #[cfg(test)]
 mod tests;
 
+pub use agent_target::{
+    AgentCapabilityRevision, AgentPluginId, AgentTarget, AgentTargetCondition,
+    AgentTargetConditionReason, AgentTargetConditionSubject, AgentTargetId, AgentTargetIdentity,
+    AgentTargetLifecycle, AgentTargetPhase, AgentTargetReconcileRequest, AgentTargetReconcileState,
+    AgentTargetRecord, AgentTargetRepository, AgentTargetRepositoryError, AgentTargetStatus,
+    AgentTargetWakeReason, ConditionImpact, initial_agent_target_status,
+};
 pub use filesystem::{
     FilesystemEffectError, FilesystemSurfaceAdapter, MARKER_FILE_NAME, ManagedSkillMarker,
     OperationPaths, RecoveryDecision, ScanDiagnostic, SurfaceScan,

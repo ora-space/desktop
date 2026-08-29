@@ -84,6 +84,12 @@ impl MigrationCatalog {
         &self.target_versions
     }
 
+    /// Returns every migration definition owned by the catalog, including versions beyond the active target.
+    #[cfg(test)]
+    pub(crate) fn migrations(&self) -> &[Migration] {
+        &self.migrations
+    }
+
     /// Finds a migration definition by version so reconciliation can execute it.
     pub fn migration(&self, version: &str) -> Option<&Migration> {
         self.migrations_by_version

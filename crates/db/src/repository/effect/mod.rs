@@ -1,3 +1,4 @@
+mod agent_target;
 mod mapping;
 
 use crate::{DatabaseError, RepositoryPool};
