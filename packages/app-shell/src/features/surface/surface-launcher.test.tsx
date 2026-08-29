@@ -21,7 +21,7 @@ function traceDashboardPlugin(): InstalledPlugin {
   return {
     id: TRACE_DASHBOARD_PLUGIN_ID,
     namespace: "official",
-    name: "agent-trace-visualizer",
+    name: "ora-space.agent-trace-visualizer",
     displayName: "Agent Trace Visualizer",
     description: "Agent trace visualization dashboard",
     homepage: null,
