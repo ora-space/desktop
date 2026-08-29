@@ -17,6 +17,8 @@ pub enum PluginDiscoveryIssueKind {
     /// order is kept.
     DuplicatePluginId,
     UnusableLogo,
+    /// The package's `[dependencies].ora` does not match the injected Desktop product version.
+    HostVersionIncompatible,
 }
 
 impl PluginDiscoveryIssueKind {
@@ -34,6 +36,7 @@ impl PluginDiscoveryIssueKind {
             Self::InvalidManifest => "invalid_manifest",
             Self::DuplicatePluginId => "duplicate_plugin_id",
             Self::UnusableLogo => "unusable_logo",
+            Self::HostVersionIncompatible => "plugin_host_version_incompatible",
         }
     }
 }

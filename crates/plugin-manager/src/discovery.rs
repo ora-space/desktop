@@ -1,4 +1,5 @@
 use crate::MAX_MANIFEST_BYTES;
+use crate::host_version::{HostProductVersion, ensure_host_compatible};
 use crate::issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 use crate::logo;
 use crate::validation::{InstalledPlugin, validate};
@@ -33,8 +34,9 @@ pub fn installed_root(data_dir: &Path) -> PathBuf {
 /// The directory names are not part of a package's identity: the manifest alone names the plugin,
 /// and two packages claiming the same id are reported rather than silently merged. The version
 /// directory, however, must agree with the manifest so an installation can never advertise one
-/// version while running another.
-pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
+/// version while running another. Host compatibility is checked last so a structurally broken
+/// package still reports its parse or layout error instead of a host mismatch.
+pub(crate) fn discover(data_dir: &Path, host_version: &impl HostProductVersion) -> PluginDiscovery {
     let installed_root = installed_root(data_dir);
     let mut issues = Vec::new();
     let Some(package_roots) = sorted_package_directories(&installed_root, &mut issues) else {
@@ -57,7 +59,13 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
                 None
             }
         };
-        match read_and_validate_manifest(&package_root, &manifest_path, logo, &directory_version) {
+        match read_and_validate_manifest(
+            &package_root,
+            &manifest_path,
+            logo,
+            &directory_version,
+            host_version,
+        ) {
             Ok(plugin) => {
                 if let Some(first_root) = first_root_by_id.get(&plugin.id) {
                     issues.push(PluginDiscoveryIssue::new(
@@ -217,6 +225,7 @@ fn read_and_validate_manifest(
     manifest_path: &Path,
     logo: Option<String>,
     directory_version: &Version,
+    host_version: &impl HostProductVersion,
 ) -> Result<InstalledPlugin, PluginDiscoveryIssue> {
     let file_type = match fs::symlink_metadata(manifest_path) {
         Ok(metadata) => metadata.file_type(),
@@ -293,6 +302,16 @@ fn read_and_validate_manifest(
                 "package version {} does not match installation directory {directory_version}",
                 plugin.version
             ),
+        ));
+    }
+    // Host compatibility is the last activation gate: a package that would fail install for this
+    // Desktop version must not appear in the discovered snapshot either.
+    if let Err(incompatibility) = ensure_host_compatible(&manifest, host_version) {
+        return Err(PluginDiscoveryIssue::new(
+            manifest_path.to_path_buf(),
+            PluginDiscoveryIssueKind::HostVersionIncompatible,
+            Some("dependencies.ora".to_string()),
+            incompatibility.to_string(),
         ));
     }
 

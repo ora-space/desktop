@@ -47,7 +47,8 @@ use ora_domain::PluginId;
 use ora_logging::ora_warn;
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_manager::{
-    InstalledPlugin as DiscoveredPlugin, PluginConfigurationDeclarationValidity, PluginManager,
+    DesktopProductVersion, InstalledPlugin as DiscoveredPlugin,
+    PluginConfigurationDeclarationValidity, PluginManager,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -55,11 +56,14 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
-/// Configures the filesystem and executable inputs needed by plugin lifecycle orchestration.
+/// Configures the filesystem, executable, and host-version inputs needed by plugin lifecycle
+/// orchestration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginLifecycleConfig {
     pub data_directory: PathBuf,
     pub deno_path: PathBuf,
+    /// Running Desktop product version used to refuse incompatible packages at startup discovery.
+    pub host_product_version: DesktopProductVersion,
 }
 
 /// Reports a failure while constructing or operating plugin lifecycle state.
@@ -131,7 +135,7 @@ where
         publisher: StatusPublisher,
         sink: NotificationSink,
     ) -> Result<Self, PluginLifecycleError> {
-        let manager = PluginManager::discover(&config.data_directory);
+        let manager = PluginManager::discover(&config.data_directory, &config.host_product_version);
         // Discovery drops unusable packages silently, so startup is the only place an operator can
         // learn that an installed package never became a plugin.
         for issue in manager.discovery_issues() {

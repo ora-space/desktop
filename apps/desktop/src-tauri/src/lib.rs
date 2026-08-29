@@ -12,7 +12,7 @@ mod workspace_files;
 
 use crate::error::DesktopBootstrapError;
 use crate::state::{BundledBinaryPaths, DesktopRuntimeGuard, DesktopState};
-use ora_backend::{Backend, BackendError, BackendPaths};
+use ora_backend::{Backend, BackendError, BackendPaths, DesktopProductVersion};
 use ora_logging::{
     FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, RotationPolicy, init_logging, ora_error,
     ora_info, ora_warn, register_gitlancer_logger,
@@ -123,6 +123,7 @@ fn bootstrap_desktop(
         skills_root: app_data_directory.join("atoms").join("skills"),
         ripgrep_path: ripgrep_path.clone(),
         timezone: resolved_timezone.timezone,
+        host_product_version: desktop_product_version(),
     })?;
     legacy_config::migrate(&backend, &app_data_directory, &home_directory)?;
     let (configured_log_level, resolved_log_level) =
@@ -177,6 +178,20 @@ fn desktop_data_directory(app: &tauri::App) -> Result<std::path::PathBuf, Deskto
     app.path()
         .app_data_dir()
         .map_err(DesktopBootstrapError::AppDataDirectory)
+}
+
+/// Parses this crate's Cargo package version as the injected plugin Host version.
+///
+/// Workspace crates stay at `0.0.0`; only `ora-desktop` carries the product version plugins
+/// declare against. An invalid package version is a packaging bug, so bootstrap cannot recover.
+pub(crate) fn desktop_product_version() -> DesktopProductVersion {
+    let version = env!("CARGO_PKG_VERSION");
+    match DesktopProductVersion::parse(version) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            panic!("ora-desktop package version `{version}` is not valid SemVer: {error}")
+        }
+    }
 }
 
 /// Resolves relative local Workspace locations against a stable directory, not process cwd.
@@ -565,6 +580,7 @@ mod tests {
             skills_root: root.join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: super::desktop_product_version(),
         }
     }
 }

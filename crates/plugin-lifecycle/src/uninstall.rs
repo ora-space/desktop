@@ -306,11 +306,14 @@ mod tests {
             .join("example");
         fs::create_dir_all(&data_root).expect("create plugin data");
         fs::write(data_root.join("store.json"), "{}").expect("write plugin data");
-        let plugin = PluginManager::discover(temporary.path())
-            .installed_plugins()
-            .first()
-            .cloned()
-            .expect("discover plugin");
+        let plugin = PluginManager::discover(
+            temporary.path(),
+            &ora_plugin_manager::DesktopProductVersion::parse("0.1.0").expect("test host version"),
+        )
+        .installed_plugins()
+        .first()
+        .cloned()
+        .expect("discover plugin");
         let file_system = FailSecondRename {
             calls: Arc::new(AtomicUsize::new(0)),
         };

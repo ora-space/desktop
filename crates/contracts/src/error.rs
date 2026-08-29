@@ -90,6 +90,19 @@ pub struct PluginConfigurationValidationParams {
     pub field_errors: Vec<PluginConfigurationFieldError>,
 }
 
+/// Carries the bounded host-version mismatch for a rejected plugin package.
+///
+/// Only the running Desktop product version and the plugin's `[dependencies].ora` constraint are
+/// included. Package contents, absolute data paths, raw manifest JSON, and configuration values
+/// must not be added here.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PluginHostVersionIncompatibleParams {
+    pub actual_host_version: String,
+    pub required_version_constraint: String,
+}
+
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(tag = "code", content = "params", rename_all = "snake_case")]
@@ -115,6 +128,7 @@ pub enum PublicError {
     ConfigurationLoadFailed(EmptyErrorParams),
     PluginConfigurationValidation(PluginConfigurationValidationParams),
     PluginConfigurationRecoveryNotRequired(EmptyErrorParams),
+    PluginHostVersionIncompatible(PluginHostVersionIncompatibleParams),
     ProjectNotFound(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
@@ -228,6 +242,7 @@ impl PublicError {
             Self::PluginConfigurationRecoveryNotRequired(_) => {
                 "plugin_configuration_recovery_not_required"
             }
+            Self::PluginHostVersionIncompatible(_) => "plugin_host_version_incompatible",
             Self::ProjectNotFound(_) => "project_not_found",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
@@ -333,6 +348,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     TaskBaseBranchNotFoundParams::export_all(config)?;
     PluginConfigurationFieldError::export_all(config)?;
     PluginConfigurationValidationParams::export_all(config)?;
+    PluginHostVersionIncompatibleParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -342,8 +358,8 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 mod tests {
     use super::{
         ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget,
-        PluginConfigurationValidationParams, PublicError, RequestId, SkillFolderConflictParams,
-        TaskBaseBranchNotFoundParams,
+        PluginConfigurationValidationParams, PluginHostVersionIncompatibleParams, PublicError,
+        RequestId, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -362,6 +378,27 @@ mod tests {
                 "code": "project_not_found",
                 "params": {},
                 "requestId": "550e8400-e29b-41d4-a716-446655440000",
+            })
+        );
+    }
+
+    /// Verifies host incompatibility serializes only the bounded actual/required parameters.
+    #[test]
+    fn serializes_plugin_host_version_incompatible_with_bounded_params() {
+        let error =
+            PublicError::PluginHostVersionIncompatible(PluginHostVersionIncompatibleParams {
+                actual_host_version: "0.1.0".to_string(),
+                required_version_constraint: ">=2.0.0".to_string(),
+            });
+
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({
+                "code": "plugin_host_version_incompatible",
+                "params": {
+                    "actualHostVersion": "0.1.0",
+                    "requiredVersionConstraint": ">=2.0.0",
+                },
             })
         );
     }
@@ -396,6 +433,10 @@ mod tests {
                 field_errors: Vec::new(),
             }),
             PublicError::PluginConfigurationRecoveryNotRequired(empty),
+            PublicError::PluginHostVersionIncompatible(PluginHostVersionIncompatibleParams {
+                actual_host_version: "0.1.0".to_string(),
+                required_version_constraint: ">=2.0.0".to_string(),
+            }),
             PublicError::ProjectNotFound(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ResourceInUse(empty),
@@ -500,6 +541,7 @@ mod tests {
                 | PublicError::ConfigurationLoadFailed(_)
                 | PublicError::PluginConfigurationValidation(_)
                 | PublicError::PluginConfigurationRecoveryNotRequired(_)
+                | PublicError::PluginHostVersionIncompatible(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ResourceInUse(_)
@@ -591,7 +633,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 94);
+        assert_eq!(samples.len(), 95);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

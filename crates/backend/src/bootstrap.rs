@@ -24,6 +24,7 @@ use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::{ora_error, ora_warn};
+use ora_plugin_manager::DesktopProductVersion;
 use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,11 @@ pub struct BackendPaths {
     pub ripgrep_path: PathBuf,
     /// IANA timezone used by backend-owned cron and delayed work.
     pub timezone: chrono_tz::Tz,
+    /// Running Ora Desktop product version used for plugin `[dependencies].ora` checks.
+    ///
+    /// This must be the Desktop application version, not a workspace crate version such as
+    /// `0.0.0`. Desktop injects `ora-desktop`'s package version at process start.
+    pub host_product_version: DesktopProductVersion,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -164,6 +170,7 @@ impl Backend {
                 clock,
                 app_events.publisher(),
                 user_config.clone(),
+                paths.host_product_version,
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
@@ -1642,8 +1649,8 @@ mod tests {
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
         DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest,
-        UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
+        GetTaskRequest, ListAgentsRequest, ListInstalledPluginsRequest, ListProjectsRequest,
+        ListSkillsRequest, UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
     };
     use ora_logging::LogLevel;
     use ora_test_support::GitTestScaffold;
@@ -1667,6 +1674,7 @@ mod tests {
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 
@@ -1830,6 +1838,7 @@ mod tests {
             skills_root: temporary.path().join("atoms/skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 
@@ -1851,6 +1860,50 @@ mod tests {
             ora_contracts::SkillAvailability::Available
         );
     }
+
+    /// Verifies Backend startup discovery does not activate a package that the injected host cannot run.
+    #[test]
+    fn startup_discovery_skips_host_incompatible_plugins() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let package_root = temporary
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join("1.0.0");
+        fs::create_dir_all(&package_root).expect("create installed plugin tree");
+        fs::write(
+            package_root.join("orax.toml"),
+            "resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather\"\n[dependencies]\nora = \">=2.0.0\"\n",
+        )
+        .expect("write incompatible plugin manifest");
+        fs::write(package_root.join("main.js"), "export {};\n").expect("write entrypoint");
+
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
+        })
+        .expect("open shared backend");
+
+        assert_eq!(
+            backend
+                .list_installed_plugins(ListInstalledPluginsRequest {})
+                .expect("list installed plugins")
+                .plugins,
+            Vec::new()
+        );
+    }
+
     /// Verifies an update rewrites only the manifest and preserves other package files.
     #[test]
     fn update_preserves_other_package_files() {
@@ -1867,6 +1920,7 @@ mod tests {
             skills_root: skills_root.clone(),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 
@@ -1924,6 +1978,7 @@ mod tests {
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
         let project = backend
@@ -2004,6 +2059,7 @@ mod tests {
             skills_root: data_directory.join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 
@@ -2175,6 +2231,7 @@ mod tests {
             skills_root: data_directory.join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 
@@ -2273,6 +2330,7 @@ mod tests {
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend");
 

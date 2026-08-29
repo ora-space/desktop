@@ -12,6 +12,7 @@ use ora_contracts::{
 };
 use ora_domain::PluginId;
 use ora_logging::with_trace_logging;
+use ora_plugin_manager::DesktopProductVersion;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::future::{Future, pending};
@@ -21,6 +22,11 @@ use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
+
+/// Injected Desktop product version for lifecycle tests that do not exercise host incompatibility.
+pub(super) fn test_host_product_version() -> DesktopProductVersion {
+    DesktopProductVersion::parse("0.1.0").expect("test host version")
+}
 
 /// Installs a test-thread TRACE subscriber for the full lifetime of an async test future.
 pub(super) fn trace_logging_guard() -> tracing::subscriber::DefaultGuard {
@@ -36,6 +42,7 @@ fn open_without_runtime(
         PluginLifecycleConfig {
             data_directory: data_directory.to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         UnusedRuntimeLauncher,
         NoopStatusPublisher,
@@ -109,6 +116,23 @@ fn opens_with_discovered_plugins_stopped() {
     });
 }
 
+/// Verifies startup discovery does not activate a package that the injected host version cannot run.
+#[test]
+fn startup_discovery_refuses_incompatible_host_before_activation() {
+    with_trace_logging(|| {
+        let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+        write_plugin_package_requiring(temp_dir.path(), "ora.example", ">=2.0.0");
+        let lifecycle = open_without_runtime(temp_dir.path());
+
+        assert_eq!(
+            lifecycle.list_installed_plugins(),
+            ListInstalledPluginsResponse {
+                plugins: Vec::new(),
+            },
+        );
+    });
+}
+
 /// Verifies a static Skill plugin can be listed and managed but never activated.
 #[tokio::test]
 async fn manages_static_skill_plugin_without_a_runtime() {
@@ -162,6 +186,7 @@ async fn activates_plugin_and_starts_its_runtime() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         ImmediateRuntimeLauncher { runtime },
         publisher,
@@ -291,6 +316,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         ImmediateRuntimeLauncher { runtime },
         NoopStatusPublisher,
@@ -368,6 +394,7 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         launcher,
         publisher,
@@ -451,6 +478,7 @@ async fn stops_running_plugin() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         launcher,
         publisher,
@@ -518,6 +546,7 @@ async fn queues_stop_behind_an_in_flight_launch() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         launcher,
         publisher,
@@ -577,6 +606,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         launcher,
         publisher,
@@ -652,6 +682,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         ImmediateRuntimeLauncher { runtime },
         publisher,
@@ -722,6 +753,7 @@ async fn records_runtime_failure() {
         PluginLifecycleConfig {
             data_directory: temp_dir.path().to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         FailureRuntimeLauncher { runtime },
         publisher,
@@ -1174,4 +1206,26 @@ description = "Example plugin"
         ),
     )
     .expect("write plugin manifest");
+}
+
+/// Writes one agent package that declares an Ora host requirement.
+fn write_plugin_package_requiring(data_dir: &std::path::Path, name: &str, requirement: &str) {
+    write_plugin_package(data_dir, name);
+    let package_root = package_version_root(data_dir, name);
+    fs::write(
+        package_root.join("orax.toml"),
+        format!(
+            r#"resolver = 1
+identifier = "{name}"
+namespace = "official"
+kind = "agent"
+version = "1.0.0"
+description = "Example plugin"
+
+[dependencies]
+ora = "{requirement}"
+"#
+        ),
+    )
+    .expect("write plugin manifest with host requirement");
 }

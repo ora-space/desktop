@@ -1,11 +1,12 @@
 use super::{
-    InstalledPlugin, InstalledPluginAgent, MAX_MANIFEST_BYTES, PluginContribution,
-    PluginDiscoveryIssueKind, PluginManager,
+    DesktopProductVersion, HostVersionIncompatibility, InstalledPlugin, InstalledPluginAgent,
+    MAX_MANIFEST_BYTES, PluginContribution, PluginDiscoveryIssue, PluginDiscoveryIssueKind,
+    PluginManager,
 };
 use ora_domain::PluginId;
 use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
-use semver::Version;
+use semver::{Version, VersionReq};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -15,13 +16,23 @@ use toml::Value;
 const NAMESPACE: &str = "official";
 const NAME: &str = "ora.claude-code";
 
+/// Injected Desktop product version that satisfies the fixture `[dependencies].ora`.
+pub(crate) fn test_host_version() -> DesktopProductVersion {
+    DesktopProductVersion::parse("0.1.0").expect("test host version")
+}
+
+/// Discovers packages with the default injected test host version.
+pub(crate) fn discover(data_dir: impl AsRef<Path>) -> PluginManager {
+    PluginManager::discover(data_dir, &test_host_version())
+}
+
 /// Verifies the complete manifest is retained behind the public interface.
 #[test]
 fn discovers_complete_manifest() {
     let temp_dir = TempDir::new().unwrap();
     let package_root = write_manifest(temp_dir.path(), NAME, agent_manifest());
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(
@@ -63,7 +74,7 @@ fn discovers_skill_plugin_with_required_skill_assets() {
         .unwrap();
     }
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(manager.installed_plugins().len(), 1);
@@ -98,7 +109,7 @@ fn rejects_skill_plugins_without_complete_skill_assets() {
             fs::create_dir_all(package_root.join("assets/review")).unwrap();
         }
 
-        let manager = PluginManager::discover(temp_dir.path());
+        let manager = discover(temp_dir.path());
         managers.push((temp_dir, manager));
     }
 
@@ -112,7 +123,7 @@ fn rejects_skill_plugins_without_complete_skill_assets() {
 fn missing_installed_root_is_empty() {
     let temp_dir = TempDir::new().unwrap();
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(manager.discovery_issues(), &[]);
@@ -136,7 +147,7 @@ fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
     alpha["version"] = Value::from("2.0.0");
     write_manifest(temp_dir.path(), "z-directory", alpha);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(
@@ -177,7 +188,7 @@ fn reports_duplicate_plugin_ids() {
     let first = write_manifest(temp_dir.path(), "a-copy", agent_manifest());
     write_manifest(temp_dir.path(), "b-copy", agent_manifest());
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(
         manager
@@ -214,7 +225,7 @@ fn isolates_malformed_and_unsupported_packages() {
     workbench["kind"] = Value::from("workbench");
     write_manifest(temp_dir.path(), "ora.workbench", workbench);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(
         manager
@@ -293,7 +304,7 @@ fn reports_structural_errors_with_field_paths() {
         replace_path(&mut manifest, &path, replacement);
         write_manifest(temp_dir.path(), NAME, manifest);
 
-        let manager = PluginManager::discover(temp_dir.path());
+        let manager = discover(temp_dir.path());
 
         assert_eq!(
             (
@@ -313,7 +324,7 @@ fn rejects_non_utf8_manifest() {
     let temp_dir = TempDir::new().unwrap();
     write_raw_manifest(temp_dir.path(), NAME, &[0xff, 0xfe, 0xfd]);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -332,7 +343,7 @@ fn rejects_oversized_manifest() {
         &vec![b' '; (MAX_MANIFEST_BYTES + 1) as usize],
     );
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -350,7 +361,7 @@ fn rejects_invalid_package_versions() {
         manifest["version"] = Value::from(version);
         write_manifest(temp_dir.path(), NAME, manifest);
 
-        let manager = PluginManager::discover(temp_dir.path());
+        let manager = discover(temp_dir.path());
 
         assert_eq!(manager.installed_plugins(), &[], "{version}");
         assert_eq!(
@@ -389,7 +400,7 @@ fn rejects_invalid_names_and_namespaces() {
         manifest[field] = Value::from(value);
         write_manifest(temp_dir.path(), NAME, manifest);
 
-        let manager = PluginManager::discover(temp_dir.path());
+        let manager = discover(temp_dir.path());
 
         assert_eq!(manager.installed_plugins(), &[], "{field}={value}");
         assert_eq!(
@@ -411,14 +422,14 @@ fn rejects_missing_and_directory_entrypoints() {
     let package_root = write_manifest(missing_root.path(), NAME, agent_manifest());
     fs::remove_file(package_root.join("main.js")).unwrap();
 
-    let missing = PluginManager::discover(missing_root.path());
+    let missing = discover(missing_root.path());
 
     let directory_root = TempDir::new().unwrap();
     let package_root = write_manifest(directory_root.path(), NAME, agent_manifest());
     fs::remove_file(package_root.join("main.js")).unwrap();
     fs::create_dir(package_root.join("main.js")).unwrap();
 
-    let directory = PluginManager::discover(directory_root.path());
+    let directory = discover(directory_root.path());
 
     assert_eq!(
         (
@@ -445,7 +456,7 @@ fn rejects_entrypoint_symlink_escape() {
         return;
     }
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(manager.discovery_issues()[0].field_path(), Some("main"));
@@ -475,7 +486,7 @@ fn ignores_symlinked_package_directories() {
         return;
     }
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(manager.discovery_issues(), &[]);
@@ -500,7 +511,7 @@ allowed_origins = ["https://example.com"]
     );
     write_manifest(temp_dir.path(), NAME, manifest);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(manager.discovery_issues()[0].field_path(), Some("webview"));
@@ -520,7 +531,7 @@ fn ignores_legacy_install_layout() {
     )
     .unwrap();
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(manager.discovery_issues(), &[]);
@@ -539,7 +550,7 @@ fn selects_highest_installed_version() {
     new["description"] = Value::from("New");
     let expected_root = write_manifest(temp_dir.path(), NAME, new);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(
@@ -568,7 +579,7 @@ fn does_not_fall_back_when_highest_version_is_broken() {
     write_manifest(temp_dir.path(), NAME, old);
     write_raw_manifest_version(temp_dir.path(), NAMESPACE, NAME, "1.1.0", b"{ invalid");
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -593,7 +604,7 @@ fn reports_non_semver_version_directories() {
         toml::to_string(&agent_manifest()).unwrap().as_bytes(),
     );
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -618,7 +629,7 @@ fn rejects_manifest_version_that_differs_from_directory() {
         toml::to_string(&agent_manifest()).unwrap().as_bytes(),
     );
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -638,7 +649,7 @@ fn reports_invalid_filesystem_shapes_and_ignores_stray_files() {
     let root_file = TempDir::new().unwrap();
     fs::create_dir_all(root_file.path().join("plugins")).unwrap();
     fs::write(root_file.path().join("plugins").join("installed"), "file").unwrap();
-    let root_manager = PluginManager::discover(root_file.path());
+    let root_manager = discover(root_file.path());
     assert_eq!(
         root_manager.discovery_issues()[0].kind(),
         PluginDiscoveryIssueKind::RootUnreadable
@@ -653,7 +664,7 @@ fn reports_invalid_filesystem_shapes_and_ignores_stray_files() {
     fs::write(namespace.parent().unwrap().join("ignored.txt"), "ignored").unwrap();
     fs::write(namespace.join("ignored.txt"), "ignored").unwrap();
     fs::write(missing.join("notes.md"), "ignored").unwrap();
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
     assert_eq!(
         manager
             .discovery_issues()
@@ -758,7 +769,7 @@ fn discovers_package_logo() {
     let package_root = write_manifest(temp_dir.path(), NAME, agent_manifest());
     fs::write(package_root.join("logo.svg"), logo).unwrap();
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(manager.installed_plugins()[0].logo, Some(logo.to_string()));
@@ -770,7 +781,7 @@ fn discovers_package_without_a_logo() {
     let temp_dir = TempDir::new().unwrap();
     write_manifest(temp_dir.path(), NAME, agent_manifest());
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(manager.installed_plugins()[0].logo, None);
@@ -784,7 +795,7 @@ fn reports_an_unsafe_logo_without_hiding_the_plugin() {
     let logo_path = package_root.join("logo.svg");
     fs::write(&logo_path, "<svg><script>evil()</script></svg>").unwrap();
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues().len(), 1);
     let issue = &manager.discovery_issues()[0];
@@ -792,6 +803,112 @@ fn reports_an_unsafe_logo_without_hiding_the_plugin() {
     assert_eq!(issue.kind(), PluginDiscoveryIssueKind::UnusableLogo);
     assert_eq!(manager.installed_plugins().len(), 1);
     assert_eq!(manager.installed_plugins()[0].logo, None);
+}
+
+/// Verifies startup discovery refuses a package whose `[dependencies].ora` does not match the
+/// injected Desktop product version, so it cannot be activated.
+#[test]
+fn discovery_rejects_incompatible_host_before_activation() {
+    let temp_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(temp_dir.path(), NAME, agent_manifest());
+    let host = DesktopProductVersion::parse("2.0.0").expect("incompatible host version");
+    let incompatibility = HostVersionIncompatibility::new(
+        Version::parse("2.0.0").expect("actual host"),
+        VersionReq::parse(">=0.1.0, <0.2.0").expect("fixture constraint"),
+    );
+
+    let manager = PluginManager::discover(temp_dir.path(), &host);
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager.discovery_issues(),
+        &[PluginDiscoveryIssue::new(
+            package_root.join("orax.toml"),
+            PluginDiscoveryIssueKind::HostVersionIncompatible,
+            Some("dependencies.ora".to_string()),
+            incompatibility.to_string(),
+        )]
+    );
+    assert_eq!(
+        manager.discovery_issues()[0].kind().as_str(),
+        "plugin_host_version_incompatible"
+    );
+}
+
+/// Verifies exact and newer-than-minimum injected host versions use the same matching rules.
+#[test]
+fn discovery_accepts_exact_and_newer_injected_host_versions() {
+    let exact = TempDir::new().unwrap();
+    write_manifest(exact.path(), NAME, agent_manifest_requiring("=0.1.0"));
+    let exact_manager = PluginManager::discover(exact.path(), &test_host_version());
+    assert_eq!(exact_manager.discovery_issues(), &[]);
+    assert_eq!(exact_manager.installed_plugins().len(), 1);
+
+    let newer = TempDir::new().unwrap();
+    write_manifest(newer.path(), NAME, agent_manifest_requiring(">=0.1.0"));
+    let newer_host = DesktopProductVersion::parse("0.1.5").expect("newer host version");
+    let newer_manager = PluginManager::discover(newer.path(), &newer_host);
+    assert_eq!(newer_manager.discovery_issues(), &[]);
+    assert_eq!(newer_manager.installed_plugins().len(), 1);
+}
+
+/// Verifies a compound range is evaluated with the injected host, not crate metadata.
+#[test]
+fn discovery_applies_compound_range_against_injected_host() {
+    let temp_dir = TempDir::new().unwrap();
+    write_manifest(
+        temp_dir.path(),
+        NAME,
+        agent_manifest_requiring("^0.1, <0.2"),
+    );
+    let compatible = PluginManager::discover(temp_dir.path(), &test_host_version());
+    assert_eq!(compatible.discovery_issues(), &[]);
+    assert_eq!(compatible.installed_plugins().len(), 1);
+
+    let incompatible_host = DesktopProductVersion::parse("0.2.0").expect("host above range");
+    let incompatible = PluginManager::discover(temp_dir.path(), &incompatible_host);
+    assert_eq!(incompatible.installed_plugins(), &[]);
+    assert_eq!(
+        incompatible.discovery_issues()[0].kind(),
+        PluginDiscoveryIssueKind::HostVersionIncompatible
+    );
+}
+
+/// Verifies a malformed `[dependencies].ora` stays an invalid-manifest issue.
+#[test]
+fn discovery_reports_malformed_ora_requirement_as_invalid_manifest() {
+    let temp_dir = TempDir::new().unwrap();
+    write_manifest(
+        temp_dir.path(),
+        NAME,
+        agent_manifest_requiring("not-a-version"),
+    );
+
+    let manager = discover(temp_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager
+            .discovery_issues()
+            .iter()
+            .map(|issue| (issue.kind(), issue.field_path()))
+            .collect::<Vec<_>>(),
+        vec![(
+            PluginDiscoveryIssueKind::InvalidManifest,
+            Some("dependencies.ora")
+        )]
+    );
+}
+
+/// Builds the agent fixture with a replacement `[dependencies].ora` constraint.
+fn agent_manifest_requiring(requirement: &str) -> Value {
+    let mut manifest = agent_manifest();
+    replace_path(
+        &mut manifest,
+        &["dependencies", "ora"],
+        Value::from(requirement),
+    );
+    manifest
 }
 
 /// Replaces a nested TOML field, including array indices represented as decimal strings.

@@ -6,7 +6,7 @@ Prompt-box `open_external_url` rejects disallowed schemes as `InvalidRequest` an
 
 File-manager handoff lives in `src/open_location.rs`. Explorer reveals files in the **system** file manager (`explorer /select,` on Windows, `open -R` on macOS) instead of opening them with the default editor. Directories still open as folder windows.
 
-The crate does not own domain persistence or agent execution semantics; those remain in the shared backend and contract crates. Desktop commands translate between Tauri IPC and those stable boundaries.
+The crate does not own domain persistence or agent execution semantics; those remain in the shared backend and contract crates. Desktop commands translate between Tauri IPC and those stable boundaries. At process start it injects `ora-desktop`'s package version as the plugin host version so marketplace install, local import, update preparation, and startup discovery all evaluate `[dependencies].ora` against the real Desktop product rather than a workspace crate version.
 
 ## Command ACL
 

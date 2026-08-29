@@ -1,7 +1,7 @@
 //! Discovery tests for the host-side policy of the `workbench`, `webview`, and `mcp` kinds.
 
-use super::tests::{agent_manifest, replace_path, write_manifest};
-use super::{PluginContribution, PluginManager};
+use super::PluginContribution;
+use super::tests::{agent_manifest, discover, replace_path, write_manifest};
 use ora_plugin_config::{McpHttpTransport, McpTransport, McpValueExpression};
 use ora_plugin_manifest::MethodName;
 use pretty_assertions::assert_eq;
@@ -71,7 +71,7 @@ fn discovers_workbench_package_with_and_without_methods() {
     });
     write_page(&static_root);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     let contributions: Vec<_> = manager
@@ -115,8 +115,8 @@ fn rejects_workbench_package_missing_entrypoint_or_page() {
     write_page(&package_root);
     fs::remove_file(package_root.join("main.js")).unwrap();
 
-    let page_issues = PluginManager::discover(without_page.path());
-    let main_issues = PluginManager::discover(without_main.path());
+    let page_issues = discover(without_page.path());
+    let main_issues = discover(without_main.path());
 
     assert_eq!(
         (
@@ -142,8 +142,8 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
     let runnable = TempDir::new().unwrap();
     write_manifest(runnable.path(), NAME, webview_manifest(section));
 
-    let clean_manager = PluginManager::discover(clean.path());
-    let runnable_manager = PluginManager::discover(runnable.path());
+    let clean_manager = discover(clean.path());
+    let runnable_manager = discover(runnable.path());
 
     let origins = match &clean_manager.installed_plugins()[0].contributes {
         PluginContribution::Webview(descriptor) => descriptor
@@ -222,7 +222,7 @@ fn discovers_mcp_package_with_http_transport() {
     let package_root = write_manifest(temp_dir.path(), NAME, mcp_manifest());
     write_mcp_package(&package_root, HTTP_MCP_CONFIG);
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.discovery_issues(), &[]);
     let plugin = &manager.installed_plugins()[0];
@@ -289,7 +289,7 @@ fn rejects_mcp_package_entrypoint_and_config_shape_violations() {
         (&without_config, "assets/config.json"),
         (&settings_only, "assets/config.json"),
     ] {
-        let manager = PluginManager::discover(data_dir.path());
+        let manager = discover(data_dir.path());
         assert_eq!(manager.installed_plugins(), &[], "{expected_field}");
         assert_eq!(
             manager.discovery_issues()[0].field_path(),
@@ -319,7 +319,7 @@ fn rejects_transport_bearing_configuration_on_other_kinds() {
     )
     .unwrap();
 
-    let manager = PluginManager::discover(temp_dir.path());
+    let manager = discover(temp_dir.path());
 
     assert_eq!(manager.installed_plugins(), &[]);
     assert_eq!(
@@ -352,8 +352,8 @@ fn validates_stdio_command_containment_on_disk() {
     let package_root = write_manifest(missing.path(), NAME, mcp_manifest());
     write_mcp_package(&package_root, stdio_config);
 
-    let present_manager = PluginManager::discover(present.path());
-    let missing_manager = PluginManager::discover(missing.path());
+    let present_manager = discover(present.path());
+    let missing_manager = discover(missing.path());
 
     assert_eq!(present_manager.discovery_issues(), &[]);
     assert_eq!(present_manager.installed_plugins().len(), 1);
@@ -412,7 +412,7 @@ action = { auto = "import_skill" }
         let package_root = write_manifest(temp_dir.path(), NAME, webview_manifest(section));
         fs::remove_file(package_root.join("main.js")).unwrap();
 
-        let manager = PluginManager::discover(temp_dir.path());
+        let manager = discover(temp_dir.path());
 
         assert_eq!(manager.installed_plugins(), &[], "{section}");
         assert_eq!(

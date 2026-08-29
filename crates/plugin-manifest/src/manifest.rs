@@ -1,8 +1,9 @@
 use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
 use crate::{
-    HomepageUrl, InvalidFieldReason, ManifestError, ManifestField, PluginKind, PluginName,
-    PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl, Sha256Digest,
+    HomepageUrl, InvalidFieldReason, ManifestError, ManifestField, OraHostDependencyMatch,
+    PluginKind, PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl,
+    RepositoryUrl, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use semver::{Version, VersionReq};
@@ -219,6 +220,14 @@ impl PluginManifest {
     /// Returns the optional declared host dependency.
     pub fn dependencies(&self) -> Option<&PluginDependencies> {
         self.dependencies.as_ref()
+    }
+
+    /// Evaluates `[dependencies].ora` against the running Desktop product version.
+    ///
+    /// Every plugin entry point must call this with the same injected product version so a package
+    /// cannot pass marketplace install and later fail startup discovery, or the reverse.
+    pub fn ora_host_compatibility(&self, host_version: &Version) -> OraHostDependencyMatch {
+        crate::evaluate_ora_host_dependency(self.dependencies.as_ref(), host_version)
     }
 
     /// Returns the `[workbench]` section; only a workbench-kind manifest may carry one.

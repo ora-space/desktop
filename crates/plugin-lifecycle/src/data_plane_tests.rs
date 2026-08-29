@@ -2,7 +2,8 @@
 //! surface-closer ordering around stop and uninstall.
 
 use crate::tests::{
-    NoopNotificationSink, RecordingStatusPublisher, trace_logging_guard, write_plugin_package,
+    NoopNotificationSink, RecordingStatusPublisher, test_host_product_version, trace_logging_guard,
+    write_plugin_package,
 };
 use crate::{
     ConnectionError, InboundNotification, LaunchedRuntime, PluginCallError, PluginGenerationKey,
@@ -187,6 +188,7 @@ fn open_lifecycle<Sink: PluginNotificationSink>(
         PluginLifecycleConfig {
             data_directory: temp_dir.to_path_buf(),
             deno_path: PathBuf::from("deno"),
+            host_product_version: test_host_product_version(),
         },
         launcher,
         publisher,

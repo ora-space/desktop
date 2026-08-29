@@ -30,6 +30,8 @@ export const translationResources = {
     "errors.plugin_configuration_validation": "一个或多个配置值无效。",
     "errors.plugin_configuration_recovery_not_required":
       "当前配置数据无需恢复。",
+    "errors.plugin_host_version_incompatible":
+      "该插件需要 Ora Desktop {{requiredVersionConstraint}}，当前版本为 {{actualHostVersion}}。",
     "errors.workflow_name_conflict": "已存在同名工作流。",
     "errors.project_not_found": "未找到该项目。",
     "errors.task_not_found": "未找到该任务。",
@@ -1464,6 +1466,8 @@ export const translationResources = {
       "One or more configuration values are invalid.",
     "errors.plugin_configuration_recovery_not_required":
       "Configuration recovery is not required.",
+    "errors.plugin_host_version_incompatible":
+      "This plugin requires Ora Desktop {{requiredVersionConstraint}}, but this app is {{actualHostVersion}}.",
     "errors.workflow_name_conflict":
       "A workflow with this name already exists.",
     "errors.project_not_found": "The project was not found.",

@@ -268,6 +268,7 @@ mod tests {
             skills_root: app_data.join("atoms").join("skills"),
             ripgrep_path: PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::desktop_product_version(),
         }
     }
 }

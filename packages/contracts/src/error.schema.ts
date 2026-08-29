@@ -5,6 +5,11 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const pluginHostVersionIncompatibleParamsSchema = z.object({
+    actualHostVersion: z.string(),
+    requiredVersionConstraint: z.string()
+});
+
 export const taskBaseBranchNotFoundParamsSchema = z.object({
     branchName: z.string()
 });
@@ -90,6 +95,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("plugin_configuration_recovery_not_required"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_host_version_incompatible"),
+        "params": pluginHostVersionIncompatibleParamsSchema
     }), z.object({
         "code": z.literal("project_not_found"),
         "params": emptyErrorParamsSchema
@@ -395,6 +403,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("plugin_configuration_recovery_not_required"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_host_version_incompatible"),
+        "params": pluginHostVersionIncompatibleParamsSchema
     }), z.object({
         "code": z.literal("project_not_found"),
         "params": emptyErrorParamsSchema

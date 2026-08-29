@@ -2,6 +2,7 @@
 //! checksum-verified installs of new plugin releases.
 
 mod discovery;
+mod host_version;
 mod install;
 mod issue;
 mod logo;
@@ -17,6 +18,7 @@ mod kind_tests;
 mod tests;
 
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
+pub use host_version::{DesktopProductVersion, HostProductVersion, HostVersionIncompatibility};
 pub use install::{InstallError, InstalledPackage, Installer, UpdateError};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
@@ -46,11 +48,15 @@ pub struct PluginManager {
 
 impl PluginManager {
     /// Discovers the selected plugin versions below `<data_dir>/plugins/installed`.
-    pub fn discover(data_dir: impl AsRef<Path>) -> Self {
+    ///
+    /// `host_version` is the running Desktop product version. Packages whose `[dependencies].ora`
+    /// does not match it are reported as discovery issues and never become installed plugins, so
+    /// startup cannot activate a package that install would have refused.
+    pub fn discover(data_dir: impl AsRef<Path>, host_version: &impl HostProductVersion) -> Self {
         let discovery::PluginDiscovery {
             installed_plugins,
             discovery_issues,
-        } = discovery::discover(data_dir.as_ref());
+        } = discovery::discover(data_dir.as_ref(), host_version);
 
         Self {
             installed_plugins,

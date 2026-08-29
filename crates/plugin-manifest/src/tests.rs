@@ -1,9 +1,9 @@
 use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
-    InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
-    PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
-    PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
-    RuleField, Sha256Digest, StartUrl,
+    InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError,
+    OraHostDependencyMatch, Origin, PageMatcher, PathPrefix, PluginDependencies, PluginHead,
+    PluginKind, PluginManifest, PluginName, PluginNamespace, PluginWebview, PluginWorkbench,
+    ReleaseUrl, RepositoryUrl, RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -343,6 +343,38 @@ sha256 = "18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558"
     assert!(manifest.release().is_some());
 }
 
+/// Verifies the marketplace release schema stays at resolver version 1.
+#[test]
+fn marketplace_resolver_schema_remains_version_1() {
+    success(
+        PluginManifest::parse(MINIMAL_MANIFEST),
+        "resolver 1 manifest",
+    );
+    assert!(matches!(
+        PluginManifest::parse(&MINIMAL_MANIFEST.replacen("resolver = 1", "resolver = 2", 1)),
+        Err(ManifestError::UnsupportedResolver { found: 2 })
+    ));
+}
+
+/// Verifies this ticket does not add currently unsupported release-manifest host fields.
+#[test]
+fn rejects_unsupported_release_manifest_host_fields() {
+    for field in [
+        "pluginApi = 1",
+        "contractVersion = 1",
+        "[engines]\nora = \">=0.1.0\"",
+    ] {
+        let source = format!("{MINIMAL_MANIFEST}{field}\n");
+        assert!(
+            matches!(
+                PluginManifest::parse(&source),
+                Err(ManifestError::InvalidToml { .. })
+            ),
+            "{field} must remain unsupported on resolver version 1"
+        );
+    }
+}
+
 /// Verifies unsupported resolver versions take priority over semantic field validation.
 #[test]
 fn rejects_unsupported_resolver_before_fields() {
@@ -645,6 +677,99 @@ fn parses_only_the_ora_dependency() {
         PluginManifest::parse(&unknown),
         Err(ManifestError::InvalidToml { .. })
     ));
+}
+
+/// Verifies a malformed `[dependencies].ora` stays a field-validation error, not incompatibility.
+#[test]
+fn rejects_malformed_ora_requirement_as_invalid_manifest_field() {
+    let source = format!("{MINIMAL_MANIFEST}\n[dependencies]\nora = \"not-a-version\"\n");
+
+    assert!(matches!(
+        PluginManifest::parse(&source),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::DependenciesOra,
+            reason: InvalidFieldReason::InvalidVersionRequirement(_),
+        })
+    ));
+}
+
+/// Parses a manifest whose only varying field is the Ora host requirement.
+fn manifest_requiring(requirement: &str) -> PluginManifest {
+    let source = format!("{MINIMAL_MANIFEST}\n[dependencies]\nora = \"{requirement}\"\n");
+    success(
+        PluginManifest::parse(&source),
+        "manifest with Ora host requirement",
+    )
+}
+
+/// Compares a requirement against an injected host version without touching process environment.
+fn host_match(requirement: &str, host_version: &str) -> OraHostDependencyMatch {
+    manifest_requiring(requirement)
+        .ora_host_compatibility(&success(Version::parse(host_version), "host version"))
+}
+
+/// Verifies an omitted `[dependencies].ora` remains compatible with any injected host version.
+#[test]
+fn omitted_ora_requirement_is_satisfied() {
+    let host = success(Version::parse("0.1.0"), "host version");
+    assert_eq!(
+        success(PluginManifest::parse(MINIMAL_MANIFEST), "minimal manifest")
+            .ora_host_compatibility(&host),
+        OraHostDependencyMatch::Satisfied
+    );
+}
+
+/// Verifies an exact `=` constraint matches only that Desktop product version.
+#[test]
+fn exact_host_version_satisfies_equals_constraint() {
+    assert_eq!(
+        host_match("=1.2.0", "1.2.0"),
+        OraHostDependencyMatch::Satisfied
+    );
+}
+
+/// Verifies a host newer than the declared minimum still satisfies a lower-bound constraint.
+#[test]
+fn host_newer_than_minimum_satisfies_constraint() {
+    assert_eq!(
+        host_match(">=1.0.0", "1.2.0"),
+        OraHostDependencyMatch::Satisfied
+    );
+}
+
+/// Verifies a host older than the declared minimum is reported as unsatisfied, not a parse error.
+#[test]
+fn host_older_than_minimum_is_unsatisfied() {
+    assert_eq!(
+        host_match(">=2.0.0", "1.0.0"),
+        OraHostDependencyMatch::Unsatisfied {
+            actual: success(Version::parse("1.0.0"), "actual host"),
+            required: success(VersionReq::parse(">=2.0.0"), "required constraint"),
+        }
+    );
+}
+
+/// Verifies compound SemVer ranges keep the grammar already accepted by manifest parse.
+#[test]
+fn compound_range_matches_existing_manifest_semantics() {
+    assert_eq!(
+        host_match("^1.2, <2", "1.5.0"),
+        OraHostDependencyMatch::Satisfied
+    );
+    assert_eq!(
+        host_match("^1.2, <2", "1.1.0"),
+        OraHostDependencyMatch::Unsatisfied {
+            actual: success(Version::parse("1.1.0"), "actual host below range"),
+            required: success(VersionReq::parse("^1.2, <2"), "compound constraint"),
+        }
+    );
+    assert_eq!(
+        host_match("^1.2, <2", "2.0.0"),
+        OraHostDependencyMatch::Unsatisfied {
+            actual: success(Version::parse("2.0.0"), "actual host above range"),
+            required: success(VersionReq::parse("^1.2, <2"), "compound constraint"),
+        }
+    );
 }
 
 /// Verifies field paths have stable dotted representations for programmatic diagnostics.

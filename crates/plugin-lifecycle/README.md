@@ -26,7 +26,9 @@ persisted completeness without a separate editor fetch. When the cached package 
 a traversable directory, the summary stays `NotDeclared` rather than `configuration_load_failed`. Per-plugin actions operate on cached
 identity, serialize changes for the same plugin, and allow unrelated plugins to progress
 independently.
-Plugins begin stopped whenever the lifecycle opens. A scan retains runtime state for a package
+Plugins begin stopped whenever the lifecycle opens. Startup discovery uses the injected Desktop
+product version so a package whose `[dependencies].ora` does not match the running product is
+skipped and never becomes available or startable. A scan retains runtime state for a package
 that remains installed and valid, while a newly discovered package becomes immediately available
 and stopped. A package with an invalid Plugin Configuration declaration remains visible but cannot
 start. Uninstall

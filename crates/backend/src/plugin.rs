@@ -13,11 +13,11 @@ use ora_contracts::{
     EmptyErrorParams, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest,
     InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
     ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
-    ListMarketplaceSourcesResponse, PublicError, ScanPluginsRequest, ScanPluginsResponse,
-    StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
-    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
-    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
-    UpdatePluginResponse,
+    ListMarketplaceSourcesResponse, PluginHostVersionIncompatibleParams, PublicError,
+    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
+    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
+    UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    UpdatePluginRequest, UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -32,7 +32,10 @@ use ora_plugin_lifecycle::{
     PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
-use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
+use ora_plugin_manager::{
+    DesktopProductVersion, HostVersionIncompatibility, InstallError, Installer, PluginContribution,
+    PluginManager, UpdateError,
+};
 use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
@@ -174,6 +177,7 @@ pub(crate) struct PluginApi {
     /// would fire, so the worker's periodic scan still converges the surface.
     effect_reconcile: OnceLock<EffectWorkerHandle>,
     clock: SystemClock,
+    host_product_version: DesktopProductVersion,
 }
 
 impl PluginApi {
@@ -185,6 +189,7 @@ impl PluginApi {
         clock: SystemClock,
         publisher: AppEventPublisher,
         user_config: Arc<UserConfigApi>,
+        host_product_version: DesktopProductVersion,
     ) -> Result<Self, BackendError> {
         let plugins_directory = data_directory.join("plugins");
         let marketplace_sources = MarketplaceSourceStore::open(
@@ -199,13 +204,17 @@ impl PluginApi {
             )
         })?;
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
-        let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
+        let installer = Installer::new(
+            ReqwestDownloader::new(ProxyConfig::default()),
+            host_product_version.clone(),
+        );
         let notifications = BroadcastNotificationSink::new();
         let configuration = ConfigurationService::new(data_directory.clone());
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
                 deno_path,
+                host_product_version: host_product_version.clone(),
             },
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
@@ -228,6 +237,7 @@ impl PluginApi {
             agent_effect_surfaces: Mutex::new(BTreeMap::new()),
             effect_reconcile: OnceLock::new(),
             clock,
+            host_product_version,
         })
     }
 
@@ -241,7 +251,7 @@ impl PluginApi {
 
     /// Rebuilds catalog projections for every Skill plugin already installed on disk.
     pub(crate) fn sync_installed_skills(&self) -> Result<(), BackendError> {
-        let manager = PluginManager::discover(&self.data_directory);
+        let manager = PluginManager::discover(&self.data_directory, &self.host_product_version);
         for plugin in manager.installed_plugins() {
             if matches!(plugin.contributes, PluginContribution::Skill(_)) {
                 self.persist_discovered_plugin_skills(plugin)?;
@@ -566,14 +576,17 @@ impl PluginApi {
             .as_url();
         ora_info!(plugin_id = %request.plugin_id, url = %release_url, "installing marketplace plugin");
         let download_proxy = self.download_proxy_for(use_proxy)?;
-        Installer::new(ReqwestDownloader::new(download_proxy))
-            .install(
-                &manifest,
-                DownloadSource::Url(release_url.clone()),
-                &self.data_directory,
-            )
-            .await
-            .map_err(|error| BackendError::internal("failed to install plugin", error))?;
+        Installer::new(
+            ReqwestDownloader::new(download_proxy),
+            self.host_product_version.clone(),
+        )
+        .install(
+            &manifest,
+            DownloadSource::Url(release_url.clone()),
+            &self.data_directory,
+        )
+        .await
+        .map_err(map_install_error)?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
         Ok(InstallPluginResponse {
@@ -611,14 +624,17 @@ impl PluginApi {
             .await
             .map_err(BackendError::from)?;
         let download_proxy = self.download_proxy_for(use_proxy)?;
-        Installer::new(ReqwestDownloader::new(download_proxy))
-            .update(
-                &manifest,
-                DownloadSource::Url(release_url.clone()),
-                &self.data_directory,
-            )
-            .await
-            .map_err(|error| BackendError::internal("failed to update plugin", error))?;
+        Installer::new(
+            ReqwestDownloader::new(download_proxy),
+            self.host_product_version.clone(),
+        )
+        .update(
+            &manifest,
+            DownloadSource::Url(release_url.clone()),
+            &self.data_directory,
+        )
+        .await
+        .map_err(map_update_error)?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "updated marketplace plugin");
         Ok(UpdatePluginResponse {
@@ -692,7 +708,7 @@ impl PluginApi {
         })
         .await
         .map_err(|error| BackendError::internal("failed to join plugin import task", error))?
-        .map_err(|error| BackendError::internal("failed to import plugin archive", error))?;
+        .map_err(map_install_error)?;
         self.finalize_new_install(&package.id).await?;
         ora_info!(plugin_id = %package.id, "imported plugin release from local archive");
         Ok(ImportPluginResponse {
@@ -714,7 +730,7 @@ impl PluginApi {
 
     /// Projects validated static Skill metadata into the shared catalog and Effect source tables.
     fn sync_plugin_skills(&self, plugin_id: &str) -> Result<(), BackendError> {
-        let manager = PluginManager::discover(&self.data_directory);
+        let manager = PluginManager::discover(&self.data_directory, &self.host_product_version);
         let plugin = manager
             .installed_plugins()
             .iter()
@@ -769,6 +785,44 @@ impl PluginApi {
             )
             .map_err(|error| BackendError::internal("failed to persist plugin Skills", error))
     }
+}
+
+/// Maps an install/import failure, keeping host incompatibility as a bounded public error.
+fn map_install_error(error: InstallError) -> BackendError {
+    match error {
+        InstallError::HostVersionIncompatible(incompatibility) => {
+            host_version_incompatible_error(incompatibility)
+        }
+        other => BackendError::internal("failed to install plugin", other),
+    }
+}
+
+/// Maps an update failure, keeping host incompatibility as a bounded public error.
+fn map_update_error(error: UpdateError) -> BackendError {
+    match error {
+        UpdateError::Install(InstallError::HostVersionIncompatible(incompatibility)) => {
+            host_version_incompatible_error(incompatibility)
+        }
+        other => BackendError::internal("failed to update plugin", other),
+    }
+}
+
+/// Projects a host-version mismatch into the stable public error with only actual/required params.
+fn host_version_incompatible_error(incompatibility: HostVersionIncompatibility) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Unprocessable,
+        PublicError::PluginHostVersionIncompatible(PluginHostVersionIncompatibleParams {
+            actual_host_version: incompatibility.actual_host_version(),
+            required_version_constraint: incompatibility.required_version_constraint(),
+        }),
+        "plugin requires an incompatible Ora Desktop version",
+    )
+}
+
+/// Injected Desktop product version for backend tests that do not exercise host incompatibility.
+#[cfg(test)]
+pub(crate) fn test_host_product_version() -> DesktopProductVersion {
+    DesktopProductVersion::parse("0.1.0").expect("test host version")
 }
 
 /** Maps marketplace source configuration failures onto their public classifications. */

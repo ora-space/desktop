@@ -45,9 +45,12 @@ where
             _operations.push(self.acquire_operation(plugin_id).await);
         }
 
-        let installed = PluginManager::discover(&self.inner.config.data_directory)
-            .installed_plugins()
-            .to_vec();
+        let installed = PluginManager::discover(
+            &self.inner.config.data_directory,
+            &self.inner.config.host_product_version,
+        )
+        .installed_plugins()
+        .to_vec();
         let installed_ids = installed
             .iter()
             .map(|plugin| plugin.id.clone())

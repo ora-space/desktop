@@ -28,6 +28,11 @@ orchestrates checksum-verified installs of new plugin releases.
   package must ship `assets/index.html` beside `main.js`; a webview package must not ship
   `main.js`, must cover `start_url` with `allowed_origins`, and must not declare shadowed
   download rules.
+- Evaluate `[dependencies].ora` against an injected Desktop product version before a package is
+  written (marketplace install, local import, update preparation) or activated (startup discovery).
+  Matching is owned by `ora-plugin-manifest`; this crate only supplies the host version and applies
+  the shared result. Incompatible packages fail with `plugin_host_version_incompatible` carrying
+  only the actual host version and required constraint.
 - Read the package's optional `logo.svg` icon and retain its source text once
   `ora-utils::svg` accepts it. A package without an icon is ordinary; an icon that is present but
   unreadable or unsafe becomes a discovery issue and leaves the plugin itself discovered without one.
@@ -49,20 +54,20 @@ orchestrates checksum-verified installs of new plugin releases.
 
 - Parsing the manifest schema; `ora-plugin-manifest` does that and this crate consumes the result.
 - Enabling, disabling, or removing plugins; starting plugin processes or loading plugin JavaScript.
-- Evaluating the `[dependencies].ora` requirement.
 - Watching the filesystem after discovery completes.
 
 ## Public interface
 
-Call `PluginManager::discover(data_dir)` once during application bootstrap. Consumers read the
+Call `PluginManager::discover(data_dir, host_version)` once during application bootstrap, injecting
+the running Desktop product version rather than a workspace crate version. Consumers read the
 resulting snapshot through `installed_plugins()` and report any non-fatal problems from
 `discovery_issues()`. `installed_root(data_dir)`, `MANIFEST_FILE_NAME`, and
 `INSTALLED_ENTRYPOINT` expose the layout to callers that write or inspect it. A local `.orax`
 archive is imported with `Installer::install_local(archive_path, data_dir)`, which returns an
 `InstalledPackage` carrying the materialized `package_dir` and the `namespace/name` plugin id
-derived from the in-archive manifest. `Installer::new` accepts any `HttpDownload`; `install`
-returns the package directory it extracted into, and `update` returns the committed
-`InstalledPackage` after stale versions are retired.
+derived from the in-archive manifest. `Installer::new` accepts any `HttpDownload` and the same
+injected `DesktopProductVersion`; `install` returns the package directory it extracted into, and
+`update` returns the committed `InstalledPackage` after stale versions are retired.
 
 ## Validation split
 

@@ -47,6 +47,7 @@ fn test_manager(root: &Path, pool: &RepositoryPool, scheduler: Scheduler) -> Age
             SystemClock,
             AppEventHub::new().publisher(),
             Arc::new(UserConfigApi::new(pool.clone())),
+            crate::plugin::test_host_product_version(),
         )
         .expect("open plugin host"),
     );

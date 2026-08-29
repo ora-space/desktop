@@ -1,6 +1,9 @@
 //! Installs and updates plugin releases by downloading and safely extracting their package.
 
 use crate::discovery::installed_root;
+use crate::host_version::{
+    DesktopProductVersion, HostVersionIncompatibility, ensure_host_compatible,
+};
 use ora_plugin_manifest::PluginManifest;
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::hash;
@@ -52,6 +55,9 @@ pub enum InstallError {
         name: String,
         version: String,
     },
+    /// The plugin's `[dependencies].ora` does not match the injected Desktop product version.
+    #[error(transparent)]
+    HostVersionIncompatible(#[from] HostVersionIncompatibility),
     /// A prerequisite directory could not be prepared.
     #[error("failed to prepare {path}: {source}")]
     Io {
@@ -123,6 +129,7 @@ pub struct InstalledPackage {
 #[derive(Clone)]
 pub struct Installer<D> {
     downloader: D,
+    host_version: DesktopProductVersion,
 }
 
 impl<D> Installer<D>
@@ -130,8 +137,14 @@ where
     D: HttpDownload,
 {
     /// Creates an installer that downloads every release through `downloader`.
-    pub fn new(downloader: D) -> Self {
-        Self { downloader }
+    ///
+    /// `host_version` is the running Desktop product version. Install, local import, and update
+    /// preparation all consult this same value before writing a package, matching startup discovery.
+    pub fn new(downloader: D, host_version: DesktopProductVersion) -> Self {
+        Self {
+            downloader,
+            host_version,
+        }
     }
 
     /// Downloads `manifest`'s release from `source` into the cache, verifies its digest, and
@@ -147,6 +160,7 @@ where
         source: DownloadSource,
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
+        ensure_host_compatible(manifest, &self.host_version)?;
         let archive_path = self.download_package(manifest, source, data_dir).await?;
         let namespace = manifest.namespace();
         let name = manifest.name();
@@ -289,6 +303,7 @@ where
                 source,
             })?;
         let manifest = PluginManifest::parse_installed(&manifest_source)?;
+        ensure_host_compatible(&manifest, &self.host_version)?;
 
         // The digest is self-declared by the package, so verifying it here only catches a
         // corrupt or degraded archive during transit or storage; it provides no anti-tamper
@@ -425,10 +440,12 @@ fn retire_stale_versions(id: &str, plugin_root: &Path, retain: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::{InstallError, InstalledPackage, Installer, UpdateError};
+    use crate::{DesktopProductVersion, HostVersionIncompatibility};
     use futures::executor::block_on;
     use ora_plugin_manifest::PluginManifest;
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
     use pretty_assertions::assert_eq;
+    use semver::{Version, VersionReq};
     use sha2::{Digest, Sha256};
     use std::fs::{self, File};
     use std::io::Write;
@@ -436,6 +453,24 @@ mod tests {
     use tempfile::TempDir;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    /// Injected Desktop product version used by existing install fixtures that omit `[dependencies].ora`.
+    fn test_host() -> DesktopProductVersion {
+        DesktopProductVersion::parse("0.1.0").expect("test host version")
+    }
+
+    /// Builds an installer that uses the default injected test host version.
+    fn installer() -> Installer<LocalFileDownloader> {
+        Installer::new(LocalFileDownloader, test_host())
+    }
+
+    /// Builds an installer whose host version is injected without mutating process environment.
+    fn installer_with_host(version: &str) -> Installer<LocalFileDownloader> {
+        Installer::new(
+            LocalFileDownloader,
+            DesktopProductVersion::parse(version).expect("injected host version"),
+        )
+    }
 
     /// Computes the SHA-256 digest of a file as raw bytes for the manifest.
     fn sha256_file(path: &Path) -> [u8; 32] {
@@ -507,7 +542,7 @@ mod tests {
         ))
         .unwrap();
 
-        let installer = Installer::new(LocalFileDownloader);
+        let installer = installer();
         let package_dir = block_on(installer.install(
             &manifest,
             DownloadSource::Local(release_path),
@@ -562,7 +597,7 @@ mod tests {
         ))
         .unwrap();
 
-        let package_dir = block_on(Installer::new(LocalFileDownloader).install(
+        let package_dir = block_on(installer().install(
             &manifest,
             DownloadSource::Local(release_path),
             temp_dir.path(),
@@ -582,7 +617,7 @@ mod tests {
         let manifest =
             PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", [0_u8; 32])).unwrap();
 
-        let installer = Installer::new(LocalFileDownloader);
+        let installer = installer();
         let error = block_on(installer.install(
             &manifest,
             DownloadSource::Local(release_path),
@@ -635,7 +670,7 @@ mod tests {
             ],
         );
 
-        let installer = Installer::new(LocalFileDownloader);
+        let installer = installer();
         let package = installer
             .install_local(&release_path, temp_dir.path())
             .expect("import static Skill archive");
@@ -675,7 +710,7 @@ mod tests {
             )],
         );
 
-        let error = Installer::new(LocalFileDownloader)
+        let error = installer()
             .install_local(&release_path, temp_dir.path())
             .unwrap_err();
 
@@ -708,7 +743,7 @@ mod tests {
             ],
         );
 
-        let installer = Installer::new(LocalFileDownloader);
+        let installer = installer();
         let package = installer
             .install_local(&release_path, temp_dir.path())
             .expect("import agent archive into a fresh profile");
@@ -773,7 +808,7 @@ mod tests {
         ))
         .unwrap();
 
-        let package = block_on(Installer::new(LocalFileDownloader).update(
+        let package = block_on(installer().update(
             &manifest,
             DownloadSource::Local(release_path),
             temp_dir.path(),
@@ -827,7 +862,7 @@ mod tests {
         ))
         .unwrap();
 
-        let error = block_on(Installer::new(LocalFileDownloader).update(
+        let error = block_on(installer().update(
             &manifest,
             DownloadSource::Local(release_path),
             temp_dir.path(),
@@ -871,7 +906,7 @@ mod tests {
         ))
         .unwrap();
 
-        let error = block_on(Installer::new(LocalFileDownloader).update(
+        let error = block_on(installer().update(
             &manifest,
             DownloadSource::Local(release_path),
             temp_dir.path(),
@@ -913,7 +948,7 @@ mod tests {
         ))
         .unwrap();
 
-        let error = block_on(Installer::new(LocalFileDownloader).update(
+        let error = block_on(installer().update(
             &manifest,
             DownloadSource::Local(release_path),
             temp_dir.path(),
@@ -924,5 +959,270 @@ mod tests {
             error,
             UpdateError::NotFound { ref id } if id == "official/weather"
         ));
+    }
+
+    /// Appends an Ora host requirement to a marketplace release manifest.
+    fn with_ora_requirement(manifest: String, requirement: &str) -> String {
+        format!("{manifest}\n[dependencies]\nora = \"{requirement}\"\n")
+    }
+
+    /// Builds the expected bounded incompatibility for an injected host and constraint.
+    fn host_incompatibility(actual: &str, required: &str) -> HostVersionIncompatibility {
+        HostVersionIncompatibility::new(
+            Version::parse(actual).expect("actual host"),
+            VersionReq::parse(required).expect("required constraint"),
+        )
+    }
+
+    /// Unwraps the install error as a host incompatibility for complete-object comparison.
+    fn host_install_error(error: InstallError) -> HostVersionIncompatibility {
+        match error {
+            InstallError::HostVersionIncompatible(incompatibility) => incompatibility,
+            other => panic!("expected host incompatibility, got {other:?}"),
+        }
+    }
+
+    /// Unwraps the update error as a host incompatibility for complete-object comparison.
+    fn host_update_error(error: UpdateError) -> HostVersionIncompatibility {
+        match error {
+            UpdateError::Install(InstallError::HostVersionIncompatible(incompatibility)) => {
+                incompatibility
+            }
+            other => panic!("expected host incompatibility, got {other:?}"),
+        }
+    }
+
+    /// Marketplace install consults the injected Desktop product version before writing a package.
+    #[test]
+    fn marketplace_install_uses_injected_host_version() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n".as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let compatible = PluginManifest::parse(&with_ora_requirement(
+            manifest_with_digest("weather", "1.0.0", sha256_file(&release_path)),
+            ">=0.1.0",
+        ))
+        .unwrap();
+
+        let package_dir = block_on(installer_with_host("0.1.5").install(
+            &compatible,
+            DownloadSource::Local(release_path.clone()),
+            temp_dir.path(),
+        ))
+        .expect("compatible injected host should install");
+        assert!(package_dir.join("main.js").exists());
+    }
+
+    /// An incompatible marketplace candidate is rejected before the package directory is written.
+    #[test]
+    fn marketplace_install_rejects_incompatible_host_before_write() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(&release_path, &[("orax.toml", b"unused".as_slice())]);
+        let manifest = PluginManifest::parse(&with_ora_requirement(
+            manifest_with_digest("weather", "1.0.0", sha256_file(&release_path)),
+            ">=2.0.0",
+        ))
+        .unwrap();
+        let expected = host_incompatibility("0.1.0", ">=2.0.0");
+
+        let error = block_on(installer().install(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(host_install_error(error), expected);
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("1.0.0")
+                .exists()
+        );
+    }
+
+    /// Local import uses the same provider and matching rules as marketplace install.
+    #[test]
+    fn local_import_uses_injected_host_version() {
+        let temp_dir = TempDir::new().unwrap();
+        let compatible_path = temp_dir.path().join("compatible.orax");
+        write_orax_zip(
+            &compatible_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n[dependencies]\nora = \">=0.1.0\"\n".as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let package = installer_with_host("0.1.5")
+            .install_local(&compatible_path, temp_dir.path())
+            .expect("compatible local import");
+        assert_eq!(
+            package,
+            InstalledPackage {
+                package_dir: temp_dir
+                    .path()
+                    .join("plugins")
+                    .join("installed")
+                    .join("official")
+                    .join("weather")
+                    .join("1.0.0"),
+                id: "official/weather".to_string(),
+            }
+        );
+
+        let incompatible_dir = TempDir::new().unwrap();
+        let incompatible_path = incompatible_dir.path().join("incompatible.orax");
+        write_orax_zip(
+            &incompatible_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n[dependencies]\nora = \">=2.0.0\"\n".as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let expected = host_incompatibility("0.1.0", ">=2.0.0");
+        let error = installer()
+            .install_local(&incompatible_path, incompatible_dir.path())
+            .unwrap_err();
+        assert_eq!(host_install_error(error), expected);
+        assert!(
+            !incompatible_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("1.0.0")
+                .exists()
+        );
+    }
+
+    /// A malformed in-archive constraint stays a manifest validation error, not incompatibility.
+    #[test]
+    fn local_import_reports_malformed_ora_requirement_as_invalid_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("weather.orax");
+        write_orax_zip(
+            &release_path,
+            &[(
+                "orax.toml",
+                b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n[dependencies]\nora = \"not-a-version\"\n".as_slice(),
+            )],
+        );
+
+        let error = installer()
+            .install_local(&release_path, temp_dir.path())
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidManifest(ora_plugin_manifest::ManifestError::InvalidField {
+                field: ora_plugin_manifest::ManifestField::DependenciesOra,
+                reason: ora_plugin_manifest::InvalidFieldReason::InvalidVersionRequirement(_),
+            })
+        ));
+    }
+
+    /// Update preparation uses the same injected host version before replacing the installed package.
+    #[test]
+    fn update_preparation_rejects_incompatible_host() {
+        let temp_dir = TempDir::new().unwrap();
+        let installed = temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join("1.0.0");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("orax.toml"), "placeholder").unwrap();
+        std::fs::write(installed.join("main.js"), "export {};\n").unwrap();
+
+        let release_path = temp_dir.path().join("weather-1.1.0.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.1.0\"\ndescription = \"A test plugin\"\n".as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let manifest = PluginManifest::parse(&with_ora_requirement(
+            manifest_with_digest("weather", "1.1.0", sha256_file(&release_path)),
+            ">=2.0.0",
+        ))
+        .unwrap();
+        let expected = host_incompatibility("0.1.0", ">=2.0.0");
+
+        let error = block_on(installer().update(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(host_update_error(error), expected);
+        assert!(installed.exists());
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("weather")
+                .join("1.1.0")
+                .exists()
+        );
+    }
+
+    /// Existing packages that omit `[dependencies].ora` keep their install and import behavior.
+    #[test]
+    fn omits_ora_requirement_remain_installable_with_injected_host() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n".as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+        let package_dir = block_on(installer_with_host("9.9.9").install(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .expect("omitted requirement stays compatible");
+        assert!(package_dir.join("main.js").exists());
     }
 }

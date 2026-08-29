@@ -13,6 +13,11 @@ forms accept an optional human-readable `title` that falls back to the identifie
 - Model plugin identifiers (`identifier`), source categories, plugin kinds (`workbench`, `agent`,
   `webview`, `skill`, `mcp`), HTTPS URLs, SHA-256 digests, optional source repository metadata,
   and optional Ora host version requirements as validated values.
+- Evaluate a parsed `[dependencies].ora` requirement against a caller-supplied host version
+  (`PluginManifest::ora_host_compatibility`). Matching uses the same SemVer grammar the parser
+  already accepted; a missing requirement is compatible. This crate does not choose the host
+  version — callers inject the running Desktop product version so every plugin entry point shares
+  one decision.
 - Pair kind-specific sections with the matching `kind`: optional `[workbench]` (page-visible
   method names) for workbench plugins, required `[webview]` (`start_url`, `allowed_origins`,
   download policy) for webview plugins. Agent, skill, and MCP plugins reject both sections.
@@ -35,6 +40,7 @@ forms accept an optional human-readable `title` that falls back to the identifie
 ## Public boundary
 
 `PluginManifest::parse(&str)` and `PluginManifest::parse_installed(&str)` are the only manifest
-construction entrypoints. Manifest fields stay private and are exposed through read-only
-accessors. Reusable validated value types additionally
+construction entrypoints. `PluginManifest::ora_host_compatibility` evaluates a parsed
+`[dependencies].ora` requirement against a caller-supplied host version. Manifest fields stay
+private and are exposed through read-only accessors. Reusable validated value types additionally
 implement `FromStr`; none of the APIs provide an unchecked constructor.

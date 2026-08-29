@@ -30,6 +30,7 @@ pub use agent_runtime::SessionEventStream;
 pub use app_event::AppEventHub;
 pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};
 pub use error::{BackendError, ErrorClassification};
+pub use ora_plugin_manager::DesktopProductVersion;
 pub use plugin_gateway::{GatewayError, PluginGateway};
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};
 pub use skill_reconciliation::SkillStorageReconciliationError;

@@ -41,6 +41,10 @@ export type ContractError =
       "code": "plugin_configuration_recovery_not_required";
       "params": EmptyErrorParams;
     }
+    | {
+      "code": "plugin_host_version_incompatible";
+      "params": PluginHostVersionIncompatibleParams;
+    }
     | { "code": "project_not_found"; "params": EmptyErrorParams }
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
@@ -179,6 +183,18 @@ export type PluginConfigurationValidationParams = {
 };
 
 /**
+ * Carries the bounded host-version mismatch for a rejected plugin package.
+ *
+ * Only the running Desktop product version and the plugin's `[dependencies].ora` constraint are
+ * included. Package contents, absolute data paths, raw manifest JSON, and configuration values
+ * must not be added here.
+ */
+export type PluginHostVersionIncompatibleParams = {
+  actualHostVersion: string;
+  requiredVersionConstraint: string;
+};
+
+/**
  * Enumerates every user-visible Ora failure and its exact interpolation parameters.
  */
 export type PublicError =
@@ -213,6 +229,10 @@ export type PublicError =
   | {
     "code": "plugin_configuration_recovery_not_required";
     "params": EmptyErrorParams;
+  }
+  | {
+    "code": "plugin_host_version_incompatible";
+    "params": PluginHostVersionIncompatibleParams;
   }
   | { "code": "project_not_found"; "params": EmptyErrorParams }
   | { "code": "task_not_found"; "params": EmptyErrorParams }

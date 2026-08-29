@@ -382,6 +382,7 @@ mod tests {
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
+            host_product_version: crate::plugin::test_host_product_version(),
         })
         .expect("open shared backend")
     }
