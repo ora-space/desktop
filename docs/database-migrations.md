@@ -12,15 +12,13 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 
 ## Shipped catalog
 
-| Version | Adds                                                                                                                                                                                                                                                                                                      |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0001`  | User configuration, projects, workspace locations and provisioning, workspaces, worktrees, task labels, and workspace-owned sessions.                                                                                                                                                                     |
-| `0002`  | Namespaced skills and configurable agents.                                                                                                                                                                                                                                                                |
-| `0003`  | Workflow definitions, snapshots, workspace-owned runs, and node runs.                                                                                                                                                                                                                                     |
-| `0004`  | Durable Git cleanup jobs and worktree provisioning leases.                                                                                                                                                                                                                                                |
-| `0005`  | Workspace Effect source state, normalized Desired selections, surface descriptors, ownership ledgers, status, file-operation journals, and durable reconcile/propagation requests.                                                                                                                        |
-| `0006`  | Durable plugin marketplace source configuration (URL, branch, proxy policy, precedence).                                                                                                                                                                                                                  |
-| `0007`  | Agent Target Effect Expand: target rows, status with ready generation, target-keyed reconcile requests, target-owned conditions with impact; deterministic surface-request backfill (max generation, earliest due); status phase is current only when ready equals desired; condition subjects preserved. |
+| Version | Adds                                                                                                                                                                               |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0001`  | User configuration, projects, workspace locations and provisioning, workspaces, worktrees, task labels, and workspace-owned sessions.                                              |
+| `0002`  | Namespaced skills and configurable agents.                                                                                                                                         |
+| `0003`  | Workflow definitions, snapshots, workspace-owned runs, and node runs.                                                                                                              |
+| `0004`  | Durable Git cleanup jobs and worktree provisioning leases.                                                                                                                         |
+| `0005`  | Workspace Effect source state, normalized Desired selections, surface descriptors, ownership ledgers, status, file-operation journals, and durable reconcile/propagation requests. |
 
 `default_migration_catalog()` returns all migrations with every version as the active target.
 
