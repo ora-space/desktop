@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createChatStore } from "@ora/chat";
 import type { InstalledPlugin } from "@ora/contracts";
@@ -119,5 +119,60 @@ describe("SurfaceLauncher", () => {
     );
     await waitFor(() => expect(host.surfaces.open).toHaveResolved());
     expect(useSurfaceStore.getState().sidePanelInstance).toBeNull();
+  });
+
+  it("marks live embedded instances with the slot owner highlighted", async () => {
+    const user = userEvent.setup();
+    renderLauncher(
+      [
+        {
+          ...webviewPlugin("ora.hub", "Hub", "Example Hub"),
+          logo: "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+        },
+        webviewPlugin("ora.docs", "Docs", "Docs Home"),
+      ],
+      true,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /扩展面板|Surfaces/ }),
+    );
+
+    // Two live embedded instances; Docs owns the side slot right now.
+    act(() => {
+      useSurfaceStore.setState({
+        records: {
+          1: {
+            instance: 1,
+            pluginId: "official/ora.hub",
+            kind: "webview" as const,
+            title: "Example Hub",
+            target: "embedded" as const,
+            state: "open" as const,
+          },
+          2: {
+            instance: 2,
+            pluginId: "official/ora.docs",
+            kind: "webview" as const,
+            title: "Docs Home",
+            target: "embedded" as const,
+            state: "open" as const,
+          },
+        },
+        sidePanelInstance: 2,
+      });
+    });
+
+    const hubItem = await screen.findByRole("menuitem", {
+      name: /Example Hub/,
+    });
+    const docsItem = await screen.findByRole("menuitem", {
+      name: /Docs Home/,
+    });
+    // The logo ships as inline SVG source, rendered through an inert <img>.
+    expect(hubItem.querySelector("img")).not.toBeNull();
+    const hubDot = hubItem.querySelector(".rounded-full");
+    const docsDot = docsItem.querySelector(".rounded-full");
+    expect(hubDot).toHaveClass("bg-muted-foreground/40");
+    expect(docsDot).toHaveClass("bg-foreground");
   });
 });

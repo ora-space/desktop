@@ -12,6 +12,8 @@ export type SurfaceDefinitionRef = {
   kind: "workbench" | "webview";
   title: string;
   pluginDisplayName: string;
+  /** The plugin package's own brand mark (inline SVG source), or null when it ships none. */
+  logo: string | null;
 };
 
 /**
@@ -31,6 +33,7 @@ export function listSurfaceDefinitions(
       kind: plugin.kind,
       title: plugin.title,
       pluginDisplayName: plugin.displayName,
+      logo: plugin.logo,
     });
   }
   return refs.sort(

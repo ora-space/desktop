@@ -7,6 +7,7 @@ beforeEach(() => {
     records: {},
     failures: {},
     sidePanelInstance: null,
+    sidePanelClaimTick: 0,
   });
 });
 
@@ -47,5 +48,20 @@ describe("surface store failures", () => {
       failed: { state: "failed", failure: "boom" },
       recovered: { state: "open", failures: {} },
     });
+  });
+});
+
+describe("surface store side-slot claims", () => {
+  it("bumps the claim tick on claims and keeps it across releases", () => {
+    useSurfaceStore.getState().setSidePanelInstance(3);
+    expect(useSurfaceStore.getState().sidePanelClaimTick).toBe(1);
+
+    useSurfaceStore.getState().setSidePanelInstance(null);
+    expect(useSurfaceStore.getState().sidePanelClaimTick).toBe(1);
+
+    // Re-claiming the instance already in the slot must stay observable so the
+    // review layout can win the panel back after another panel took it over.
+    useSurfaceStore.getState().setSidePanelInstance(3);
+    expect(useSurfaceStore.getState().sidePanelClaimTick).toBe(2);
   });
 });

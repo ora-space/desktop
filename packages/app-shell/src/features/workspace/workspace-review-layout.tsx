@@ -404,11 +404,13 @@ export function WorkspaceReviewLayout({
       setReviewFilePath(path);
       setWorkspaceDirectoryRequest(undefined);
       setWorkspaceArtifactRequest(undefined);
+      // Changes/Files take the slot over, so the embedded surface must go.
+      releaseSurface();
       setPanel("files");
       setReviewOpen(true);
       if (panelAnimationRef.current !== null) slidePanelOpen();
     },
-    [context.kind, setReviewOpen, slidePanelOpen],
+    [context.kind, releaseSurface, setReviewOpen, slidePanelOpen],
   );
 
   const openWorkspaceDirectory = useCallback(
@@ -421,11 +423,13 @@ export function WorkspaceReviewLayout({
       });
       setWorkspaceFileRequest(undefined);
       setWorkspaceArtifactRequest(undefined);
+      // Changes/Files take the slot over, so the embedded surface must go.
+      releaseSurface();
       setPanel("files");
       setReviewOpen(true);
       if (panelAnimationRef.current !== null) slidePanelOpen();
     },
-    [context.kind, setReviewOpen, slidePanelOpen],
+    [context.kind, releaseSurface, setReviewOpen, slidePanelOpen],
   );
 
   const openWorkspaceArtifact = useCallback(
@@ -440,11 +444,13 @@ export function WorkspaceReviewLayout({
       });
       setWorkspaceFileRequest(undefined);
       setWorkspaceDirectoryRequest(undefined);
+      // Changes/Files take the slot over, so the embedded surface must go.
+      releaseSurface();
       setPanel("files");
       setReviewOpen(true);
       if (panelAnimationRef.current !== null) slidePanelOpen();
     },
-    [context.kind, setReviewOpen, slidePanelOpen],
+    [context.kind, releaseSurface, setReviewOpen, slidePanelOpen],
   );
 
   const openDiff = useCallback(
@@ -463,12 +469,20 @@ export function WorkspaceReviewLayout({
         side: location?.side,
       });
       setReviewFilePath(path);
+      // Changes/Files take the slot over, so the embedded surface must go.
+      releaseSurface();
       setPanel("changes");
       setReviewOpen(true);
       // A close slide may still be in flight; switch it back to opening.
       if (panelAnimationRef.current !== null) slidePanelOpen();
     },
-    [openWorkspaceFile, setReviewOpen, slidePanelOpen, workspaceId],
+    [
+      openWorkspaceFile,
+      releaseSurface,
+      setReviewOpen,
+      slidePanelOpen,
+      workspaceId,
+    ],
   );
 
   // The panel mounts collapsed, so opening (or re-opening after a context switch)
@@ -484,11 +498,15 @@ export function WorkspaceReviewLayout({
   useEffect(
     () =>
       useSurfaceStore.subscribe((state, previous) => {
-        if (
-          releasingSurfaceRef.current ||
-          state.sidePanelInstance === previous.sidePanelInstance
-        )
-          return;
+        if (releasingSurfaceRef.current) return;
+        const instanceChanged =
+          state.sidePanelInstance !== previous.sidePanelInstance;
+        // Re-claiming the instance already in the slot must still win the panel
+        // back (e.g. a file reference moved it to Files): the tick is what makes
+        // that claim observable over no-op event traffic.
+        const claimed =
+          state.sidePanelClaimTick !== previous.sidePanelClaimTick;
+        if (!instanceChanged && !claimed) return;
         if (state.sidePanelInstance !== null) {
           setPanel("surface");
           setReviewOpen(true);

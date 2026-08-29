@@ -25,6 +25,12 @@ interface SurfaceStoreState {
   failures: Record<number, string>;
   /** The embedded instance currently occupying the right review slot. */
   sidePanelInstance: number | null;
+  /**
+   * Bumped on every claim so re-claiming the instance already in the slot stays
+   * observable; a value-only comparison cannot distinguish it from no-op event
+   * traffic, which must not yank the review panel back to the surface.
+   */
+  sidePanelClaimTick: number;
   /** Landed prompt downloads in arrival order; the prompt dialog shows the head. */
   downloadPrompts: SurfaceDownloadPromptEntry[];
   setEmbeddedSupported(embedded: boolean): void;
@@ -61,6 +67,7 @@ export const useSurfaceStore = create<SurfaceStoreState>()((set) => ({
   records: {},
   failures: {},
   sidePanelInstance: null,
+  sidePanelClaimTick: 0,
   downloadPrompts: [],
   setEmbeddedSupported: (embedded) => set({ embeddedSupported: embedded }),
   removeDownloadPrompt: (downloadId) =>
@@ -75,7 +82,15 @@ export const useSurfaceStore = create<SurfaceStoreState>()((set) => ({
         records.map((record) => [record.instance, record]),
       ),
     }),
-  setSidePanelInstance: (instance) => set({ sidePanelInstance: instance }),
+  setSidePanelInstance: (instance) =>
+    set((state) => ({
+      sidePanelInstance: instance,
+      // Releases keep the tick: they must collapse the panel, not re-open it.
+      sidePanelClaimTick:
+        instance === null
+          ? state.sidePanelClaimTick
+          : state.sidePanelClaimTick + 1,
+    })),
   applyEvent: (event) =>
     set((state) => {
       switch (event.type) {

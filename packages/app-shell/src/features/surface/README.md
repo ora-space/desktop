@@ -36,5 +36,7 @@ registry into the shell.
   and the side-slot owner. `WorkspaceReviewLayout` reacts to
   `sidePanelInstance`: non-null opens its `"surface"` panel, null closes it;
   closing the panel in the UI releases the slot and calls `surfaces.close`.
+  Claims bump `sidePanelClaimTick`, so re-claiming the instance already in the
+  slot wins the panel back even after another panel took it over.
 - `app-shell.tsx` places the `Toaster` bottom-left while an embedded surface is
   visible so toasts are not covered by the native view.

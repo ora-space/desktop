@@ -84,24 +84,28 @@ describe("listSurfaceDefinitions", () => {
         kind: "webview",
         title: "Market",
         pluginDisplayName: "Hub",
+        logo: null,
       },
       {
         pluginId: "official/acme.panel",
         kind: "workbench",
         title: "Counter",
         pluginDisplayName: "Panel",
+        logo: null,
       },
       {
         pluginId: "official/acme.portal",
         kind: "webview",
         title: "Developer",
         pluginDisplayName: "Portal",
+        logo: null,
       },
       {
         pluginId: "official/ora-space.tools",
         kind: "webview",
         title: "X",
         pluginDisplayName: "Tools",
+        logo: null,
       },
     ]);
   });
