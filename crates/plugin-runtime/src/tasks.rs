@@ -124,6 +124,13 @@ pub(crate) async fn run_supervisor<P>(
                 Ok(status) => format!("plugin process exited with {status}"),
                 Err(error) => format!("failed to wait for plugin process: {error}"),
             };
+            if !matches!(*inner.status_tx.borrow(), RuntimeStatus::ShuttingDown) {
+                ora_warn!(
+                    plugin_id = %inner.plugin_id,
+                    reason = %reason,
+                    "plugin process exited unexpectedly"
+                );
+            }
             fail_pending(&inner, PluginRuntimeError::Unavailable(reason.clone())).await;
             if !matches!(*inner.status_tx.borrow(), RuntimeStatus::ShuttingDown) {
                 inner.status_tx.send_replace(RuntimeStatus::Failed(reason));

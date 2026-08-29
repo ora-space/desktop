@@ -26,7 +26,7 @@ use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentRef, PluginId, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_plugin_lifecycle::ConnectionError;
-use ora_plugin_runtime::PluginRuntime;
+use ora_plugin_runtime::{PluginProcessExit, PluginRuntime};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -656,7 +656,8 @@ async fn run_supervisor(context: SupervisorContext) {
     }
 }
 
-/// Drains and demultiplexes one live connection until shutdown or a transport-level failure.
+/// Drains and demultiplexes one live connection until shutdown, a transport-level failure, or the
+/// backing plugin process dies.
 async fn run_process_generation(
     process: &mut SharedProcess,
     routes: &RouteRegistry,
@@ -697,6 +698,13 @@ async fn run_process_generation(
                     None => return false,
                 }
             }
+            // A dead process never sends another frame, so the inbound stream alone cannot report
+            // the loss. Without this watch the supervisor would park here forever on a zombie
+            // connection instead of applying its restart policy to the failure it already knows.
+            exit = process.process.runtime.wait_for_exit() => match exit {
+                PluginProcessExit::Failed(_) => return false,
+                PluginProcessExit::Stopped => return true,
+            },
             _ = shutdown.recv() => return true,
         }
     }
