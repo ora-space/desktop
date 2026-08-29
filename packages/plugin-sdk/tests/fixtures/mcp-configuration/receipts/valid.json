@@ -1,0 +1,13 @@
+{
+  "appliedGeneration": 4,
+  "documentLocator": ".opencode/opencode.json",
+  "documentFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "entries": [
+    {
+      "managedIdentity": "mcp-tavily",
+      "nativeKey": "ora_tavily_search_abcdef123456",
+      "entryFingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sourceRevisionId": "rev-tavily-1"
+    }
+  ]
+}

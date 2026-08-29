@@ -1,0 +1,4 @@
+{
+  "methods": ["agent/start", "agent/stop", "agent/listModels"],
+  "emits": ["agent/acp"]
+}

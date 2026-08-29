@@ -14,6 +14,10 @@ static SECRET_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap_or_else(|error| panic!("invalid built-in error redaction pattern: {error}"))
 });
+static BEARER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bBearer\s+[^\s,;]+")
+        .unwrap_or_else(|error| panic!("invalid built-in Bearer redaction pattern: {error}"))
+});
 static URL_CREDENTIAL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(https?://)[^/@\s:]+(?::[^/@\s]*)?@")
         .unwrap_or_else(|error| panic!("invalid built-in URL credential pattern: {error}"))
@@ -115,6 +119,14 @@ impl ErrorReport {
         }
     }
 
+    /// Redacts secret-shaped values from diagnostics that are not error chains.
+    ///
+    /// Plugin stderr, timeout text, and MCP protocol logs must never carry header values,
+    /// environment values, or document bytes, including in debug builds.
+    pub fn sanitize_text(value: &str) -> String {
+        sanitize_node(value)
+    }
+
     /// Returns the top-level semantic context rendered for the active build mode.
     pub fn message(&self) -> &str {
         &self.message
@@ -142,7 +154,8 @@ fn sanitize_node(value: &str) -> String {
             }
         })
         .collect::<String>();
-    let redacted_secrets = SECRET_PATTERN.replace_all(&single_line, "$1=[REDACTED]");
+    let redacted_bearer = BEARER_PATTERN.replace_all(&single_line, "Bearer [REDACTED]");
+    let redacted_secrets = SECRET_PATTERN.replace_all(&redacted_bearer, "$1=[REDACTED]");
     let redacted_credentials =
         URL_CREDENTIAL_PATTERN.replace_all(&redacted_secrets, "$1[REDACTED]@");
     let redacted_urls = URL_PATTERN.replace_all(&redacted_credentials, "[URL]");
@@ -217,6 +230,17 @@ mod tests {
         "git failed at C:\\Users\\alice\\repo; remote=https://alice:secret@example.com/org/repo; value='customer@example.com'"
     )]
     struct SensitiveExternalError;
+
+    #[test]
+    fn sanitize_text_redacts_authorization_headers_in_every_build() {
+        let sanitized = ErrorReport::sanitize_text(
+            r#"Authorization: Bearer tavily-secret-key api_key=also-secret"#,
+        );
+        assert_eq!(
+            sanitized,
+            "Authorization=[REDACTED] [REDACTED] api_key=[REDACTED]"
+        );
+    }
 
     #[test]
     fn redacts_paths_remotes_and_quoted_values() {

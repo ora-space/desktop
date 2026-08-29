@@ -107,7 +107,11 @@ current process. `ui.plugin` exposes the underlying `Plugin`.
 `agent/stop`, `agent/listModels`, and the `agent/acp` notification in both
 directions. Ora validates that whole contract when the handshake completes and
 refuses a plugin whose declaration is incomplete, so the helper registers all of
-it up front.
+it up front. Optional MCP support is a separate, versioned capability: pass
+`mcpConfiguration` to register both the `mcpConfiguration` field and the
+`agent/configureWorkspace` full-snapshot handler together. There is no
+high-level way to declare only one side. A missing or malformed MCP capability
+does not invalidate the baseline conversation contract.
 
 ```ts
 import {
@@ -137,6 +141,21 @@ const plugin = defineAgent({
     },
     restart: async ({ surfaceKey, generation }) => {
       // Restart every affected instance, then release the idempotent barrier for this generation.
+    },
+  },
+  mcpConfiguration: {
+    protocolVersion: 1,
+    transports: ["http"],
+    coordination: "wait_for_idle_and_restart",
+    configureWorkspace: async (snapshot) => {
+      // Materialize snapshot.resolvedMcps into the target Agent's native document and return
+      // generation, locator, fingerprints, and one entry receipt per supported MCP.
+      return {
+        appliedGeneration: snapshot.generation,
+        documentLocator: ".opencode/opencode.json",
+        documentFingerprint: "sha256:…",
+        entries: [],
+      };
     },
   },
 });

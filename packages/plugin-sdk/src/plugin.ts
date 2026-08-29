@@ -73,6 +73,13 @@ export class Plugin {
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #effectSurfaces: EffectSurfaceDeclaration[] = [];
+  #mcpConfiguration:
+    | {
+      protocolVersion: number;
+      transports: string[];
+      coordination: string;
+    }
+    | undefined;
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
   readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
   #nextHostRequestId = 1;
@@ -103,6 +110,26 @@ export class Plugin {
       throw new Error("Emitted method names cannot be empty");
     }
     this.#emits.add(name);
+  }
+
+  /**
+   * Declares the optional MCP configuration capability on the immutable registration.
+   *
+   * `defineAgent` is the supported pairing: it registers this field together with
+   * `agent/configureWorkspace`. Calling this without that method is a low-level defect the Host
+   * disables rather than a second high-level API.
+   */
+  declareMcpConfiguration(capability: {
+    protocolVersion: number;
+    transports: readonly string[];
+    coordination: string;
+  }): void {
+    this.#assertRegistering();
+    this.#mcpConfiguration = {
+      protocolVersion: capability.protocolVersion,
+      transports: [...capability.transports],
+      coordination: capability.coordination,
+    };
   }
 
   /** Declares one runtime-consumed Effect surface before registration is sent. */
@@ -220,6 +247,13 @@ export class Plugin {
         materializationFormat: surface.materializationFormat,
         coordination: surface.coordination,
       }));
+    }
+    if (this.#mcpConfiguration !== undefined) {
+      registration.mcpConfiguration = {
+        protocolVersion: this.#mcpConfiguration.protocolVersion,
+        transports: [...this.#mcpConfiguration.transports],
+        coordination: this.#mcpConfiguration.coordination,
+      };
     }
     await writer.write({
       jsonrpc: "2.0",

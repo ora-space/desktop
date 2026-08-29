@@ -1,0 +1,15 @@
+{
+  "methods": [
+    "agent/start",
+    "agent/stop",
+    "agent/listModels",
+    "agent/configureWorkspace"
+  ],
+  "emits": ["agent/acp"],
+  "futureHostHint": { "ignored": true },
+  "mcpConfiguration": {
+    "protocolVersion": 1,
+    "transports": ["http"],
+    "coordination": "wait_for_idle_and_restart"
+  }
+}

@@ -79,9 +79,30 @@ impl AgentCapabilityRevision {
         Self(value.into())
     }
 
+    /// Skill-only Expand declarations that have not negotiated an MCP capability yet.
+    ///
+    /// Live attach always binds a version and digest. This sentinel exists so the Skill-only
+    /// replacement path can still remove a plugin when it has no surfaces left.
+    pub fn unspecified() -> Self {
+        Self(String::new())
+    }
+
+    /// Returns whether this revision is the Expand Skill-only sentinel rather than a bound digest.
+    pub fn is_unspecified(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Returns the persistence representation.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Binds one exact plugin package version to the canonical capability declaration digest.
+    ///
+    /// Both inputs are required because a version-only upgrade and a capability-only change must
+    /// each produce a distinct revision so Agent Targets can be reconciled again.
+    pub fn bind(plugin_version: &str, capability_digest: &crate::Digest) -> Self {
+        Self(format!("{plugin_version}/{}", capability_digest.as_str()))
     }
 }
 
@@ -265,4 +286,25 @@ pub struct AgentTargetRecord {
     pub target: AgentTarget,
     pub status: AgentTargetStatus,
     pub reconcile_request: Option<AgentTargetReconcileRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Digest;
+    use pretty_assertions::assert_eq;
+
+    /// Version-only and digest-only changes must each produce a distinct revision.
+    #[test]
+    fn capability_revision_bind_includes_version_and_digest() {
+        let digest_a = Digest::sha256(b"capability-a");
+        let digest_b = Digest::sha256(b"capability-b");
+        let first = AgentCapabilityRevision::bind("0.2.2", &digest_a);
+        assert_eq!(
+            first,
+            AgentCapabilityRevision::new(format!("0.2.2/{}", digest_a.as_str()))
+        );
+        assert_ne!(first, AgentCapabilityRevision::bind("0.3.0", &digest_a));
+        assert_ne!(first, AgentCapabilityRevision::bind("0.2.2", &digest_b));
+    }
 }

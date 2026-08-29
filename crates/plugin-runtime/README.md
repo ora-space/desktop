@@ -26,7 +26,12 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
   "jsonrpc": "2.0",
   "method": "ora/register",
   "params": {
-    "methods": ["agent/start", "effect/waitForIdle", "effect/restart"],
+    "methods": [
+      "agent/start",
+      "effect/waitForIdle",
+      "effect/restart",
+      "agent/configureWorkspace",
+    ],
     "emits": ["agent/acp"],
     "effectSurfaces": [
       {
@@ -35,6 +40,11 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
         "coordination": "wait_for_idle_and_restart",
       },
     ],
+    "mcpConfiguration": {
+      "protocolVersion": 1,
+      "transports": ["http"],
+      "coordination": "wait_for_idle_and_restart",
+    },
   },
 }
 ```
@@ -48,6 +58,10 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
   runtime. The runtime crate parses the locator, format, and coordination tokens strictly;
   capability-specific code validates their meaning and derives the trusted consumer identity from
   the launched plugin rather than from this payload.
+- `mcpConfiguration` is an optional additive Agent capability. The runtime records a structurally
+  valid declaration, or an invalid issue, without failing handshake: older plugins omit the field,
+  and a malformed capability only disables MCP materialization. Unknown top-level registration
+  fields other than this one remain ignored so older hosts can skip the capability entirely.
 - Plugin requests to the host (`ora/storage/*` and the like) need no declaration: the
   launch-time handler decides what it serves and answers method-not-found otherwise.
 
@@ -96,3 +110,7 @@ is a protocol failure. Launches without host methods pass `NoHostRequests`.
 
 The handler is bound to one process at launch; that binding, not anything in the request
 params, is how a handler knows which plugin is calling.
+
+Plugin stderr is drained continuously and logged only after secret-shaped values (including
+`Authorization` headers and Bearer tokens) are redacted, so a plugin that prints configuration
+payloads cannot put those values into Host traces.

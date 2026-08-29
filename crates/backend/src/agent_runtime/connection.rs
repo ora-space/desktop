@@ -785,15 +785,26 @@ async fn spawn_plugin_connection(
         .attach_agent(plugin_id)
         .await
         .map_err(plugin_attach_error)?;
+    let Some(plugin_version) = plugin_host
+        .installed_plugin_version(plugin_id)
+        .filter(|version| !version.is_empty())
+    else {
+        stop_plugin_runtime(plugin_host, plugin_id).await;
+        return Err(StartFailure::Terminal(runtime_internal(
+            "agent_start_failed",
+            "installed plugin version is unavailable",
+        )));
+    };
     let LaunchedPluginAgent {
         runtime,
         messages,
-        effect_surfaces,
+        effect_declaration,
     } = match plugin_agent::attach(
         attachment,
         &plugin_id.canonical(),
         home_directory,
         env!("CARGO_PKG_VERSION"),
+        &plugin_version,
     )
     .await
     {
@@ -804,7 +815,7 @@ async fn spawn_plugin_connection(
         }
     };
     plugin_host
-        .replace_agent_effect_surfaces(plugin_id.clone(), effect_surfaces)
+        .replace_agent_plugin_declaration(plugin_id.clone(), effect_declaration)
         .map_err(|error| {
             StartFailure::Terminal(runtime_internal("agent_start_failed", error.to_string()))
         })?;

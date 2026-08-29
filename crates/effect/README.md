@@ -10,6 +10,8 @@ types and persistence port used by the Expand-phase target-keyed Effect schema.
   and generations.
 - Agent Target identity (Workspace × Agent Plugin), target status generations, target-owned
   conditions with Blocking/NonBlocking impact, and target reconcile-request shapes.
+- Agent Capability Revision binding of an exact plugin package version to the canonical digest of
+  the plugin's declared configuration capabilities.
 - A pure planner that separates desired, managed, observed, and preserved state and never grants
   ownership from disk contents alone.
 - Consumer descriptor merging, structured conditions, retry policy, and per-consumer readiness.

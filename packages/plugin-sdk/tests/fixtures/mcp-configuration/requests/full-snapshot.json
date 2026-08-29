@@ -1,0 +1,22 @@
+{
+  "protocolVersion": 1,
+  "operationId": "op-7",
+  "agentTargetId": "target-1",
+  "workspaceRoot": "/workspace",
+  "generation": 4,
+  "resolvedMcps": [
+    {
+      "canonicalIdentity": "official/ora-space.tavily-search",
+      "managedIdentity": "mcp-tavily",
+      "packageVersion": "0.1.0",
+      "sourceRevisionId": "rev-tavily-1",
+      "transport": {
+        "kind": "http",
+        "url": "https://mcp.tavily.com/mcp",
+        "headers": {
+          "Authorization": "Bearer tavily-secret-key"
+        }
+      }
+    }
+  ]
+}

@@ -13,6 +13,8 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 - Attach to one lifecycle-owned plugin process and read the notifications of that one generation.
 - Reject, at handshake time, any plugin whose registration does not cover `agent/start`,
   `agent/stop`, `agent/listModels`, and the emitted `agent/acp`.
+- Negotiate the optional `mcpConfiguration` capability independently of that baseline contract.
+  Missing, malformed, unpaired, or unsupported declarations disable MCP materialization only.
 - Call `agent/start` and confirm the plugin will speak a protocol version this host understands.
 - Read the plugin's pre-session model list through `agent/listModels`.
 - Relay ACP messages in both directions as `agent/acp` notifications.
@@ -52,6 +54,18 @@ failing agent rather than as a failure in the middle of someone's turn. That fai
 the supervisor publishes `Failing` and abandons the agent for the rest of the process instead of
 retrying, because the same plugin will fail identically every time and retrying only produces a
 warning per backoff interval.
+
+MCP configuration is additive. `mcpConfiguration` plus `agent/configureWorkspace` are negotiated
+as one optional capability; either side missing, an unknown protocol version, duplicate
+transports, or unknown capability fields disable MCP materialization and record
+`mcp_capability_invalid` / `mcp_capability_version_unsupported` without failing `agent/start`.
+Older plugins that omit the field are `UnsupportedByAgent` for every Ready MCP. Host snapshot
+requests carry operation identity, Agent Target identity, Workspace root, generation, and the
+supported Resolved MCP list only. Receipts that miss, duplicate, extra-cover, or mismatch
+generation, locator bounds, source revision, or fingerprint are rejected and cannot advance
+Ready Generation. Agent Capability Revision binds the exact plugin version to the canonical
+capability digest. JSON-RPC diagnostics, stderr, timeout errors, and traces never include header
+values, environment values, document bytes, or Authorization material.
 
 `agent/start` failures split in two. `-32001` means the agent CLI the plugin wraps is absent from
 this machine; that is an expected local configuration, so it is reported as `agent_not_installed`

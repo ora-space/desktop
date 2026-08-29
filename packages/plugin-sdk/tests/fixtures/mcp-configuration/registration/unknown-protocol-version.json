@@ -1,0 +1,14 @@
+{
+  "methods": [
+    "agent/start",
+    "agent/stop",
+    "agent/listModels",
+    "agent/configureWorkspace"
+  ],
+  "emits": ["agent/acp"],
+  "mcpConfiguration": {
+    "protocolVersion": 2,
+    "transports": ["http"],
+    "coordination": "wait_for_idle_and_restart"
+  }
+}

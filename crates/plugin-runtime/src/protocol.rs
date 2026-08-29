@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::PluginRuntimeError;
 use crate::host_requests::{HostRequestHandler, serve_request};
+use crate::mcp_configuration::{McpConfigurationRegistration, parse_mcp_configuration};
 use crate::state::{ResponseRequest, RuntimeInner, RuntimeStatus};
 
 pub(crate) const JSON_RPC_VERSION: &str = "2.0";
@@ -23,6 +24,8 @@ pub struct PluginRegistration {
     pub emits: HashSet<String>,
     /// Workspace-relative Effect surfaces this runtime consumes.
     pub effect_surfaces: Vec<PluginEffectSurface>,
+    /// Optional MCP configuration capability; invalid values never fail handshake.
+    pub mcp_configuration: McpConfigurationRegistration,
 }
 
 /// Declares one filesystem Skill surface consumed by a plugin runtime.
@@ -153,6 +156,7 @@ async fn handle_plugin_originated<H: HostRequestHandler>(
                 .ok_or_else(|| "plugin registration is missing a methods array".to_string())?,
             emits: parse_method_list(params, "emits")?.unwrap_or_default(),
             effect_surfaces: parse_effect_surfaces(params)?,
+            mcp_configuration: parse_mcp_configuration(params),
         };
         *inner.registration.write().await = registration;
         inner.status_tx.send_replace(RuntimeStatus::Ready);

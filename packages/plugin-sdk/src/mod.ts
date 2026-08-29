@@ -10,6 +10,32 @@ export {
   type AgentStartContext,
   defineAgent,
 } from "./agent.ts";
+export {
+  AGENT_CONFIGURE_WORKSPACE,
+  type AgentMcpConfigurationDefinition,
+  type ExpectedReceiptCoverage,
+  type McpConfigurationCapabilityDeclaration,
+  type McpConfigurationReceipt,
+  type McpConfigurationSnapshotRequest,
+  type McpCoordinationMode,
+  type McpEntryReceipt,
+  type McpTransportKind,
+  type NegotiatedMcpConfiguration,
+  negotiateMcpConfiguration,
+  type ParsedMcpConfigurationReceipt,
+  type ParsedMcpConfigurationRegistration,
+  parseMcpConfigurationReceipt,
+  parseMcpConfigurationRegistration,
+  parseMcpConfigurationSnapshotRequest,
+  type ReceiptValidationCode,
+  type ResolvedHttpMcpTransport,
+  type ResolvedMcpTransport,
+  type ResolvedStdioMcpTransport,
+  serializeMcpConfigurationReceipt,
+  type SnapshotResolvedMcp,
+  validateMcpConfigurationCapability,
+  validateMcpConfigurationReceiptCoverage,
+} from "./mcp.ts";
 export type { EffectSurfaceDeclaration } from "./plugin.ts";
 export {
   createPlugin,

@@ -90,16 +90,19 @@ mod tests {
             methods: HashSet::from(["counter/get".to_string()]),
             emits: HashSet::from(["counter/tick".to_string()]),
             effect_surfaces: Vec::new(),
+            mcp_configuration: ora_plugin_runtime::McpConfigurationRegistration::Absent,
         };
         let bad_name = PluginRegistration {
             methods: HashSet::from(["Counter.Get".to_string()]),
             emits: HashSet::new(),
             effect_surfaces: Vec::new(),
+            mcp_configuration: ora_plugin_runtime::McpConfigurationRegistration::Absent,
         };
         let superset = PluginRegistration {
             methods: HashSet::from(["counter/get".to_string(), "internal/reset".to_string()]),
             emits: HashSet::new(),
             effect_surfaces: Vec::new(),
+            mcp_configuration: ora_plugin_runtime::McpConfigurationRegistration::Absent,
         };
         assert_eq!(
             (

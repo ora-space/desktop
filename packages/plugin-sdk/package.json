@@ -18,8 +18,8 @@
   "scripts": {
     "format": "deno fmt src tests deno.json package.json README.md",
     "format:check": "deno fmt --check src tests deno.json package.json README.md",
-    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts tests/agent.test.ts tests/storage.test.ts tests/workbench.test.ts",
-    "test": "deno test tests"
+    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts tests/agent.test.ts tests/storage.test.ts tests/workbench.test.ts tests/mcp-configuration.test.ts",
+    "test": "deno test --allow-read tests"
   },
   "publishConfig": {
     "access": "public"

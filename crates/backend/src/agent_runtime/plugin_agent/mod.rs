@@ -1,6 +1,7 @@
 mod control;
 mod effect;
 mod inbound;
+mod mcp_configuration;
 mod transport;
 
 #[cfg(test)]
@@ -8,12 +9,15 @@ mod tests;
 
 pub(crate) use control::{PluginAgentError, PluginAgentModel, list_models, stop_agent};
 pub(crate) use effect::{WaitForIdleOutcome, restart, wait_for_idle};
+pub(crate) use mcp_configuration::{
+    AgentPluginEffectDeclaration, NegotiatedMcpConfiguration, agent_capability_revision,
+    negotiate_mcp_configuration,
+};
 pub(crate) use transport::PluginAcpTransport;
 
 use std::path::Path;
 
 use ora_acp::AcpMessages;
-use ora_effect::FilesystemSkillSurface;
 use ora_plugin_runtime::PluginRuntime;
 
 use crate::plugin::AgentPluginAttachment;
@@ -22,7 +26,7 @@ use crate::plugin::AgentPluginAttachment;
 pub(crate) struct LaunchedPluginAgent {
     pub runtime: PluginRuntime,
     pub messages: AcpMessages,
-    pub effect_surfaces: Vec<FilesystemSkillSurface>,
+    pub effect_declaration: AgentPluginEffectDeclaration,
 }
 
 /// Brings up the agent behind one already-running plugin process.
@@ -39,6 +43,7 @@ pub(crate) async fn attach(
     plugin_id: &str,
     home_directory: &Path,
     host_version: &str,
+    plugin_version: &str,
 ) -> Result<LaunchedPluginAgent, PluginAgentError> {
     let AgentPluginAttachment {
         connection,
@@ -52,12 +57,19 @@ pub(crate) async fn attach(
     })?;
     let effect_surfaces = effect::registered_skill_surfaces(&plugin_id, &registration)
         .map_err(|error| PluginAgentError::ContractIncomplete(error.to_string()))?;
+    let mcp_configuration = negotiate_mcp_configuration(&registration);
+    let capability_revision =
+        agent_capability_revision(plugin_version, &registration.mcp_configuration);
     control::start_agent(&runtime, home_directory, host_version).await?;
     inbound::discard_frames_before_start(&mut notifications, &plugin_id.canonical());
 
     Ok(LaunchedPluginAgent {
         runtime,
         messages: inbound::spawn_frame_forwarding(notifications, plugin_id.to_string()),
-        effect_surfaces,
+        effect_declaration: AgentPluginEffectDeclaration {
+            skill_surfaces: effect_surfaces,
+            mcp_configuration,
+            capability_revision,
+        },
     })
 }

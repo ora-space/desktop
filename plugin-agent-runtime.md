@@ -145,6 +145,38 @@ Vec<_>` 变成 `agent: Option<InstalledPluginAgent>`——`kind == "agent"` 时�
 缺任何一个就直接判定插件不可用（不重启、标记 `Failing`）。这是 fail-fast 的关键：在没有会话、
 没有用户等待的时刻暴露契约不符，而不是等用户点了发送才报错。
 
+可选顶层 `mcpConfiguration` 是加法式 MCP Configuration Capability，**不参与**上述基础契约校验，
+也不提升全局 `pluginApi` major。protocol v1 要求正整数版本、非空且不重复的 transport 集合
+（`http` / `stdio`）以及合法 coordination mode（目前仅 `wait_for_idle_and_restart`）。声明该
+capability 时必须同时注册 `agent/configureWorkspace`；SDK 高层 API 将二者成对注册，调用方不能
+只声明一侧。缺失、畸形、重复 transport、未知协议版本或缺一配对只禁用 MCP materialization，
+基础对话契约仍然成立。未知顶层 registration 字段被忽略，因此旧 Host 可以跳过该能力。
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "method": "ora/register",
+  "params": {
+    "methods": [
+      "agent/start",
+      "agent/stop",
+      "agent/listModels",
+      "agent/configureWorkspace",
+    ],
+    "emits": ["agent/acp"],
+    "mcpConfiguration": {
+      "protocolVersion": 1,
+      "transports": ["http"],
+      "coordination": "wait_for_idle_and_restart",
+    },
+  },
+}
+```
+
+旧插件省略 `mcpConfiguration` 时，宿主将每个 Ready MCP 视为该 Agent Target 的 NonBlocking
+`UnsupportedByAgent`。Agent Capability Revision 绑定精确插件版本与 capability 声明的 canonical
+digest；二者任一变化都是新 revision。
+
 ## 4. 控制方法
 
 三个方法都是 request/response，走 `PluginRuntime::invoke`，受 `call_timeout` 约束。
@@ -201,6 +233,22 @@ capabilities 才把连接置为 `Ready`。
 为什么不复用 ACP 的 session config options：设置页要在**没有任何会话**的情况下展示可选模型，
 而 config options 是 `session/new` 之后才有的会话级能力。两者共存——`listModels` 服务
 "选 agent / 选模型"的前置 UI，config options 服务会话内切换。
+
+### `agent/configureWorkspace`
+
+可选 MCP Configuration Capability 的唯一 Host→插件配置方法。只接收完整快照，不接收增量事件。
+该方法与 `mcpConfiguration` 成对出现；Host 在调用前排除 Agent 不支持的 transport，并将它们
+表示为 Agent Target 级 NonBlocking `UnsupportedByAgent`。
+
+请求包含 protocol version、稳定 operation identity、稳定 Agent Target identity、绝对 Workspace
+root、非负 Workspace generation，以及该目标支持的完整 `Resolved MCP` 列表。禁止携带原始插件
+manifest、完整配置存储、Ora 数据库路径或无关插件路径。JSON-RPC、stderr、timeout error、日志和
+trace 不得包含 header value、environment value、文档内容或 Authorization 材料。
+
+成功回执必须包含 exact applied generation、Workspace-relative document locator、document SHA-256
+fingerprint，以及恰好覆盖全部受支持 Desired MCP 的 entry receipts。Host 拒绝 generation 不匹配、
+locator 越界、managed identity 缺失/重复/额外、Desired 覆盖不完整、source revision 不匹配或
+fingerprint 非法的回执。
 
 ## 5. ACP 透传
 

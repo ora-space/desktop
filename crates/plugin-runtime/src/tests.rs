@@ -91,6 +91,7 @@ async fn accepts_initial_registration() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::from(["example.tick".to_string()]),
             effect_surfaces: Vec::new(),
+            mcp_configuration: crate::McpConfigurationRegistration::Absent,
         }
     );
     assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
@@ -118,6 +119,7 @@ async fn defaults_missing_emits_to_an_empty_whitelist() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
             effect_surfaces: Vec::new(),
+            mcp_configuration: crate::McpConfigurationRegistration::Absent,
         }
     );
 }
@@ -154,6 +156,39 @@ async fn parses_effect_surface_registration() {
             coordination: PluginEffectCoordination::WaitForIdleAndRestart,
         }]
     );
+}
+
+/// A malformed MCP capability is recorded without failing the plugin handshake.
+#[tokio::test]
+async fn malformed_mcp_configuration_keeps_registration_ready() {
+    use crate::{McpConfigurationCapabilityIssue, McpConfigurationRegistration};
+
+    let (inner, _inbound) = test_inner();
+    handle_message(
+        &inner,
+        json!({
+            "jsonrpc": "2.0",
+            "method": "ora/register",
+            "params": {
+                "methods": ["example.echo"],
+                "mcpConfiguration": {
+                    "protocolVersion": 1,
+                    "transports": ["http", "http"],
+                    "coordination": "wait_for_idle_and_restart"
+                }
+            },
+        }),
+    )
+    .await
+    .expect("register despite malformed MCP capability");
+
+    assert_eq!(
+        inner.registration.read().await.mcp_configuration,
+        McpConfigurationRegistration::Invalid(McpConfigurationCapabilityIssue::DuplicateTransport(
+            "http".to_string()
+        ))
+    );
+    assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
 }
 
 /// Duplicate method names invalidate registration rather than selecting one handler.
@@ -402,6 +437,7 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
             effect_surfaces: Vec::new(),
+            mcp_configuration: crate::McpConfigurationRegistration::Absent,
         }),
         status_tx,
         exited_tx,

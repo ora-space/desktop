@@ -93,7 +93,7 @@ where
                 ora_info!(
                     message = "plugin stderr",
                     plugin_id = %plugin_id,
-                    output = %message.trim_end(),
+                    output = %ora_logging::ErrorReport::sanitize_text(message.trim_end()),
                 );
             }
             Err(error) => {

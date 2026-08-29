@@ -30,6 +30,7 @@ fn complete_registration() -> PluginRegistration {
         ]),
         emits: HashSet::from(["agent/acp".to_string()]),
         effect_surfaces: Vec::new(),
+        mcp_configuration: ora_plugin_runtime::McpConfigurationRegistration::Absent,
     }
 }
 
@@ -73,6 +74,20 @@ fn rejects_a_registration_that_cannot_emit_acp() {
             "missing emitted method agent/acp".to_string()
         ))
     );
+}
+
+/// A malformed MCP capability does not fail the baseline Agent conversation contract.
+#[test]
+fn malformed_mcp_capability_does_not_fail_the_agent_contract() {
+    let mut registration = complete_registration();
+    registration.mcp_configuration = ora_plugin_runtime::McpConfigurationRegistration::Invalid(
+        ora_plugin_runtime::McpConfigurationCapabilityIssue::DuplicateTransport("http".to_string()),
+    );
+    registration
+        .methods
+        .insert("agent/configureWorkspace".to_string());
+
+    assert_eq!(verify_agent_contract(&registration), Ok(()));
 }
 
 /// A coordinated surface is rejected unless the plugin can establish and release its barrier.

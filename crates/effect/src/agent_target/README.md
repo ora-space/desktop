@@ -8,6 +8,8 @@ by a physical Skill surface.
 ## Responsibilities
 
 - Strong identities for Agent Targets, capability revisions, and target-owned conditions.
+- Binding Agent Capability Revision to an exact plugin package version and the canonical digest of
+  the declared configuration capability.
 - Closed enums for target phase, condition impact, reconcile state, and wake reason.
 - The `AgentTargetRepository` port for typed persistence without activating target-keyed workers.
 - Complete record shapes suitable for whole-object repository round-trips.

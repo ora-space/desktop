@@ -1,4 +1,11 @@
 import {
+  AGENT_CONFIGURE_WORKSPACE,
+  type AgentMcpConfigurationDefinition,
+  parseMcpConfigurationSnapshotRequest,
+  serializeMcpConfigurationReceipt,
+  validateMcpConfigurationCapability,
+} from "./mcp.ts";
+import {
   createPlugin,
   type EffectSurfaceDeclaration,
   type Plugin,
@@ -79,6 +86,13 @@ export interface AgentDefinition {
   onAcp(frame: JsonValue): void | Promise<void>;
   /** Declares Skill surfaces this Agent consumes and coordinates their safe replacement. */
   effects?: AgentEffectDefinition;
+  /**
+   * Optional MCP configuration capability.
+   *
+   * Supplying this definition always registers both the `mcpConfiguration` field and the
+   * `agent/configureWorkspace` handler. There is no high-level way to declare only one side.
+   */
+  mcpConfiguration?: AgentMcpConfigurationDefinition;
 }
 
 /**
@@ -122,6 +136,21 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     plugin.registerMethod(EFFECT_RESTART, async (input) => {
       await effects.restart(parseRestartContext(input));
       return {};
+    });
+  }
+  const mcpConfiguration = definition.mcpConfiguration;
+  if (mcpConfiguration !== undefined) {
+    validateMcpConfigurationCapability(mcpConfiguration);
+    plugin.declareMcpConfiguration({
+      protocolVersion: mcpConfiguration.protocolVersion,
+      transports: mcpConfiguration.transports,
+      coordination: mcpConfiguration.coordination,
+    });
+    plugin.registerMethod(AGENT_CONFIGURE_WORKSPACE, async (input) => {
+      const receipt = await mcpConfiguration.configureWorkspace(
+        parseMcpConfigurationSnapshotRequest(input),
+      );
+      return serializeMcpConfigurationReceipt(receipt);
     });
   }
 

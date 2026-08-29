@@ -2,6 +2,7 @@
 
 mod codec;
 mod host_requests;
+mod mcp_configuration;
 mod protocol;
 mod state;
 mod tasks;
@@ -11,6 +12,12 @@ mod tests;
 
 pub use host_requests::{
     HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
+};
+pub use mcp_configuration::{
+    CONFIGURE_WORKSPACE_METHOD, MCP_CONFIGURATION_PROTOCOL_V1, McpConfigurationCapability,
+    McpConfigurationCapabilityIssue, McpConfigurationProtocolVersion, McpConfigurationRegistration,
+    McpCoordinationMode, McpTransportKind, McpTransportSet, parse_mcp_configuration,
+    parse_mcp_configuration_value,
 };
 pub use protocol::{
     PluginEffectCoordination, PluginEffectSurface, PluginNotification, PluginRegistration,
