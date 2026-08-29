@@ -29,7 +29,7 @@ fn bootstraps_the_current_workspace_schema() {
     let catalog = default_migration_catalog().expect("build migration catalog");
     assert_eq!(
         catalog.target_versions(),
-        ["0001", "0002", "0003", "0004", "0005", "0006"]
+        ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
     );
 
     let database = with_trace_logging(|| {
@@ -44,6 +44,10 @@ fn bootstraps_the_current_workspace_schema() {
         load_table_names(database.connection()),
         vec![
             "agents",
+            "effect_agent_target_conditions",
+            "effect_agent_target_reconcile_requests",
+            "effect_agent_target_status",
+            "effect_agent_targets",
             "effect_audit_events",
             "effect_conditions",
             "effect_consumer_status",

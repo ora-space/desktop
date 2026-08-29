@@ -1,12 +1,15 @@
 # ora-effect
 
 `ora-effect` owns Ora's workspace-scoped declarative Skill State and the machinery that safely
-projects it onto consumer-declared filesystem surfaces.
+projects it onto consumer-declared filesystem surfaces. It also defines the Agent Target domain
+types and persistence port used by the Expand-phase target-keyed Effect schema.
 
 ## Responsibilities
 
 - Strong identities for selections, exact source states, managed ownership, surfaces, operations,
   and generations.
+- Agent Target identity (Workspace × Agent Plugin), target status generations, target-owned
+  conditions with Blocking/NonBlocking impact, and target reconcile-request shapes.
 - A pure planner that separates desired, managed, observed, and preserved state and never grants
   ownership from disk contents alone.
 - Consumer descriptor merging, structured conditions, retry policy, and per-consumer readiness.
@@ -24,4 +27,6 @@ all materialized content except the ownership marker.
 
 Reconciliation plans a complete surface before mutation, serializes one physical surface at a
 time through its repository request, and treats watcher payloads only as wakeups. Different
-surfaces may be driven concurrently by the host.
+surfaces may be driven concurrently by the host. Agent Target persistence types coexist with the
+surface-keyed Skill worker; runtime cutover to target-keyed claims is out of scope for this crate's
+domain layer alone.

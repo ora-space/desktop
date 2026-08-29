@@ -6,6 +6,8 @@ mod repository;
 mod time;
 
 #[cfg(test)]
+mod agent_target_repository_tests;
+#[cfg(test)]
 mod effect_repository_tests;
 #[cfg(test)]
 mod git_cleanup_tests;
