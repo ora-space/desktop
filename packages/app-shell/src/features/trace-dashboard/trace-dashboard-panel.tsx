@@ -12,9 +12,7 @@ import type {
   DashboardEndpoint,
   DashboardResolver,
 } from "./types";
-
-/** The plugin-ized trace dashboard; its workbench surface replaces the legacy iframe. */
-const TRACE_DASHBOARD_PLUGIN_ID = "ora-space.agent-trace-visualizer";
+import { TRACE_DASHBOARD_PLUGIN_ID } from "./constants";
 
 interface TraceDashboardPanelProps {
   /** Injected by the Desktop app via Tauri invoke; null in non-Desktop builds/tests. */

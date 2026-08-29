@@ -8,6 +8,7 @@ import {
 import { IconWorld } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
+import { TRACE_DASHBOARD_PLUGIN_ID } from "../trace-dashboard/constants";
 import { listSurfaceDefinitions } from "./surface-definitions";
 import { useOpenSurface } from "./use-open-surface";
 
@@ -16,21 +17,29 @@ import { useOpenSurface } from "./use-open-surface";
  * one, and a menu when several plugins contribute surfaces.
  *
  * It must stay a sibling of `DragRegion`, whose children are pointer-inert.
+ *
+ * When opened from a chat, the trace dashboard surface binds to the current
+ * session (`sessionId`) so its live view can read that session's trace; other
+ * surfaces open unbound.
  */
-export function SurfaceLauncher() {
+export function SurfaceLauncher({ sessionId }: { sessionId?: string | null }) {
   const { t } = useTranslation();
   const definitions = listSurfaceDefinitions(useInstalledPlugins().data ?? []);
   const openSurface = useOpenSurface();
   if (definitions.length === 0) return null;
   if (definitions.length === 1) {
     const [definition] = definitions;
+    const bindSessionId =
+      definition.pluginId === TRACE_DASHBOARD_PLUGIN_ID
+        ? (sessionId ?? undefined)
+        : undefined;
     return (
       <Button
         variant="ghost"
         size="icon"
         aria-label={definition.title}
         title={definition.title}
-        onClick={() => void openSurface(definition)}
+        onClick={() => void openSurface(definition, bindSessionId)}
       >
         <IconWorld />
       </Button>
@@ -54,7 +63,14 @@ export function SurfaceLauncher() {
         {definitions.map((definition) => (
           <DropdownMenuItem
             key={definition.pluginId}
-            onClick={() => void openSurface(definition)}
+            onClick={() =>
+              void openSurface(
+                definition,
+                definition.pluginId === TRACE_DASHBOARD_PLUGIN_ID
+                  ? (sessionId ?? undefined)
+                  : undefined,
+              )
+            }
           >
             {definition.title}
             <span className="ml-2 text-xs text-muted-foreground">

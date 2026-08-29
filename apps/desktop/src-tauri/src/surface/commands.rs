@@ -124,10 +124,21 @@ pub async fn surface_open(
     if let Some(session_id) = &request.session_id {
         // The binding resolves the Ora session to the agent session id inside the backend; the
         // page later reads the trace keyed by its surface identity, never by a path or id.
-        state
+        //
+        // A failed resolution (e.g. the agent has not taken the session over yet) keeps the
+        // surface open but unbound: browse mode still works and the live view reports the
+        // unbound surface instead of the open failing outright.
+        if let Err(error) = state
             .backend
             .register_trace_binding(record.instance.value(), session_id)
-            .map_err(CommandError::from)?;
+        {
+            tracing::warn!(
+                %session_id,
+                instance = record.instance.value(),
+                %error,
+                "opening a surface without a trace binding",
+            );
+        }
     }
     Ok(SurfaceRecordDto::from(&record))
 }

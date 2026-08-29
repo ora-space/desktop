@@ -19,8 +19,7 @@ import { useSurfaceStore } from "../../state/stores/surface-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { TraceDashboardPanel } from "./trace-dashboard-panel";
 import type { DashboardCompareResolver, DashboardResolver } from "./types";
-
-const TRACE_DASHBOARD_PLUGIN_ID = "ora-space.agent-trace-visualizer";
+import { TRACE_DASHBOARD_PLUGIN_ID } from "./constants";
 
 function traceDashboardPlugin(): InstalledPlugin {
   return {

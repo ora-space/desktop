@@ -666,7 +666,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             )}
           </DragRegion>
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
-          <SurfaceLauncher />
+          <SurfaceLauncher sessionId={conversationSessionId} />
           <Button
             variant="ghost"
             size="icon"
