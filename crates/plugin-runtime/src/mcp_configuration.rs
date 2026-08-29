@@ -323,7 +323,7 @@ pub fn parse_mcp_configuration(params: Option<&Value>) -> McpConfigurationRegist
 }
 
 /// Parses one capability JSON value using the same rules Host and compatibility fixtures share.
-pub fn parse_mcp_configuration_value(value: &Value) -> McpConfigurationRegistration {
+fn parse_mcp_configuration_value(value: &Value) -> McpConfigurationRegistration {
     let Some(object) = value.as_object() else {
         return McpConfigurationRegistration::Invalid(McpConfigurationCapabilityIssue::NotAnObject);
     };
@@ -511,6 +511,26 @@ mod tests {
             McpConfigurationRegistration::Invalid(
                 McpConfigurationCapabilityIssue::DuplicateTransport("http".to_string())
             )
+        );
+    }
+
+    /// Unknown transport tokens disable MCP without failing handshake.
+    #[test]
+    fn unknown_transport_invalidates_capability() {
+        assert_eq!(
+            parse_fixture("unknown-transport.json"),
+            McpConfigurationRegistration::Invalid(
+                McpConfigurationCapabilityIssue::UnknownTransport("sse".to_string())
+            )
+        );
+    }
+
+    /// An empty transport list is unrepresentable as a protocol v1 capability.
+    #[test]
+    fn empty_transports_invalidate_capability() {
+        assert_eq!(
+            parse_fixture("empty-transports.json"),
+            McpConfigurationRegistration::Invalid(McpConfigurationCapabilityIssue::TransportsEmpty)
         );
     }
 

@@ -174,43 +174,33 @@ pub(crate) fn snapshot_request_json(prepared: &PreparedMcpConfiguration) -> Valu
         "resolvedMcps": prepared
             .resolved_mcps
             .iter()
-            .map(serialize_resolved_mcp)
+            .map(|mcp| json!({
+                "canonicalIdentity": mcp.canonical_identity,
+                "managedIdentity": mcp.managed_identity,
+                "packageVersion": mcp.package_version,
+                "sourceRevisionId": mcp.source_revision_id,
+                "transport": match &mcp.transport {
+                    ResolvedMcpTransport::Http { url, headers } => json!({
+                        "kind": "http",
+                        "url": url.as_str(),
+                        "headers": string_map(headers),
+                    }),
+                    ResolvedMcpTransport::Stdio {
+                        executable,
+                        args,
+                        env,
+                        working_directory,
+                    } => json!({
+                        "kind": "stdio",
+                        "executable": executable,
+                        "args": args,
+                        "env": string_map(env),
+                        "workingDirectory": working_directory,
+                    }),
+                },
+            }))
             .collect::<Vec<_>>(),
     })
-}
-
-/// Closed Resolved MCP object the plugin receives; header values stay on this wire only.
-fn serialize_resolved_mcp(mcp: &DesiredResolvedMcp) -> Value {
-    json!({
-        "canonicalIdentity": mcp.canonical_identity,
-        "managedIdentity": mcp.managed_identity,
-        "packageVersion": mcp.package_version,
-        "sourceRevisionId": mcp.source_revision_id,
-        "transport": serialize_transport(&mcp.transport),
-    })
-}
-
-/// Serializes one transport without adding Host-private paths or store fields.
-fn serialize_transport(transport: &ResolvedMcpTransport) -> Value {
-    match transport {
-        ResolvedMcpTransport::Http { url, headers } => json!({
-            "kind": "http",
-            "url": url.as_str(),
-            "headers": string_map(headers),
-        }),
-        ResolvedMcpTransport::Stdio {
-            executable,
-            args,
-            env,
-            working_directory,
-        } => json!({
-            "kind": "stdio",
-            "executable": executable,
-            "args": args,
-            "env": string_map(env),
-            "workingDirectory": working_directory,
-        }),
-    }
 }
 
 /// Copies a string map in key order so HTTP headers and stdio env stay deterministic.

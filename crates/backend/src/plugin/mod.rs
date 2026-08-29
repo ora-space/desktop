@@ -1,6 +1,4 @@
-use crate::agent_runtime::plugin_agent::{
-    AgentPluginEffectDeclaration, NegotiatedMcpConfiguration,
-};
+use crate::agent_runtime::plugin_agent::AgentPluginEffectDeclaration;
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
@@ -26,8 +24,8 @@ use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
     SqlitePluginMarketplaceSourceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
-use ora_domain::{PluginId, WorkspaceLocation};
-use ora_effect::{AgentCapabilityRevision, Digest, FilesystemSkillSurface, SurfaceDescriptorSet};
+use ora_domain::PluginId;
+use ora_effect::Digest;
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
@@ -44,6 +42,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
+
+mod agent_effect;
 
 /// The concrete lifecycle composition the backend runs.
 pub(crate) type BackendPluginLifecycle =
@@ -168,15 +168,15 @@ pub(crate) struct PluginApi {
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
     skill_repository: SqliteSkillRepository,
-    effect_repository: SqliteEffectRepository,
-    workspace_repository: SqliteWorkspaceRepository,
-    agent_effect_surfaces: Mutex<BTreeMap<PluginId, AgentPluginEffectDeclaration>>,
+    pub(super) effect_repository: SqliteEffectRepository,
+    pub(super) workspace_repository: SqliteWorkspaceRepository,
+    pub(super) agent_effect_surfaces: Mutex<BTreeMap<PluginId, AgentPluginEffectDeclaration>>,
     /// Set once the Effect worker exists, which is after this API the worker itself borrows.
     ///
     /// Its absence only costs latency: a declaration change is already durable before the wake
     /// would fire, so the worker's periodic scan still converges the surface.
-    effect_reconcile: OnceLock<EffectWorkerHandle>,
-    clock: SystemClock,
+    pub(super) effect_reconcile: OnceLock<EffectWorkerHandle>,
+    pub(super) clock: SystemClock,
 }
 
 impl PluginApi {
@@ -460,114 +460,6 @@ impl PluginApi {
         })
     }
 
-    /// Returns the exact installed package version used to bind Agent Capability Revision.
-    pub(crate) fn installed_plugin_version(&self, plugin_id: &PluginId) -> Option<String> {
-        self.list(ListInstalledPluginsRequest {})
-            .plugins
-            .into_iter()
-            .find(|plugin| plugin.id == plugin_id.canonical())
-            .map(|plugin| plugin.version)
-    }
-
-    /// Replaces one Agent plugin's Skill surfaces while leaving MCP negotiation unset.
-    ///
-    /// Worker tests and uninstall use this Skill-only path. Live attach writes the full
-    /// declaration through [`Self::replace_agent_plugin_declaration`].
-    pub(crate) fn replace_agent_effect_surfaces(
-        &self,
-        plugin_id: PluginId,
-        surfaces: Vec<FilesystemSkillSurface>,
-    ) -> Result<(), BackendError> {
-        self.replace_agent_plugin_declaration(
-            plugin_id,
-            AgentPluginEffectDeclaration {
-                skill_surfaces: surfaces,
-                mcp_configuration: NegotiatedMcpConfiguration::Unsupported,
-                capability_revision: AgentCapabilityRevision::unspecified(),
-            },
-        )
-    }
-
-    /// Replaces one Agent plugin's Skill surfaces, MCP capability, and capability revision.
-    ///
-    /// This is the single declaration snapshot convergence reads. Empty Skill surfaces with an
-    /// unset MCP capability remove the plugin so uninstall cannot leave a ghost consumer.
-    pub(crate) fn replace_agent_plugin_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: AgentPluginEffectDeclaration,
-    ) -> Result<(), BackendError> {
-        let descriptors = {
-            let mut registered = self
-                .agent_effect_surfaces
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            let remove = declaration.skill_surfaces.is_empty()
-                && !declaration.mcp_configuration.enables_materialization()
-                && declaration.mcp_configuration.disable_error_code().is_none()
-                && declaration.capability_revision.is_unspecified();
-            if remove {
-                registered.remove(&plugin_id);
-            } else {
-                registered.insert(plugin_id, declaration);
-            }
-            registered
-                .values()
-                .flat_map(|declaration| declaration.skill_surfaces.iter().cloned())
-                .collect::<Vec<_>>()
-        };
-        let timestamp = self.clock.now_timestamp_millis();
-        let workspaces = self
-            .workspace_repository
-            .list_all_workspaces()
-            .map_err(|error| BackendError::internal("failed to list Effect Workspaces", error))?;
-        for workspace in workspaces {
-            let WorkspaceLocation::LocalFilesystem { path } = &workspace.location else {
-                // The first adapter is deliberately filesystem-only. Remote Workspaces need a
-                // provider-owned adapter instead of treating an opaque locator as a host path.
-                continue;
-            };
-            let merged = SurfaceDescriptorSet::merge(&workspace.id, descriptors.clone())
-                .map_err(|error| BackendError::internal("invalid Agent Effect surface", error))?;
-            self.effect_repository
-                .replace_surfaces(&workspace.id, Path::new(path), &merged, timestamp)
-                .map_err(|error| {
-                    BackendError::internal("failed to persist Agent Effect surfaces", error)
-                })?;
-        }
-        // Waking after the commit, never before it: the request the worker will read is already
-        // durable, so a wake lost to a crash costs a scan interval rather than a reconcile.
-        if let Some(reconcile) = self.effect_reconcile.get() {
-            reconcile.notify();
-        }
-        Ok(())
-    }
-
-    /// Returns the merged Effect surface declarations of every currently registered Agent plugin.
-    ///
-    /// This snapshot is the single source convergence reads. It is process-local on purpose: a
-    /// plugin that is not running declares nothing, and a Workspace therefore owes it no surface
-    /// until its next start republishes the declaration. MCP capability and revision ride on the
-    /// same per-plugin entries; Skill-only callers still flatten to filesystem surfaces.
-    pub(crate) fn agent_effect_surface_declarations(&self) -> Vec<FilesystemSkillSurface> {
-        self.agent_effect_declaration_snapshot()
-            .into_iter()
-            .flat_map(|(_, declaration)| declaration.skill_surfaces)
-            .collect()
-    }
-
-    /// Returns the full Agent Effect declaration snapshot, including MCP capability negotiation.
-    pub(crate) fn agent_effect_declaration_snapshot(
-        &self,
-    ) -> Vec<(PluginId, AgentPluginEffectDeclaration)> {
-        self.agent_effect_surfaces
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .map(|(plugin_id, declaration)| (plugin_id.clone(), declaration.clone()))
-            .collect()
-    }
-
     /// Stops one plugin process while leaving the installed plugin available.
     pub(crate) async fn stop(
         &self,
@@ -588,7 +480,10 @@ impl PluginApi {
         self.skill_repository
             .remove_plugin_skills(&plugin_id, self.clock.now_timestamp_millis())
             .map_err(|error| BackendError::internal("failed to remove plugin Skills", error))?;
-        self.replace_agent_effect_surfaces(plugin_id, Vec::new())?;
+        self.replace_agent_plugin_declaration(
+            plugin_id,
+            AgentPluginEffectDeclaration::skill_only(Vec::new()),
+        )?;
         Ok(response)
     }
     /// Installs a marketplace plugin by resolving its release manifest from the synced sources and

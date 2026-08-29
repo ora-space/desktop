@@ -94,7 +94,28 @@ impl NegotiatedMcpConfiguration {
 pub(crate) struct AgentPluginEffectDeclaration {
     pub skill_surfaces: Vec<ora_effect::FilesystemSkillSurface>,
     pub mcp_configuration: NegotiatedMcpConfiguration,
-    pub capability_revision: AgentCapabilityRevision,
+    pub capability_revision: Option<AgentCapabilityRevision>,
+}
+
+impl AgentPluginEffectDeclaration {
+    /// Skill-only Expand declaration: no MCP negotiation and no bound capability revision.
+    pub(crate) fn skill_only(skill_surfaces: Vec<ora_effect::FilesystemSkillSurface>) -> Self {
+        Self {
+            skill_surfaces,
+            mcp_configuration: NegotiatedMcpConfiguration::Unsupported,
+            capability_revision: None,
+        }
+    }
+
+    /// True when uninstall (or an empty Skill-only write) should drop this plugin from the snapshot.
+    pub(crate) fn is_absent(&self) -> bool {
+        self.skill_surfaces.is_empty()
+            && matches!(
+                self.mcp_configuration,
+                NegotiatedMcpConfiguration::Unsupported
+            )
+            && self.capability_revision.is_none()
+    }
 }
 
 /// Pairs capability and handler without failing the baseline Agent conversation contract.

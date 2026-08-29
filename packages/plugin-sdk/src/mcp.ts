@@ -169,11 +169,13 @@ export function serializeMcpConfigurationReceipt(
   return {
     appliedGeneration: receipt.appliedGeneration,
     documentLocator: receipt.documentLocator,
-    documentFingerprint: receipt.documentFingerprint,
+    documentFingerprint: normalizeFingerprint(receipt.documentFingerprint) ??
+      receipt.documentFingerprint,
     entries: receipt.entries.map((entry) => ({
       managedIdentity: entry.managedIdentity,
       nativeKey: entry.nativeKey,
-      entryFingerprint: entry.entryFingerprint,
+      entryFingerprint: normalizeFingerprint(entry.entryFingerprint) ??
+        entry.entryFingerprint,
       sourceRevisionId: entry.sourceRevisionId,
     })),
   };
@@ -214,7 +216,7 @@ const ENTRY_RECEIPT_FIELDS = new Set([
   "entryFingerprint",
   "sourceRevisionId",
 ]);
-const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
+const FINGERPRINT = /^sha256:([a-fA-F0-9]{64})$/;
 
 /** Parses registration JSON the same way Host handshake classifies the optional capability. */
 export function parseMcpConfigurationRegistration(
@@ -261,6 +263,7 @@ export type ReceiptValidationCode =
   | "locator_out_of_bounds"
   | "missing_managed_identity"
   | "duplicate_managed_identity"
+  | "duplicate_native_key"
   | "extra_managed_identity"
   | "source_revision_mismatch"
   | "illegal_fingerprint";
@@ -300,7 +303,8 @@ export function parseMcpConfigurationReceipt(
   if (!isWorkspaceRelativeLocator(input.documentLocator)) {
     return { ok: false, code: "locator_out_of_bounds" };
   }
-  if (!FINGERPRINT.test(input.documentFingerprint)) {
+  const documentFingerprint = normalizeFingerprint(input.documentFingerprint);
+  if (documentFingerprint === undefined) {
     return { ok: false, code: "illegal_fingerprint" };
   }
   const entries: McpEntryReceipt[] = [];
@@ -323,13 +327,14 @@ export function parseMcpConfigurationReceipt(
     ) {
       return { ok: false, code: "invalid_structure" };
     }
-    if (!FINGERPRINT.test(entry.entryFingerprint)) {
+    const entryFingerprint = normalizeFingerprint(entry.entryFingerprint);
+    if (entryFingerprint === undefined) {
       return { ok: false, code: "illegal_fingerprint" };
     }
     entries.push({
       managedIdentity: entry.managedIdentity,
       nativeKey: entry.nativeKey,
-      entryFingerprint: entry.entryFingerprint,
+      entryFingerprint,
       sourceRevisionId: entry.sourceRevisionId,
     });
   }
@@ -338,7 +343,7 @@ export function parseMcpConfigurationReceipt(
     receipt: {
       appliedGeneration: input.appliedGeneration,
       documentLocator: input.documentLocator,
-      documentFingerprint: input.documentFingerprint,
+      documentFingerprint,
       entries,
     },
   };
@@ -357,12 +362,17 @@ export function validateMcpConfigurationReceiptCoverage(
       entry,
     ) => [entry.managedIdentity, entry.sourceRevisionId]),
   );
-  const seen = new Set<string>();
+  const seenIdentities = new Set<string>();
+  const seenNativeKeys = new Set<string>();
   for (const entry of receipt.entries) {
-    if (seen.has(entry.managedIdentity)) {
+    if (seenIdentities.has(entry.managedIdentity)) {
       return "duplicate_managed_identity";
     }
-    seen.add(entry.managedIdentity);
+    seenIdentities.add(entry.managedIdentity);
+    if (seenNativeKeys.has(entry.nativeKey)) {
+      return "duplicate_native_key";
+    }
+    seenNativeKeys.add(entry.nativeKey);
     const expectedRevision = expectedById.get(entry.managedIdentity);
     if (expectedRevision === undefined) {
       return "extra_managed_identity";
@@ -371,7 +381,7 @@ export function validateMcpConfigurationReceiptCoverage(
       return "source_revision_mismatch";
     }
   }
-  if (seen.size !== expected.desired.length) {
+  if (seenIdentities.size !== expected.desired.length) {
     return "missing_managed_identity";
   }
   return undefined;
@@ -467,7 +477,7 @@ function parseTransport(value: unknown): ResolvedMcpTransport {
     rejectUnknownFields(value, HTTP_FIELDS);
     if (
       typeof value.url !== "string" ||
-      value.url.length === 0 ||
+      !isAbsoluteHttpUrl(value.url) ||
       !isRecord(value.headers) ||
       !stringMap(value.headers)
     ) {
@@ -518,7 +528,29 @@ function rejectUnknownFields(
 function stringMap(
   value: Record<string, unknown>,
 ): value is Record<string, string> {
-  return Object.values(value).every((entry) => typeof entry === "string");
+  return Object.entries(value).every(([key, entry]) =>
+    key.length > 0 && typeof entry === "string"
+  );
+}
+
+/** Host snapshots carry absolute HTTP(S) URLs; relative and non-HTTP schemes are rejected. */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Accepts SHA-256 hex in either case and stores the Host-canonical lowercase form. */
+function normalizeFingerprint(value: string): string | undefined {
+  const match = FINGERPRINT.exec(value);
+  if (match === null) {
+    return undefined;
+  }
+  return `sha256:${match[1].toLowerCase()}`;
 }
 
 function isAbsoluteWorkspaceRoot(value: string): boolean {

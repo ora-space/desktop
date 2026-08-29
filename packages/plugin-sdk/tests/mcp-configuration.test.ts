@@ -2,12 +2,14 @@ import {
   AGENT_CONFIGURE_WORKSPACE,
   defineAgent,
   type McpConfigurationSnapshotRequest,
+  parseMcpConfigurationSnapshotRequest,
+} from "../src/mod.ts";
+import {
   negotiateMcpConfiguration,
   parseMcpConfigurationReceipt,
   parseMcpConfigurationRegistration,
-  parseMcpConfigurationSnapshotRequest,
   validateMcpConfigurationReceiptCoverage,
-} from "../src/mod.ts";
+} from "../src/mcp.ts";
 import {
   decodeFrames,
   encodeFrame,
@@ -201,6 +203,57 @@ Deno.test("snapshot parse rejects unknown fields without echoing header values",
   }
 });
 
+Deno.test("snapshot parse rejects relative HTTP URLs and empty header names", () => {
+  const snapshot = {
+    protocolVersion: 1,
+    operationId: "op-7",
+    agentTargetId: "target-1",
+    workspaceRoot: "/workspace",
+    generation: 4,
+    resolvedMcps: [{
+      canonicalIdentity: "official/ora-space.tavily-search",
+      managedIdentity: "mcp-tavily",
+      packageVersion: "0.1.0",
+      sourceRevisionId: "rev-tavily-1",
+      transport: {
+        kind: "http" as const,
+        url: "/relative",
+        headers: { Authorization: "Bearer tavily-secret-key" } as Record<
+          string,
+          string
+        >,
+      },
+    }],
+  };
+  try {
+    parseMcpConfigurationSnapshotRequest(snapshot);
+    throw new Error("expected relative URL to fail");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assertEquals(
+      message,
+      "agent/configureWorkspace requires a protocol v1 snapshot",
+    );
+    assertStringDoesNotContain(message, "tavily-secret-key");
+  }
+
+  snapshot.resolvedMcps[0].transport.url = "https://mcp.tavily.com/mcp";
+  snapshot.resolvedMcps[0].transport.headers = {
+    "": "Bearer tavily-secret-key",
+  };
+  try {
+    parseMcpConfigurationSnapshotRequest(snapshot);
+    throw new Error("expected empty header name to fail");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assertEquals(
+      message,
+      "agent/configureWorkspace requires a protocol v1 snapshot",
+    );
+    assertStringDoesNotContain(message, "tavily-secret-key");
+  }
+});
+
 const HTTP_V1 = {
   protocolVersion: 1,
   transports: ["http"],
@@ -235,6 +288,18 @@ Deno.test("shared registration fixtures classify omitted, unknown, malformed, an
   assertEquals(
     parseMcpConfigurationRegistration(
       await loadFixture("registration/duplicate-transports.json"),
+    ),
+    { status: "invalid", code: "mcp_capability_invalid" },
+  );
+  assertEquals(
+    parseMcpConfigurationRegistration(
+      await loadFixture("registration/unknown-transport.json"),
+    ),
+    { status: "invalid", code: "mcp_capability_invalid" },
+  );
+  assertEquals(
+    parseMcpConfigurationRegistration(
+      await loadFixture("registration/empty-transports.json"),
     ),
     { status: "invalid", code: "mcp_capability_invalid" },
   );
@@ -304,6 +369,38 @@ Deno.test("shared receipt fixtures reject missing, duplicate, extra, and mismatc
       code,
     );
   }
+
+  const duplicateNativeKey = parseMcpConfigurationReceipt(
+    await loadFixture("receipts/duplicate-native-key.json"),
+  );
+  if (!duplicateNativeKey.ok) {
+    throw new Error("duplicate-native-key.json must parse as a receipt object");
+  }
+  assertEquals(
+    validateMcpConfigurationReceiptCoverage(duplicateNativeKey.receipt, {
+      generation: 4,
+      desired: [
+        { managedIdentity: "mcp-tavily", sourceRevisionId: "rev-tavily-1" },
+        { managedIdentity: "mcp-other", sourceRevisionId: "rev-other-1" },
+      ],
+    }),
+    "duplicate_native_key",
+  );
+
+  const uppercase = structuredClone(
+    await loadFixture("receipts/valid.json"),
+  ) as {
+    documentFingerprint: string;
+    entries: { entryFingerprint: string }[];
+  };
+  uppercase.documentFingerprint =
+    "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  uppercase.entries[0].entryFingerprint =
+    "sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+  assertEquals(parseMcpConfigurationReceipt(uppercase), {
+    ok: true,
+    receipt: await loadFixture("receipts/valid.json"),
+  });
 
   assertEquals(
     parseMcpConfigurationReceipt(

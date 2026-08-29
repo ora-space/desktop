@@ -10,8 +10,7 @@ mod tests;
 pub(crate) use control::{PluginAgentError, PluginAgentModel, list_models, stop_agent};
 pub(crate) use effect::{WaitForIdleOutcome, restart, wait_for_idle};
 pub(crate) use mcp_configuration::{
-    AgentPluginEffectDeclaration, NegotiatedMcpConfiguration, agent_capability_revision,
-    negotiate_mcp_configuration,
+    AgentPluginEffectDeclaration, agent_capability_revision, negotiate_mcp_configuration,
 };
 pub(crate) use transport::PluginAcpTransport;
 
@@ -69,7 +68,7 @@ pub(crate) async fn attach(
         effect_declaration: AgentPluginEffectDeclaration {
             skill_surfaces: effect_surfaces,
             mcp_configuration,
-            capability_revision,
+            capability_revision: Some(capability_revision),
         },
     })
 }

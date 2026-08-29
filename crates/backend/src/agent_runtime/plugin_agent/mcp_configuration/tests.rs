@@ -125,6 +125,7 @@ fn omitted_capability_is_unsupported_without_failing_the_agent_contract() {
         negotiate_mcp_configuration(&registration),
         NegotiatedMcpConfiguration::Unsupported
     );
+    assert!(!negotiate_mcp_configuration(&registration).enables_materialization());
 }
 
 /// Unknown protocol versions disable MCP materialization only.
@@ -170,6 +171,24 @@ fn malformed_and_duplicate_capabilities_do_not_invalidate_the_agent_contract() {
             )
         }
     );
+    assert_eq!(
+        negotiate_mcp_configuration(&registration_from_fixture("unknown-transport.json")),
+        NegotiatedMcpConfiguration::Disabled {
+            reason: McpConfigurationDisableReason::Invalid(
+                ora_plugin_runtime::McpConfigurationCapabilityIssue::UnknownTransport(
+                    "sse".to_string()
+                )
+            )
+        }
+    );
+    assert_eq!(
+        negotiate_mcp_configuration(&registration_from_fixture("empty-transports.json")),
+        NegotiatedMcpConfiguration::Disabled {
+            reason: McpConfigurationDisableReason::Invalid(
+                ora_plugin_runtime::McpConfigurationCapabilityIssue::TransportsEmpty
+            )
+        }
+    );
 }
 
 /// Capability and handler must be present together; either side alone is disabled.
@@ -202,6 +221,10 @@ fn capability_and_handler_must_be_registered_together() {
         negotiate_mcp_configuration(&registration_from_fixture("valid-http-v1.json")).capability(),
         Some(&http_capability())
     );
+    assert!(
+        negotiate_mcp_configuration(&registration_from_fixture("valid-http-v1.json"))
+            .enables_materialization()
+    );
 }
 
 /// Host excludes unsupported transports and records NonBlocking target-specific issues.
@@ -216,15 +239,21 @@ fn unsupported_transports_are_excluded_as_non_blocking_conditions() {
         vec![tavily_http(), stdio_mcp()],
     )
     .expect("prepare");
-    assert_eq!(prepared.resolved_mcps, vec![tavily_http()]);
     assert_eq!(
-        prepared.unsupported,
-        vec![super::UnsupportedMcp {
-            managed_identity: "mcp-stdio".to_string(),
-            transport: McpTransportKind::Stdio,
-            impact: ConditionImpact::NonBlocking,
-            code: "mcp_unsupported_by_agent",
-        }]
+        prepared,
+        super::PreparedMcpConfiguration {
+            operation_id: "op-7".to_string(),
+            agent_target_id: AgentTargetId::new("target-1"),
+            workspace_root: PathBuf::from("/workspace"),
+            generation: Generation::new(4),
+            resolved_mcps: vec![tavily_http()],
+            unsupported: vec![super::UnsupportedMcp {
+                managed_identity: "mcp-stdio".to_string(),
+                transport: McpTransportKind::Stdio,
+                impact: ConditionImpact::NonBlocking,
+                code: "mcp_unsupported_by_agent",
+            }],
+        }
     );
 }
 
@@ -319,6 +348,54 @@ fn invalid_receipts_are_rejected() {
     );
 }
 
+/// Distinct managed identities still cannot share a native key.
+#[test]
+fn duplicate_native_keys_are_rejected() {
+    let parsed = parse_mcp_configuration_receipt(fixture("receipts", "duplicate-native-key.json"))
+        .expect("parse");
+    assert_eq!(
+        validate_mcp_configuration_receipt(
+            &parsed,
+            &ExpectedReceiptCoverage {
+                generation: Generation::new(4),
+                desired: vec![
+                    ExpectedManagedMcp {
+                        managed_identity: "mcp-tavily".to_string(),
+                        source_revision_id: "rev-tavily-1".to_string(),
+                    },
+                    ExpectedManagedMcp {
+                        managed_identity: "mcp-other".to_string(),
+                        source_revision_id: "rev-other-1".to_string(),
+                    },
+                ],
+            },
+        ),
+        Err(super::ReceiptValidationError::DuplicateNativeKey)
+    );
+}
+
+/// Host and SDK both accept mixed-case SHA-256 hex and store the lowercase canonical form.
+#[test]
+fn uppercase_fingerprints_are_normalized() {
+    let mut value = fixture("receipts", "valid.json");
+    value["documentFingerprint"] = serde_json::json!(
+        "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    );
+    value["entries"][0]["entryFingerprint"] = serde_json::json!(
+        "sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+    );
+    let receipt = parse_mcp_configuration_receipt(value).expect("parse");
+    let mut expected =
+        parse_mcp_configuration_receipt(fixture("receipts", "valid.json")).expect("valid");
+    expected.document_fingerprint =
+        Digest::parse("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("document digest");
+    expected.entries[0].entry_fingerprint =
+        Digest::parse("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .expect("entry digest");
+    assert_eq!(receipt, expected);
+}
+
 /// Plugin version and capability digest are both bound into the revision.
 #[test]
 fn capability_revision_changes_when_version_or_digest_changes() {
@@ -363,6 +440,7 @@ fn configure_timeout_does_not_include_payload_secrets() {
         .expect_err("timeout")
     });
     assert_eq!(error, ConfigureWorkspaceError::TimedOut);
+    assert_eq!(error.error_code(), "mcp_configuration_failed");
     let rendered = error.to_string();
     assert!(!rendered.contains("tavily-secret-key"));
     assert!(!rendered.contains("Authorization"));
@@ -386,6 +464,7 @@ fn configure_remote_errors_redact_authorization_values() {
     });
     let rendered = error.to_string();
     assert!(!rendered.contains("tavily-secret-key"));
+    assert_eq!(error.error_code(), "mcp_configuration_failed");
 }
 
 /// Configure traces record identity fields and never the JSON-RPC body.
@@ -412,6 +491,22 @@ fn configure_trace_omits_header_values() {
     let logs = capture.text();
     assert!(!logs.contains("tavily-secret-key"));
     assert!(!logs.contains("Bearer "));
+}
+
+/// Incomplete receipts fail with the stable public response-invalid code, not message text.
+#[test]
+fn invalid_receipt_uses_stable_response_invalid_code() {
+    let error = with_trace_logging(|| {
+        futures_executor_block_on(configure_workspace(
+            &ScriptedRuntime {
+                result: Ok(fixture("receipts", "missing.json")),
+            },
+            &prepared_tavily_http(),
+            &expected_tavily(),
+        ))
+        .expect_err("invalid receipt")
+    });
+    assert_eq!(error.error_code(), "mcp_configuration_response_invalid");
 }
 
 #[derive(Clone, Default)]

@@ -56,6 +56,8 @@ pub(crate) enum ReceiptValidationError {
     MissingManagedIdentity,
     #[error("configure receipt contains a duplicate managed identity")]
     DuplicateManagedIdentity,
+    #[error("configure receipt contains a duplicate native key")]
+    DuplicateNativeKey,
     #[error("configure receipt contains an extra managed identity")]
     ExtraManagedIdentity,
     #[error("configure receipt source revision does not match Desired")]
@@ -131,10 +133,14 @@ pub(crate) fn validate_mcp_configuration_receipt(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let mut seen = BTreeSet::new();
+    let mut seen_identities = BTreeSet::new();
+    let mut seen_native_keys = BTreeSet::new();
     for entry in &receipt.entries {
-        if !seen.insert(entry.managed_identity.as_str()) {
+        if !seen_identities.insert(entry.managed_identity.as_str()) {
             return Err(ReceiptValidationError::DuplicateManagedIdentity);
+        }
+        if !seen_native_keys.insert(entry.native_key.as_str()) {
+            return Err(ReceiptValidationError::DuplicateNativeKey);
         }
         let Some(expected_revision) = expected_by_id.get(entry.managed_identity.as_str()) else {
             return Err(ReceiptValidationError::ExtraManagedIdentity);
@@ -143,7 +149,7 @@ pub(crate) fn validate_mcp_configuration_receipt(
             return Err(ReceiptValidationError::SourceRevisionMismatch);
         }
     }
-    if seen.len() != expected.desired.len() {
+    if seen_identities.len() != expected.desired.len() {
         return Err(ReceiptValidationError::MissingManagedIdentity);
     }
     Ok(())

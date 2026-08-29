@@ -17,7 +17,6 @@ pub use mcp_configuration::{
     CONFIGURE_WORKSPACE_METHOD, MCP_CONFIGURATION_PROTOCOL_V1, McpConfigurationCapability,
     McpConfigurationCapabilityIssue, McpConfigurationProtocolVersion, McpConfigurationRegistration,
     McpCoordinationMode, McpTransportKind, McpTransportSet, parse_mcp_configuration,
-    parse_mcp_configuration_value,
 };
 pub use protocol::{
     PluginEffectCoordination, PluginEffectSurface, PluginNotification, PluginRegistration,

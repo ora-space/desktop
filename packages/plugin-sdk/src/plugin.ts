@@ -8,6 +8,7 @@ import {
   type PluginTransport,
   type RequestId,
 } from "./protocol.ts";
+import type { McpConfigurationCapabilityDeclaration } from "./mcp.ts";
 
 export type MethodHandler = (
   input: JsonValue,
@@ -73,13 +74,7 @@ export class Plugin {
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #effectSurfaces: EffectSurfaceDeclaration[] = [];
-  #mcpConfiguration:
-    | {
-      protocolVersion: number;
-      transports: string[];
-      coordination: string;
-    }
-    | undefined;
+  #mcpConfiguration: McpConfigurationCapabilityDeclaration | undefined;
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
   readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
   #nextHostRequestId = 1;
@@ -119,11 +114,9 @@ export class Plugin {
    * `agent/configureWorkspace`. Calling this without that method is a low-level defect the Host
    * disables rather than a second high-level API.
    */
-  declareMcpConfiguration(capability: {
-    protocolVersion: number;
-    transports: readonly string[];
-    coordination: string;
-  }): void {
+  declareMcpConfiguration(
+    capability: McpConfigurationCapabilityDeclaration,
+  ): void {
     this.#assertRegistering();
     this.#mcpConfiguration = {
       protocolVersion: capability.protocolVersion,

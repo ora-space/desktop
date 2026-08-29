@@ -70,26 +70,16 @@ impl From<ConsumerId> for AgentPluginId {
 }
 
 /// Digest of the Agent Plugin version and its declared configuration capabilities.
+///
+/// Process-local Skill-only Expand declarations leave revision unset (`Option::None` on the
+/// declaration) instead of encoding that absence as an empty string here.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AgentCapabilityRevision(String);
 
 impl AgentCapabilityRevision {
-    /// Accepts an opaque revision token; empty means "not yet negotiated" during Expand.
+    /// Accepts an already-persisted revision token from the Agent Target ledger.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
-    }
-
-    /// Skill-only Expand declarations that have not negotiated an MCP capability yet.
-    ///
-    /// Live attach always binds a version and digest. This sentinel exists so the Skill-only
-    /// replacement path can still remove a plugin when it has no surfaces left.
-    pub fn unspecified() -> Self {
-        Self(String::new())
-    }
-
-    /// Returns whether this revision is the Expand Skill-only sentinel rather than a bound digest.
-    pub fn is_unspecified(&self) -> bool {
-        self.0.is_empty()
     }
 
     /// Returns the persistence representation.

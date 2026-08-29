@@ -276,8 +276,13 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
     /// next pass re-derives the same set, and the surfaces that are already registered still owe
     /// their reconcile regardless.
     fn converge_surface_registrations(&self, now: i64) {
-        let declarations = self.plugin_host.agent_effect_surface_declarations();
-        if declarations.is_empty() {
+        let skill_surfaces = self
+            .plugin_host
+            .agent_effect_surface_declarations()
+            .into_iter()
+            .flat_map(|(_, declaration)| declaration.skill_surfaces)
+            .collect::<Vec<_>>();
+        if skill_surfaces.is_empty() {
             return;
         }
         let workspaces = match self.workspace_repository.list_all_workspaces() {
@@ -291,7 +296,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                 return;
             }
         };
-        match converge_workspace_surfaces(&self.repository, &workspaces, &declarations, now) {
+        match converge_workspace_surfaces(&self.repository, &workspaces, &skill_surfaces, now) {
             Ok(0) => {}
             Ok(registered) => ora_info!(
                 operation = "effect_reconcile",
@@ -685,6 +690,7 @@ mod tests {
     use super::{
         EffectWorker, EffectWorkerHandle, ReplacedAgentSessions, SurfaceOutcome, reconcile_one,
     };
+    use crate::agent_runtime::plugin_agent::AgentPluginEffectDeclaration;
     use crate::app_event::AppEventHub;
     use crate::effect_surface_registration::converge_workspace_surfaces;
     use crate::plugin::PluginApi;
@@ -1061,9 +1067,9 @@ mod tests {
         );
         // The declaration reaches only the Workspaces that exist at this moment.
         plugin_host
-            .replace_agent_effect_surfaces(
+            .replace_agent_plugin_declaration(
                 PluginId::new("official", "ora-space.opencode").unwrap(),
-                agent_declarations(),
+                AgentPluginEffectDeclaration::skill_only(agent_declarations()),
             )
             .unwrap();
         let repository = SqliteEffectRepository::new(pool.clone());

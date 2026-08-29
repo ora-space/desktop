@@ -62,7 +62,7 @@ transports, or unknown capability fields disable MCP materialization and record
 Older plugins that omit the field are `UnsupportedByAgent` for every Ready MCP. Host snapshot
 requests carry operation identity, Agent Target identity, Workspace root, generation, and the
 supported Resolved MCP list only. Receipts that miss, duplicate, extra-cover, or mismatch
-generation, locator bounds, source revision, or fingerprint are rejected and cannot advance
+generation, locator bounds, native key uniqueness, source revision, or fingerprint are rejected and cannot advance
 Ready Generation. Agent Capability Revision binds the exact plugin version to the canonical
 capability digest. JSON-RPC diagnostics, stderr, timeout errors, and traces never include header
 values, environment values, document bytes, or Authorization material.

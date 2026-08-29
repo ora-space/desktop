@@ -12,7 +12,10 @@ strict receipt validation, and Agent Capability Revision binding.
   root, generation, and supported Resolved MCP values only.
 - Exclude unsupported transports before the plugin call and represent them as target-level
   NonBlocking `UnsupportedByAgent` conditions.
-- Reject receipts that do not exactly cover the supported Desired set.
+- Reject receipts that do not exactly cover the supported Desired set, including duplicate
+  native keys.
+- Surface `mcp_configuration_failed` / `mcp_configuration_response_invalid` as stable public
+  codes; Display text is diagnostic only.
 - Bind Agent Capability Revision to the exact plugin version and canonical capability digest.
 - Keep header values, environment values, document bytes, and API keys out of diagnostics.
 

@@ -46,6 +46,18 @@ pub(crate) enum ConfigureWorkspaceError {
     InvalidReceipt(ReceiptValidationError),
 }
 
+impl ConfigureWorkspaceError {
+    /// Stable public code; the Display message is diagnostic only and must not drive control flow.
+    pub(crate) fn error_code(&self) -> &'static str {
+        match self {
+            Self::InvalidReceipt(_) => "mcp_configuration_response_invalid",
+            Self::MethodNotRegistered | Self::TimedOut | Self::Failed(_) => {
+                "mcp_configuration_failed"
+            }
+        }
+    }
+}
+
 impl From<PluginRuntimeError> for ConfigureWorkspaceError {
     fn from(error: PluginRuntimeError) -> Self {
         match error {

@@ -9,7 +9,8 @@ by a physical Skill surface.
 
 - Strong identities for Agent Targets, capability revisions, and target-owned conditions.
 - Binding Agent Capability Revision to an exact plugin package version and the canonical digest of
-  the declared configuration capability.
+  the declared configuration capability. Process-local Skill-only Expand declarations leave revision
+  unset rather than encoding absence as an empty string.
 - Closed enums for target phase, condition impact, reconcile state, and wake reason.
 - The `AgentTargetRepository` port for typed persistence without activating target-keyed workers.
 - Complete record shapes suitable for whole-object repository round-trips.
