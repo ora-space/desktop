@@ -3,6 +3,7 @@ import {
   AGENT_NOT_INSTALLED,
   defineAgent,
   PluginMethodError,
+  renderOpenCodeMcpFile,
 } from "../src/mod.ts";
 import {
   decodeFrames,
@@ -174,6 +175,128 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     jsonrpc: "2.0",
     id: 3,
     result: {},
+  });
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
+Deno.test("renders the complete MCP file from a plaintext-free desired set", async () => {
+  const renderCalls: unknown[] = [];
+  const plugin = defineAgent({
+    start: () => {},
+    stop: () => {},
+    listModels: () => [],
+    onAcp: () => {},
+    effects: {
+      surfaces: [{
+        workspaceRelativePath: ".opencode/opencode.jsonc",
+        materializationFormat: "opencode_mcp_complete_file.v1",
+        coordination: "wait_for_idle_and_restart",
+      }],
+      waitForIdle: () => "ready",
+      restart: () => {},
+      renderMcp: (request) => {
+        renderCalls.push(request);
+        return renderOpenCodeMcpFile(request.servers);
+      },
+    },
+  });
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    method: "ora/register",
+    params: {
+      methods: [
+        "agent/start",
+        "agent/stop",
+        "agent/listModels",
+        "effect/waitForIdle",
+        "effect/restart",
+        "agent_mcp_v1/render",
+      ],
+      emits: ["agent/acp"],
+      effectSurfaces: [{
+        workspaceRelativePath: ".opencode/opencode.jsonc",
+        materializationFormat: "opencode_mcp_complete_file.v1",
+        coordination: "wait_for_idle_and_restart",
+      }],
+    },
+  });
+
+  const request = {
+    servers: [{
+      namespace: "official",
+      identifier: "ora-space.tavily-search",
+      version: "1.0.0",
+      definitionDigest: "deadbeef",
+      revision: 1,
+      url: "https://mcp.tavily.com/mcp",
+      headers: [{
+        name: "Authorization",
+        envVar: "ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0",
+        prefix: "Bearer ",
+        suffix: "",
+      }],
+    }],
+  };
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "agent_mcp_v1/render",
+    params: request,
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 1,
+    result: {
+      bytes:
+        `{"$schema":"https://opencode.ai/config.json","mcp":{"ora__ora-space__tavily-search":{"type":"remote","url":"https://mcp.tavily.com/mcp","enabled":true,"headers":{"Authorization":"Bearer {env:ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0}"}}}}`,
+      digest:
+        "sha256:0c32e1ac46a8c96d166ac1f611e4c43cd32c8521a9c1eaf5577dfdfddfa36bce",
+    },
+  });
+  assertEquals(renderCalls, [request]);
+
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
+Deno.test("rejects a malformed MCP render request before the renderer runs", async () => {
+  const plugin = defineAgent({
+    start: () => {},
+    stop: () => {},
+    listModels: () => [],
+    onAcp: () => {},
+    effects: {
+      surfaces: [{
+        workspaceRelativePath: ".opencode/opencode.jsonc",
+        materializationFormat: "opencode_mcp_complete_file.v1",
+        coordination: "wait_for_idle_and_restart",
+      }],
+      waitForIdle: () => "ready",
+      restart: () => {},
+      renderMcp: () => ({ bytes: "", digest: "" }),
+    },
+  });
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+  await harness.responses.next();
+
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "agent_mcp_v1/render",
+    params: { servers: "not-an-array" },
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 1,
+    error: {
+      code: -32602,
+      message: "agent_mcp_v1/render requires a servers array",
+    },
   });
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;

@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use ora_effect::MaterializationFormat;
 use ora_logging::ora_warn;
 use ora_plugin_runtime::PluginEffectCoordination;
 use ora_plugin_runtime::{PluginRegistration, PluginRuntime, PluginRuntimeError};
@@ -147,6 +148,23 @@ pub(super) fn verify_agent_contract(
                 missing_effect_methods.join(", ")
             )));
         }
+    }
+    // An MCP complete-file surface is rendered by the plugin's `agent_mcp_v1/render` method, so a
+    // plugin that declares one without registering the renderer cannot fulfill the contract and is
+    // rejected here rather than failing mid-reconcile.
+    let requires_mcp_renderer = registration.effect_surfaces.iter().any(|surface| {
+        surface.materialization_format.as_str()
+            == MaterializationFormat::opencode_mcp_complete_file_v1().as_str()
+    });
+    if requires_mcp_renderer
+        && !registration
+            .methods
+            .contains(super::effect::RENDER_MCP_METHOD)
+    {
+        return Err(PluginAgentError::ContractIncomplete(format!(
+            "missing MCP renderer method {}",
+            super::effect::RENDER_MCP_METHOD
+        )));
     }
     Ok(())
 }

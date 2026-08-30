@@ -3,6 +3,7 @@ import type { CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, Delet
 import type { CommitAgentImportRequest, CommitAgentImportResponse, PrepareAgentImportRequest, PrepareAgentImportResponse } from "./agent-import.js";
 import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
+import type { GetMcpApplicationStateRequest, GetMcpApplicationStateResponse } from "./effect.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
@@ -36,6 +37,7 @@ export type RequestByOperation = {
   deleteProject: DeleteProjectRequest;
   getDeveloperMode: GetDeveloperModeRequest;
   setDeveloperMode: SetDeveloperModeRequest;
+  getMcpApplicationState: GetMcpApplicationStateRequest;
   getRuntimeLogLevel: GetRuntimeLogLevelRequest;
   setRuntimeLogLevel: SetRuntimeLogLevelRequest;
   createTask: CreateTaskRequest;
@@ -149,6 +151,7 @@ export type ResponseByOperation = {
   deleteProject: DeleteProjectResponse;
   getDeveloperMode: DeveloperModeResponse;
   setDeveloperMode: DeveloperModeResponse;
+  getMcpApplicationState: GetMcpApplicationStateResponse;
   getRuntimeLogLevel: RuntimeLogLevelStateResponse;
   setRuntimeLogLevel: RuntimeLogLevelStateResponse;
   createTask: CreateTaskResponse;
@@ -318,6 +321,14 @@ export const endpoints = {
     memberName: "set",
     requestType: "SetDeveloperModeRequest",
     responseType: "DeveloperModeResponse",
+    responseMode: "unary",
+  },
+  getMcpApplicationState: {
+    operationName: "getMcpApplicationState",
+    namespace: "effect",
+    memberName: "getMcpApplicationState",
+    requestType: "GetMcpApplicationStateRequest",
+    responseType: "GetMcpApplicationStateResponse",
     responseMode: "unary",
   },
   getRuntimeLogLevel: {

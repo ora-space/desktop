@@ -336,25 +336,33 @@ where
             path: staging.path().to_path_buf(),
             source,
         })?;
-        crate::validation::validate(staging.path(), manifest, /*logo*/ None)
+        // The marketplace manifest selected the release, but the fetched bytes carry their own
+        // `orax.toml`, so it is read unconditionally and its four identity fields are reconciled
+        // with the release before any on-disk validation. A wrong or repackaged archive cannot
+        // install as a valid plugin whose on-disk identity disagrees with the registry, and the
+        // check runs before the final rename so a failure leaves no installed directory behind.
+        let installed_manifest_path = staging.path().join(crate::discovery::MANIFEST_FILE_NAME);
+        if !installed_manifest_path.is_file() {
+            return Err(InstallError::MissingManifest);
+        }
+        let installed_source =
+            std::fs::read_to_string(&installed_manifest_path).map_err(|source| {
+                InstallError::Io {
+                    path: installed_manifest_path.clone(),
+                    source,
+                }
+            })?;
+        let installed_manifest =
+            ora_plugin_manifest::PluginManifest::parse_installed(&installed_source)?;
+        crate::identity::ensure_manifest_identity(manifest, &installed_manifest)?;
+        // Static package validation runs against the in-package manifest, which now provably names
+        // the same plugin the marketplace resolved, so the on-disk checks describe the actual bytes.
+        crate::validation::validate(staging.path(), &installed_manifest, /*logo*/ None)
             .map_err(InstallError::invalid_package)?;
         // A targeted archive must self-declare its target in an in-package `[artifact]` section.
-        // Missing the installed manifest or the section fails closed so a wrong-architecture
-        // archive cannot install as valid. Local import applies the same check against the host.
+        // The manifest read above is reused so a wrong-architecture archive cannot install as
+        // valid; missing the section fails closed exactly as a mismatched target does.
         if let Some(selected) = source.target() {
-            let installed_manifest_path = staging.path().join(crate::discovery::MANIFEST_FILE_NAME);
-            if !installed_manifest_path.is_file() {
-                return Err(InstallError::MissingManifest);
-            }
-            let installed_source =
-                std::fs::read_to_string(&installed_manifest_path).map_err(|source| {
-                    InstallError::Io {
-                        path: installed_manifest_path.clone(),
-                        source,
-                    }
-                })?;
-            let installed_manifest =
-                ora_plugin_manifest::PluginManifest::parse_installed(&installed_source)?;
             let Some(artifact) = installed_manifest.artifact() else {
                 return Err(InstallError::MissingArtifactTarget);
             };
@@ -707,7 +715,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    b"resolver = 1\nidentifier = \"weather\"\n".as_slice(),
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n".as_slice(),
                 ),
                 ("main.js", b"export {};\n".as_slice()),
                 ("logo.svg", b"<svg/>".as_slice()),
@@ -1500,5 +1508,257 @@ mod tests {
             error,
             UpdateError::NotFound { ref id } if id == "official/weather"
         ));
+    }
+
+    /// Builds a complete in-package `orax.toml` whose identifier, version, and kind are
+    /// individually configurable, so one field swap produces a clean identity mismatch with the
+    /// marketplace manifest. `namespace` is fixed to the only value resolver 1 admits.
+    fn in_package_manifest_toml(identifier: &str, version: &str, kind: &str) -> String {
+        format!(
+            "resolver = 1\nidentifier = \"{identifier}\"\nnamespace = \"official\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\n"
+        )
+    }
+
+    /// Returns the final install directory a `weather` 1.0.0 release would commit, used to prove
+    /// that every identity failure below leaves no trace behind.
+    fn weather_install_dir(temp_dir: &TempDir) -> std::path::PathBuf {
+        temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join("1.0.0")
+    }
+
+    /// A universal package whose extracted bytes carry no `orax.toml` cannot self-identify, so the
+    /// commit boundary refuses it before rename rather than recording an unverifiable plugin.
+    #[test]
+    fn rejects_universal_package_without_in_package_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(&release_path, &[("main.js", b"export {};\n".as_slice())]);
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather", "1.0.0", "agent", digest,
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(error, InstallError::MissingManifest));
+        assert!(!weather_install_dir(&temp_dir).exists());
+    }
+
+    /// An in-package identifier that disagrees with the release manifest never lands as installed.
+    #[test]
+    fn rejects_package_when_in_package_identifier_mismatches_release() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    in_package_manifest_toml("climate", "1.0.0", "agent").as_bytes(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather", "1.0.0", "agent", digest,
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidPackage { ref field_path, .. } if field_path == "identifier"
+        ));
+        assert!(!weather_install_dir(&temp_dir).exists());
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("climate")
+                .join("1.0.0")
+                .exists()
+        );
+    }
+
+    /// An in-package version that disagrees with the release manifest never lands as installed.
+    #[test]
+    fn rejects_package_when_in_package_version_mismatches_release() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    in_package_manifest_toml("weather", "2.0.0", "agent").as_bytes(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather", "1.0.0", "agent", digest,
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidPackage { ref field_path, .. } if field_path == "version"
+        ));
+        assert!(!weather_install_dir(&temp_dir).exists());
+    }
+
+    /// An in-package kind that disagrees with the release manifest never lands as installed.
+    #[test]
+    fn rejects_package_when_in_package_kind_mismatches_release() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    in_package_manifest_toml("weather", "1.0.0", "skill").as_bytes(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather", "1.0.0", "agent", digest,
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidPackage { ref field_path, .. } if field_path == "kind"
+        ));
+        assert!(!weather_install_dir(&temp_dir).exists());
+    }
+
+    /// An in-package namespace resolver 1 cannot admit still fails before rename; this covers the
+    /// namespace dimension of the identity matrix through the parse boundary it actually enforces.
+    #[test]
+    fn rejects_package_when_in_package_namespace_is_unsupported() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nnamespace = \"unsupported\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n"
+                        .as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather", "1.0.0", "agent", digest,
+        ))
+        .unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(error, InstallError::InvalidManifest(_)));
+        assert!(!weather_install_dir(&temp_dir).exists());
+    }
+
+    /// A targeted Hook release whose in-package identifier disagrees with the release manifest
+    /// fails identity reconciliation before the targeted-only artifact check, leaving no installed
+    /// directory. This covers the identity matrix on the targeted install path, not only the
+    /// universal one: the identity check is hoisted above the artifact branch, so a mismatched
+    /// archive cannot install as valid on a targeted release any more than a universal one.
+    #[test]
+    fn rejects_targeted_hook_release_when_in_package_identifier_mismatches_release() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk-other\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"x86_64-pc-windows-msvc\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{}\"\n",
+            hex(digest)
+        ))
+        .unwrap();
+        let host_target = ora_plugin_manifest::HookTarget::parse("x86_64-pc-windows-msvc").unwrap();
+        let source = ResolvedReleaseSource::targeted(
+            DownloadSource::Local(release_path),
+            digest,
+            host_target,
+        );
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            source,
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidPackage { ref field_path, .. } if field_path == "identifier"
+        ));
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("rtk-ai.rtk")
+                .join("0.1.0")
+                .exists()
+        );
     }
 }

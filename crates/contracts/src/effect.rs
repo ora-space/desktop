@@ -159,6 +159,34 @@ pub struct RetryEffectSurfaceResponse {
     pub requested: bool,
 }
 
+/// The five user-visible states an MCP traverses, mirroring the ora-effect domain fold that
+/// derives them from configuration completeness, Agent availability, surface convergence, and
+/// Agent activation (CONTEXT.md).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "effect.ts")]
+pub enum McpApplicationStateDto {
+    NeedsConfiguration,
+    WaitingForAgent,
+    Applying,
+    Ready,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "effect.ts")]
+pub struct GetMcpApplicationStateRequest {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "effect.ts")]
+pub struct GetMcpApplicationStateResponse {
+    pub state: McpApplicationStateDto,
+}
+
 /// Exports Effect contract bindings beside the other transport-neutral DTO families.
 pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     EffectSourceKind::export_all(config)?;
@@ -176,5 +204,8 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     GetEffectSurfaceStatusResponse::export_all(config)?;
     RetryEffectSurfaceRequest::export_all(config)?;
     RetryEffectSurfaceResponse::export_all(config)?;
+    McpApplicationStateDto::export_all(config)?;
+    GetMcpApplicationStateRequest::export_all(config)?;
+    GetMcpApplicationStateResponse::export_all(config)?;
     Ok(())
 }

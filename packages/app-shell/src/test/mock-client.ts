@@ -777,6 +777,12 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { ...state.developerMode };
       },
     },
+    effect: {
+      // The resting state of a workspace with no MCP desired; the hermetic E2E drives the real
+      // client, so the mock only needs a type-correct default for hook tests that don't assert on
+      // the convergence lifecycle.
+      getMcpApplicationState: async () => ({ state: "needs_configuration" }),
+    },
     runtimeLogLevel: {
       get: async () => ({ ...state.runtimeLogLevel }),
       set: async (request) => {

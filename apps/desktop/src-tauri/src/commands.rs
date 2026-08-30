@@ -212,6 +212,13 @@ backend_command!(
     "Lists workspaces through the shared Backend."
 );
 backend_command!(
+    get_mcp_application_state,
+    GetMcpApplicationStateRequest,
+    GetMcpApplicationStateResponse,
+    mcp_application_state,
+    "Folds durable Effect state and the live OpenCode Agent into the MCP Application State for one Workspace."
+);
+backend_command!(
     list_project_branches,
     ListProjectBranchesRequest,
     ListProjectBranchesResponse,

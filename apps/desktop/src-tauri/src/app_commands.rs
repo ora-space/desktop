@@ -111,6 +111,7 @@ desktop_command_registry! {
     commands::set_worktree_root,
     commands::resolve_task_cwd,
     commands::resolve_workspace_cwd,
+    commands::get_mcp_application_state,
     open_location::open_location,
     open_external::open_external_url,
     commands::write_workflow_export,

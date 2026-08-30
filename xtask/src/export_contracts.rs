@@ -499,6 +499,10 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         "GetDeveloperModeRequest" | "SetDeveloperModeRequest" | "DeveloperModeResponse" => {
             "developerMode"
         }
+        // effect
+        "GetMcpApplicationStateRequest"
+        | "GetMcpApplicationStateResponse"
+        | "McpApplicationStateDto" => "effect",
         other => panic!("unknown contract type `{other}`"),
     }
 }

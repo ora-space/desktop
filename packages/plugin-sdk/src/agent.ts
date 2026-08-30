@@ -12,6 +12,7 @@ const AGENT_LIST_MODELS = "agent/listModels";
 const AGENT_ACP = "agent/acp";
 const EFFECT_WAIT_FOR_IDLE = "effect/waitForIdle";
 const EFFECT_RESTART = "effect/restart";
+const AGENT_MCP_RENDER = "agent_mcp_v1/render";
 
 /**
  * The error code that tells Ora the agent CLI is absent from this machine.
@@ -54,6 +55,36 @@ export interface AgentEffectRestartContext extends AgentEffectContext {
 /** Result of establishing the Agent plugin's idempotent surface mutation barrier. */
 export type AgentEffectIdleState = "ready" | "waiting_for_idle";
 
+/** One header whose value the agent resolves at start from a named environment variable. */
+export interface McpHttpHeaderRef {
+  name: string;
+  envVar: string;
+  prefix: string;
+  suffix: string;
+}
+
+/** One plaintext-free MCP server in a render request. */
+export interface McpServerRef {
+  namespace: string;
+  identifier: string;
+  version: string;
+  definitionDigest: string;
+  revision: number;
+  url: string;
+  headers: McpHttpHeaderRef[];
+}
+
+/** The host's request to render the complete OpenCode MCP file from env-var references only. */
+export interface AgentMcpRenderRequest {
+  servers: McpServerRef[];
+}
+
+/** The rendered complete file: its bytes and the digest the host rechecks. */
+export interface AgentMcpRenderResult {
+  bytes: string;
+  digest: string;
+}
+
 /** Defines Agent-owned Skill surfaces and the runtime barrier around their mutation. */
 export interface AgentEffectDefinition {
   surfaces: readonly EffectSurfaceDeclaration[];
@@ -61,6 +92,16 @@ export interface AgentEffectDefinition {
     context: AgentEffectContext,
   ): AgentEffectIdleState | Promise<AgentEffectIdleState>;
   restart(context: AgentEffectRestartContext): void | Promise<void>;
+  /**
+   * Renders the complete OpenCode MCP file from a plaintext-free desired set. The request carries
+   * only environment-variable references (never a Setting value), so a renderer cannot leak a key it
+   * was never handed. Ora recomputes the digest over the returned bytes, so the renderer cannot
+   * vouch for content it did not produce. Optional because only agents that own an
+   * `opencode_mcp_complete_file.v1` surface serve it.
+   */
+  renderMcp?(
+    request: AgentMcpRenderRequest,
+  ): AgentMcpRenderResult | Promise<AgentMcpRenderResult>;
 }
 
 /** Implements the agent contract Ora requires of every `kind: "agent"` plugin. */
@@ -123,6 +164,13 @@ export function defineAgent(definition: AgentDefinition): Plugin {
       await effects.restart(parseRestartContext(input));
       return {};
     });
+    const renderMcp = effects.renderMcp;
+    if (renderMcp !== undefined) {
+      plugin.registerMethod(AGENT_MCP_RENDER, async (input) => {
+        const rendered = await renderMcp(parseMcpRenderRequest(input));
+        return { bytes: rendered.bytes, digest: rendered.digest };
+      });
+    }
   }
 
   return plugin;
@@ -176,4 +224,74 @@ function parseStartContext(input: JsonValue): AgentStartContext {
     );
   }
   return { cwd: input.cwd, hostVersion: input.hostVersion };
+}
+
+/**
+ * Validates the plaintext-free render request before the renderer implementation sees it.
+ *
+ * Every server must carry its identity, the digest of the definition it was resolved from, and a
+ * non-negative integer revision, plus an `http` transport described purely by URL and env-var-bound
+ * headers. Rejecting here means a malformed host request never reaches the renderer, so the
+ * renderer's own code can assume a well-shaped [`AgentMcpRenderRequest`].
+ */
+function parseMcpRenderRequest(input: JsonValue): AgentMcpRenderRequest {
+  if (
+    typeof input !== "object" || input === null || Array.isArray(input) ||
+    !Array.isArray(input.servers)
+  ) {
+    throw new PluginMethodError(
+      -32602,
+      "agent_mcp_v1/render requires a servers array",
+    );
+  }
+  const servers = input.servers.map((rawServer): McpServerRef => {
+    if (
+      typeof rawServer !== "object" || rawServer === null ||
+      Array.isArray(rawServer) ||
+      typeof rawServer.namespace !== "string" ||
+      typeof rawServer.identifier !== "string" ||
+      typeof rawServer.version !== "string" ||
+      typeof rawServer.definitionDigest !== "string" ||
+      typeof rawServer.revision !== "number" ||
+      !Number.isSafeInteger(rawServer.revision) || rawServer.revision < 0 ||
+      typeof rawServer.url !== "string" ||
+      !Array.isArray(rawServer.headers)
+    ) {
+      throw new PluginMethodError(
+        -32602,
+        "agent_mcp_v1/render requires namespace, identifier, version, definitionDigest, revision, url, and headers",
+      );
+    }
+    const headers = rawServer.headers.map((rawHeader): McpHttpHeaderRef => {
+      if (
+        typeof rawHeader !== "object" || rawHeader === null ||
+        Array.isArray(rawHeader) ||
+        typeof rawHeader.name !== "string" ||
+        typeof rawHeader.envVar !== "string" ||
+        typeof rawHeader.prefix !== "string" ||
+        typeof rawHeader.suffix !== "string"
+      ) {
+        throw new PluginMethodError(
+          -32602,
+          "agent_mcp_v1/render header requires name, envVar, prefix, and suffix",
+        );
+      }
+      return {
+        name: rawHeader.name,
+        envVar: rawHeader.envVar,
+        prefix: rawHeader.prefix,
+        suffix: rawHeader.suffix,
+      };
+    });
+    return {
+      namespace: rawServer.namespace,
+      identifier: rawServer.identifier,
+      version: rawServer.version,
+      definitionDigest: rawServer.definitionDigest,
+      revision: rawServer.revision,
+      url: rawServer.url,
+      headers,
+    };
+  });
+  return { servers };
 }

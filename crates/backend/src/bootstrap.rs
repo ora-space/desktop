@@ -828,6 +828,19 @@ impl Backend {
         )
     }
 
+    /// Folds durable Effect state and the live OpenCode Agent process into the MCP Application
+    /// State for one Workspace's OpenCode MCP surface.
+    ///
+    /// The pool yields the durable rows; the plugin host yields the one fact it alone knows —
+    /// whether the OpenCode Agent process is connected — so the read stays a thin delegate over
+    /// the application service's pure fold.
+    pub fn mcp_application_state(
+        &self,
+        request: GetMcpApplicationStateRequest,
+    ) -> Result<GetMcpApplicationStateResponse, BackendError> {
+        crate::effect_read::mcp_application_state(&self.pool, &self.plugin, request)
+    }
+
     /// Resolves the main Workspace directory for an ordinary project chat.
     pub fn resolve_project_cwd(&self, project_id: &str) -> Result<PathBuf, BackendError> {
         crate::task::resolve_project_cwd(
@@ -1661,14 +1674,44 @@ mod tests {
     use ora_contracts::CreateTaskRequest;
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
-        DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest,
-        UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
+        DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetMcpApplicationStateRequest,
+        GetProjectRequest, GetTaskRequest, ListAgentsRequest, ListProjectsRequest,
+        ListSkillsRequest, McpApplicationStateDto, UpdateAgentRequest, UpdateProjectRequest,
+        UpdateSkillRequest,
     };
     use ora_logging::LogLevel;
     use ora_test_support::GitTestScaffold;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Verifies the MCP Application State read facade reports NeedsConfiguration for a workspace
+    /// with no MCP desired, exercising the backend's pool→service construction and its live
+    /// OpenCode Agent probe without asserting on reconcile outcomes the service tests already own.
+    #[test]
+    fn mcp_application_state_is_needs_configuration_without_any_mcp_desired() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms/skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
+        })
+        .expect("open shared backend");
+
+        let response = backend
+            .mcp_application_state(GetMcpApplicationStateRequest {
+                workspace_id: "ws-no-mcp".to_string(),
+            })
+            .expect("read MCP application state");
+
+        assert_eq!(response.state, McpApplicationStateDto::NeedsConfiguration);
+    }
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
     #[tokio::test]

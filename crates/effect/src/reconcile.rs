@@ -3,10 +3,12 @@ use crate::{
     CoordinationOutcome, DesiredSkillState, EffectOperation, EffectOperationId,
     EffectOperationKind, EffectOperationPhase, EffectRepository, FilesystemEffectError,
     FilesystemSurfaceAdapter, Generation, LedgerTransition, ManagedIdentity,
-    ManagedIdentityGenerator, ManagedSkill, OperationPaths, OperationState, PlanOperation,
-    PlanOperationKind, Planner, PlannerInput, RecoveryDecision, RepositoryError, SourceError,
-    SourceProvider, SurfaceDescriptorSet, SurfaceLifecycle, SurfacePhase, SurfaceStatus,
+    ManagedIdentityGenerator, ManagedSkill, McpRenderError, OperationPaths, OperationState,
+    PlanOperation, PlanOperationKind, Planner, PlannerInput, RecoveryDecision, RepositoryError,
+    SourceError, SourceProvider, SurfaceDescriptorSet, SurfaceLifecycle, SurfacePhase,
+    SurfaceStatus,
 };
+use ora_utils::path::PathContainmentError;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -24,6 +26,25 @@ pub enum ReconcileError {
     Repository(#[from] RepositoryError),
     #[error(transparent)]
     Filesystem(#[from] FilesystemEffectError),
+    #[error(transparent)]
+    Render(#[from] McpRenderError),
+    #[error(transparent)]
+    Path(#[from] PathContainmentError),
+    /// A target file exists that Ora did not author; the host refuses to replace user content.
+    #[error("an existing OpenCode MCP file is not Ora-owned; refusing to replace user content")]
+    ExistingFileNotOwned,
+    /// The surface declares no consumer able to serve the renderer method.
+    #[error("the MCP surface has no consumer that can render the complete file")]
+    NoRendererConsumer,
+    /// The surface path could not be canonicalized to a contained, link-safe target.
+    #[error("the MCP surface path could not be resolved to a contained target")]
+    PathUnsafePath,
+    /// The rendered MCP complete file exceeded the host size bound; the host refuses to publish
+    /// megabytes of untrusted content, and a deterministic over-producer cannot self-heal on retry.
+    #[error("the rendered MCP complete file exceeded the host size bound")]
+    RenderedFileTooLarge,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 /// Statically dispatched orchestrator for one-process Effect reconciliation.

@@ -6,9 +6,18 @@
 //! the MCP. Resolution against `store.json` (`ResolvedMcp`) is a later, separate step and is
 //! deliberately not modeled here.
 
+mod resolve;
+#[cfg(test)]
+mod resolve_tests;
 #[cfg(test)]
 mod tests;
 mod transport;
+
+pub use resolve::{
+    EffectiveSettings, McpActivationBindings, McpDescriptor, NeedsConfiguration,
+    NeedsConfigurationReason, ResolveMcp, ResolvedHttpHeader, ResolvedHttpMcp, ResolvedMcp,
+    resolve_mcp,
+};
 
 use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, compile_declaration,
@@ -17,6 +26,7 @@ use crate::declaration::{
 use crate::hook::{
     CompileHookConfigurationError, CompiledHookConfiguration, compile_hook_configuration,
 };
+use ora_utils::hash::sha256_bytes;
 use ora_utils::path::PortableRelativePath;
 use serde::Deserialize;
 use serde_json::Value;
@@ -53,6 +63,11 @@ pub struct CompiledMcpConfiguration {
     /// MCP package feeds the settings UI without a second declaration format.
     pub settings: Option<CompiledDeclaration>,
     pub transport: McpTransport,
+    /// Stable SHA-256 digest of the whole MCP definition (schema version, Settings subset, and
+    /// transport), so a resolver can bind the exact definition an Agent rendered against. It
+    /// covers the transport that the Settings-only [`CompiledDeclaration::fingerprint`] does not,
+    /// so a transport-only MCP still carries a stable definition identifier.
+    pub definition_digest: String,
 }
 
 /// Models the exclusive MCP Transport so illegal combinations are unrepresentable: stdio cannot
@@ -121,6 +136,8 @@ pub enum CompileMcpConfigurationError {
     UnsupportedTransportType(String),
     #[error("invalid MCP transport `{field}`: {reason}")]
     InvalidTransport { field: String, reason: String },
+    #[error("failed to digest the MCP definition: {0}")]
+    Fingerprint(String),
 }
 
 /// Reports either strict `assets/config.json` shape failing to compile.
@@ -185,6 +202,11 @@ struct RawMcpConfiguration {
 fn compile_mcp_configuration(
     value: Value,
 ) -> Result<CompiledMcpConfiguration, CompileMcpConfigurationError> {
+    // The definition digest is taken from the canonical serialization of the parsed strict-JSON
+    // value before it is consumed, mirroring how the Settings-only declaration fingerprints itself.
+    // serde_json serializes the BTreeMap-backed value with sorted keys, so the digest is stable.
+    let canonical = serde_json::to_vec(&value)
+        .map_err(|error| CompileMcpConfigurationError::Fingerprint(error.to_string()))?;
     let raw: RawMcpConfiguration = serde_json::from_value(value)
         .map_err(|error| CompileMcpConfigurationError::InvalidStructure(error.to_string()))?;
     if raw.schema_version != 1 {
@@ -204,6 +226,7 @@ fn compile_mcp_configuration(
         schema_version: 1,
         settings,
         transport,
+        definition_digest: sha256_bytes(&canonical),
     })
 }
 

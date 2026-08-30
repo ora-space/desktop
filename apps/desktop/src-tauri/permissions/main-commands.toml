@@ -114,6 +114,7 @@ commands.allow = [
     "set_worktree_root",
     "resolve_task_cwd",
     "resolve_workspace_cwd",
+    "get_mcp_application_state",
     "open_location",
     "open_external_url",
     "write_workflow_export",

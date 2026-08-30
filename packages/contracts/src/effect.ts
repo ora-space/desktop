@@ -73,9 +73,25 @@ export type GetEffectSurfaceStatusResponse = {
   status: EffectSurfaceStatusDto | null;
 };
 
+export type GetMcpApplicationStateRequest = { workspaceId: string };
+
+export type GetMcpApplicationStateResponse = { state: McpApplicationStateDto };
+
 export type GetWorkspaceEffectRequest = { workspaceId: string };
 
 export type GetWorkspaceEffectResponse = { effect: WorkspaceEffectDto };
+
+/**
+ * The five user-visible states an MCP traverses, mirroring the ora-effect domain fold that
+ * derives them from configuration completeness, Agent availability, surface convergence, and
+ * Agent activation (CONTEXT.md).
+ */
+export type McpApplicationStateDto =
+  | "needs_configuration"
+  | "waiting_for_agent"
+  | "applying"
+  | "ready"
+  | "failed";
 
 /**
  * Full replacement request using optimistic generation compare-and-swap.

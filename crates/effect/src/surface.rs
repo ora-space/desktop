@@ -67,6 +67,15 @@ impl MaterializationFormat {
         Self("skill_directory.v1".to_string())
     }
 
+    /// Returns the complete-file format the Ora-owned OpenCode MCP config is rendered into.
+    ///
+    /// A distinct format identifier is what dispatches an MCP surface to its own adapter rather
+    /// than the Skill reconciler: the worker branches on this value, so an MCP desired row can
+    /// never reach the Skill planner.
+    pub fn opencode_mcp_complete_file_v1() -> Self {
+        Self("opencode_mcp_complete_file.v1".to_string())
+    }
+
     /// Builds a named format for plugin adapters and compatibility tests.
     pub fn named(value: impl Into<String>) -> Result<Self, DescriptorMergeError> {
         let value = value.into();
@@ -90,13 +99,78 @@ pub enum ConsumerCoordination {
     WaitForIdleAndRestart,
 }
 
-/// One consumer's data-only declaration of a filesystem Skill surface.
+/// One consumer's data-only declaration of a filesystem surface, dispatched by materialization
+/// format.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FilesystemSkillSurface {
     pub workspace_relative_path: SurfacePath,
     pub materialization_format: MaterializationFormat,
     pub consumer: ConsumerId,
     pub coordination: ConsumerCoordination,
+}
+
+/// The format-polymorphic view of one consumer's surface declaration.
+///
+/// Both Skill and MCP declarations satisfy this trait so [`SurfaceDescriptorSet::merge`] groups
+/// either kind by physical path without knowing which adapter will reconcile it. The kind is
+/// decided later, at the `format_kind` the descriptor carries — one adapter per format, so an MCP
+/// desired row never enters the Skill reconciler and a Skill row never reaches the MCP adapter.
+pub trait SurfaceDeclaration {
+    fn workspace_relative_path(&self) -> &SurfacePath;
+    fn materialization_format(&self) -> &MaterializationFormat;
+    fn consumer(&self) -> &ConsumerId;
+    fn coordination(&self) -> ConsumerCoordination;
+}
+
+impl SurfaceDeclaration for FilesystemSkillSurface {
+    fn workspace_relative_path(&self) -> &SurfacePath {
+        &self.workspace_relative_path
+    }
+    fn materialization_format(&self) -> &MaterializationFormat {
+        &self.materialization_format
+    }
+    fn consumer(&self) -> &ConsumerId {
+        &self.consumer
+    }
+    fn coordination(&self) -> ConsumerCoordination {
+        self.coordination
+    }
+}
+
+/// The canonical Workspace-relative path of the Ora-owned OpenCode MCP complete file.
+///
+/// The OpenCode Agent declares this exact path for its MCP surface, so the read path resolves the
+/// surface key for one workspace from it without a separate surface-descriptor load. It is the
+/// path the [`FilesystemMcpSurface`] the OpenCode adapter registers carries.
+pub const OPENCODE_MCP_COMPLETE_FILE_RELATIVE_PATH: &str = ".opencode/opencode.jsonc";
+
+/// One consumer's declaration of the Ora-owned complete MCP file surface.
+///
+/// The physical path is the Workspace-relative file the adapter owns (e.g.
+/// `.opencode/opencode.jsonc`); the format dispatches the surface to the MCP adapter rather than
+/// the Skill reconciler. Consumers and coordination match the Skill surface shape so the shared
+/// merge, status, and consumer infrastructure is reused without a parallel surface table.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FilesystemMcpSurface {
+    pub workspace_relative_path: SurfacePath,
+    pub materialization_format: MaterializationFormat,
+    pub consumer: ConsumerId,
+    pub coordination: ConsumerCoordination,
+}
+
+impl SurfaceDeclaration for FilesystemMcpSurface {
+    fn workspace_relative_path(&self) -> &SurfacePath {
+        &self.workspace_relative_path
+    }
+    fn materialization_format(&self) -> &MaterializationFormat {
+        &self.materialization_format
+    }
+    fn consumer(&self) -> &ConsumerId {
+        &self.consumer
+    }
+    fn coordination(&self) -> ConsumerCoordination {
+        self.coordination
+    }
 }
 
 /// Persisted lifecycle of a physical surface after consumer changes.
@@ -119,9 +193,13 @@ pub struct SurfaceDescriptorSet {
 
 impl SurfaceDescriptorSet {
     /// Merges compatible descriptors so one physical path has exactly one reconciler ledger.
+    ///
+    /// Accepts any surface declaration (Skill or MCP) via the [`SurfaceDeclaration`] trait; two
+    /// declarations at the same path must agree on format, which is what keeps the Skill and MCP
+    /// adapters from being claimed for one path at once.
     pub fn merge(
         workspace_id: &WorkspaceId,
-        descriptors: impl IntoIterator<Item = FilesystemSkillSurface>,
+        descriptors: impl IntoIterator<Item = impl SurfaceDeclaration>,
     ) -> Result<Vec<Self>, DescriptorMergeError> {
         let mut grouped: BTreeMap<
             SurfacePath,
@@ -132,16 +210,18 @@ impl SurfaceDescriptorSet {
         > = BTreeMap::new();
         for descriptor in descriptors {
             let entry = grouped
-                .entry(descriptor.workspace_relative_path.clone())
-                .or_insert_with(|| (descriptor.materialization_format.clone(), BTreeMap::new()));
-            if entry.0 != descriptor.materialization_format {
+                .entry(descriptor.workspace_relative_path().clone())
+                .or_insert_with(|| (descriptor.materialization_format().clone(), BTreeMap::new()));
+            if &entry.0 != descriptor.materialization_format() {
                 return Err(DescriptorMergeError::IncompatibleSurfaceDeclarations {
-                    path: descriptor.workspace_relative_path,
+                    path: descriptor.workspace_relative_path().clone(),
                     first_format: entry.0.clone(),
-                    second_format: descriptor.materialization_format,
+                    second_format: descriptor.materialization_format().clone(),
                 });
             }
-            entry.1.insert(descriptor.consumer, descriptor.coordination);
+            entry
+                .1
+                .insert(descriptor.consumer().clone(), descriptor.coordination());
         }
 
         Ok(grouped

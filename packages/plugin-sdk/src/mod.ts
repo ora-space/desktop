@@ -6,11 +6,18 @@ export {
   type AgentEffectDefinition,
   type AgentEffectIdleState,
   type AgentEffectRestartContext,
+  type AgentMcpRenderRequest,
+  type AgentMcpRenderResult,
   type AgentModel,
   type AgentStartContext,
   defineAgent,
+  type McpHttpHeaderRef,
+  type McpServerRef,
 } from "./agent.ts";
 export type { EffectSurfaceDeclaration } from "./plugin.ts";
+export { renderOpenCodeMcpFile } from "./opencode-mcp.ts";
+export { encodeOpenCodeEnvValue } from "./opencode-env.ts";
+export { redactOpenCodeStderr } from "./opencode-stderr.ts";
 export {
   createHostProcesses,
   type HostChildProcess,

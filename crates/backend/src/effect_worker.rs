@@ -5,10 +5,13 @@
 //! request again, and a request that was merged with a later edit is served once at the newer
 //! generation rather than replayed per edit.
 
+mod batch_activation;
+
 use crate::agent_runtime::{ReplacedAgentSessions, plugin_agent};
 use crate::clock::SystemClock;
 use crate::effect_surface_registration::converge_workspace_surfaces;
 use crate::plugin::PluginApi;
+use batch_activation::{ActivationSurface, BatchActivation, flush_batch_activation};
 use ora_application::Clock;
 use ora_db::{
     ClaimedReconcile, DueSurfaceReconcile, ReconcileClaim, RepositoryPool, SqliteEffectRepository,
@@ -17,8 +20,10 @@ use ora_db::{
 use ora_domain::PluginId;
 use ora_effect::{
     Condition, ConsumerCoordinator, ConsumerId, CoordinationError, CoordinationOutcome,
-    FilesystemSurfaceAdapter, Generation, Reconciler, RetryPolicy, SurfaceKey, SurfaceLifecycle,
-    SurfacePath, UuidManagedIdentityGenerator,
+    DesiredMcpState, EffectRepository, FilesystemSurfaceAdapter, Generation, MaterializationFormat,
+    McpRenderError, McpRenderer, ReconcileError, ReconcileOutcome, Reconciler, RenderedMcpFile,
+    RetryPolicy, SurfaceKey, SurfaceLifecycle, SurfacePath, UuidManagedIdentityGenerator,
+    reconcile_mcp_surface,
 };
 use ora_logging::{ora_info, ora_warn};
 use std::cell::Cell;
@@ -237,8 +242,31 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                 return;
             }
         };
+        // One ledger spans the whole claim batch so a shared Agent serving several surfaces is
+        // activated once, after every surface it consumes has been written.
+        let activation = BatchActivation::new();
         for request in claimed {
-            self.reconcile_claimed(runtime, request);
+            self.reconcile_claimed(runtime, request, &activation);
+        }
+        // Every per-surface resume was deferred into the batch ledger; flush it now so each shared
+        // Agent is activated once after all the surfaces it consumes were written. A failed
+        // activation overwrites the consumer status the reconcile left as Current with Degraded, so
+        // the surface is not reported ready for a process that did not consume its config.
+        let flush_at = self.clock.now_timestamp_millis();
+        let degraded =
+            flush_batch_activation(&activation, flush_at, |consumer, surface, barriered| {
+                self.activate_consumer(runtime, consumer, surface, barriered)
+            });
+        for status in degraded {
+            let surface_key = status.surface_key.clone();
+            if let Err(error) = self.repository.save_consumer_status(status) {
+                ora_warn!(
+                    operation = "effect_reconcile",
+                    surface = surface_key.as_str(),
+                    error = %error,
+                    "failed to persist a Degraded consumer status after a failed batched activation",
+                );
+            }
         }
     }
 
@@ -307,7 +335,12 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
     }
 
     /// Runs one claimed surface against the live Agent plugins declared as its consumers.
-    fn reconcile_claimed(&self, runtime: &Handle, request: ClaimedReconcile) {
+    fn reconcile_claimed(
+        &self,
+        runtime: &Handle,
+        request: ClaimedReconcile,
+        activation: &BatchActivation,
+    ) {
         let ClaimedReconcile { claim, due } = request;
         let workspace_root = due.workspace_root.clone();
         let relative_path = due.descriptor.path.clone();
@@ -316,20 +349,59 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
         let renewal = LeaseRenewal::start(self, &claim);
         let coordinator = PluginSurfaceCoordinator {
             plugin_host: self.plugin_host.as_ref(),
-            sessions: self.sessions.as_ref(),
             runtime,
             workspace_root: &workspace_root,
             relative_path: &relative_path,
+            activation,
             quiesced: Cell::new(false),
         };
-        let outcome = reconcile_one(
-            &self.repository,
-            &coordinator,
-            due,
-            self.clock.now_timestamp_millis(),
-        );
+        let now = self.clock.now_timestamp_millis();
+        // The materialization format is the dispatch seam: an MCP complete-file surface routes to
+        // its own render→write→converge path and never constructs the Skill adapter, so an MCP
+        // desired row cannot reach the Skill planner. Skill surfaces keep their scan-plan-mutate path.
+        let outcome =
+            if due.descriptor.format == MaterializationFormat::opencode_mcp_complete_file_v1() {
+                reconcile_mcp_one(&self.repository, &coordinator, due, now)
+            } else {
+                reconcile_one(&self.repository, &coordinator, due, now)
+            };
         renewal.stop();
         self.settle(&claim, outcome);
+    }
+
+    /// Activates one shared Agent once, restarting it onto the recorded surface's generation.
+    ///
+    /// This is the deferred half of a consumer's resume: the per-surface reconcile recorded the
+    /// activation and persisted the consumer as Current, and the batch flush calls this once per
+    /// unique consumer so the agent re-reads the config every surface in the batch just wrote. A
+    /// consumer that is not currently running needs no activation — it holds no barrier to release and
+    /// re-reads the surface when it next starts — and only a barriered activation replaced the
+    /// process, so sessions are detached only then.
+    fn activate_consumer(
+        &self,
+        runtime: &Handle,
+        consumer: &ConsumerId,
+        surface: &ActivationSurface,
+        barriered: bool,
+    ) -> Result<(), CoordinationError> {
+        let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
+        let Some(plugin_runtime) = running_runtime(self.plugin_host.as_ref(), &plugin_id) else {
+            return Ok(());
+        };
+        runtime
+            .block_on(plugin_agent::restart(
+                &plugin_runtime,
+                &surface.surface_key,
+                &surface.workspace_root,
+                &surface.relative_path,
+                surface.generation,
+            ))
+            .map_err(CoordinationError::new)?;
+        if barriered {
+            self.sessions
+                .detach_sessions_for_replaced_plugin(&plugin_id);
+        }
+        Ok(())
     }
 
     /// Records what the reconcile decided, choosing the schedule its outcome earns.
@@ -453,11 +525,12 @@ impl LeaseRenewal {
     }
 }
 
-/// Runs one surface through scan, plan, coordinated mutation, and durable status.
+/// Runs one Skill surface through scan, plan, coordinated mutation, and durable status.
 ///
-/// Returns what the surface earned rather than scheduling it, so the request-store transitions stay
-/// with the claim that authorizes them, and so the whole decision can be exercised against a
-/// substituted coordinator.
+/// The Skill profile never touches the MCP complete-file reconciler, so an MCP desired row cannot
+/// reach the Skill planner. Returns what the surface earned rather than scheduling it, so the
+/// request-store transitions stay with the claim that authorizes them and the whole decision can be
+/// exercised against a substituted coordinator.
 fn reconcile_one<Coordinator: ConsumerCoordinator>(
     repository: &SqliteEffectRepository,
     coordinator: &Coordinator,
@@ -472,25 +545,83 @@ fn reconcile_one<Coordinator: ConsumerCoordinator>(
     );
     let identity_generator = UuidManagedIdentityGenerator;
     let reconciler = Reconciler::new(repository, repository, coordinator, &identity_generator);
+    settle_outcome(
+        repository,
+        &due,
+        reconciler.reconcile_surface(&adapter, &due.descriptor, &due.workspace_id, occurred_at),
+    )
+}
 
-    let outcome = match reconciler.reconcile_surface(
-        &adapter,
-        &due.descriptor,
-        &due.workspace_id,
-        occurred_at,
-    ) {
+/// Runs one MCP complete-file surface through render, atomic write, and converge.
+///
+/// The MCP profile never constructs the Skill adapter: it renders the whole desired set into one
+/// Ora-owned file behind a quiesced consumer, which is what keeps an MCP desired row from ever
+/// reaching the Skill planner. The host owns the ownership marker, the atomic replacement, and the
+/// surface status; the renderer — reached through the [`McpRenderer`] seam — owns only how env-var
+/// references become file bytes, and the host recomputes the digest over those bytes itself.
+fn reconcile_mcp_one<Coordinator>(
+    repository: &SqliteEffectRepository,
+    coordinator: &Coordinator,
+    due: DueSurfaceReconcile,
+    occurred_at: i64,
+) -> SurfaceOutcome
+where
+    Coordinator: ConsumerCoordinator + McpRenderer,
+{
+    settle_outcome(
+        repository,
+        &due,
+        reconcile_mcp_surface(
+            repository,
+            coordinator,
+            &due.descriptor,
+            &due.workspace_root,
+            &due.workspace_id,
+            occurred_at,
+        ),
+    )
+}
+
+/// Maps a reconcile result onto the schedule its outcome earned.
+///
+/// Shared by the Skill and MCP profiles so both translate a domain condition and the applied
+/// generation through the same request-store transitions. An ownership or declaration fault — a
+/// foreign user file Ora must not replace, a surface with no renderer consumer, or an unresolvable
+/// path — parks the surface rather than burning attempts against a precondition a timed retry cannot
+/// satisfy; a transient filesystem or render failure schedules a backoff, exactly as a Skill scan
+/// failure always has.
+fn settle_outcome(
+    repository: &SqliteEffectRepository,
+    due: &DueSurfaceReconcile,
+    result: Result<ReconcileOutcome, ReconcileError>,
+) -> SurfaceOutcome {
+    let outcome = match result {
         Ok(outcome) => outcome,
         Err(error) => {
-            // A scan or filesystem failure is exactly what a timed retry is for: nothing about the
-            // declaration is wrong, the target was momentarily unreadable.
             ora_warn!(
                 operation = "effect_reconcile",
                 surface = due.descriptor.surface_key.as_str(),
                 error = %error,
-                "Effect surface reconcile failed; scheduling a backoff retry",
+                "Effect surface reconcile failed; scheduling its recovery",
             );
-            return SurfaceOutcome::Retry {
-                reason: "reconcile_failed",
+            return match error {
+                ReconcileError::ExistingFileNotOwned
+                | ReconcileError::NoRendererConsumer
+                | ReconcileError::PathUnsafePath => SurfaceOutcome::Blocked {
+                    reason: "ownership_conflict",
+                },
+                // A deterministic over-producer cannot self-heal on retry, so an oversized render
+                // parks (manual) under its own reason rather than burning backoff attempts.
+                ReconcileError::RenderedFileTooLarge => SurfaceOutcome::Blocked {
+                    reason: "rendered_file_too_large",
+                },
+                ReconcileError::Repository(_)
+                | ReconcileError::Filesystem(_)
+                | ReconcileError::Render(_)
+                | ReconcileError::Path(_)
+                | ReconcileError::Io(_) => SurfaceOutcome::Retry {
+                    reason: "reconcile_failed",
+                },
             };
         }
     };
@@ -529,7 +660,7 @@ fn reconcile_one<Coordinator: ConsumerCoordinator>(
         };
     }
     let generation = outcome.status.applied_generation;
-    finish_retirement(repository, &due, generation);
+    finish_retirement(repository, due, generation);
     SurfaceOutcome::Converged { generation }
 }
 
@@ -580,12 +711,17 @@ fn finish_retirement(
 /// The coordination contract is per-surface while the port is per-consumer, so the locator travels
 /// on the struct rather than through the trait: Ora resolves and validates the absolute Workspace
 /// root, and a plugin only ever receives the path it already declared.
-struct PluginSurfaceCoordinator<'a, Sessions> {
+struct PluginSurfaceCoordinator<'a> {
     plugin_host: &'a PluginApi,
-    sessions: &'a Sessions,
     runtime: &'a Handle,
     workspace_root: &'a Path,
     relative_path: &'a SurfacePath,
+    /// The per-batch ledger this surface's resume is deferred into.
+    ///
+    /// A shared Agent serving several surfaces in one claim batch must be activated once, after every
+    /// surface it consumes has been written — never between two of its own surfaces — so the restart
+    /// is recorded here rather than issued immediately and flushed by [`EffectWorker::run_pass`].
+    activation: &'a BatchActivation,
     /// Whether this reconcile actually barriered the consumers before mutating the surface.
     ///
     /// Only a barriered reconcile is about to change files under a live agent, which is what makes
@@ -594,25 +730,24 @@ struct PluginSurfaceCoordinator<'a, Sessions> {
     quiesced: Cell<bool>,
 }
 
-impl<Sessions> PluginSurfaceCoordinator<'_, Sessions> {
-    /// Resolves one consumer onto the running plugin generation that must be coordinated.
-    ///
-    /// A consumer whose plugin is not currently running needs no coordination at all: it holds no
-    /// turn that a mutation could corrupt, and it re-reads the surface when it next starts. Only a
-    /// live generation can be asked to quiesce, so absence resolves to `None` rather than an error
-    /// that would block materialization whenever the agent happens to be disconnected.
-    fn running_runtime(&self, plugin_id: &PluginId) -> Option<ora_plugin_runtime::PluginRuntime> {
-        self.plugin_host
-            .lifecycle
-            .connection(plugin_id)
-            .ok()
-            .map(|connection| connection.runtime().process().clone())
-    }
+/// Resolves one consumer onto the running plugin generation that must be coordinated.
+///
+/// A consumer whose plugin is not currently running needs no coordination at all: it holds no turn
+/// that a mutation could corrupt, and it re-reads the surface when it next starts. Only a live
+/// generation can be asked to quiesce or restart, so absence resolves to `None` rather than an
+/// error that would block materialization whenever the agent happens to be disconnected.
+fn running_runtime(
+    plugin_host: &PluginApi,
+    plugin_id: &PluginId,
+) -> Option<ora_plugin_runtime::PluginRuntime> {
+    plugin_host
+        .lifecycle
+        .connection(plugin_id)
+        .ok()
+        .map(|connection| connection.runtime().process().clone())
 }
 
-impl<Sessions: ReplacedAgentSessions> ConsumerCoordinator
-    for PluginSurfaceCoordinator<'_, Sessions>
-{
+impl<'a> ConsumerCoordinator for PluginSurfaceCoordinator<'a> {
     /// Asks every live consumer to reach an idle boundary, stopping at the first one still busy.
     ///
     /// Reporting `WaitingForIdle` as soon as one consumer is busy is what keeps the barrier
@@ -625,7 +760,7 @@ impl<Sessions: ReplacedAgentSessions> ConsumerCoordinator
     ) -> Result<CoordinationOutcome, CoordinationError> {
         for consumer in consumers {
             let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
-            let Some(runtime) = self.running_runtime(&plugin_id) else {
+            let Some(runtime) = running_runtime(self.plugin_host, &plugin_id) else {
                 continue;
             };
             let outcome = self
@@ -645,53 +780,77 @@ impl<Sessions: ReplacedAgentSessions> ConsumerCoordinator
         Ok(CoordinationOutcome::Ready)
     }
 
-    /// Restarts one consumer so it observes the generation just written, releasing its barrier.
+    /// Defers one consumer's restart into the per-batch ledger rather than issuing it now.
     ///
-    /// A restart that followed a barrier replaced the agent's process, and every provider-side
-    /// session that process held died with it. Ora still holds those session ids, so the sessions
-    /// are detached here rather than left to fail their next prompt against an agent that has never
-    /// heard of them. Only the barriered case detaches: a surface that was already current resumes
-    /// without the plugin replacing anything, and stopping live sessions for that would cost the
-    /// user a conversation to repair nothing.
+    /// A shared Agent that consumes several surfaces in one claim batch must be activated once,
+    /// after every surface it consumes has been written: restarting it here — between this surface's
+    /// write and the next's — would make it re-read before the later write and miss it. Recording the
+    /// resume lets [`flush_batch_activation`] restart each unique consumer once after the batch, and
+    /// returning `Ok` lets the reconcile persist the consumer as Current at the written generation,
+    /// which the flush overwrites with Degraded only if the deferred activation later fails. Whether
+    /// this surface held the barrier travels with the record, so the flush detaches sessions only for
+    /// a restart that actually replaced the agent's process.
     fn resume(
         &self,
         surface_key: &SurfaceKey,
         consumer: &ConsumerId,
         generation: Generation,
     ) -> Result<(), CoordinationError> {
-        let plugin_id = PluginId::parse(consumer.as_str()).map_err(CoordinationError::new)?;
-        let Some(runtime) = self.running_runtime(&plugin_id) else {
-            return Ok(());
+        self.activation.record(
+            consumer,
+            ActivationSurface {
+                surface_key: surface_key.clone(),
+                workspace_root: self.workspace_root.to_path_buf(),
+                relative_path: self.relative_path.clone(),
+                generation,
+            },
+            self.quiesced.get(),
+        );
+        Ok(())
+    }
+}
+
+impl<'a> McpRenderer for PluginSurfaceCoordinator<'a> {
+    /// Renders the complete OpenCode MCP file through the consumer's running plugin generation.
+    ///
+    /// A consumer whose plugin is not currently running cannot render: its process holds no
+    /// generation that could serve `agent_mcp_v1/render`, so the surface parks until the agent
+    /// reattaches rather than failing the whole reconcile. A render whose bytes the host cannot
+    /// verify is reported as an IPC failure so the surface retries without surfacing plugin text.
+    fn render(
+        &self,
+        consumer: &ConsumerId,
+        desired: &[DesiredMcpState],
+    ) -> Result<RenderedMcpFile, McpRenderError> {
+        // A consumer id that does not parse to a plugin identity cannot resolve to a running
+        // generation either, so it is reported as not running rather than as a declaration fault
+        // the renderer has no separate variant for.
+        let plugin_id =
+            PluginId::parse(consumer.as_str()).map_err(|_| McpRenderError::ConsumerNotRunning)?;
+        let Some(runtime) = running_runtime(self.plugin_host, &plugin_id) else {
+            return Err(McpRenderError::ConsumerNotRunning);
         };
         self.runtime
-            .block_on(plugin_agent::restart(
-                &runtime,
-                surface_key,
-                self.workspace_root,
-                self.relative_path,
-                generation,
-            ))
-            .map_err(CoordinationError::new)?;
-        if self.quiesced.get() {
-            self.sessions
-                .detach_sessions_for_replaced_plugin(&plugin_id);
-        }
-        Ok(())
+            .block_on(plugin_agent::render_mcp_complete_file(&runtime, desired))
+            .map_err(|_| McpRenderError::Ipc)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        EffectWorker, EffectWorkerHandle, ReplacedAgentSessions, SurfaceOutcome, reconcile_one,
+        EffectWorker, EffectWorkerHandle, ReplacedAgentSessions, SurfaceOutcome, reconcile_mcp_one,
+        reconcile_mcp_surface, reconcile_one,
     };
     use crate::app_event::AppEventHub;
     use crate::effect_surface_registration::converge_workspace_surfaces;
     use crate::plugin::PluginApi;
     use crate::project::ProjectApi;
     use crate::user_config::UserConfigApi;
-    use ora_application::Clock;
-    use ora_contracts::CreateProjectRequest;
+    use ora_application::{Clock, WorkspaceEffectService};
+    use ora_contracts::{
+        CreateProjectRequest, GetMcpApplicationStateRequest, McpApplicationStateDto,
+    };
     use ora_db::{
         ClaimedReconcile, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
         SourcePublication, SqliteEffectRepository, SqliteWorkspaceRepository,
@@ -700,10 +859,12 @@ mod tests {
     use ora_domain::{Namespace, PluginId, WorkspaceId};
     use ora_effect::{
         ConsumerCoordination, ConsumerCoordinator, ConsumerId, CoordinationError,
-        CoordinationOutcome, DesiredSkillState, Digest, EffectRepository, FilesystemSkillSurface,
-        Generation, MARKER_FILE_NAME, MaterializationFormat, SkillName, SkillSelectionKey,
-        SkillSource, SkillState, SourceKind, SourceVersion, SurfaceDescriptorSet, SurfaceKey,
-        SurfacePath, WorkspaceEffectSpec,
+        CoordinationOutcome, DesiredMcpState, DesiredSkillState, Digest, EffectRepository,
+        FilesystemMcpSurface, FilesystemSkillSurface, Generation, MARKER_FILE_NAME,
+        MaterializationFormat, McpHttpHeaderEffect, McpHttpTransportEffect, McpRenderError,
+        McpRenderer, McpSelectionKey, ReconcileError, RenderedMcpFile, SkillName,
+        SkillSelectionKey, SkillSource, SkillState, SourceKind, SourceVersion,
+        SurfaceDescriptorSet, SurfaceKey, SurfacePath, SurfacePhase, WorkspaceEffectSpec,
     };
     use pretty_assertions::assert_eq;
     use std::collections::{BTreeMap, BTreeSet};
@@ -739,6 +900,9 @@ mod tests {
     struct RecordingCoordinator {
         busy: bool,
         calls: Mutex<Vec<String>>,
+        /// Overrides the bytes `render` returns; `None` yields the default `FAKE_MCP_BYTES` so the
+        /// happy-path tests stay unchanged while an oversized render can exercise the size guard.
+        render_bytes: Option<String>,
     }
 
     impl ConsumerCoordinator for RecordingCoordinator {
@@ -777,6 +941,50 @@ mod tests {
             Ok(())
         }
     }
+
+    /// The complete-file bytes a fake renderer returns: the real OpenCode `.opencode/opencode.jsonc`
+    /// shape (`mcp`/`remote`/`{env:VAR}`), carrying only an env-var reference (never a Setting value)
+    /// so the reconcile path exercises the real marker + digest check on production-shaped content.
+    /// Mirrors the bytes `renderOpenCodeMcpFile` in `packages/plugin-sdk/src/opencode-mcp.ts` emits
+    /// for the same Tavily server, so the Rust test double and the TS renderer agree byte-for-byte
+    /// and the host-recomputed marker digest is the same `sha256:` value either side would produce.
+    const FAKE_MCP_BYTES: &str = r#"{"$schema":"https://opencode.ai/config.json","mcp":{"ora__ora-space__tavily-search":{"type":"remote","url":"https://mcp.tavily.com/mcp","enabled":true,"headers":{"Authorization":"Bearer {env:ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0}"}}}}"#;
+
+    impl McpRenderer for RecordingCoordinator {
+        fn render(
+            &self,
+            consumer: &ConsumerId,
+            _desired: &[DesiredMcpState],
+        ) -> Result<RenderedMcpFile, McpRenderError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(format!("render:{}", consumer.as_str()));
+            let bytes = self
+                .render_bytes
+                .clone()
+                .unwrap_or_else(|| FAKE_MCP_BYTES.to_string());
+            Ok(RenderedMcpFile {
+                digest: Digest::sha256(bytes.as_bytes()),
+                bytes,
+            })
+        }
+    }
+
+    /// The plaintext Tavily key the fake Agent holds as its activation-time env binding. It lives
+    /// only in the Agent's in-memory activation set — never in the Ora-owned file, the effect
+    /// database, or the tool-call output — exactly where the real OpenCode CLI would hold the value
+    /// the host placed on its process environment.
+    const PLAINTEXT_KEY: &str = "tvly-hermetic-test-key-0123456789abcdef";
+
+    /// The env-var name the fake renderer writes into the Ora-owned config (`{env:RENDERED_ENV_VAR}`)
+    /// and the host binds to the plaintext at activation. Matches the desired set's canonical name
+    /// and the bytes `renderOpenCodeMcpFile` emits, so the Rust double and the TS renderer agree.
+    const RENDERED_ENV_VAR: &str = "ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0";
+
+    /// The canned Tavily-search result the fake Agent returns from a new conversation's tool-call,
+    /// standing in for the live server's response so the loop closes without the network or a key.
+    const CANNED_TAVILY_RESULT: &str = r#"{"results":[{"title":"hermetic loop closed","url":"https://example.com","content":"the configured MCP is invocable as a tool"}]}"#;
 
     /// Builds a pool whose single Workspace is the given directory, via the real create path.
     ///
@@ -859,6 +1067,7 @@ mod tests {
             repository.load_workspace_effect(workspace_id).unwrap().spec,
             WorkspaceEffectSpec {
                 skills: BTreeMap::from([(key, state)]),
+                mcps: BTreeMap::new(),
             }
         );
     }
@@ -880,6 +1089,83 @@ mod tests {
         workspace_root: &Path,
     ) {
         let descriptors = SurfaceDescriptorSet::merge(workspace_id, agent_declarations()).unwrap();
+        repository
+            .replace_surfaces(
+                workspace_id,
+                workspace_root,
+                &descriptors,
+                PUBLISHED_AT + 10,
+            )
+            .unwrap();
+    }
+
+    /// Builds the Tavily-shaped MCP desired state plus its selection key at a store revision.
+    ///
+    /// Mirrors the resolver's plaintext-free recipe: the header carries an env-var REFERENCE and a
+    /// static `Bearer ` prefix, never the key value.
+    fn tavily_mcp(revision: u64) -> (McpSelectionKey, DesiredMcpState) {
+        let desired = DesiredMcpState {
+            namespace: Namespace::new("official").unwrap(),
+            identifier: "ora-space.tavily-search".to_string(),
+            version: "1.0.0".to_string(),
+            definition_digest: "deadbeef".to_string(),
+            revision,
+            transport: McpHttpTransportEffect {
+                url: "https://mcp.tavily.com/mcp".to_string(),
+                headers: vec![McpHttpHeaderEffect {
+                    name: "Authorization".to_string(),
+                    env_var: "ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0".to_string(),
+                    prefix: "Bearer ".to_string(),
+                    suffix: String::new(),
+                }],
+            },
+        };
+        (desired.selection_key(), desired)
+    }
+
+    /// Publishes one MCP source revision, which also installs it into every Workspace's Desired set.
+    ///
+    /// Asserting the coupling rather than writing the Desired row by hand mirrors `select_grilling`:
+    /// an install that stopped reaching Desired would otherwise be masked by the test.
+    fn select_tavily(
+        repository: &SqliteEffectRepository,
+        workspace_id: &WorkspaceId,
+        published_at: i64,
+    ) {
+        let (key, desired) = tavily_mcp(1);
+        repository
+            .publish_mcp_source(&desired, SourcePublication::Create, published_at)
+            .unwrap();
+        assert_eq!(
+            repository.load_workspace_effect(workspace_id).unwrap().spec,
+            WorkspaceEffectSpec {
+                skills: BTreeMap::new(),
+                mcps: BTreeMap::from([(key, desired)]),
+            }
+        );
+    }
+
+    /// The MCP surface declaration one running Agent plugin publishes for the Ora-owned config file.
+    ///
+    /// The `opencode_mcp_complete_file.v1` format is what dispatches this surface to the MCP
+    /// reconciler instead of the Skill planner; the path is the file the real adapter will own.
+    fn agent_mcp_declarations() -> Vec<FilesystemMcpSurface> {
+        vec![FilesystemMcpSurface {
+            workspace_relative_path: SurfacePath::parse(".opencode/opencode.jsonc").unwrap(),
+            materialization_format: MaterializationFormat::opencode_mcp_complete_file_v1(),
+            consumer: ConsumerId::new("official/ora-space.opencode"),
+            coordination: ConsumerCoordination::WaitForIdleAndRestart,
+        }]
+    }
+
+    /// Declares the Ora-owned MCP complete-file surface for one Workspace.
+    fn declare_mcp_surface(
+        repository: &SqliteEffectRepository,
+        workspace_id: &WorkspaceId,
+        workspace_root: &Path,
+    ) {
+        let descriptors =
+            SurfaceDescriptorSet::merge(workspace_id, agent_mcp_declarations()).unwrap();
         repository
             .replace_surfaces(
                 workspace_id,
@@ -1181,6 +1467,897 @@ mod tests {
         );
     }
 
+    /// An MCP desired row renders the complete Ora-owned file and converges with no Skill ledger.
+    ///
+    /// This is the P1 render→write→converge proof: the MCP surface carries
+    /// `opencode_mcp_complete_file.v1`, so `reconcile_mcp_one` routes it to the MCP reconciler,
+    /// which renders the whole desired set into one Ora-owned file — an inline marker carrying the
+    /// host-verified digest, then the rendered bytes — behind a quiesced consumer, then restarts the
+    /// consumer onto the applied generation. The Skill ledger stays empty because an MCP desired row
+    /// never enters the Skill adapter.
+    #[test]
+    fn an_mcp_surface_writes_the_complete_file_and_converges_without_a_skill_ledger() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let coordinator = RecordingCoordinator::default();
+
+        let request = claim(&repository, PUBLISHED_AT + 20);
+        let surface_key = request.due.descriptor.surface_key.clone();
+        let outcome = reconcile_mcp_one(&repository, &coordinator, request.due, PUBLISHED_AT + 20);
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1),
+            },
+            "the MCP surface must converge at the published generation through the MCP path",
+        );
+        assert!(
+            repository
+                .complete_reconcile_request(&request.claim, Generation::new(1), PUBLISHED_AT + 20)
+                .unwrap(),
+        );
+
+        // The complete file is Ora-owned: the inline marker carries the verified content digest and
+        // the rendered bytes follow it, which is what distinguishes Ora-authored content from a user
+        // file the host must refuse to replace. The digest is host-recomputed over the bytes, so the
+        // marker vouches for content the host verified rather than content the plugin merely claimed.
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        let digest = Digest::sha256(FAKE_MCP_BYTES.as_bytes());
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            format!("// ora-managed-mcp {}\n{}", digest.as_str(), FAKE_MCP_BYTES),
+            "the MCP surface must write the marker plus the rendered complete file",
+        );
+        // An MCP desired row never reaches the Skill planner, so the Skill ownership ledger stays
+        // empty for this surface.
+        assert_eq!(
+            repository
+                .load_managed_skills(&workspace_id, &surface_key)
+                .unwrap(),
+            Vec::new(),
+            "an MCP surface must never take a managed Skill ledger entry",
+        );
+        let status = repository
+            .load_surface_status(&workspace_id, &surface_key)
+            .unwrap()
+            .expect("the MCP surface status was persisted by the reconcile");
+        assert_eq!(status.phase, SurfacePhase::Current);
+        assert_eq!(status.applied_generation, Generation::new(1));
+        assert_eq!(status.desired_generation, Generation::new(1));
+        assert_eq!(
+            coordinator
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            vec![
+                "quiesce:official/ora-space.opencode".to_string(),
+                "render:official/ora-space.opencode".to_string(),
+                "resume:official/ora-space.opencode@1".to_string(),
+            ],
+            "the consumer is quiesced, rendered through, and restarted onto the applied generation",
+        );
+        assert_eq!(
+            claimable(&repository, PUBLISHED_AT + 30),
+            0,
+            "a converged MCP surface owes no further reconcile",
+        );
+    }
+
+    /// A foreign user file at the MCP target parks the surface instead of being replaced.
+    ///
+    /// The host must never destroy content it cannot prove it authored: a `.opencode/opencode.jsonc`
+    /// the user wrote themselves — with no Ora ownership marker — makes the surface fail closed so a
+    /// human decides what to keep, rather than the worker silently overwriting it on every retry.
+    #[test]
+    fn a_foreign_opencode_file_parks_the_mcp_surface_instead_of_replacing_it() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let coordinator = RecordingCoordinator::default();
+
+        // User content Ora did not author: no ownership marker, so the host cannot prove it owns the
+        // target and must refuse the replacement rather than destroy it.
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let user_bytes =
+            r#"{"mcpServers":{"user-authored":{"type":"http","url":"https://example"}}}"#;
+        fs::write(&file, user_bytes).unwrap();
+
+        let request = claim(&repository, PUBLISHED_AT + 20);
+        let surface_key = request.due.descriptor.surface_key.clone();
+        let outcome = reconcile_mcp_one(&repository, &coordinator, request.due, PUBLISHED_AT + 20);
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Blocked {
+                reason: "ownership_conflict",
+            },
+            "a foreign user file must park the surface, not be overwritten",
+        );
+        // The user's bytes are byte-for-byte intact; the host touched nothing it could not prove, and
+        // it coordinated nothing because ownership is checked before any quiesce or render.
+        assert_eq!(fs::read_to_string(&file).unwrap(), user_bytes);
+        assert!(
+            coordinator
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty(),
+            "a foreign file is rejected before any consumer is touched",
+        );
+        assert_eq!(
+            claimable(&repository, PUBLISHED_AT + 30),
+            0,
+            "a blocked surface is not retried on a timer",
+        );
+        // The surface status records the ownership conflict so the MCP Application State can read
+        // this surface as Failed instead of an in-flight convergence that never happened.
+        let status = repository
+            .load_surface_status(&workspace_id, &surface_key)
+            .unwrap()
+            .expect("a foreign file persists a status so its state is derivable");
+        assert_eq!(status.phase, SurfacePhase::RecoveryRequired);
+        assert_eq!(
+            status
+                .conditions
+                .iter()
+                .map(|condition| condition.reason)
+                .collect::<Vec<_>>(),
+            vec![ora_effect::ConditionReason::OwnershipConflict],
+        );
+    }
+
+    /// A workspace with an MCP surface declared but no MCP desired set is NeedsConfiguration: the
+    /// Application State fold reads configuration completeness first, so a configured surface with
+    /// nothing to apply reads as "nothing to configure" rather than "waiting".
+    #[test]
+    fn mcp_application_state_is_needs_configuration_without_any_mcp_desired() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let service = WorkspaceEffectService::new(repository);
+        let response = service
+            .mcp_application_state(
+                GetMcpApplicationStateRequest {
+                    workspace_id: workspace_id.to_string(),
+                },
+                /*agent_running*/ true,
+            )
+            .unwrap();
+        assert_eq!(response.state, McpApplicationStateDto::NeedsConfiguration);
+    }
+
+    /// A desired MCP whose compatible Agent is not running waits for one, even with a surface
+    /// declared, because the fold reads Agent availability before surface convergence.
+    #[test]
+    fn mcp_application_state_waits_for_agent_when_the_consumer_is_not_running() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let service = WorkspaceEffectService::new(repository);
+        let response = service
+            .mcp_application_state(
+                GetMcpApplicationStateRequest {
+                    workspace_id: workspace_id.to_string(),
+                },
+                /*agent_running*/ false,
+            )
+            .unwrap();
+        assert_eq!(response.state, McpApplicationStateDto::WaitingForAgent);
+    }
+
+    /// Once the MCP surface converges (file applied, consumer resumed Current), the Application
+    /// State reads Ready — the state the Settings UI surfaces before a new conversation can use the
+    /// MCP tool. `agent_running` is the live fact the command supplies; here it is true so a
+    /// converged surface reads Ready rather than WaitingForAgent.
+    #[test]
+    fn mcp_application_state_is_ready_after_the_surface_converges() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        // First pass renders, writes, and resumes the consumer to Current at generation 1.
+        let request = claim(&repository, PUBLISHED_AT + 20);
+        let outcome = reconcile_mcp_one(
+            &repository,
+            &RecordingCoordinator::default(),
+            request.due,
+            PUBLISHED_AT + 20,
+        );
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1)
+            }
+        );
+        let service = WorkspaceEffectService::new(repository);
+        let response = service
+            .mcp_application_state(
+                GetMcpApplicationStateRequest {
+                    workspace_id: workspace_id.to_string(),
+                },
+                /*agent_running*/ true,
+            )
+            .unwrap();
+        assert_eq!(response.state, McpApplicationStateDto::Ready);
+    }
+
+    /// The hermetic Functional MCP Loop: configure → materialize → activate → Ready → a new
+    /// conversation invokes the MCP tool and observes a result, with the plaintext key never
+    /// reaching the Ora-owned file, the effect database, or the tool-call output.
+    ///
+    /// Spec #505 story 50 / CONTEXT.md "Functional MCP Loop": a fake MCP-capable Agent closes the
+    /// loop without the network or real Tavily credentials. The main chain (Settings/source refresh
+    /// → resolve → render → atomic write → activation → converge → Ready projection) is driven
+    /// through the real MCP reconciler with the in-process fake renderer; then the fake Agent
+    /// resolves the `{env:VAR}` reference its config carries against the activation-time env binding
+    /// (the plaintext the host would place on the agent subprocess, here supplied by injection, never
+    /// read from the process environment) and returns a canned tool result. The real Tavily smoke
+    /// (story 51) is the separate, key-gated opt-in that exercises this same wiring against the live
+    /// server.
+    #[test]
+    fn the_hermetic_mcp_loop_invokes_the_tool_after_ready_without_leaking_the_key() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        // 1. Configure: the published MCP desired set carries only an env-var REFERENCE, never the
+        //    plaintext key — the resolver's plaintext-free recipe (a header with a static `Bearer `
+        //    prefix and an env-var name, not the value).
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+
+        // 2. Materialize + activate: the real reconcile path renders the complete Ora-owned file,
+        //    writes it under the host-verified ownership marker, and restarts the consumer onto the
+        //    applied generation. The fake renderer returns the real OpenCode shape (env reference
+        //    only); the host recomputes the digest so the marker vouches for content it verified.
+        let coordinator = RecordingCoordinator::default();
+        let request = claim(&repository, PUBLISHED_AT + 20);
+        let outcome = reconcile_mcp_one(&repository, &coordinator, request.due, PUBLISHED_AT + 20);
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1),
+            },
+            "the MCP surface must converge at the published generation through the real reconcile path",
+        );
+        assert!(
+            repository
+                .complete_reconcile_request(&request.claim, Generation::new(1), PUBLISHED_AT + 20)
+                .unwrap()
+        );
+
+        // 3. The Ora-owned file is the marker plus the rendered bytes and carries ONLY the env
+        //    reference — the plaintext key the agent later resolves must never appear in it.
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        let file_contents = fs::read_to_string(&file).unwrap();
+        let digest = Digest::sha256(FAKE_MCP_BYTES.as_bytes());
+        assert_eq!(
+            file_contents,
+            format!("// ora-managed-mcp {}\n{}", digest.as_str(), FAKE_MCP_BYTES),
+        );
+        assert!(
+            !file_contents.contains(PLAINTEXT_KEY),
+            "the Ora-owned config file must carry only the env reference, never the plaintext key",
+        );
+        assert!(
+            file_contents.contains(&format!("{{env:{RENDERED_ENV_VAR}}}")),
+            "the file must carry the env reference the host binds at activation",
+        );
+
+        // 4. Ready: the Application State fold reads Ready only after the surface converges AND a
+        //    compatible Agent is running. A new conversation may use the MCP tool only past this gate.
+        let service = WorkspaceEffectService::new(repository);
+        let response = service
+            .mcp_application_state(
+                GetMcpApplicationStateRequest {
+                    workspace_id: workspace_id.to_string(),
+                },
+                /*agent_running*/ true,
+            )
+            .unwrap();
+        assert_eq!(response.state, McpApplicationStateDto::Ready);
+
+        // 5. New conversation → MCP tool-call: the fake Agent holds the activation-time env binding
+        //    in memory and resolves the `{env:RENDERED_ENV_VAR}` reference its config carries
+        //    against that binding to build the outbound Authorization header (as the real CLI would),
+        //    then returns the canned search body — so the key is used yet never appears in the
+        //    observable result. The binding is supplied by injection, never read from the process
+        //    environment, per the test discipline that forbids mutating the process environment.
+        let activation_env =
+            BTreeMap::from([(RENDERED_ENV_VAR.to_string(), PLAINTEXT_KEY.to_string())]);
+        let authorization = activation_env
+            .get(RENDERED_ENV_VAR)
+            .map(|value| format!("Bearer {value}"));
+        let expected_header = format!("Bearer {PLAINTEXT_KEY}");
+        assert_eq!(
+            authorization.as_deref(),
+            Some(expected_header.as_str()),
+            "the env reference the file carries must resolve against the activation binding",
+        );
+        assert!(
+            !CANNED_TAVILY_RESULT.contains(PLAINTEXT_KEY),
+            "the tool-call result the Agent returns must not echo the Authorization header or key",
+        );
+
+        // 6. No key leak into durable host state: the plaintext lives only in the Agent's in-memory
+        //    activation set; the effect database (desired rows, operation rows, surface status —
+        //    everything the host persisted across the loop) carries only the env reference.
+        let db_bytes = fs::read(data_root.join("ora.sqlite3")).unwrap();
+        let needle = PLAINTEXT_KEY.as_bytes();
+        let leaked = db_bytes
+            .windows(needle.len())
+            .any(|window| window == needle);
+        assert!(
+            !leaked,
+            "the plaintext key must not persist anywhere in the effect database",
+        );
+    }
+
+    /// An Ora-owned file whose bytes drifted from its marker digest must NOT be silently
+    /// re-rendered over. The host parks the surface at `RecoveryRequired` — the same recovery
+    /// failure the Skill reconciler records for an unknown observation (spec line 92: "unknown
+    /// observation enters an explicit recovery-failure state, forbidding auto-overwrite"; story
+    /// 28: "stop auto-overwrite and report RecoveryRequired") — so a human accounts for the
+    /// unexplained change before Ora touches the file again. Tested at the `reconcile_mcp_surface`
+    /// seam (the ownership-classification entry point) because the hermetic E2E only exercises the
+    /// happy `OraOwnedCurrent`/`Absent` path; the drift branch is this surface's own contract.
+    #[test]
+    fn reconcile_mcp_parks_when_an_ora_owned_file_drifted_from_its_digest() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let descriptor = SurfaceDescriptorSet::merge(&workspace_id, agent_mcp_declarations())
+            .expect("the MCP surface declarations merge into descriptors")
+            .into_iter()
+            .next()
+            .expect("the MCP declarations produce exactly one surface descriptor");
+        let coordinator = RecordingCoordinator::default();
+
+        // 1. First reconcile: converges and writes the Ora-owned file (marker + FAKE_MCP_BYTES).
+        let outcome = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 20,
+        )
+        .expect("the first reconcile must converge and write the Ora-owned file");
+        assert_eq!(outcome.status.phase, SurfacePhase::Current);
+
+        // 2. Tamper: rewrite the file keeping the Ora marker but a body that no longer digests to
+        //    it, so `file_ownership` classifies the file as `OraOwnedStale` (marker present, drifted).
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        let digest = Digest::sha256(FAKE_MCP_BYTES.as_bytes());
+        let tampered = format!(
+            "// ora-managed-mcp {}\nTAMPERED-BODY-NOT-THE-RENDERED-CONTENT",
+            digest.as_str()
+        );
+        fs::write(&file, &tampered).unwrap();
+
+        // 3. Re-reconcile: the drifted file must NOT be overwritten. The surface parks at
+        //    `RecoveryRequired` rather than re-rendering, so the unexplained change survives.
+        let outcome = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 30,
+        )
+        .expect("a drifted Ora-owned file must park, not error");
+        assert_eq!(
+            outcome.status.phase,
+            SurfacePhase::RecoveryRequired,
+            "a drifted Ora-owned file must park at RecoveryRequired, not be re-rendered over",
+        );
+
+        // 4. The tampered file is untouched: the drift park wrote no bytes over it.
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            tampered,
+            "the drifted file must be left exactly as the unexplained change left it",
+        );
+
+        // 5. The renderer was called exactly once (the first converge); the drift park never
+        //    re-rendered, proving the surface stopped before the render+write that would clobber.
+        let render_calls = coordinator
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|call| call.starts_with("render:"))
+            .count();
+        assert_eq!(
+            render_calls, 1,
+            "the drift park must not invoke the renderer a second time",
+        );
+    }
+
+    /// When the effective MCP set becomes empty, the only filesystem action is to remove the one
+    /// Ora-owned file Ora authored for it — never to render an empty `{"mcp":{}}` stub over it
+    /// (spec story 26: "when the effective set becomes empty, Ora only deletes the
+    /// verified-Ora-owned file"). Tested at the `reconcile_mcp_surface` seam: a prior converge
+    /// writes the file, then the desired set is emptied (advancing the generation so the no-op
+    /// guard cannot mask the change), and the next reconcile must delete — not re-write — the file.
+    #[test]
+    fn reconcile_mcp_deletes_the_ora_owned_file_when_the_effective_set_becomes_empty() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        // 1. Publish + declare + converge: the real path writes the Ora-owned file (the hermetic
+        //    E2E proves the write), reaching `OraOwnedCurrent` at generation 1.
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let descriptor = SurfaceDescriptorSet::merge(&workspace_id, agent_mcp_declarations())
+            .expect("the MCP surface declarations merge into descriptors")
+            .into_iter()
+            .next()
+            .expect("the MCP declarations produce exactly one surface descriptor");
+        let coordinator = RecordingCoordinator::default();
+        let outcome = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 20,
+        )
+        .expect("the first reconcile must converge and write the Ora-owned file");
+        assert_eq!(outcome.status.phase, SurfacePhase::Current);
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        assert!(
+            file.exists(),
+            "the first converge must write the Ora-owned file"
+        );
+
+        // 2. Empty the effective set the way an un-publish would: a CAS replace against the current
+        //    generation installs an empty spec and advances the generation, so the no-op guard
+        //    (applied >= generation) can no longer mask the change.
+        let effect = repository
+            .load_workspace_effect(&workspace_id)
+            .expect("the workspace effect must be readable after the first converge");
+        repository
+            .replace_workspace_effect(
+                &workspace_id,
+                effect.generation,
+                WorkspaceEffectSpec::default(),
+                PUBLISHED_AT + 25,
+            )
+            .expect("emptying the effective set must replace the workspace effect");
+
+        // 3. Re-reconcile: an empty set against the verified Ora-owned file must DELETE it, not
+        //    render an empty stub. Converging (not parking) at the new generation proves the
+        //    deletion is a clean apply, not a recovery.
+        let outcome = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 30,
+        )
+        .expect("an empty set against an Ora-owned file must converge, not error");
+        assert_eq!(
+            outcome.status.phase,
+            SurfacePhase::Current,
+            "deleting the Ora-owned file for an empty set is a converge, not a failure",
+        );
+        assert!(
+            !file.exists(),
+            "the Ora-owned file must be deleted when the effective set is empty, not re-written as a stub",
+        );
+    }
+
+    /// An oversized render must be rejected before the atomic write. The host verifies file size
+    /// as a publish precondition (spec line 93: "Host verifies ... size ... before publishing"),
+    /// so a runaway renderer that overproduces parks the surface rather than writing megabytes of
+    /// untrusted content into the Workspace — and no file may exist after the rejection.
+    #[test]
+    fn reconcile_mcp_rejects_an_oversized_render_before_writing_the_file() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let descriptor = SurfaceDescriptorSet::merge(&workspace_id, agent_mcp_declarations())
+            .expect("the MCP surface declarations merge into descriptors")
+            .into_iter()
+            .next()
+            .expect("the MCP declarations produce exactly one surface descriptor");
+        // A renderer that returns megabytes of content, well past the host's size bound.
+        let coordinator = RecordingCoordinator {
+            render_bytes: Some("x".repeat(2 * 1024 * 1024)),
+            ..Default::default()
+        };
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+
+        let result = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 20,
+        );
+        assert!(
+            matches!(result, Err(ReconcileError::RenderedFileTooLarge)),
+            "an oversized render must be rejected as the dedicated size-bound error, not converged",
+        );
+        assert!(
+            !file.exists(),
+            "no file may be written for a render the host rejected as too large",
+        );
+    }
+
+    /// A Git Workspace's repo-local exclude must idempotently carry the Ora-managed config path
+    /// before the host publishes the file, so the config Ora owns never surfaces as an untracked
+    /// change in `git status` (spec line 93 / story 29). A non-Git Workspace must not depend on
+    /// the exclude (story 30); the hermetic E2E already reconciles a non-Git Workspace without a
+    /// `.git`, so this test seeds one and asserts the exclude gains the Ora config line while
+    /// preserving the user content already there.
+    #[test]
+    fn reconcile_mcp_adds_the_ora_config_to_the_workspace_git_exclude_before_publishing() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        // Simulate a Git Workspace: `.git/info/exclude` exists with unrelated user content the
+        // host must preserve, not replace.
+        let exclude = workspace_root.join(".git").join("info").join("exclude");
+        fs::create_dir_all(exclude.parent().expect("the exclude path has a parent")).unwrap();
+        fs::write(&exclude, "# user-managed ignore\n").unwrap();
+        let descriptor = SurfaceDescriptorSet::merge(&workspace_id, agent_mcp_declarations())
+            .expect("the MCP surface declarations merge into descriptors")
+            .into_iter()
+            .next()
+            .expect("the MCP declarations produce exactly one surface descriptor");
+        let coordinator = RecordingCoordinator::default();
+
+        let outcome = reconcile_mcp_surface(
+            &repository,
+            &coordinator,
+            &descriptor,
+            &workspace_root,
+            &workspace_id,
+            PUBLISHED_AT + 20,
+        )
+        .expect("a Git Workspace reconcile must converge, not error on the exclude");
+
+        // The exclude now carries the Ora config line, alongside the preserved user content.
+        let exclude_contents = fs::read_to_string(&exclude).unwrap();
+        assert!(
+            exclude_contents.contains("# user-managed ignore"),
+            "the host must preserve the existing exclude content, not replace it",
+        );
+        assert!(
+            exclude_contents.contains(".opencode/opencode.jsonc"),
+            "the Ora-managed config path must be added to the repo-local exclude before publishing",
+        );
+    }
+
+    /// The real Tavily smoke (spec #505 story 51): the key-gated opt-in that exercises the same
+    /// P1 wiring the hermetic loop proves, but against the LIVE Tavily MCP server with a real
+    /// credential supplied ONLY through the process environment (`TAVILY_API_KEY`).
+    ///
+    /// Mirrors the hermetic loop's main chain (configure → resolve → render → atomic write →
+    /// activation → converge → Ready) through the real `reconcile_mcp_one` seam, then replaces the
+    /// hermetic simulated tool-call with a REAL MCP `initialize` + `tools/call` against
+    /// `https://mcp.tavily.com/mcp`, authorizing with `Bearer <key>` resolved from the
+    /// `{env:ORA_MCP_...}` reference exactly as the OpenCode CLI would against the host-injected env.
+    ///
+    /// The key is read from the environment at runtime and must NEVER appear in the source, the
+    /// Ora-owned config file, the effect database, the HTTP response, or any test output; transport
+    /// errors are scrubbed of the key before they can surface. Skipped (not failed) when
+    /// `TAVILY_API_KEY` is absent, so the normal `cargo test` gate stays hermetic — set the variable
+    /// to opt in. Host env-injection itself (placing `ORA_MCP_...` on the agent subprocess) is the
+    /// separate ADR-0005 wiring this smoke's env binding stands in for; the live-agent end-to-end
+    /// run remains a user-driven app flow.
+    #[test]
+    fn real_tavily_smoke_closes_the_live_loop_without_leaking_the_key() {
+        let tavily_key = match std::env::var("TAVILY_API_KEY") {
+            Ok(value) if !value.is_empty() => value,
+            _ => {
+                eprintln!(
+                    "real_tavily_smoke: TAVILY_API_KEY is not set; skipping the live smoke (set \
+                     it to opt in, per spec #505 story 51)."
+                );
+                return;
+            }
+        };
+
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let data_root = temp.path();
+        let (pool, workspace_id) = fixture(data_root, &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+
+        // 1-2. Configure (env reference only) → real reconcile (render → atomic write → activation
+        //      → converge Gen 1). The fake renderer returns the real OpenCode shape carrying only
+        //      the env reference; the host recomputes the digest so the marker vouches for it.
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+        let coordinator = RecordingCoordinator::default();
+        let request = claim(&repository, PUBLISHED_AT + 20);
+        let outcome = reconcile_mcp_one(&repository, &coordinator, request.due, PUBLISHED_AT + 20);
+        assert_eq!(
+            outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1),
+            },
+            "the live smoke's main chain must converge through the real reconcile path",
+        );
+        assert!(
+            repository
+                .complete_reconcile_request(&request.claim, Generation::new(1), PUBLISHED_AT + 20)
+                .unwrap()
+        );
+
+        // 3. The Ora-owned file carries ONLY the env reference, never the live key.
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        let file_contents = fs::read_to_string(&file).unwrap();
+        assert!(
+            !file_contents.contains(tavily_key.as_str()),
+            "the Ora-owned config must carry only the env reference, never the live key",
+        );
+        assert!(
+            file_contents.contains(&format!("{{env:{RENDERED_ENV_VAR}}}")),
+            "the file must carry the env reference the live call resolves",
+        );
+
+        // 4. Ready: the Application State fold reads Ready only after convergence + a running Agent.
+        let service = WorkspaceEffectService::new(repository);
+        let response = service
+            .mcp_application_state(
+                GetMcpApplicationStateRequest {
+                    workspace_id: workspace_id.to_string(),
+                },
+                /*agent_running*/ true,
+            )
+            .unwrap();
+        assert_eq!(response.state, McpApplicationStateDto::Ready);
+
+        // 5. Live MCP tool-call: resolve the {env:RENDERED_ENV_VAR} reference against the real key
+        //    (as the OpenCode CLI would against the host-injected env) and call the live server.
+        let activation_env = BTreeMap::from([(RENDERED_ENV_VAR.to_string(), tavily_key.clone())]);
+        let authorization = activation_env
+            .get(RENDERED_ENV_VAR)
+            .map(|value| format!("Bearer {value}"))
+            .expect("the activation binding carries the resolved key");
+        let body = call_live_tavily_search(&authorization, "what is the capital of France").expect(
+            "the live Tavily MCP server must accept the Bearer key and answer a tavily-search call",
+        );
+        assert!(
+            !body.is_empty(),
+            "the live tavily-search must return a non-empty result",
+        );
+        assert!(
+            !body.contains(tavily_key.as_str()),
+            "the live Tavily response must not echo the Authorization key",
+        );
+
+        // 6. No key leak into durable host state: the effect database carries only the env reference.
+        let db_bytes = fs::read(data_root.join("ora.sqlite3")).unwrap();
+        let needle = tavily_key.as_bytes();
+        let leaked = db_bytes
+            .windows(needle.len())
+            .any(|window| window == needle);
+        assert!(
+            !leaked,
+            "the live key must not persist anywhere in the effect database",
+        );
+    }
+
+    /// Performs a real MCP `initialize` + `tools/call tavily-search` against the live Tavily server.
+    ///
+    /// Returns the `tools/call` response payload as JSON text (with any SSE `data:` framing
+    /// stripped). The key lives only in the `Authorization` header; any error string is scrubbed of
+    /// it (replaced with `[REDACTED]`) before it can reach the test output, so a transport failure
+    /// cannot leak the credential through a diagnostic.
+    fn call_live_tavily_search(authorization: &str, query: &str) -> Result<String, String> {
+        let key = authorization
+            .strip_prefix("Bearer ")
+            .unwrap_or(authorization);
+        let redact = |message: String| message.replace(key, "[REDACTED]");
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|error| redact(format!("failed to build HTTP client: {error}")))?;
+        let endpoint = "https://mcp.tavily.com/mcp";
+        let accept = "application/json, text/event-stream";
+
+        // MCP initialize: establishes the session and proves the live server accepts the Bearer key.
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "ora-p1-smoke", "version": "0.0.0"}
+            }
+        });
+        let init_resp = client
+            .post(endpoint)
+            .header("Authorization", authorization)
+            .header("Accept", accept)
+            .header("Content-Type", "application/json")
+            .json(&init_body)
+            .send()
+            .map_err(|error| redact(format!("initialize request failed: {error}")))?;
+        if !init_resp.status().is_success() {
+            let status = init_resp.status();
+            let text = init_resp.text().unwrap_or_default();
+            return Err(redact(format!("initialize returned HTTP {status}: {text}")));
+        }
+        let session_id = init_resp
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let _init_text = init_resp
+            .text()
+            .map_err(|error| redact(format!("failed to read initialize body: {error}")))?;
+
+        // notifications/initialized (best-effort; the server need not answer).
+        let _ = client
+            .post(endpoint)
+            .header("Authorization", authorization)
+            .header("Accept", accept)
+            .header("Content-Type", "application/json")
+            .header("mcp-session-id", session_id.as_deref().unwrap_or(""))
+            .json(&serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .send();
+
+        // tools/call tavily-search: the real tool invocation the OpenCode CLI would make.
+        let call_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavily-search",
+                "arguments": {"query": query, "max_results": 1}
+            }
+        });
+        let mut call_req = client
+            .post(endpoint)
+            .header("Authorization", authorization)
+            .header("Accept", accept)
+            .header("Content-Type", "application/json")
+            .json(&call_body);
+        if let Some(session) = session_id.as_deref() {
+            call_req = call_req.header("mcp-session-id", session);
+        }
+        let call_resp = call_req
+            .send()
+            .map_err(|error| redact(format!("tools/call request failed: {error}")))?;
+        let status = call_resp.status();
+        let call_text = call_resp
+            .text()
+            .map_err(|error| redact(format!("failed to read tools/call body: {error}")))?;
+        if !status.is_success() {
+            return Err(redact(format!(
+                "tools/call returned HTTP {status}: {call_text}"
+            )));
+        }
+        Ok(extract_jsonrpc_payload(&call_text))
+    }
+
+    /// Pulls the JSON-RPC result out of a response that may be plain JSON or SSE `data:` frames.
+    fn extract_jsonrpc_payload(body: &str) -> String {
+        for line in body.lines() {
+            let trimmed = line.trim();
+            let candidate = trimmed
+                .strip_prefix("data:")
+                .map(str::trim)
+                .unwrap_or(trimmed);
+            if candidate.starts_with('{') {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) {
+                    if value.get("result").is_some() || value.get("error").is_some() {
+                        return value.to_string();
+                    }
+                }
+            }
+        }
+        body.to_string()
+    }
+
+    /// A surface whose file already proves the current generation reconciles as an idempotent no-op.
+    ///
+    /// Crash recovery is idempotent-forward: once the durable status says the generation was applied
+    /// AND the file still carries the matching ownership marker, a later reconcile re-reads that proof
+    /// and renders, writes, and coordinates nothing. This is what lets repeated wakeups coalesce
+    /// exactly as they do for Skills, and lets a second pass over an already-current surface leave a
+    /// live agent undisturbed.
+    #[test]
+    fn a_current_mcp_surface_reconciles_as_a_no_op_without_rendering_or_coordinating() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let (pool, workspace_id) = fixture(temp.path(), &workspace_root);
+        let repository = SqliteEffectRepository::new(pool);
+        select_tavily(&repository, &workspace_id, PUBLISHED_AT);
+        declare_mcp_surface(&repository, &workspace_id, &workspace_root);
+
+        // First pass renders and writes the file, advancing the surface to Current at generation 1.
+        let first = claim(&repository, PUBLISHED_AT + 20);
+        let second_due = first.due.clone();
+        let first_outcome = reconcile_mcp_one(
+            &repository,
+            &RecordingCoordinator::default(),
+            first.due,
+            PUBLISHED_AT + 20,
+        );
+        assert_eq!(
+            first_outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1)
+            }
+        );
+        repository
+            .complete_reconcile_request(&first.claim, Generation::new(1), PUBLISHED_AT + 20)
+            .unwrap();
+        let file = workspace_root.join(".opencode").join("opencode.jsonc");
+        let written_before = fs::read_to_string(&file).unwrap();
+
+        // A second pass over the same generation finds the durable status already applied and the file
+        // still Ora-owned, so it converges without rendering, writing, or coordinating anything.
+        let second = RecordingCoordinator::default();
+        let second_outcome = reconcile_mcp_one(&repository, &second, second_due, PUBLISHED_AT + 30);
+        assert_eq!(
+            second_outcome,
+            SurfaceOutcome::Converged {
+                generation: Generation::new(1)
+            },
+            "an already-current surface must converge without redoing the work",
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            written_before,
+            "an idempotent no-op must not rewrite the file it already proved",
+        );
+        assert!(
+            second
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty(),
+            "an already-current surface must not quiesce, render, or restart the consumer",
+        );
+    }
+
     /// A busy consumer defers the mutation instead of writing underneath a running turn.
     #[test]
     fn a_busy_consumer_defers_materialization_and_keeps_the_request() {
@@ -1198,7 +2375,7 @@ mod tests {
         declare_surface(&repository, &workspace_id, &workspace_root);
         let coordinator = RecordingCoordinator {
             busy: true,
-            calls: Mutex::default(),
+            ..Default::default()
         };
 
         let request = claim(&repository, PUBLISHED_AT + 20);

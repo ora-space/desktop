@@ -93,6 +93,41 @@ fn rejects_a_surface_without_effect_control_methods() {
     );
 }
 
+/// An MCP complete-file surface is rejected unless the plugin serves the renderer method, so a
+/// malformed renderer declaration fails at handshake instead of mid-reconcile.
+#[test]
+fn rejects_an_mcp_surface_without_the_renderer_method() {
+    let mut registration = complete_registration();
+    registration.effect_surfaces = vec![PluginEffectSurface {
+        workspace_relative_path: ".opencode/opencode.jsonc".to_string(),
+        materialization_format: "opencode_mcp_complete_file.v1".to_string(),
+        coordination: PluginEffectCoordination::Uninterrupted,
+    }];
+
+    assert_eq!(
+        verify_agent_contract(&registration),
+        Err(PluginAgentError::ContractIncomplete(
+            "missing MCP renderer method agent_mcp_v1/render".to_string()
+        ))
+    );
+}
+
+/// An MCP complete-file surface is accepted once the plugin serves the renderer method.
+#[test]
+fn accepts_an_mcp_surface_with_the_renderer_method() {
+    let mut registration = complete_registration();
+    registration
+        .methods
+        .insert("agent_mcp_v1/render".to_string());
+    registration.effect_surfaces = vec![PluginEffectSurface {
+        workspace_relative_path: ".opencode/opencode.jsonc".to_string(),
+        materialization_format: "opencode_mcp_complete_file.v1".to_string(),
+        coordination: PluginEffectCoordination::Uninterrupted,
+    }];
+
+    assert_eq!(verify_agent_contract(&registration), Ok(()));
+}
+
 /// Frames that arrived before the agent started belong to no connection and are dropped.
 #[tokio::test]
 async fn discards_frames_that_arrived_before_the_agent_started() {

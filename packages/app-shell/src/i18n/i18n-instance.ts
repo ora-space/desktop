@@ -354,6 +354,7 @@ export const translationResources = {
     "settings.nav.skills": "技能",
     "settings.nav.proxy": "代理",
     "settings.nav.plugins": "插件",
+    "settings.nav.mcp": "MCP",
     "settings.workflow.nodes": "节点",
     "settings.workflow.nodesHint": "点击添加到画布，再连接执行顺序。",
     "settings.workflow.add": "添加",
@@ -813,6 +814,27 @@ export const translationResources = {
     "settings.proxy.loading": "加载中",
     "settings.proxy.loadError": "无法读取代理配置。",
     "settings.proxy.updateError": "无法保存代理配置。",
+    "settings.mcp.title": "MCP 应用状态",
+    "settings.mcp.description":
+      "查看当前工作区 OpenCode 代理的 MCP 就绪状态。仅在对话期间按需轮询，不会持久化任何配置。",
+    "settings.mcp.loading": "加载中",
+    "settings.mcp.loadError": "无法读取 MCP 状态。",
+    "settings.mcp.noWorkspace": "打开一个工作区以查看其 MCP 状态。",
+    "settings.mcp.stateNeedsConfiguration": "需要配置",
+    "settings.mcp.stateNeedsConfigurationDescription":
+      "该工作区尚未配置任何 MCP，或必填项不完整。",
+    "settings.mcp.stateWaitingForAgent": "等待代理",
+    "settings.mcp.stateWaitingForAgentDescription":
+      "MCP 已配置，但 OpenCode 代理尚未运行。",
+    "settings.mcp.stateApplying": "应用中",
+    "settings.mcp.stateApplyingDescription":
+      "正在将 MCP 配置写入并激活到代理。",
+    "settings.mcp.stateReady": "就绪",
+    "settings.mcp.stateReadyDescription":
+      "MCP 已就绪，可在该工作区的对话中调用。",
+    "settings.mcp.stateFailed": "失败",
+    "settings.mcp.stateFailedDescription":
+      "MCP 未能就绪。请检查配置或所有权冲突后重试。",
     "settings.plugins.sourceAdded": "已添加市场源。",
     "settings.plugins.sourceAddFailed": "添加市场源失败。",
     "settings.plugins.sourceRemoved": "已删除市场源。",
@@ -1870,6 +1892,7 @@ export const translationResources = {
     "settings.nav.skills": "Skills",
     "settings.nav.proxy": "Proxy",
     "settings.nav.plugins": "Plugins",
+    "settings.nav.mcp": "MCP",
     "settings.workflow.nodes": "Nodes",
     "settings.workflow.nodesHint":
       "Click to add a node, then connect the execution order.",
@@ -2351,6 +2374,27 @@ export const translationResources = {
     "settings.proxy.loading": "Loading",
     "settings.proxy.loadError": "Could not read proxy settings.",
     "settings.proxy.updateError": "Could not save proxy settings.",
+    "settings.mcp.title": "MCP application state",
+    "settings.mcp.description":
+      "View the MCP readiness of the OpenCode agent for the active workspace. It polls only during a conversation as needed and never persists any configuration.",
+    "settings.mcp.loading": "Loading",
+    "settings.mcp.loadError": "Could not read MCP state.",
+    "settings.mcp.noWorkspace": "Open a workspace to view its MCP state.",
+    "settings.mcp.stateNeedsConfiguration": "Needs configuration",
+    "settings.mcp.stateNeedsConfigurationDescription":
+      "No MCP is configured for this workspace yet, or required inputs are incomplete.",
+    "settings.mcp.stateWaitingForAgent": "Waiting for agent",
+    "settings.mcp.stateWaitingForAgentDescription":
+      "MCP is configured, but the OpenCode agent is not running yet.",
+    "settings.mcp.stateApplying": "Applying",
+    "settings.mcp.stateApplyingDescription":
+      "Writing and activating the MCP configuration for the agent.",
+    "settings.mcp.stateReady": "Ready",
+    "settings.mcp.stateReadyDescription":
+      "MCP is ready and can be invoked in this workspace's conversations.",
+    "settings.mcp.stateFailed": "Failed",
+    "settings.mcp.stateFailedDescription":
+      "MCP failed to become ready. Check configuration or ownership conflicts and retry.",
     "settings.plugins.back": "Back",
     "settings.plugins.manageSources": "Manage marketplace",
     "settings.plugins.manageSourcesDescription":

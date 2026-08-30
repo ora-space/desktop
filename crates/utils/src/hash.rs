@@ -25,6 +25,19 @@ pub fn sha256_reader(reader: impl Read) -> io::Result<String> {
     Ok(digest_hex(&hasher.finalize()))
 }
 
+/// Hashes an already-in-memory byte slice through SHA-256 and returns the lowercase hex digest.
+///
+/// Streaming is unnecessary when the whole input is already materialized (digesting a resolved
+/// set, a compiled declaration, or a small canonical payload), and the in-memory `Sha256` path
+/// cannot fail the way a `Read` can. Callers that would otherwise write `sha256_reader(Cursor::new(
+/// bytes)).expect("cursor never fails")` reach for this infallible entrypoint instead so no
+/// `unwrap`/`expect` is needed at the callsite.
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    digest_hex(&hasher.finalize())
+}
+
 /// Streams the file at `path` through SHA-256, returning the lowercase hex digest.
 ///
 /// Wraps [`sha256_reader`] so callers that already have an open handle can reuse either API.
@@ -45,7 +58,7 @@ fn digest_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sha256_file, sha256_reader};
+    use super::{sha256_bytes, sha256_file, sha256_reader};
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::io::Cursor;
@@ -69,6 +82,20 @@ mod tests {
         assert_eq!(
             sha256_reader(Cursor::new(b"abc".to_vec())).unwrap(),
             ABC_SHA256
+        );
+    }
+
+    /// The infallible in-memory entrypoint must agree with the streaming reader on every input,
+    /// and must reproduce the published vectors so callers can drop `unwrap`/`expect` at callsites.
+    #[test]
+    fn bytes_entrypoint_matches_reader_and_published_vectors() {
+        assert_eq!(sha256_bytes(b""), EMPTY_SHA256);
+        assert_eq!(sha256_bytes(b"abc"), ABC_SHA256);
+        // Agreement across a non-trivial body confirms the two paths hash the same bytes.
+        let body: Vec<u8> = (0..=u8::MAX).cycle().take(2 * 1024).collect();
+        assert_eq!(
+            sha256_bytes(&body),
+            sha256_reader(Cursor::new(body)).unwrap()
         );
     }
 

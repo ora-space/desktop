@@ -53,3 +53,6 @@ ora-test-support = { workspace = true }
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 zip = { workspace = true }
+# Used only by the key-gated live Tavily smoke (spec #505 story 51), which is skipped when
+# `TAVILY_API_KEY` is absent, so the normal `cargo test` gate stays hermetic.
+reqwest = { workspace = true, features = ["blocking", "json"] }

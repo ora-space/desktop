@@ -11,32 +11,63 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+mod mcp;
+
+pub(super) use mcp::{
+    insert_mcp_desired, load_mcp_active_source, map_mcp_desired, map_mcp_selection_key,
+    referenced_mcp_workspaces, upsert_mcp_propagation_request,
+};
+
 /// Loads the complete normalized desired set while treating a missing row as generation zero.
+///
+/// Skill and MCP desired rows share the `workspace_effect_desired_items` table and are
+/// distinguished only by `effect_kind`; each kind is reconstructed with a kind-specific mapper so
+/// the two resource DTOs never share a payload shape. The two scans are scoped to their own
+/// prepared statements so the Skill rows are fully drained before the MCP statement borrows the
+/// connection again.
 pub(super) fn load_workspace_effect(
     connection: &Connection,
     workspace_id: &WorkspaceId,
 ) -> Result<WorkspaceEffect, DatabaseError> {
     let generation = current_generation(connection, workspace_id)?;
-    let mut statement = connection.prepare(
-        "SELECT sources.source_kind, sources.namespace, sources.identifier AS skill_name,
-                json_extract(revisions.payload_json, '$.display_name') AS display_name,
-                revisions.revision AS source_version, revisions.state_digest AS skill_md_digest
-         FROM workspace_effect_desired_items desired
-         JOIN effect_sources sources ON sources.id = desired.source_id
-         JOIN effect_source_revisions revisions ON revisions.id = desired.revision_id
-         WHERE desired.workspace_id = ?1
-         ORDER BY sources.source_kind, sources.namespace, sources.identifier",
-    )?;
-    let mut rows = statement.query(params![workspace_id.as_ref()])?;
     let mut skills = BTreeMap::new();
-    while let Some(row) = rows.next()? {
-        let (key, state) = map_desired(row)?;
-        skills.insert(key, state);
+    {
+        let mut statement = connection.prepare(
+            "SELECT sources.source_kind, sources.namespace, sources.identifier AS skill_name,
+                    json_extract(revisions.payload_json, '$.display_name') AS display_name,
+                    revisions.revision AS source_version, revisions.state_digest AS skill_md_digest
+             FROM workspace_effect_desired_items desired
+             JOIN effect_sources sources ON sources.id = desired.source_id
+             JOIN effect_source_revisions revisions ON revisions.id = desired.revision_id
+             WHERE desired.workspace_id = ?1 AND sources.effect_kind = 'skill'
+             ORDER BY sources.source_kind, sources.namespace, sources.identifier",
+        )?;
+        let mut rows = statement.query(params![workspace_id.as_ref()])?;
+        while let Some(row) = rows.next()? {
+            let (key, state) = map_desired(row)?;
+            skills.insert(key, state);
+        }
+    }
+    let mut mcps = BTreeMap::new();
+    {
+        let mut statement = connection.prepare(
+            "SELECT sources.namespace, sources.identifier, revisions.payload_json
+             FROM workspace_effect_desired_items desired
+             JOIN effect_sources sources ON sources.id = desired.source_id
+             JOIN effect_source_revisions revisions ON revisions.id = desired.revision_id
+             WHERE desired.workspace_id = ?1 AND sources.effect_kind = 'mcp'
+             ORDER BY sources.namespace, sources.identifier",
+        )?;
+        let mut rows = statement.query(params![workspace_id.as_ref()])?;
+        while let Some(row) = rows.next()? {
+            let (key, state) = map_mcp_desired(row)?;
+            mcps.insert(key, state);
+        }
     }
     Ok(WorkspaceEffect {
         workspace_id: workspace_id.clone(),
         generation,
-        spec: WorkspaceEffectSpec { skills },
+        spec: WorkspaceEffectSpec { skills, mcps },
     })
 }
 

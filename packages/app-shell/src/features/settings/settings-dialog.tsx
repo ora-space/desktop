@@ -32,6 +32,7 @@ import {
   IconFolder,
   IconLanguage,
   IconMoon,
+  IconPlug,
   IconProng,
   IconPuzzle,
   IconRobot,
@@ -46,7 +47,9 @@ import { SettingsHeading } from "./settings-heading";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
 import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
+import { McpSettings } from "./mcp-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
+import { useMcpApplicationState } from "../../state/hooks/use-mcp-application-state";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
   useSettingsStore,
@@ -60,6 +63,7 @@ type SettingsCategory =
   | "roles"
   | "skills"
   | "plugins"
+  | "mcp"
   | "proxy"
   | "privacy"
   | "developer";
@@ -81,6 +85,7 @@ export function SettingsDialog() {
     useRef<PluginConfigurationNavigationGuard | null>(null);
   const developerMode = useDeveloperMode();
   const developerModeEnabled = developerMode.state?.enabled === true;
+  const mcpApplicationState = useMcpApplicationState(open);
 
   const registerPluginConfigurationGuard = useCallback(
     (guard: PluginConfigurationNavigationGuard | null) => {
@@ -118,6 +123,7 @@ export function SettingsDialog() {
     { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
+    { id: "mcp", icon: IconPlug, label: t("settings.nav.mcp") },
     { id: "proxy", icon: IconProng, label: t("settings.nav.proxy") },
     { id: "privacy", icon: IconDatabase, label: t("settings.nav.privacy") },
     {
@@ -203,6 +209,9 @@ export function SettingsDialog() {
                   <PluginsSettings
                     onNavigationGuardChange={registerPluginConfigurationGuard}
                   />
+                )}
+                {category === "mcp" && (
+                  <McpSettings controller={mcpApplicationState} />
                 )}
                 {category === "proxy" && <ProxySettings />}
                 {category === "privacy" && <PrivacySettings />}

@@ -4,11 +4,12 @@ use crate::{DatabaseError, RepositoryPool};
 use mapping::*;
 use ora_domain::WorkspaceId;
 use ora_effect::{
-    ConsumerCoordination, ConsumerId, ConsumerStatus, DesiredSkillState, Digest, EffectOperation,
-    EffectRepository, Generation, LedgerTransition, ManagedIdentity, ManagedSkill,
-    MaterializationFormat, ReplaceEffectOutcome, RepositoryError, SkillSelectionKey, SourceError,
-    SourceProvider, SourceSnapshot, SourceVersion, SurfaceDescriptorSet, SurfaceKey,
-    SurfaceLifecycle, SurfacePath, SurfaceStatus, WorkspaceEffect, WorkspaceEffectSpec,
+    ConsumerCoordination, ConsumerId, ConsumerStatus, DesiredMcpState, DesiredSkillState, Digest,
+    EffectOperation, EffectRepository, Generation, LedgerTransition, ManagedIdentity, ManagedSkill,
+    MaterializationFormat, McpSelectionKey, ReplaceEffectOutcome, RepositoryError,
+    SkillSelectionKey, SourceError, SourceProvider, SourceSnapshot, SourceVersion,
+    SurfaceDescriptorSet, SurfaceKey, SurfaceLifecycle, SurfacePath, SurfaceStatus,
+    WorkspaceEffect, WorkspaceEffectSpec,
 };
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -249,6 +250,142 @@ impl SqliteEffectRepository {
             )?;
             transaction.commit()?;
             Ok(SourceMutationOutcome::Deleted)
+        })
+    }
+
+    /// Publishes a validated MCP source revision and atomically coalesces its propagation wakeup.
+    ///
+    /// Mirrors [`publish_source`](Self::publish_source) for the HTTP-only MCP profile: the
+    /// plaintext-free [`DesiredMcpState`] IS the revision payload, the `state_digest` is its
+    /// [`DesiredMcpState::content_digest`], and the revision column carries the bound
+    /// `store.json` revision so two resolved-value sets at the same plugin version stay distinct.
+    /// The generic [`install_source_in_all_workspaces`] is reused because it is keyed only by
+    /// `source_id`, so a freshly published MCP source reaches every existing Workspace exactly as
+    /// a Skill source does. `source_kind` is fixed to `plugin` because MCP sources are always
+    /// plugin-installed.
+    pub fn publish_mcp_source(
+        &self,
+        desired: &DesiredMcpState,
+        publication: SourcePublication,
+        updated_at: i64,
+    ) -> Result<(), DatabaseError> {
+        let selection_key = desired.selection_key();
+        let revision = desired.revision.to_string();
+        let digest = desired.content_digest().as_str().to_string();
+        let payload = serde_json::to_string(desired).map_err(effect_json_error)?;
+        self.pool.with_connection_mut(|connection| {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing_source_id = transaction
+                .query_row(
+                    "SELECT id FROM effect_sources
+                     WHERE effect_kind = 'mcp' AND source_kind = 'plugin'
+                       AND namespace = ?1 AND identifier = ?2",
+                    params![
+                        selection_key.namespace.as_ref(),
+                        selection_key.identifier.as_str(),
+                    ],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let source_id = existing_source_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            transaction.execute(
+                "INSERT INTO effect_sources (
+                     id, effect_kind, source_kind, namespace, identifier, lifecycle,
+                     created_at, updated_at
+                 ) VALUES (?1, 'mcp', 'plugin', ?2, ?3, 'active', ?4, ?4)
+                 ON CONFLICT(effect_kind, source_kind, namespace, identifier) DO UPDATE SET
+                     lifecycle = 'active', updated_at = excluded.updated_at",
+                params![
+                    &source_id,
+                    selection_key.namespace.as_ref(),
+                    selection_key.identifier.as_str(),
+                    updated_at,
+                ],
+            )?;
+            let existing_revision = transaction
+                .query_row(
+                    "SELECT id, state_digest, payload_json FROM effect_source_revisions
+                     WHERE source_id = ?1 AND revision = ?2",
+                    params![&source_id, &revision],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let revision_id =
+                if let Some((revision_id, stored_digest, stored_payload)) = existing_revision {
+                    if stored_digest != digest || stored_payload != payload {
+                        return Err(DatabaseError::CorruptEffectState(
+                        "an immutable MCP source revision was republished with different content"
+                            .to_string(),
+                    ));
+                    }
+                    transaction.execute(
+                        "UPDATE effect_source_revisions
+                     SET availability = 'available', unavailable_reason = NULL, updated_at = ?2
+                     WHERE id = ?1",
+                        params![&revision_id, updated_at],
+                    )?;
+                    revision_id
+                } else {
+                    let revision_id = Uuid::new_v4().to_string();
+                    transaction.execute(
+                        "INSERT INTO effect_source_revisions (
+                         id, source_id, revision, state_digest, payload_json, availability,
+                         unavailable_reason, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, 'available', NULL, ?6, ?6)",
+                        params![
+                            &revision_id,
+                            &source_id,
+                            &revision,
+                            &digest,
+                            &payload,
+                            updated_at,
+                        ],
+                    )?;
+                    revision_id
+                };
+            let previous_head = transaction
+                .query_row(
+                    "SELECT revision_id FROM effect_source_heads WHERE source_id = ?1",
+                    params![&source_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            transaction.execute(
+                "INSERT INTO effect_source_heads (source_id, revision_id, updated_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(source_id) DO UPDATE SET
+                     revision_id = excluded.revision_id, updated_at = excluded.updated_at",
+                params![&source_id, &revision_id, updated_at],
+            )?;
+            if existing_source_id.is_none() {
+                install_source_in_all_workspaces(
+                    &transaction,
+                    &source_id,
+                    &revision_id,
+                    updated_at,
+                )?;
+            }
+            if publication == SourcePublication::Update
+                && previous_head.as_deref() != Some(revision_id.as_str())
+            {
+                upsert_mcp_propagation_request(
+                    &transaction,
+                    &selection_key,
+                    desired.revision,
+                    updated_at,
+                )?;
+            }
+            transaction.commit()?;
+            Ok(())
         })
     }
 
@@ -528,6 +665,123 @@ impl SqliteEffectRepository {
             let mut requests = Vec::new();
             while let Some(row) = rows.next()? {
                 requests.push(map_selection_key(row)?);
+            }
+            Ok(requests)
+        })
+    }
+
+    /// Advances every still-referencing Workspace directly to the latest coalesced MCP source state.
+    ///
+    /// Mirrors [`propagate_source`](Self::propagate_source) for the MCP profile: it confirms the
+    /// head revision is available, then moves every referencing Workspace's desired row to that head
+    /// and advances its generation, draining the coalesced propagation request afterwards.
+    pub fn propagate_mcp_source(
+        &self,
+        selection_key: &McpSelectionKey,
+        updated_at: i64,
+    ) -> Result<Vec<(WorkspaceId, Generation)>, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            load_mcp_active_source(connection, selection_key)?.ok_or_else(|| {
+                DatabaseError::CorruptEffectState("propagation source is unavailable".to_string())
+            })
+        })?;
+        let affected = self
+            .pool
+            .with_connection(|connection| referenced_mcp_workspaces(connection, selection_key))?;
+        let mut advanced = Vec::new();
+        for workspace_id in affected {
+            let result = self.pool.with_connection_mut(|connection| {
+                let transaction =
+                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let changed = transaction.execute(
+                    "UPDATE workspace_effect_desired_items
+                     SET revision_id = (
+                         SELECT heads.revision_id
+                         FROM effect_sources sources
+                         JOIN effect_source_heads heads ON heads.source_id = sources.id
+                         WHERE sources.effect_kind = 'mcp' AND sources.source_kind = 'plugin'
+                           AND sources.namespace = ?2 AND sources.identifier = ?3
+                     ), updated_at = ?4
+                     WHERE workspace_id = ?1 AND source_id = (
+                         SELECT id FROM effect_sources
+                         WHERE effect_kind = 'mcp' AND source_kind = 'plugin'
+                           AND namespace = ?2 AND identifier = ?3
+                     ) AND revision_id <> (
+                         SELECT heads.revision_id
+                         FROM effect_sources sources
+                         JOIN effect_source_heads heads ON heads.source_id = sources.id
+                         WHERE sources.effect_kind = 'mcp' AND sources.source_kind = 'plugin'
+                           AND sources.namespace = ?2 AND sources.identifier = ?3
+                     )",
+                    params![
+                        workspace_id.as_ref(),
+                        selection_key.namespace.as_ref(),
+                        selection_key.identifier.as_str(),
+                        updated_at,
+                    ],
+                )?;
+                if changed == 0 {
+                    transaction.commit()?;
+                    return Ok(None);
+                }
+                let generation = current_generation(&transaction, &workspace_id)?
+                    .next()
+                    .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
+                transaction.execute(
+                    "UPDATE workspace_effects SET generation = ?2, updated_at = ?3
+                     WHERE workspace_id = ?1",
+                    params![
+                        workspace_id.as_ref(),
+                        generation_to_sql(generation)?,
+                        updated_at
+                    ],
+                )?;
+                enqueue_workspace_surfaces(&transaction, &workspace_id, generation, updated_at)?;
+                transaction.commit()?;
+                Ok(Some(generation))
+            })?;
+            if let Some(generation) = result {
+                advanced.push((workspace_id, generation));
+            }
+        }
+        self.pool.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM effect_propagation_requests
+                 WHERE source_id = (
+                     SELECT id FROM effect_sources
+                     WHERE effect_kind = 'mcp' AND source_kind = 'plugin'
+                       AND namespace = ?1 AND identifier = ?2
+                 ) AND head_revision_id = (
+                     SELECT heads.revision_id
+                     FROM effect_sources sources
+                     JOIN effect_source_heads heads ON heads.source_id = sources.id
+                     WHERE sources.effect_kind = 'mcp' AND sources.source_kind = 'plugin'
+                       AND sources.namespace = ?1 AND sources.identifier = ?2
+                 )",
+                params![
+                    selection_key.namespace.as_ref(),
+                    selection_key.identifier.as_str(),
+                ],
+            )?;
+            Ok(())
+        })?;
+        Ok(advanced)
+    }
+
+    /// Lists coalesced MCP source wakeups in deterministic order for an explicitly driven worker.
+    pub fn list_mcp_propagation_requests(&self) -> Result<Vec<McpSelectionKey>, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT sources.namespace, sources.identifier
+                 FROM effect_propagation_requests requests
+                 JOIN effect_sources sources ON sources.id = requests.source_id
+                 WHERE sources.effect_kind = 'mcp'
+                 ORDER BY requests.requested_at, sources.namespace, sources.identifier",
+            )?;
+            let mut rows = statement.query([])?;
+            let mut requests = Vec::new();
+            while let Some(row) = rows.next()? {
+                requests.push(map_mcp_selection_key(row)?);
             }
             Ok(requests)
         })
@@ -952,6 +1206,15 @@ impl EffectRepository for SqliteEffectRepository {
                         });
                     }
                 }
+                for (selection_key, desired) in &spec.mcps {
+                    let active = load_mcp_active_source(&transaction, selection_key)?;
+                    if active.as_ref() != Some(desired) {
+                        transaction.commit()?;
+                        return Ok(ReplaceEffectOutcome::SourceUnavailableMcp {
+                            selection_key: selection_key.clone(),
+                        });
+                    }
+                }
                 if current.spec == spec {
                     transaction.commit()?;
                     return Ok(ReplaceEffectOutcome::Unchanged(current));
@@ -978,6 +1241,15 @@ impl EffectRepository for SqliteEffectRepository {
                 )?;
                 for (selection_key, desired) in &spec.skills {
                     insert_desired(
+                        &transaction,
+                        workspace_id,
+                        selection_key,
+                        desired,
+                        updated_at,
+                    )?;
+                }
+                for (selection_key, desired) in &spec.mcps {
+                    insert_mcp_desired(
                         &transaction,
                         workspace_id,
                         selection_key,
@@ -1249,6 +1521,69 @@ impl EffectRepository for SqliteEffectRepository {
                 )?;
                 transaction.commit()?;
                 Ok(())
+            })
+            .map_err(effect_repository_error)
+    }
+
+    fn load_consumer_statuses(
+        &self,
+        workspace_id: &WorkspaceId,
+        surface_key: &SurfaceKey,
+    ) -> Result<Vec<ConsumerStatus>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                // The surface key is workspace-unique, so the load joins the surface table to scope
+                // by workspace before selecting that surface's consumer rows — the same shape
+                // load_surface_status uses to keep a status read from crossing workspaces.
+                let mut statement = connection.prepare(
+                    "SELECT status.surface_id AS surface_key, status.consumer_id,
+                            status.ready_generation, status.phase,
+                            status.status_version AS revision, status.updated_at
+                     FROM effect_consumer_status status
+                     JOIN effect_surfaces surfaces ON surfaces.id = status.surface_id
+                     WHERE surfaces.workspace_id = ?1 AND status.surface_id = ?2",
+                )?;
+                let mut consumers = statement
+                    .query_map(
+                        params![workspace_id.as_ref(), surface_key.as_str()],
+                        |row| {
+                            Ok(ConsumerStatus {
+                                surface_key: SurfaceKey::new(row.get::<_, String>("surface_key")?),
+                                consumer_id: ConsumerId::new(row.get::<_, String>("consumer_id")?),
+                                ready_generation: generation_from_row(row, "ready_generation")?,
+                                phase: parse_surface_phase(&row.get::<_, String>("phase")?)
+                                    .map_err(|error| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            3,
+                                            rusqlite::types::Type::Text,
+                                            Box::new(error),
+                                        )
+                                    })?,
+                                revision: u64::try_from(row.get::<_, i64>("revision")?).map_err(
+                                    |error| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            4,
+                                            rusqlite::types::Type::Integer,
+                                            Box::new(error),
+                                        )
+                                    },
+                                )?,
+                                updated_at: row.get("updated_at")?,
+                                conditions: Vec::new(),
+                            })
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                // Each consumer carries its own conditions, keyed by (surface, consumer), so they
+                // are loaded per consumer exactly as the surface status loads its own.
+                for consumer in &mut consumers {
+                    consumer.conditions = load_conditions(
+                        connection,
+                        surface_key.as_str(),
+                        Some(consumer.consumer_id.as_str()),
+                    )?;
+                }
+                Ok(consumers)
             })
             .map_err(effect_repository_error)
     }

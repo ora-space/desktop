@@ -194,6 +194,11 @@ const tauriCommands = {
   getProxySettings: "get_proxy_settings",
   setProxySettings: "set_proxy_settings",
   completeWorkflowNode: "complete_workflow_node",
+
+  // =============================================================================
+  // effect
+  // =============================================================================
+  getMcpApplicationState: "get_mcp_application_state",
 } as const satisfies Record<SupportedTauriOperation, string>;
 
 /** Creates the Desktop contracts transport backed by unary commands and Tauri IPC channels. */

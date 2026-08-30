@@ -20,8 +20,10 @@ pub use hook::{
 };
 pub use mcp::{
     CompileConfigurationFileError, CompileMcpConfigurationError, CompiledConfigurationFile,
-    CompiledMcpConfiguration, MCP_COMMAND_DIRECTORY, McpArgument, McpHttpTransport,
-    McpStdioTransport, McpTransport, McpValueExpression, compile_configuration_file,
+    CompiledMcpConfiguration, EffectiveSettings, MCP_COMMAND_DIRECTORY, McpActivationBindings,
+    McpArgument, McpDescriptor, McpHttpTransport, McpStdioTransport, McpTransport,
+    McpValueExpression, NeedsConfiguration, NeedsConfigurationReason, ResolveMcp,
+    ResolvedHttpHeader, ResolvedHttpMcp, ResolvedMcp, compile_configuration_file, resolve_mcp,
 };
 pub use service::{
     ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationFieldError,

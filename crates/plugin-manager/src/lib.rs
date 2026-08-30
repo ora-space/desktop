@@ -3,6 +3,7 @@
 
 mod discovery;
 mod hook;
+mod identity;
 mod install;
 mod issue;
 mod limits;

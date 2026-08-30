@@ -1,16 +1,18 @@
 use ora_contracts::{
     DesiredSkillStateDto, EffectConditionDto, EffectRetryPolicy, EffectSourceKind,
     EffectSurfacePhase, EffectSurfaceStatusDto, GetEffectSurfaceStatusRequest,
-    GetEffectSurfaceStatusResponse, GetWorkspaceEffectRequest, GetWorkspaceEffectResponse,
+    GetEffectSurfaceStatusResponse, GetMcpApplicationStateRequest, GetMcpApplicationStateResponse,
+    GetWorkspaceEffectRequest, GetWorkspaceEffectResponse, McpApplicationStateDto,
     ReplaceWorkspaceEffectRequest, ReplaceWorkspaceEffectResponse, RetryEffectSurfaceRequest,
     RetryEffectSurfaceResponse, WorkspaceEffectDto,
 };
 use ora_domain::{Namespace, WorkspaceId};
 use ora_effect::{
     ConditionReason, ConditionSubject, DesiredSkillState, Digest, EffectRepository, Generation,
+    McpApplicationState, McpApplicationStateInput, OPENCODE_MCP_COMPLETE_FILE_RELATIVE_PATH,
     ReplaceEffectOutcome, RepositoryError, RetryPolicy, SkillName, SkillSource, SkillState,
     SourceKind, SourceVersion, SurfaceKey, SurfacePhase, SurfaceStatus, WorkspaceEffect,
-    WorkspaceEffectSpec,
+    WorkspaceEffectSpec, derive_mcp_application_state,
 };
 use thiserror::Error;
 
@@ -26,6 +28,11 @@ pub enum EffectApplicationError {
         source_kind: &'static str,
         namespace: String,
         name: String,
+    },
+    #[error("selected MCP source is unavailable: {namespace}/{identifier}")]
+    SourceUnavailableMcp {
+        namespace: String,
+        identifier: String,
     },
     #[error("Effect repository operation failed")]
     Repository(#[source] RepositoryError),
@@ -98,6 +105,12 @@ where
                     name: selection_key.name.to_string(),
                 })
             }
+            ReplaceEffectOutcome::SourceUnavailableMcp { selection_key } => {
+                Err(EffectApplicationError::SourceUnavailableMcp {
+                    namespace: selection_key.namespace.to_string(),
+                    identifier: selection_key.identifier,
+                })
+            }
         }
     }
 
@@ -131,6 +144,46 @@ where
             )
             .map_err(EffectApplicationError::Repository)?;
         Ok(RetryEffectSurfaceResponse { requested })
+    }
+
+    /// Folds durable Effect state and a live Agent-availability fact into the user-visible MCP
+    /// Application State for one workspace's OpenCode MCP surface.
+    ///
+    /// `agent_running` is the one fact the repository cannot know — whether a compatible Agent
+    /// process is currently serving the surface's renderer — so the caller (the Tauri command with
+    /// access to the plugin runtime) computes it and passes it in, keeping the fold pure and the
+    /// service free of plugin-host coupling. The MCP surface key is resolved from the canonical
+    /// OpenCode path, so the read needs only the workspace id.
+    pub fn mcp_application_state(
+        &self,
+        request: GetMcpApplicationStateRequest,
+        agent_running: bool,
+    ) -> Result<GetMcpApplicationStateResponse, EffectApplicationError> {
+        let workspace_id = WorkspaceId::new(request.workspace_id);
+        let effect = self
+            .repository
+            .load_workspace_effect(&workspace_id)
+            .map_err(EffectApplicationError::Repository)?;
+        let has_desired = !effect.spec.mcps.is_empty();
+        let surface_key =
+            SurfaceKey::for_workspace(&workspace_id, OPENCODE_MCP_COMPLETE_FILE_RELATIVE_PATH);
+        let surface = self
+            .repository
+            .load_surface_status(&workspace_id, &surface_key)
+            .map_err(EffectApplicationError::Repository)?;
+        let consumers = self
+            .repository
+            .load_consumer_statuses(&workspace_id, &surface_key)
+            .map_err(EffectApplicationError::Repository)?;
+        let state = derive_mcp_application_state(McpApplicationStateInput {
+            has_desired,
+            surface: surface.as_ref(),
+            consumers: &consumers,
+            agent_running,
+        });
+        Ok(GetMcpApplicationStateResponse {
+            state: map_mcp_application_state(state),
+        })
     }
 }
 
@@ -254,6 +307,16 @@ fn source_kind_value(kind: SourceKind) -> &'static str {
     match kind {
         SourceKind::Local => "local",
         SourceKind::Plugin => "plugin",
+    }
+}
+
+fn map_mcp_application_state(state: McpApplicationState) -> McpApplicationStateDto {
+    match state {
+        McpApplicationState::NeedsConfiguration => McpApplicationStateDto::NeedsConfiguration,
+        McpApplicationState::WaitingForAgent => McpApplicationStateDto::WaitingForAgent,
+        McpApplicationState::Applying => McpApplicationStateDto::Applying,
+        McpApplicationState::Ready => McpApplicationStateDto::Ready,
+        McpApplicationState::Failed => McpApplicationStateDto::Failed,
     }
 }
 

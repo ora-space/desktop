@@ -4,10 +4,12 @@ use crate::{
 };
 use ora_domain::{Namespace, WorkspaceId};
 use ora_effect::{
-    ConsumerCoordination, ConsumerId, DesiredSkillState, Digest, EffectRepository,
-    FilesystemSkillSurface, Generation, MaterializationFormat, ReplaceEffectOutcome, SkillName,
-    SkillSelectionKey, SkillSource, SkillState, SourceKind, SourceVersion, SurfaceDescriptorSet,
-    SurfaceLifecycle, SurfacePath, WorkspaceEffectSpec,
+    Condition, ConditionReason, ConditionSubject, ConsumerCoordination, ConsumerId, ConsumerStatus,
+    DesiredMcpState, DesiredSkillState, Digest, EffectRepository, FilesystemSkillSurface,
+    Generation, MaterializationFormat, McpHttpHeaderEffect, McpHttpTransportEffect,
+    McpSelectionKey, ReplaceEffectOutcome, SkillName, SkillSelectionKey, SkillSource, SkillState,
+    SourceKind, SourceVersion, SurfaceDescriptorSet, SurfaceKey, SurfaceLifecycle, SurfacePath,
+    SurfacePhase, WorkspaceEffectSpec,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -121,6 +123,7 @@ fn desired_replace_uses_cas_and_normalized_no_op_semantics() {
     register_surface(&repository, &workspace_id, 10);
     let spec = WorkspaceEffectSpec {
         skills: BTreeMap::from([(source.0, source.1)]),
+        mcps: BTreeMap::new(),
     };
 
     assert_eq!(
@@ -267,6 +270,7 @@ fn unavailable_source_cannot_enter_desired_state() {
                 Generation::new(2),
                 WorkspaceEffectSpec {
                     skills: BTreeMap::from([(source.0.clone(), source.1)]),
+                    mcps: BTreeMap::new(),
                 },
                 30,
             )
@@ -426,5 +430,270 @@ fn retired_surface_deletion_waits_for_an_empty_ownership_ledger() {
         repository
             .delete_retired_surface(&surface_key)
             .unwrap_or_else(|error| panic!("delete cleaned surface: {error}")),
+    );
+}
+
+/// Builds the Tavily-shaped plaintext-free MCP desired state at the given store revision.
+///
+/// The env-var reference is a NAME, never the key value; changing `revision` alone changes the
+/// content digest, which is what lets the source store tell two resolved-value sets apart.
+fn tavily_mcp(revision: u64) -> (McpSelectionKey, DesiredMcpState) {
+    let state = DesiredMcpState {
+        namespace: Namespace::new("official")
+            .unwrap_or_else(|error| panic!("parse namespace: {error}")),
+        identifier: "ora-space.tavily-search".to_string(),
+        version: "1.0.0".to_string(),
+        definition_digest: "deadbeef".to_string(),
+        revision,
+        transport: McpHttpTransportEffect {
+            url: "https://mcp.tavily.com/mcp".to_string(),
+            headers: vec![McpHttpHeaderEffect {
+                name: "Authorization".to_string(),
+                env_var: "ORA_MCP_OFFICIAL_ORA_SPACE_TAVILY_SEARCH_APIKEY_0".to_string(),
+                prefix: "Bearer ".to_string(),
+                suffix: String::new(),
+            }],
+        },
+    };
+    let key = state.selection_key();
+    (key, state)
+}
+
+/// Coalescing and propagation work for MCP exactly as for Skills: a Create installs the source
+/// into every Workspace, an Update coalesces a propagation wakeup, and propagating advances every
+/// referencing Workspace to the latest head revision in one generation step.
+#[test]
+fn mcp_source_updates_coalesce_and_propagate_to_every_workspace() {
+    let (_directory, pool, workspace_id) = fixture();
+    let repository = SqliteEffectRepository::new(pool);
+    let (key, revision_one) = tavily_mcp(1);
+    repository
+        .publish_mcp_source(&revision_one, SourcePublication::Create, 10)
+        .unwrap_or_else(|error| panic!("publish mcp rev 1: {error}"));
+    let (_, revision_two) = tavily_mcp(2);
+    repository
+        .publish_mcp_source(&revision_two, SourcePublication::Update, 30)
+        .unwrap_or_else(|error| panic!("publish mcp rev 2: {error}"));
+    assert_eq!(
+        repository
+            .list_mcp_propagation_requests()
+            .unwrap_or_else(|error| panic!("list mcp propagation: {error}")),
+        vec![key.clone()]
+    );
+    assert_eq!(
+        repository
+            .propagate_mcp_source(&key, 50)
+            .unwrap_or_else(|error| panic!("propagate mcp: {error}")),
+        vec![(workspace_id.clone(), Generation::new(2))]
+    );
+    let effect = repository
+        .load_workspace_effect(&workspace_id)
+        .unwrap_or_else(|error| panic!("load propagated mcp effect: {error}"));
+    assert_eq!(effect.generation, Generation::new(2));
+    assert_eq!(effect.spec.mcps[&key], revision_two);
+    assert!(
+        repository
+            .list_mcp_propagation_requests()
+            .unwrap_or_else(|error| panic!("list completed mcp propagation: {error}"))
+            .is_empty()
+    );
+}
+
+/// A replace that moves the Desired set to a newer, published revision advances the generation and
+/// round-trips the plaintext-free MCP state through the revision payload.
+#[test]
+fn mcp_desired_replace_advances_to_a_newly_published_revision() {
+    let (_directory, pool, workspace_id) = fixture();
+    let repository = SqliteEffectRepository::new(pool);
+    let (key, revision_one) = tavily_mcp(1);
+    repository
+        .publish_mcp_source(&revision_one, SourcePublication::Create, 10)
+        .unwrap_or_else(|error| panic!("publish mcp rev 1: {error}"));
+    let (_, revision_two) = tavily_mcp(2);
+    repository
+        .publish_mcp_source(&revision_two, SourcePublication::Update, 20)
+        .unwrap_or_else(|error| panic!("publish mcp rev 2: {error}"));
+    let next_spec = WorkspaceEffectSpec {
+        skills: BTreeMap::new(),
+        mcps: BTreeMap::from([(key, revision_two)]),
+    };
+    assert_eq!(
+        repository
+            .replace_workspace_effect(&workspace_id, Generation::new(1), next_spec, 30)
+            .unwrap_or_else(|error| panic!("replace to rev 2: {error}")),
+        ReplaceEffectOutcome::Replaced(
+            repository
+                .load_workspace_effect(&workspace_id)
+                .unwrap_or_else(|error| panic!("load rev 2 effect: {error}"))
+        )
+    );
+}
+
+/// CAS and no-op semantics hold for MCP: a replace matching the installed state is Unchanged, and a
+/// stale expected generation conflicts without touching the Desired set.
+#[test]
+fn mcp_desired_replace_uses_cas_and_no_op_semantics() {
+    let (_directory, pool, workspace_id) = fixture();
+    let repository = SqliteEffectRepository::new(pool);
+    let (key, desired) = tavily_mcp(1);
+    repository
+        .publish_mcp_source(&desired, SourcePublication::Create, 10)
+        .unwrap_or_else(|error| panic!("publish mcp source: {error}"));
+    let spec = WorkspaceEffectSpec {
+        skills: BTreeMap::new(),
+        mcps: BTreeMap::from([(key, desired)]),
+    };
+    // Publishing installed the MCP into every Workspace, so the Desired set already matches and the
+    // replace at the installed generation is a no-op.
+    assert_eq!(
+        repository
+            .replace_workspace_effect(&workspace_id, Generation::new(1), spec, 30)
+            .unwrap_or_else(|error| panic!("replace no-op: {error}")),
+        ReplaceEffectOutcome::Unchanged(
+            repository
+                .load_workspace_effect(&workspace_id)
+                .unwrap_or_else(|error| panic!("load mcp effect: {error}"))
+        )
+    );
+    assert_eq!(
+        repository
+            .replace_workspace_effect(
+                &workspace_id,
+                Generation::default(),
+                WorkspaceEffectSpec::default(),
+                40
+            )
+            .unwrap_or_else(|error| panic!("replace conflict: {error}")),
+        ReplaceEffectOutcome::Conflict {
+            expected_generation: Generation::default(),
+            current_generation: Generation::new(1)
+        }
+    );
+}
+
+/// A never-published MCP selection is unavailable and is rejected before it can enter Desired,
+/// mirroring the Skill `SourceUnavailable` gate.
+#[test]
+fn unavailable_mcp_source_cannot_enter_desired_state() {
+    let (_directory, pool, workspace_id) = fixture();
+    let repository = SqliteEffectRepository::new(pool);
+    let (key, desired) = tavily_mcp(1);
+    // The MCP source was never published, so it is unavailable and cannot enter Desired.
+    assert_eq!(
+        repository
+            .replace_workspace_effect(
+                &workspace_id,
+                Generation::default(),
+                WorkspaceEffectSpec {
+                    skills: BTreeMap::new(),
+                    mcps: BTreeMap::from([(key.clone(), desired)])
+                },
+                10
+            )
+            .unwrap_or_else(|error| panic!("replace unavailable mcp: {error}")),
+        ReplaceEffectOutcome::SourceUnavailableMcp { selection_key: key }
+    );
+}
+
+/// `load_consumer_statuses` returns every persisted consumer row for one workspace surface,
+/// workspace-scoped through the surface join, each carrying its own conditions.
+#[test]
+fn load_consumer_statuses_returns_persisted_rows_with_their_conditions() {
+    let (_directory, pool, workspace_id) = fixture();
+    let repository = SqliteEffectRepository::new(pool.clone());
+    register_surface(&repository, &workspace_id, 10);
+    let surface_key = SurfaceKey::for_workspace(&workspace_id, ".agents/skills");
+    let consumer = ConsumerId::new("codex");
+    repository
+        .save_consumer_status(ConsumerStatus {
+            surface_key: surface_key.clone(),
+            consumer_id: consumer.clone(),
+            ready_generation: Generation::new(1),
+            phase: SurfacePhase::Degraded,
+            revision: 1,
+            updated_at: 20,
+            conditions: vec![Condition::new(
+                ConditionSubject::Consumer {
+                    consumer_id: consumer.clone(),
+                },
+                ConditionReason::ConsumerResumeFailed,
+                "the agent did not resume after the file it should have consumed",
+                20,
+                Generation::new(1),
+            )],
+        })
+        .unwrap_or_else(|error| panic!("save consumer status: {error}"));
+
+    let loaded = repository
+        .load_consumer_statuses(&workspace_id, &surface_key)
+        .unwrap_or_else(|error| panic!("load consumer statuses: {error}"));
+    assert_eq!(
+        loaded.len(),
+        1,
+        "the one persisted consumer status is loaded"
+    );
+    assert_eq!(loaded[0].consumer_id, consumer);
+    assert_eq!(loaded[0].phase, SurfacePhase::Degraded);
+    assert_eq!(loaded[0].ready_generation, Generation::new(1));
+    assert_eq!(
+        loaded[0].conditions.len(),
+        1,
+        "the consumer's own conditions are loaded with it"
+    );
+    assert_eq!(
+        loaded[0].conditions[0].reason,
+        ConditionReason::ConsumerResumeFailed
+    );
+}
+
+/// `load_consumer_statuses` is workspace-scoped: a consumer row saved for one workspace's surface
+/// is not returned when another workspace reads the same surface key.
+#[test]
+fn load_consumer_statuses_is_workspace_scoped() {
+    let (_directory, pool, workspace_a) = fixture();
+    let repository = SqliteEffectRepository::new(pool.clone());
+    register_surface(&repository, &workspace_a, 10);
+    let surface_key_a = SurfaceKey::for_workspace(&workspace_a, ".agents/skills");
+    repository
+        .save_consumer_status(ConsumerStatus {
+            surface_key: surface_key_a.clone(),
+            consumer_id: ConsumerId::new("codex"),
+            ready_generation: Generation::new(1),
+            phase: SurfacePhase::Current,
+            revision: 1,
+            updated_at: 20,
+            conditions: Vec::new(),
+        })
+        .unwrap_or_else(|error| panic!("save consumer status: {error}"));
+
+    // A second workspace that never registered a surface nor saved a consumer status reads empty,
+    // even though the first workspace holds a row for an equal surface path string.
+    let workspace_b = WorkspaceId::new("workspace-2");
+    pool.with_connection(|connection| {
+        connection.execute(
+            "INSERT INTO projects (id, name, repository_kind, created_at, updated_at, is_deleted)
+             VALUES ('project-2', 'Other', 'git', 1, 1, 0)",
+            [],
+        )?;
+        connection.execute(
+            "INSERT INTO workspace_locations (id, location_kind, locator_version, locator_json, created_at, updated_at)
+             VALUES ('location-2', 'local_filesystem', 1, '{}', 1, 1)",
+            [],
+        )?;
+        connection.execute(
+            "INSERT INTO workspaces (id, project_id, workspace_kind, location_id, lifecycle, created_at, updated_at, is_deleted)
+             VALUES (?1, 'project-2', 'main', 'location-2', 'active', 1, 1, 0)",
+            params![workspace_b.as_ref()],
+        )?;
+        Ok(())
+    })
+    .unwrap_or_else(|error| panic!("insert second workspace fixture: {error}"));
+    let surface_key_b = SurfaceKey::for_workspace(&workspace_b, ".agents/skills");
+    let loaded = repository
+        .load_consumer_statuses(&workspace_b, &surface_key_b)
+        .unwrap_or_else(|error| panic!("load consumer statuses for workspace b: {error}"));
+    assert!(
+        loaded.is_empty(),
+        "a workspace with no consumer status for this surface reads nothing"
     );
 }

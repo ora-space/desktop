@@ -1,6 +1,6 @@
 use crate::{
-    AppliedFingerprint, ConsumerId, Digest, EffectOperationId, Generation, ManagedIdentity,
-    SkillName, SkillSelectionKey, SourceVersion, SurfaceKey,
+    AppliedFingerprint, ConsumerId, DesiredMcpState, Digest, EffectOperationId, Generation,
+    ManagedIdentity, McpSelectionKey, SkillName, SkillSelectionKey, SourceVersion, SurfaceKey,
 };
 use ora_domain::{Namespace, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -85,28 +85,56 @@ impl DesiredSkillState {
 }
 
 /// The normalized complete desired specification for one Workspace generation.
+///
+/// Skills and MCPs are parallel typed collections, not `Option<Mcp...>` fields on Skill state, so
+/// an MCP desired row can never enter the Skill adapter and a Skill row can never be planned as an
+/// MCP. Both share the generation, request, lease, status, and operation infrastructure; only the
+/// resource DTO is per-kind.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkspaceEffectSpec {
     pub skills: BTreeMap<SkillSelectionKey, DesiredSkillState>,
+    pub mcps: BTreeMap<McpSelectionKey, DesiredMcpState>,
 }
 
 impl WorkspaceEffectSpec {
-    /// Validates that each map key describes the exact value it indexes.
+    /// Validates that each Skill map key describes the exact value it indexes, with no MCPs.
     pub fn normalized(
         skills: impl IntoIterator<Item = DesiredSkillState>,
     ) -> Result<Self, StateError> {
-        let mut normalized = BTreeMap::new();
+        Self::normalized_with_mcps(skills, std::iter::empty())
+    }
+
+    /// Validates that each Skill and MCP map key describes the exact value it indexes.
+    ///
+    /// Skill and MCP selections live in disjoint key spaces, so a duplicate is detected within
+    /// each kind rather than across them: the two kinds never collide because they are dispatched
+    /// by `effect_kind` at the source/revision seam and by `format_kind` at the surface seam.
+    pub fn normalized_with_mcps(
+        skills: impl IntoIterator<Item = DesiredSkillState>,
+        mcps: impl IntoIterator<Item = DesiredMcpState>,
+    ) -> Result<Self, StateError> {
+        let mut normalized_skills = BTreeMap::new();
         for desired in skills {
             let state = desired.state();
             let key = state
                 .source
                 .selection_key(state.name.clone())
                 .ok_or(StateError::PreservedCannotBeDesired)?;
-            if normalized.insert(key.clone(), desired).is_some() {
+            if normalized_skills.insert(key.clone(), desired).is_some() {
                 return Err(StateError::DuplicateSelection(key));
             }
         }
-        Ok(Self { skills: normalized })
+        let mut normalized_mcps = BTreeMap::new();
+        for desired in mcps {
+            let key = desired.selection_key();
+            if normalized_mcps.insert(key.clone(), desired).is_some() {
+                return Err(StateError::DuplicateMcpSelection(key));
+            }
+        }
+        Ok(Self {
+            skills: normalized_skills,
+            mcps: normalized_mcps,
+        })
     }
 }
 
@@ -345,6 +373,8 @@ pub struct EffectOperation {
 pub enum StateError {
     #[error("preserved Skill state cannot enter desired state")]
     PreservedCannotBeDesired,
-    #[error("desired specification contains duplicate selection {0:?}")]
+    #[error("desired specification contains duplicate Skill selection {0:?}")]
     DuplicateSelection(SkillSelectionKey),
+    #[error("desired specification contains duplicate MCP selection {0:?}")]
+    DuplicateMcpSelection(McpSelectionKey),
 }

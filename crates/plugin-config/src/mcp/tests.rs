@@ -540,3 +540,55 @@ fn compiles_hook_files_through_the_shared_configuration_router() {
         Ok(CompiledConfigurationFile::Hook(_))
     ));
 }
+
+/// The definition digest identifies the whole MCP definition (transport plus the Settings subset),
+/// so a resolver can bind the exact definition an Agent rendered without re-reading package bytes.
+///
+/// Unlike the Settings-only `fingerprint`, it covers the transport, so a transport-only MCP still
+/// has a stable digest. It is deterministic: the same definition always digests to the same hex.
+#[test]
+fn computes_a_stable_definition_digest_covering_transport_and_settings() {
+    let tavily = br#"{
+            "schemaVersion": 1,
+            "settings": {
+                "apiKey": {"type":"string","title":"API key","description":"Key","required":true}
+            },
+            "transport": {
+                "type": "http",
+                "url": "https://mcp.tavily.com/mcp",
+                "headers": { "Authorization": { "setting": "apiKey", "prefix": "Bearer " } }
+            }
+        }"#;
+    let transport_only = br#"{
+            "schemaVersion": 1,
+            "transport": { "type": "http", "url": "https://mcp.example.com/v1" }
+        }"#;
+
+    let tavily_compiled = match compile_configuration_file(tavily).expect("compile tavily") {
+        CompiledConfigurationFile::Mcp(compiled) => compiled,
+        _ => panic!("expected the MCP shape"),
+    };
+    let transport_only_compiled =
+        match compile_configuration_file(transport_only).expect("compile transport-only") {
+            CompiledConfigurationFile::Mcp(compiled) => compiled,
+            _ => panic!("expected the MCP shape"),
+        };
+
+    let tavily_digest = tavily_compiled.definition_digest.clone();
+    let transport_only_digest = transport_only_compiled.definition_digest.clone();
+    // Both digests are 64-char lowercase hex SHA-256.
+    for digest in [&tavily_digest, &transport_only_digest] {
+        assert_eq!(digest.len(), 64);
+        assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(*digest, digest.to_ascii_lowercase());
+    }
+    // Different definitions digest differently, including a transport-only one with no settings
+    // fingerprint to lean on.
+    assert_ne!(tavily_digest, transport_only_digest);
+    // Re-compiling the same bytes is stable so a resolver can cache and compare.
+    let recomputed = match compile_configuration_file(tavily).expect("recompile tavily") {
+        CompiledConfigurationFile::Mcp(compiled) => compiled.definition_digest,
+        _ => panic!("expected the MCP shape"),
+    };
+    assert_eq!(recomputed, tavily_digest);
+}

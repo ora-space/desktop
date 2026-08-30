@@ -1,6 +1,6 @@
 use crate::{
     ConsumerId, DesiredSkillState, EffectOperation, Generation, ManagedIdentity, ManagedSkill,
-    SkillSelectionKey, SourceVersion, SurfaceKey, SurfaceStatus, WorkspaceEffect,
+    McpSelectionKey, SkillSelectionKey, SourceVersion, SurfaceKey, SurfaceStatus, WorkspaceEffect,
     WorkspaceEffectSpec,
 };
 use ora_domain::WorkspaceId;
@@ -36,6 +36,11 @@ pub enum ReplaceEffectOutcome {
     },
     SourceUnavailable {
         selection_key: SkillSelectionKey,
+    },
+    /// A desired MCP named a source revision that is not the active, available head; the caller
+    /// must re-resolve against the current catalog before retrying the replace.
+    SourceUnavailableMcp {
+        selection_key: McpSelectionKey,
     },
 }
 
@@ -122,6 +127,18 @@ pub trait EffectRepository {
 
     /// Persists per-consumer readiness independently from surface file application.
     fn save_consumer_status(&self, status: crate::ConsumerStatus) -> Result<(), RepositoryError>;
+
+    /// Loads every consumer readiness row recorded for one surface, workspace-scoped.
+    ///
+    /// Mirrors [`Self::load_surface_status`]: the surface key is workspace-unique, so the load joins
+    /// the surface table to scope by workspace before selecting that surface's consumer rows. The
+    /// MCP Application State fold needs these to tell a consumer that did not resume (Degraded) apart
+    /// from one that converged (Current) at a file the surface already reports applied.
+    fn load_consumer_statuses(
+        &self,
+        workspace_id: &WorkspaceId,
+        surface_key: &crate::SurfaceKey,
+    ) -> Result<Vec<crate::ConsumerStatus>, RepositoryError>;
 
     /// Coalesces an explicit retry wakeup at the current Desired generation.
     fn retry_surface(

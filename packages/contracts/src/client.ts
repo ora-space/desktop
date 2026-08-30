@@ -266,6 +266,10 @@ export function createContractsClient(
       set: (request, options) =>
         executeOperation("setDeveloperMode", request, transport, options),
     },
+    effect: {
+      getMcpApplicationState: (request, options) =>
+        executeOperation("getMcpApplicationState", request, transport, options),
+    },
     runtimeLogLevel: {
       get: (request, options) =>
         executeOperation("getRuntimeLogLevel", request, transport, options),
