@@ -28,8 +28,6 @@ import {
   IconArrowBigUpLines,
   IconDots,
   IconLoader2,
-  IconPlayerPlay,
-  IconPlayerStop,
   IconProgressDown,
   IconRefresh,
   IconSearch,
@@ -44,7 +42,7 @@ import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 
-/** The installed-plugin manager exposes runtime and package lifecycle commands. */
+/** The installed-plugin manager exposes package lifecycle commands without process start/stop. */
 export function PluginManager({
   plugins,
   onBack,
@@ -187,23 +185,11 @@ function InstalledPluginRow({
     plugin.kind === "agent" ? plugin.name : undefined,
   );
   const uninstalling = mutations.uninstall.isPending;
-  const lifecycleBusy =
-    mutations.activate.isPending || mutations.stop.isPending;
-  const busy = uninstalling || update.isPending || lifecycleBusy;
+  const busy = uninstalling || update.isPending;
   const hasUpdate =
     available !== undefined && available.version !== plugin.version;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
-  const failStart = (cause: unknown) => {
-    toast.error(t("settings.plugins.startFailed"), {
-      description: localizeContractError(cause, t),
-    });
-  };
-  const failStop = (cause: unknown) => {
-    toast.error(t("settings.plugins.stopFailed"), {
-      description: localizeContractError(cause, t),
-    });
-  };
   const failUpdate = (cause: unknown) => {
     toast.error(t("settings.plugins.updateFailed"), {
       description: localizeContractError(cause, t),
@@ -251,49 +237,6 @@ function InstalledPluginRow({
             </Badge>
           )}
         </span>
-
-        {(plugin.runtime === "stopped" || plugin.runtime === "failed") && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() =>
-              mutations.activate.mutate(undefined, { onError: failStart })
-            }
-          >
-            {mutations.activate.isPending ? (
-              <IconLoader2 className="animate-spin" />
-            ) : (
-              <IconPlayerPlay />
-            )}
-            {t("settings.plugins.start")}
-          </Button>
-        )}
-
-        {plugin.runtime === "starting" && (
-          <Button variant="outline" size="sm" disabled>
-            <IconLoader2 className="animate-spin" />
-            {t("settings.plugins.starting")}
-          </Button>
-        )}
-
-        {plugin.runtime === "running" && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() =>
-              mutations.stop.mutate(undefined, { onError: failStop })
-            }
-          >
-            {mutations.stop.isPending ? (
-              <IconLoader2 className="animate-spin" />
-            ) : (
-              <IconPlayerStop />
-            )}
-            {t("settings.plugins.stop")}
-          </Button>
-        )}
 
         {hasUpdate && (
           <Button

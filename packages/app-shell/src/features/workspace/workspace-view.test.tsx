@@ -399,6 +399,10 @@ describe("WorkspaceView", () => {
       screen.queryByRole("button", { name: /选择分支|Select branch/ }),
     ).toBeNull();
     expect(screen.queryByText(/直聊|Direct chat/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Spec 模式|Spec mode/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Spec 模式")).toBeNull();
   });
 
   it("shows only worktrees in the worktree context menu", async () => {

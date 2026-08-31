@@ -367,34 +367,43 @@ it("renders the brand mark of an installed plugin in the manager", async () => {
     "src",
     `data:image/svg+xml;charset=utf-8,${encodeURIComponent(WEATHER_LOGO)}`,
   );
+  expect(
+    screen.queryByRole("button", { name: /启动|Start/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /停止|Stop/ }),
+  ).not.toBeInTheDocument();
 });
 
-/** The manager exposes lifecycle controls that start and stop an installed plugin. */
-it("starts and stops an installed plugin from the manager", async () => {
+/** Installed plugins no longer expose start or stop, regardless of runtime. */
+it("hides start and stop for stopped, starting, failed, and running plugins", async () => {
   const user = userEvent.setup();
   const state = createMockClientState();
-  state.installedPlugins = [weatherInstalled()];
-  const client = createMockClient(state);
-  renderSettings(client);
+  state.installedPlugins = [
+    weatherInstalled(),
+    { ...weatherInstalled(), id: "official/starting", runtime: "starting" },
+    {
+      ...weatherInstalled(),
+      id: "official/failed",
+      runtime: "failed",
+      failureReason: "launch failed",
+    },
+    { ...weatherInstalled(), id: "official/running", runtime: "running" },
+  ];
+  renderSettings(createMockClient(state));
 
   await openManagePlugins(user);
   await screen.findByText("official/weather");
 
-  await user.click(await screen.findByRole("button", { name: /启动|Start/ }));
-  await waitFor(() => {
-    expect(
-      screen.getByRole("button", { name: /停止|Stop/ }),
-    ).toBeInTheDocument();
-  });
-  expect(state.installedPlugins[0].runtime).toBe("running");
-
-  await user.click(screen.getByRole("button", { name: /停止|Stop/ }));
-  await waitFor(() => {
-    expect(
-      screen.getByRole("button", { name: /启动|Start/ }),
-    ).toBeInTheDocument();
-  });
-  expect(state.installedPlugins[0].runtime).toBe("stopped");
+  expect(
+    screen.queryByRole("button", { name: /启动|Start/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /启动中|Starting/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /停止|Stop/ }),
+  ).not.toBeInTheDocument();
 });
 
 /** Host-rendered fields preserve defaults and explicit boolean false through Save. */

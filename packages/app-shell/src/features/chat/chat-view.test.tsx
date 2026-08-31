@@ -20,6 +20,7 @@ import type {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import { ContractsClientContext } from "../../contracts-client-context";
 import { ChatStoreContext } from "../../chat-store-context";
 import { createChatStore } from "@ora/chat";
@@ -46,6 +47,8 @@ import {
   resetComposerSendAdoptionsForTests,
 } from "../../state/session-drafts";
 import { FILE_MENTION_DEBOUNCE_MS } from "./use-composer-file-mentions";
+
+void appI18n;
 
 function composerText(element: HTMLElement): string {
   return element.dataset.composerText ?? "";
@@ -259,6 +262,16 @@ describe("Tool calls", () => {
 });
 
 describe("Composer", () => {
+  it("does not offer the retired Spec mode toggle in the footer", () => {
+    renderWithI18n(<Composer onSend={vi.fn()} isResponding={false} />);
+
+    expect(
+      screen.queryByRole("button", { name: /Spec 模式|Spec mode/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Spec 模式")).toBeNull();
+    expect(screen.queryByText("Spec mode")).toBeNull();
+  });
+
   it("sends trimmed text with Enter and clears the textarea", async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
