@@ -83,6 +83,9 @@ describe("SurfaceDownloadPrompt", () => {
     await waitFor(() =>
       expect(screen.getByText("导入技能")).toBeInTheDocument(),
     );
+    // The marketplace comes back only after the review dialog closes, so it
+    // never covers the review.
+    expect(host.surfaces.open).not.toHaveBeenCalled();
     expect({
       resolved: host.surfaces.resolveDownload.mock.calls,
       fetched: (client.skillImport.get as ReturnType<typeof vi.fn>).mock.calls,
@@ -92,6 +95,17 @@ describe("SurfaceDownloadPrompt", () => {
       fetched: [[{ sessionId: "session-1" }]],
       prompts: [],
     });
+
+    // "Re-choose" means going back to the marketplace for another package: the
+    // review closes and the surface returns to the front.
+    await user.click(screen.getByRole("button", { name: "重新选择" }));
+    await waitFor(() =>
+      expect(screen.queryByText("导入技能")).not.toBeInTheDocument(),
+    );
+    expect(host.surfaces.open).toHaveBeenCalledWith(
+      { pluginId: "official/acme.hub" },
+      "windowed",
+    );
   });
 
   it("keeps the prompt open when the save dialog is cancelled, then saves", async () => {
@@ -120,6 +134,11 @@ describe("SurfaceDownloadPrompt", () => {
     expect(host.surfaces.resolveDownload.mock.calls).toEqual([
       [6, "save_as", "/home/user/pack.zip"],
     ]);
+    // The chain ended with the save: the buried marketplace comes back to the front.
+    expect(host.surfaces.open).toHaveBeenCalledWith(
+      { pluginId: "official/acme.hub" },
+      "windowed",
+    );
   });
 
   it("discards a dismissed download and shows queued prompts one at a time", async () => {
@@ -139,6 +158,19 @@ describe("SurfaceDownloadPrompt", () => {
       expect(screen.getByText(/second\.zip/)).toBeInTheDocument(),
     );
     expect(host.surfaces.discardDownload.mock.calls).toEqual([[7]]);
+    // A queued prompt keeps the dialog chain going, so no restore happens yet.
+    expect(host.surfaces.open).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "忽略" }));
+
+    await waitFor(() =>
+      expect(useSurfaceStore.getState().downloadPrompts).toEqual([]),
+    );
+    // Answering the last prompt hands the screen back to the marketplace.
+    expect(host.surfaces.open).toHaveBeenCalledWith(
+      { pluginId: "official/acme.hub" },
+      "windowed",
+    );
   });
 
   it("opens the import review when an automatic import completes", async () => {

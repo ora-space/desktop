@@ -27,5 +27,9 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     css: false,
+    // Full-shell tests (AppShell + workflow editor) take well under a second
+    // in isolation but exceed the 5s default when `task test` loads the machine
+    // with parallel frontend and Rust workers, which flakes them spuriously.
+    testTimeout: 15_000,
   },
 });

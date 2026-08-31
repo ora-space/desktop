@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ContractsClient, InstalledPlugin, Session } from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -12,6 +13,7 @@ import {
 } from "../../test/mock-client";
 import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
+import { useUiStore } from "../../state/stores/ui-store";
 import { SessionAgentBanner } from "./session-agent-banner";
 
 /**
@@ -103,6 +105,13 @@ function renderBanner(plugins: InstalledPlugin[], bound: Session) {
 }
 
 describe("SessionAgentBanner", () => {
+  beforeEach(() => {
+    useUiStore.setState({
+      settingsOpen: false,
+      settingsCategory: "appearance",
+    });
+  });
+
   it("reports an agent whose package is gone as uninstalled", async () => {
     renderBanner([], session("ora-space.reviewer"));
 
@@ -110,6 +119,19 @@ describe("SessionAgentBanner", () => {
       "data-agent-availability",
       "uninstalled",
     );
+  });
+
+  it("offers a marketplace button when the agent's package is gone", async () => {
+    renderBanner([], session("ora-space.reviewer"));
+    const user = userEvent.setup();
+
+    const button = await screen.findByRole("button", {
+      name: /Go to the plugin marketplace|前往插件市场/,
+    });
+    await user.click(button);
+
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+    expect(useUiStore.getState().settingsCategory).toBe("plugins");
   });
 
   it("stays silent for a built-in CLI, which has no plugin package", async () => {

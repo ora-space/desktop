@@ -47,22 +47,13 @@ import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
 import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
-import { useUiStore } from "../../state/stores/ui-store";
+import { useUiStore, type SettingsCategory } from "../../state/stores/ui-store";
 import {
   useSettingsStore,
   type SettingsPreferences,
 } from "../../state/stores/settings-store";
 import { DesktopUpdateControl } from "../workspace/desktop-update-control";
 import type { ThemeMode } from "../../state/stores/settings-store";
-
-type SettingsCategory =
-  | "appearance"
-  | "roles"
-  | "skills"
-  | "plugins"
-  | "proxy"
-  | "privacy"
-  | "developer";
 
 type PendingSettingsNavigation =
   { kind: "close" } | { kind: "category"; category: SettingsCategory };
@@ -72,9 +63,10 @@ export function SettingsDialog() {
   const { t } = useTranslation();
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
+  const category = useUiStore((s) => s.settingsCategory);
+  const setCategory = useUiStore((s) => s.setSettingsCategory);
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
-  const [category, setCategory] = useState<SettingsCategory>("appearance");
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingSettingsNavigation | null>(null);
   const pluginConfigurationGuard =

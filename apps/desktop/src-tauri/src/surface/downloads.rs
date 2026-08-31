@@ -6,6 +6,7 @@
 //! from the plugin's manifest rules against the page URL frozen at request time, and the outcome
 //! is either an automatic host action or a prompt to the trusted main webview.
 
+use crate::surface::MAIN_WINDOW_LABEL;
 use crate::surface::download_actions::DownloadActionHost;
 use crate::surface::effects::emit_event;
 use crate::surface::gateway::SurfacePluginGateway;
@@ -23,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::webview::DownloadEvent;
-use tauri::{AppHandle, Runtime, Url};
+use tauri::{AppHandle, Manager, Runtime, Url, UserAttentionType};
 
 /// Host-written child of the plugin data directory that holds downloaded artifacts.
 const DOWNLOADS_DIRECTORY: &str = "webview/downloads";
@@ -42,7 +43,9 @@ pub struct StagedArtifact {
 /// One tracked download: its state machine plus the on-disk paths the host owns.
 struct TrackedDownload {
     managed: ManagedDownload,
-    part_path: PathBuf,
+    /// `.part` staging path the engine writes through. `None` for `blob:` sources, which the
+    /// engine lands at its own destination: re-targeting such a transfer aborts it.
+    part_path: Option<PathBuf>,
     final_path: PathBuf,
 }
 
@@ -99,7 +102,9 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
     /// Selects a disposition, reserves a `.part` path, and redirects the browser to it.
     ///
     /// A rejected download returns `false`, which denies the browser transfer; otherwise the
-    /// destination is rewritten to the reserved path and a `Staging` download is tracked.
+    /// destination is rewritten to the reserved path and a `Staging` download is tracked. A
+    /// `blob:` URL is the exception: the engine keeps the transfer at its own default
+    /// destination (see the branch below).
     /// `pub(super)` so the host tests can drive the pipeline without constructing Tauri's
     /// non-exhaustive `DownloadEvent`.
     pub(super) fn requested(
@@ -121,17 +126,12 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
             ora_info!(message = "webview download rejected by policy", plugin_id = %record.definition.plugin_id, url = %url);
             return false;
         }
-        let directory = match self.gateway.data_directory(&record.definition.plugin_id) {
-            Ok(directory) => directory.join(DOWNLOADS_DIRECTORY),
-            Err(error) => {
-                ora_warn!(message = "plugin data directory unavailable for download", error = %error);
-                return false;
-            }
-        };
-        if let Err(error) = std::fs::create_dir_all(&directory) {
-            ora_warn!(message = "download directory could not be created", error = %error);
-            return false;
-        }
+        // A `blob:` URL carries bytes the page built in memory rather than a network resource.
+        // WebView2 aborts such a transfer almost immediately when its write target is re-opened
+        // through the download manager — the observed failure was an instant "transfer failed"
+        // — so blob downloads stay at the engine's own destination and the host only tracks the
+        // path the import flow will read from.
+        let blob_source = url.scheme() == "blob";
         let suggested = destination
             .file_name()
             .and_then(|name| name.to_str())
@@ -142,25 +142,44 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
                     .map(str::to_owned)
             })
             .unwrap_or_default();
-        let file_name = sanitize_file_name(&suggested, FALLBACK_STEM);
-        // Reserve a unique final name against on-disk files and in-flight reservations, then use
-        // its `.part` sibling as the transfer target.
-        let held = self.reserved_final_paths();
-        let final_path = next_available_file_name(&directory, &file_name, |candidate| {
-            held.iter().any(|reserved| reserved == candidate)
-        });
+
+        // `None` part path: the engine owns the landing file, so there is nothing to stage,
+        // promote, or reserve in the plugin directory.
+        let (part_path, final_path) = if blob_source {
+            (None, destination.clone())
+        } else {
+            let directory = match self.gateway.data_directory(&record.definition.plugin_id) {
+                Ok(directory) => directory.join(DOWNLOADS_DIRECTORY),
+                Err(error) => {
+                    ora_warn!(message = "plugin data directory unavailable for download", error = %error);
+                    return false;
+                }
+            };
+            if let Err(error) = std::fs::create_dir_all(&directory) {
+                ora_warn!(message = "download directory could not be created", error = %error);
+                return false;
+            }
+            let file_name = sanitize_file_name(&suggested, FALLBACK_STEM);
+            // Reserve a unique final name against on-disk files and in-flight reservations, then
+            // use its `.part` sibling as the transfer target.
+            let held = self.reserved_final_paths();
+            let final_path = next_available_file_name(&directory, &file_name, |candidate| {
+                held.iter().any(|reserved| reserved == candidate)
+            });
+            let part_path = final_path.with_extension(format!(
+                "{}{PART_SUFFIX}",
+                final_path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or_default()
+            ));
+            (Some(part_path), final_path)
+        };
         let file_name = final_path
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(&file_name)
+            .unwrap_or(suggested.as_str())
             .to_owned();
-        let part_path = final_path.with_extension(format!(
-            "{}{PART_SUFFIX}",
-            final_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .unwrap_or_default()
-        ));
 
         let download_id = DownloadId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let intent = DownloadIntent {
@@ -173,6 +192,9 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
             suggested_file_name: suggested,
             disposition: disposition_for(&decision),
         };
+        if let Some(part_path) = &part_path {
+            *destination = part_path.clone();
+        }
         self.tracked
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -180,7 +202,7 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
                 download_id.value(),
                 TrackedDownload {
                     managed: ManagedDownload::staging(intent),
-                    part_path: part_path.clone(),
+                    part_path,
                     final_path,
                 },
             );
@@ -190,7 +212,15 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
             .entry((record.label.as_str().to_owned(), url.to_string()))
             .or_default()
             .push_back(download_id.value());
-        *destination = part_path;
+        // The accept is silent in the UI when a transfer later fails, so this line is the only
+        // record of which URL and file the engine was redirected to.
+        ora_info!(
+            message = "webview download accepted",
+            plugin_id = %record.definition.plugin_id,
+            download_id = download_id.value(),
+            url = %url,
+            file_name = %file_name,
+        );
         emit_event(
             &self.app,
             &SurfaceEvent::DownloadStarted {
@@ -231,7 +261,9 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
             return;
         };
         if !success {
-            let _ = std::fs::remove_file(&entry.part_path);
+            if let Some(part_path) = &entry.part_path {
+                let _ = std::fs::remove_file(part_path);
+            }
             entry.managed = entry
                 .managed
                 .clone()
@@ -242,33 +274,36 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
             return;
         }
         // Promote `.part` to its reserved final name; a name taken by an outside file since the
-        // reservation is re-resolved rather than overwritten.
-        if let Some(parent) = entry.final_path.parent() {
-            let file_name = entry
-                .final_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(FALLBACK_STEM)
-                .to_owned();
-            let held = Vec::new();
-            let promoted = next_available_file_name(parent, &file_name, |candidate| {
-                held.iter()
-                    .any(|reserved: &PathBuf| reserved.as_path() == candidate)
-            });
-            entry.final_path = promoted;
-        }
-        if let Err(error) = std::fs::rename(&entry.part_path, &entry.final_path) {
-            ora_warn!(message = "download could not be promoted", error = %error);
-            let _ = std::fs::remove_file(&entry.part_path);
-            emit_download_failed(
-                &self.app,
-                record,
-                download_id,
-                entry,
-                "could not be finalized",
-            );
-            tracked.remove(&download_id);
-            return;
+        // reservation is re-resolved rather than overwritten. A `blob:` download skipped the
+        // staging area and already sits at its final path, so there is nothing to promote.
+        if let Some(part_path) = &entry.part_path {
+            if let Some(parent) = entry.final_path.parent() {
+                let file_name = entry
+                    .final_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(FALLBACK_STEM)
+                    .to_owned();
+                let held = Vec::new();
+                let promoted = next_available_file_name(parent, &file_name, |candidate| {
+                    held.iter()
+                        .any(|reserved: &PathBuf| reserved.as_path() == candidate)
+                });
+                entry.final_path = promoted;
+            }
+            if let Err(error) = std::fs::rename(part_path, &entry.final_path) {
+                ora_warn!(message = "download could not be promoted", error = %error);
+                let _ = std::fs::remove_file(part_path);
+                emit_download_failed(
+                    &self.app,
+                    record,
+                    download_id,
+                    entry,
+                    "could not be finalized",
+                );
+                tracked.remove(&download_id);
+                return;
+            }
         }
         match entry.managed.clone().landed() {
             Ok(landed) => {
@@ -277,6 +312,9 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
                     ManagedDownload::AwaitingChoice {
                         allowed_actions, ..
                     } => {
+                        // The choice dialog lives in the main window and needs an answer, so the
+                        // window is raised above a surface window that may cover it.
+                        nudge_main_window(&self.app, true);
                         emit_event(
                             &self.app,
                             &SurfaceEvent::DownloadChoice {
@@ -308,6 +346,11 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
                 }
             }
             Err(_) => {
+                ora_warn!(
+                    message = "download entered an invalid state while landing",
+                    plugin_id = %record.definition.plugin_id,
+                    download_id,
+                );
                 tracked.remove(&download_id);
             }
         }
@@ -415,11 +458,15 @@ impl<G: SurfacePluginGateway, R: Runtime> DownloadDispatcher<G, R> {
     }
 
     /// Every reserved final path (used to keep concurrent reservations distinct).
+    ///
+    /// Engine-landed `blob:` downloads write outside the plugin directory, so their paths never
+    /// participate in the reservation namespace.
     fn reserved_final_paths(&self) -> Vec<PathBuf> {
         self.tracked
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .values()
+            .filter(|entry| entry.part_path.is_some())
             .map(|entry| entry.final_path.clone())
             .collect()
     }
@@ -488,20 +535,26 @@ fn settle_auto_action<R: Runtime>(
         .unwrap_or_else(|poison| poison.into_inner())
         .remove(&download_id);
     match outcome {
-        Ok(import_session_id) => emit_event(
-            app,
-            &SurfaceEvent::DownloadCompleted {
-                instance,
-                plugin_id: plugin_id.to_owned(),
-                download_id,
-                file_name: artifact.file_name.clone(),
-                action: action.as_str().to_owned(),
-                import_session_id,
-            },
-        ),
+        Ok(import_session_id) => {
+            // An import session opens the review dialog in the main window and needs an answer;
+            // a bare completion only toasts. Either way a surface window may be covering it.
+            nudge_main_window(app, import_session_id.is_some());
+            emit_event(
+                app,
+                &SurfaceEvent::DownloadCompleted {
+                    instance,
+                    plugin_id: plugin_id.to_owned(),
+                    download_id,
+                    file_name: artifact.file_name.clone(),
+                    action: action.as_str().to_owned(),
+                    import_session_id,
+                },
+            );
+        }
         Err(reason) => {
             let _ = std::fs::remove_file(&artifact.path);
             ora_warn!(message = "automatic download action failed", download_id, reason = %reason);
+            nudge_main_window(app, false);
             emit_event(
                 app,
                 &SurfaceEvent::DownloadFailed {
@@ -516,7 +569,25 @@ fn settle_auto_action<R: Runtime>(
     }
 }
 
+/// Draws the user's attention to download feedback a surface window may be covering.
+///
+/// Download feedback renders in the main webview's DOM, while a surface lives in a native view or
+/// separate window that always paints above DOM. Prompts need an answer and steal focus; plain
+/// toasts only flash the taskbar so they never interrupt typing elsewhere.
+fn nudge_main_window<R: Runtime>(app: &AppHandle<R>, steal_focus: bool) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+    if steal_focus {
+        let _ = window.set_focus();
+    }
+}
+
 /// Emits a `downloadFailed` event for one tracked download.
+///
+/// The failure toast is the only user-visible signal for a failed transfer, and the engine does
+/// not report why, so this log line is what makes an otherwise silent failure diagnosable.
 fn emit_download_failed<R: Runtime>(
     app: &AppHandle<R>,
     record: &SurfaceRecord,
@@ -524,6 +595,14 @@ fn emit_download_failed<R: Runtime>(
     entry: &TrackedDownload,
     reason: &str,
 ) {
+    ora_warn!(
+        message = "webview download failed",
+        plugin_id = %record.definition.plugin_id,
+        download_id,
+        file_name = %file_name_of(entry),
+        reason,
+    );
+    nudge_main_window(app, false);
     emit_event(
         app,
         &SurfaceEvent::DownloadFailed {

@@ -31,9 +31,29 @@ export type DeleteTarget =
 
 export const UI_STORAGE_KEY = "ora.ui.v1";
 
+/** The settings categories the dialog can be asked to open on. */
+export type SettingsCategory =
+  | "appearance"
+  | "roles"
+  | "skills"
+  | "plugins"
+  | "proxy"
+  | "privacy"
+  | "developer";
+
 interface UiState {
   sidebarCollapsed: boolean;
   settingsOpen: boolean;
+  /**
+   * The settings category currently shown, and the one the dialog opens on by
+   * default. Held here rather than in the dialog so other surfaces can deep-link
+   * to a specific category through {@link openSettingsAt}; it is transient and
+   * never persisted.
+   */
+  settingsCategory: SettingsCategory;
+  setSettingsCategory(category: SettingsCategory): void;
+  /** Requests the category the settings dialog should open on, and opens it. */
+  openSettingsAt(category: SettingsCategory): void;
   /** First-class workflow definition editor; session-only, not persisted. */
   workflowEditorOpen: boolean;
   expandedProjects: Set<string>;
@@ -150,6 +170,7 @@ export const useUiStore = create<UiState>()(
     (set, get) => ({
       sidebarCollapsed: initialPersist.sidebarCollapsed,
       settingsOpen: false,
+      settingsCategory: "appearance",
       workflowEditorOpen: false,
       expandedProjects: initialPersist.expandedProjects,
       expandedTasks: initialPersist.expandedTasks,
@@ -158,6 +179,9 @@ export const useUiStore = create<UiState>()(
       deleteTarget: null,
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+      setSettingsCategory: (settingsCategory) => set({ settingsCategory }),
+      openSettingsAt: (settingsCategory) =>
+        set({ settingsOpen: true, settingsCategory }),
       setWorkflowEditorOpen: (workflowEditorOpen) =>
         set({ workflowEditorOpen }),
       toggleProjectExpand: (projectId) =>

@@ -593,6 +593,41 @@ fn same_url_downloads_settle_in_start_order() {
     );
 }
 
+/// A `blob:` download is engine-landed: the destination keeps the engine's own path instead of a
+/// `.part` redirect (which aborts blob transfers on WebView2), and the choice flow still runs
+/// against the landed file.
+#[test]
+fn blob_downloads_land_at_the_engine_destination() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (_app, service, events) = harness(FakeGateway::new(temp.path().to_path_buf()));
+    let record = service
+        .open(&webview_plugin(), MountTarget::Windowed)
+        .expect("open webview");
+    let page = Url::parse("https://www.example.com/files/42").expect("url");
+    let url = Url::parse("blob:https://www.example.com/bb8c22fe-4e55-4d20-b399-61f01315ed21")
+        .expect("url");
+    let engine_destination = temp.path().join("dev-expert-1.0.51.zip");
+    std::fs::write(&engine_destination, b"zip bytes").expect("engine landing");
+    let mut destination = engine_destination.clone();
+
+    assert!(
+        service
+            .downloads
+            .requested(&record, Some(page), &url, &mut destination)
+    );
+    // The engine's landing path is preserved rather than redirected into a `.part` sibling.
+    assert_eq!(destination, engine_destination);
+
+    service.downloads.finished(&record, &url, true);
+
+    wait_for_events(&events, |events| {
+        events.iter().any(|event| event["type"] == "downloadChoice")
+    });
+    // Nothing was staged in the plugin directory: the engine's file is the artifact.
+    let staged = temp.path().join("webview").join("downloads");
+    assert!(!staged.exists() || std::fs::read_dir(&staged).expect("read downloads").count() == 0);
+}
+
 /// An automatic disposition runs its host action before reporting success; a failed action
 /// reports `downloadFailed` and removes the landed file instead of claiming success.
 #[test]

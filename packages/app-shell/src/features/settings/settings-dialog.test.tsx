@@ -204,6 +204,21 @@ describe("SettingsDialog developer options", () => {
       await screen.findByRole("heading", { name: "Appearance" }),
     ).toBeInTheDocument();
   });
+
+  it("opens on the requested settings category when deep-linked", async () => {
+    const client = createMockClient(createMockClientState());
+    renderDialog(client);
+
+    useUiStore.getState().openSettingsAt("plugins");
+
+    expect(
+      await screen.findByRole("heading", { name: "Plugins" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Appearance" }),
+    ).not.toBeInTheDocument();
+    expect(useUiStore.getState().settingsCategory).toBe("plugins");
+  });
 });
 
 /** Renders the real settings dialog with shared client, query, chat, i18n, and platform providers. */

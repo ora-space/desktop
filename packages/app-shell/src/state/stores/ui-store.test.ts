@@ -9,6 +9,7 @@ beforeEach(() => {
   useUiStore.setState({
     sidebarCollapsed: false,
     settingsOpen: false,
+    settingsCategory: "appearance",
     workflowEditorOpen: false,
     expandedProjects: new Set<string>(),
     expandedTasks: new Set<string>(),
@@ -33,6 +34,13 @@ describe("useUiStore", () => {
   it("toggles settings dialog open state", () => {
     useUiStore.getState().setSettingsOpen(true);
     expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+  it("opens settings on the requested category", () => {
+    useUiStore.getState().openSettingsAt("plugins");
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+    expect(useUiStore.getState().settingsCategory).toBe("plugins");
+    useUiStore.getState().setSettingsCategory("appearance");
+    expect(useUiStore.getState().settingsCategory).toBe("appearance");
   });
   it("toggles the workflow editor without persisting it", () => {
     useUiStore.getState().setWorkflowEditorOpen(true);

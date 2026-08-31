@@ -16,6 +16,7 @@ import {
   type MockClientState,
 } from "../../test/mock-client";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useUiStore } from "../../state/stores/ui-store";
 import {
   useSettingsStore,
   DEFAULT_SETTINGS,
@@ -389,5 +390,28 @@ describe("ModelSelector model search", () => {
         name: /搜索模型|Search models/,
       }),
     ).toHaveLength(1);
+  });
+});
+
+describe("ModelSelector with no agent package installed", () => {
+  it("offers the install hint and opens the plugin marketplace on click", async () => {
+    useUiStore.setState({ settingsCategory: "appearance" });
+    const user = userEvent.setup();
+    renderModelSelector((state) => {
+      state.installedPlugins = [];
+      state.agentRuntimeStatuses = [];
+    });
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    const menu = await openAgentList(user);
+
+    const hint =
+      /Install an agent from the plugin marketplace|从插件市场安装 Agent/;
+    await waitFor(() => expect(within(menu).queryByText(hint)).not.toBeNull());
+    expect(within(menu).queryByText("OpenCode")).toBeNull();
+
+    await user.click(within(menu).getByText(hint));
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+    expect(useUiStore.getState().settingsCategory).toBe("plugins");
   });
 });

@@ -15,6 +15,7 @@ import { usePlatform } from "../../platform";
 import { useContractsClient } from "../../contracts-client-context";
 import { useSurfaceStore } from "../../state/stores/surface-store";
 import { SkillImportDialog } from "../settings/atoms-settings";
+import { useOpenSurface } from "./use-open-surface";
 
 /** Renders a byte count as a short human-readable size for the prompt copy. */
 function formatSize(bytes: number): string {
@@ -32,18 +33,33 @@ function formatSize(bytes: number): string {
  * `discardDownload` (dismiss, which also deletes the landed file). A resolved
  * `import_skill` — and likewise an automatic import completed by the host —
  * opens the shared skill-import review dialog on the prepared session.
+ *
+ * Answering the last queued prompt also re-opens the surface the download came
+ * from: the host raised the main window to show this dialog, so returning the
+ * plugin view to the front is what restores the user's browsing context.
  */
 export function SurfaceDownloadPrompt() {
   const { t } = useTranslation();
   const platform = usePlatform();
   const client = useContractsClient();
+  const openSurface = useOpenSurface();
   const prompts = useSurfaceStore((state) => state.downloadPrompts);
   const removePrompt = useSurfaceStore((state) => state.removeDownloadPrompt);
   const [busy, setBusy] = useState(false);
   const [importSession, setImportSession] = useState<SkillImportSession | null>(
     null,
   );
+  /**
+   * The plugin whose surface re-opens once the import review dialog closes; the
+   * marketplace must not come back while that dialog still needs the screen.
+   */
+  const [restoreSurfaceId, setRestoreSurfaceId] = useState<string | null>(null);
   const current = prompts[0] ?? null;
+  /** Answering the last prompt ends the chain; earlier ones keep the dialog up. */
+  const lastPrompt = prompts.length <= 1;
+  const restoreSurface = (pluginId: string) => {
+    if (lastPrompt) void openSurface({ pluginId });
+  };
 
   // Automatic `import_skill` dispositions complete host-side; their event carries
   // the prepared session so the review opens without any prompt round trip.
@@ -62,7 +78,10 @@ export function SurfaceDownloadPrompt() {
         void client.skillImport
           .get({ sessionId: event.importSessionId })
           .then((response) => {
-            if (!disposed) setImportSession(response.session);
+            if (!disposed) {
+              setRestoreSurfaceId(event.pluginId);
+              setImportSession(response.session);
+            }
           })
           .catch(() => {
             toast.error(t("surface.downloadActionFailed"));
@@ -84,6 +103,7 @@ export function SurfaceDownloadPrompt() {
     void platform.surfaces
       .discardDownload(current.downloadId)
       .catch(() => undefined);
+    restoreSurface(current.pluginId);
     removePrompt(current.downloadId);
   };
 
@@ -97,10 +117,15 @@ export function SurfaceDownloadPrompt() {
       );
       removePrompt(current.downloadId);
       if (outcome.importSessionId !== null) {
+        // The review dialog is the next modal step; the marketplace comes back
+        // when it closes (see the dialog's onOpenChange).
+        if (lastPrompt) setRestoreSurfaceId(current.pluginId);
         const response = await client.skillImport.get({
           sessionId: outcome.importSessionId,
         });
         setImportSession(response.session);
+      } else {
+        restoreSurface(current.pluginId);
       }
     } catch (cause) {
       // The host settles a failed action, so the prompt cannot be retried.
@@ -108,6 +133,7 @@ export function SurfaceDownloadPrompt() {
       toast.error(t("surface.downloadActionFailed"), {
         description: String(cause),
       });
+      restoreSurface(current.pluginId);
     } finally {
       setBusy(false);
     }
@@ -129,11 +155,13 @@ export function SurfaceDownloadPrompt() {
       );
       removePrompt(current.downloadId);
       toast.success(t("surface.downloaded", { fileName: current.fileName }));
+      restoreSurface(current.pluginId);
     } catch (cause) {
       removePrompt(current.downloadId);
       toast.error(t("surface.downloadActionFailed"), {
         description: String(cause),
       });
+      restoreSurface(current.pluginId);
     } finally {
       setBusy(false);
     }
@@ -187,10 +215,31 @@ export function SurfaceDownloadPrompt() {
           key={importSession.sessionId}
           open
           onOpenChange={(open) => {
-            if (!open) setImportSession(null);
+            if (!open) {
+              setImportSession(null);
+              // The whole chain ended with the review: hand the screen back to
+              // the marketplace the download came from.
+              const pluginId = restoreSurfaceId;
+              setRestoreSurfaceId(null);
+              if (pluginId !== null) void openSurface({ pluginId });
+            }
           }}
           onCompleted={() => undefined}
           initialSession={importSession}
+          onSessionEnded={
+            restoreSurfaceId !== null
+              ? () => {
+                  // Re-choosing or continuing the next import from a
+                  // marketplace download means going back to the marketplace,
+                  // so the review dialog closes and the surface comes back to
+                  // the front.
+                  const pluginId = restoreSurfaceId;
+                  setImportSession(null);
+                  setRestoreSurfaceId(null);
+                  void openSurface({ pluginId });
+                }
+              : undefined
+          }
         />
       )}
     </>

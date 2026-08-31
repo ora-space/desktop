@@ -14,13 +14,16 @@ import {
 import {
   IconCheck,
   IconChevronDown,
+  IconChevronRight,
   IconLoader2,
+  IconPlug,
   IconRobot,
   IconSearch,
 } from "@tabler/icons-react";
 import { useChatStore } from "../../chat-store-context";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useUiStore } from "../../state/stores/ui-store";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useSetSessionConfig } from "../../state/hooks/use-session-config";
 import {
@@ -29,6 +32,7 @@ import {
 } from "../../state/hooks/use-warm-session";
 import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
 import { useAvailableAgents } from "../../state/hooks/use-available-agents";
+import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import {
   usePendingAgentStore,
   usePendingSwitch,
@@ -106,6 +110,23 @@ export function ModelSelector({
   // drops out of the list rather than being offered and then failing on the
   // first message.
   const availableAgents = useAvailableAgents();
+  // Whether this installation has *any* agent plugin installed at all. This is
+  // broader than availability: an installed agent can still be unreachable (a
+  // disabled package, a missing runtime) and must not read as "install one" —
+  // the user already has it. Distinguishing "no agent plugin ever installed"
+  // from "installed but unavailable" is what lets the picker offer the install
+  // hint only to a truly empty installation.
+  const { data: installedPlugins, isPending: pluginsPending } =
+    useInstalledPlugins();
+  const noAgentPackageInstalled =
+    installedPlugins !== undefined &&
+    installedPlugins.every((plugin) => plugin.kind !== "agent");
+  // Opening the marketplace is a one-shot intent; the loading gate keeps the hint
+  // from flashing "go install one" while the installed snapshot is still in flight.
+  const openPluginMarketplace = () => {
+    if (pluginsPending || !noAgentPackageInstalled) return;
+    useUiStore.getState().openSettingsAt("plugins");
+  };
   // Preserve the internal preference across temporary unavailability without
   // presenting that unavailable runtime as the active picker identity.
   const displayedAgent = availableAgents.find(
@@ -294,98 +315,120 @@ export function ModelSelector({
         side="top"
         className="w-56 max-h-[min(24rem,var(--available-height))]"
       >
-        <DropdownMenuGroup className="p-1">
-          <DropdownMenuLabel className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
-            {t("chat.modelSelector.agent")}
-          </DropdownMenuLabel>
-          {availableAgents.map((candidate) => (
+        {noAgentPackageInstalled ? (
+          <DropdownMenuGroup className="p-1">
+            <DropdownMenuLabel className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
+              {t("chat.modelSelector.agent")}
+            </DropdownMenuLabel>
             <DropdownMenuItem
-              key={candidate.agentRef}
-              className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-              // Choosing an agent is only half the choice: its models replace the
-              // group below and the user still has to pick one from them.
-              closeOnClick={false}
-              onClick={() => selectAgent(candidate.agentRef)}
+              className="flex items-center gap-1.5 rounded-sm px-2 py-2 text-xs"
+              // Navigating to the marketplace closes the menu so the settings
+              // surface is not fighting a still-open popover.
+              onClick={openPluginMarketplace}
             >
-              <PluginLogoMark
-                logo={candidate.logo}
-                fallback={IconRobot}
-                className="size-3.5 object-contain"
-              />
-              {candidate.label}
-              {candidate.agentRef === agentCli && (
-                <IconCheck className="ml-auto size-4" />
-              )}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
-        <DropdownMenuGroup className="p-1">
-          <DropdownMenuLabel className="flex items-center gap-1 px-2 py-1.5 text-xs font-normal text-muted-foreground">
-            {t("chat.modelSelector.model")}
-            {isUpdatingModels && (
-              <span className="inline-flex items-center gap-1 text-muted-foreground/70">
-                <IconLoader2
-                  className="size-3 animate-spin"
-                  aria-hidden="true"
-                />
-                {t("chat.modelSelector.updating")}
+              <IconPlug className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 text-left text-muted-foreground">
+                {t("chat.modelSelector.noAgentPackage")}
               </span>
-            )}
-          </DropdownMenuLabel>
-          {/* Kept out of the agent group above: the agent list is short and
-              unsearched, and a query here should never be mistaken for
-              filtering which CLI is offered. */}
-          {modelValues.length > 0 && (
-            <div className="relative px-0.5 pb-1">
-              <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={modelQuery}
-                onChange={(event) => setModelQuery(event.target.value)}
-                placeholder={t("chat.modelSelector.search")}
-                aria-label={t("chat.modelSelector.search")}
-                className="h-7 border-transparent bg-muted/50 pl-8 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                // Excluded from the tab order so the menu's own focus manager,
-                // which moves focus to the popup's first tabbable descendant
-                // on open, does not land here — opening the menu should not
-                // steal focus into the search box. A click still focuses it.
-                tabIndex={-1}
-                // The dropdown's own typeahead and arrow-key navigation listen
-                // on the popup element, so unfiltered keystrokes here would be
-                // swallowed as menu navigation instead of reaching the input.
-                onKeyDown={(event) => event.stopPropagation()}
-                onClick={(event) => event.stopPropagation()}
-              />
-            </div>
-          )}
-          {modelOption === null ? (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-              {t(
-                isLoadingModels
-                  ? "chat.modelSelector.loading"
-                  : "chat.modelSelector.empty",
-              )}
-            </p>
-          ) : visibleModelValues.length === 0 ? (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-              {t("chat.modelSelector.noResults")}
-            </p>
-          ) : (
-            visibleModelValues.map((value) => (
-              <DropdownMenuItem
-                key={value.value}
-                className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-                disabled={!canSelectModel}
-                onClick={() => selectModel(value.value)}
-              >
-                {value.name}
-                {modelOption.type === "select" &&
-                  value.value === modelOption.currentValue && (
+              <IconChevronRight className="size-3.5 shrink-0 opacity-50" />
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        ) : (
+          <>
+            <DropdownMenuGroup className="p-1">
+              <DropdownMenuLabel className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
+                {t("chat.modelSelector.agent")}
+              </DropdownMenuLabel>
+              {availableAgents.map((candidate) => (
+                <DropdownMenuItem
+                  key={candidate.agentRef}
+                  className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+                  // Choosing an agent is only half the choice: its models replace the
+                  // group below and the user still has to pick one from them.
+                  closeOnClick={false}
+                  onClick={() => selectAgent(candidate.agentRef)}
+                >
+                  <PluginLogoMark
+                    logo={candidate.logo}
+                    fallback={IconRobot}
+                    className="size-3.5 object-contain"
+                  />
+                  {candidate.label}
+                  {candidate.agentRef === agentCli && (
                     <IconCheck className="ml-auto size-4" />
                   )}
-              </DropdownMenuItem>
-            ))
-          )}
-        </DropdownMenuGroup>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+            <DropdownMenuGroup className="p-1">
+              <DropdownMenuLabel className="flex items-center gap-1 px-2 py-1.5 text-xs font-normal text-muted-foreground">
+                {t("chat.modelSelector.model")}
+                {isUpdatingModels && (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground/70">
+                    <IconLoader2
+                      className="size-3 animate-spin"
+                      aria-hidden="true"
+                    />
+                    {t("chat.modelSelector.updating")}
+                  </span>
+                )}
+              </DropdownMenuLabel>
+              {/* Kept out of the agent group above: the agent list is short and
+                  unsearched, and a query here should never be mistaken for
+                  filtering which CLI is offered. */}
+              {modelValues.length > 0 && (
+                <div className="relative px-0.5 pb-1">
+                  <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={modelQuery}
+                    onChange={(event) => setModelQuery(event.target.value)}
+                    placeholder={t("chat.modelSelector.search")}
+                    aria-label={t("chat.modelSelector.search")}
+                    className="h-7 border-transparent bg-muted/50 pl-8 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-ring/50"
+                    // Excluded from the tab order so the menu's own focus manager,
+                    // which moves focus to the popup's first tabbable descendant
+                    // on open, does not land here — opening the menu should not
+                    // steal focus into the search box. A click still focuses it.
+                    tabIndex={-1}
+                    // The dropdown's own typeahead and arrow-key navigation listen
+                    // on the popup element, so unfiltered keystrokes here would be
+                    // swallowed as menu navigation instead of reaching the input.
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </div>
+              )}
+              {modelOption === null ? (
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                  {t(
+                    isLoadingModels
+                      ? "chat.modelSelector.loading"
+                      : "chat.modelSelector.empty",
+                  )}
+                </p>
+              ) : visibleModelValues.length === 0 ? (
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                  {t("chat.modelSelector.noResults")}
+                </p>
+              ) : (
+                visibleModelValues.map((value) => (
+                  <DropdownMenuItem
+                    key={value.value}
+                    className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+                    disabled={!canSelectModel}
+                    onClick={() => selectModel(value.value)}
+                  >
+                    {value.name}
+                    {modelOption.type === "select" &&
+                      value.value === modelOption.currentValue && (
+                        <IconCheck className="ml-auto size-4" />
+                      )}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuGroup>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

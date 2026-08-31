@@ -2,7 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { IconLoader2 } from "@tabler/icons-react";
 import { Composer } from "./composer";
-import { LandingHeading, LandingSuggestions } from "./empty-state";
+import { LandingHeading } from "./empty-state";
 import { MessageList } from "./message-list";
 import type { ConversationNavigationPresentation } from "./conversation-navigator";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
@@ -286,13 +286,6 @@ export function ChatView({
               </TooltipTrigger>
               <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
             </Tooltip>
-          )}
-          {composerVisible && isEmpty && (
-            <LandingSuggestions
-              onSend={onSend}
-              isResponding={isResponding}
-              disabled={disabled}
-            />
           )}
         </div>
         {composerActions && (

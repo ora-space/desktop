@@ -991,6 +991,7 @@ export function SkillImportDialog({
   initialSession = null,
   restoreName = null,
   onClearRestore,
+  onSessionEnded,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1000,6 +1001,13 @@ export function SkillImportDialog({
   restoreName?: string | null;
   /** Drops the restore-name constraint after success or when the user starts a generic import. */
   onClearRestore?: () => void;
+  /**
+   * Runs when the user dismisses the reviewed session without closing the dialog
+   * (re-choosing another source, or continuing with the next import), for callers
+   * whose dialog should close so the import origin (e.g. a plugin marketplace)
+   * can come back up. Without it the dialog stays open on the source chooser.
+   */
+  onSessionEnded?: () => void;
 }) {
   const { t } = useTranslation();
   const platform = usePlatform();
@@ -1085,12 +1093,14 @@ export function SkillImportDialog({
       void client.skillImport.cancel({ sessionId: session.sessionId });
     }
     clearSession();
+    onSessionEnded?.();
   };
 
   /** Starts a fresh generic import after the current session is finished. */
   const importAnother = () => {
     clearSession();
     onClearRestore?.();
+    onSessionEnded?.();
   };
 
   const chooseSource = async (kind: "folder" | "archive") => {
