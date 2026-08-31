@@ -1,15 +1,9 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@ora/ui";
-import {
-  IconFileDescription,
-  IconFolderOpen,
-  IconRefresh,
-  IconSearch,
-} from "@tabler/icons-react";
+import { IconFolderOpen, IconRefresh, IconSearch } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { queryKeys } from "../../state/hooks/query-keys";
-import { SpecsContent, type SpecsContentHandle } from "../specs/specs-view";
 import {
   WorkspaceFilesView,
   type WorkspaceDirectoryRequest,
@@ -17,7 +11,7 @@ import {
   type WorkspaceFileRequest,
 } from "./workspace-files-view";
 
-export type FilesSurface = "explorer" | "search" | "specs";
+export type FilesSurface = "explorer" | "search";
 
 interface WorkspaceReviewFilesPanelProps {
   projectId: string;
@@ -29,7 +23,7 @@ interface WorkspaceReviewFilesPanelProps {
   artifactRequest?: WorkspaceArtifactRequest;
 }
 
-/** Hosts project/task file browsing and the read-only Spec catalog in one review panel. */
+/** Hosts project/task file browsing in one review panel. */
 export function WorkspaceReviewFilesPanel({
   projectId,
   taskId,
@@ -51,8 +45,6 @@ export function WorkspaceReviewFilesPanel({
   const [appliedArtifactRequestId, setAppliedArtifactRequestId] = useState<
     number | null
   >(null);
-  const specsRef = useRef<SpecsContentHandle>(null);
-  const [specsRefreshing, setSpecsRefreshing] = useState(false);
 
   if (
     fileRequest !== undefined &&
@@ -76,7 +68,6 @@ export function WorkspaceReviewFilesPanel({
     setSurface("explorer");
   }
 
-  const refreshSpecs = () => void specsRef.current?.refresh();
   const refreshFiles = () => {
     if (taskId !== undefined) {
       void queryClient.invalidateQueries({
@@ -110,65 +101,28 @@ export function WorkspaceReviewFilesPanel({
           <IconSearch />
           {t("files.search")}
         </Button>
-        <Button
-          size="sm"
-          variant={surface === "specs" ? "secondary" : "ghost"}
-          aria-pressed={surface === "specs"}
-          onClick={() => {
-            if (surface === "specs") {
-              specsRef.current?.clearSelection();
-              return;
-            }
-            setSurface("specs");
-          }}
-        >
-          <IconFileDescription />
-          {t("specs.specs")}
-        </Button>
         <div className="flex-1" />
-        {surface === "specs" ? (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t("specs.refresh")}
-            onClick={refreshSpecs}
-          >
-            <IconRefresh
-              className={specsRefreshing ? "animate-spin" : undefined}
-            />
-          </Button>
-        ) : (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t("files.refresh")}
-            onClick={refreshFiles}
-          >
-            <IconRefresh />
-          </Button>
-        )}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={t("files.refresh")}
+          onClick={refreshFiles}
+        >
+          <IconRefresh />
+        </Button>
         {toolbar}
       </header>
       <div className="min-h-0 flex-1">
-        {surface === "specs" ? (
-          <SpecsContent
-            ref={specsRef}
-            projectId={projectId}
-            taskId={taskId}
-            onRefreshingChange={setSpecsRefreshing}
-          />
-        ) : (
-          <WorkspaceFilesView
-            projectId={projectId}
-            taskId={taskId}
-            surface={surface}
-            hideHeader
-            fileRequest={fileRequest}
-            onPreviewPathChange={onPreviewPathChange}
-            directoryRequest={directoryRequest}
-            artifactRequest={artifactRequest}
-          />
-        )}
+        <WorkspaceFilesView
+          projectId={projectId}
+          taskId={taskId}
+          surface={surface}
+          hideHeader
+          fileRequest={fileRequest}
+          onPreviewPathChange={onPreviewPathChange}
+          directoryRequest={directoryRequest}
+          artifactRequest={artifactRequest}
+        />
       </div>
     </section>
   );

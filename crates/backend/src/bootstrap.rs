@@ -9,7 +9,6 @@ use crate::plugin_gateway::PluginGateway;
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
-use crate::spec::SpecApi;
 use crate::task::TaskApi;
 use crate::user_config::{BackendPreferredLogLevelStore, UserConfigApi};
 use crate::workflow::WorkflowApi;
@@ -46,8 +45,6 @@ pub struct BackendPaths {
     /// was created. Live process cwd is not used: Desktop `tauri dev` starts in
     /// `src-tauri`, which is not that directory.
     pub relative_path_base: PathBuf,
-    /// Bundled ripgrep executable used by shared specification discovery.
-    pub ripgrep_path: PathBuf,
     /// IANA timezone used by backend-owned cron and delayed work.
     pub timezone: chrono_tz::Tz,
 }
@@ -97,7 +94,6 @@ pub struct Backend {
     plugin: Arc<PluginApi>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
-    spec: Arc<SpecApi>,
     workflow: Arc<WorkflowApi>,
     workflow_run: Arc<WorkflowRunApi>,
     workflow_run_engine: Arc<ConcreteWorkflowRunControl>,
@@ -250,12 +246,6 @@ impl Backend {
             plugin,
             skill: Arc::new(SkillApi::new(pool.clone(), skills_root.clone(), clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
-            spec: Arc::new(SpecApi::new(
-                pool.clone(),
-                paths.ripgrep_path,
-                git_cleanup.clone(),
-                relative_path_base.clone(),
-            )),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run: Arc::new(WorkflowRunApi::new(pool.clone(), skills_root, clock)),
             workflow_run_engine,
@@ -992,34 +982,6 @@ impl Backend {
     }
 
     // =============================================================================
-    // spec
-    // =============================================================================
-
-    /// Builds the effective specification catalog for one project or task target.
-    pub async fn get_spec_catalog(
-        &self,
-        request: GetSpecCatalogRequest,
-    ) -> Result<SpecCatalogResponse, BackendError> {
-        self.spec.catalog(request).await
-    }
-
-    /// Reads one catalog-authorized Markdown document.
-    pub async fn read_spec(
-        &self,
-        request: ReadSpecRequest,
-    ) -> Result<ReadSpecResponse, BackendError> {
-        self.spec.read(request).await
-    }
-
-    /// Resolves a specification watch request to its authoritative workspace root.
-    pub fn resolve_spec_watch_root(
-        &self,
-        request: &WatchSpecsRequest,
-    ) -> Result<PathBuf, BackendError> {
-        self.spec.watch_root(&request.target)
-    }
-
-    // =============================================================================
     // workspaceDiff
     // =============================================================================
     /// Returns the current Git snapshot for one workspace checkout — a task's isolated worktree
@@ -1668,7 +1630,6 @@ mod tests {
             home_directory: home_directory.to_path_buf(),
             deno_path: PathBuf::from("deno"),
             relative_path_base: app_data_directory.to_path_buf(),
-            ripgrep_path: PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
         }
     }

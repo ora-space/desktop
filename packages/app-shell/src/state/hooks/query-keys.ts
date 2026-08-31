@@ -71,11 +71,6 @@ export const queryKeys = {
   /** Every warm-session query whose model catalog belongs to one agent. */
   warmSessionsForAgent: (agentRef: string) =>
     ["warmSession", agentRef] as const,
-  specs: (projectId: string) => ["specs", projectId] as const,
-  specCatalog: (projectId: string, targetKey: string) =>
-    ["specs", projectId, "catalog", targetKey] as const,
-  specDocument: (projectId: string, targetKey: string, path: string) =>
-    ["specs", projectId, "document", targetKey, path] as const,
 };
 
 /** Extracts the identifier a warm target is scoped to, for cache-key purposes. */

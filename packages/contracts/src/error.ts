@@ -76,7 +76,6 @@ export type ContractError =
     | { "code": "workspace_unavailable"; "params": EmptyErrorParams }
     | { "code": "task_worktree_unavailable"; "params": EmptyErrorParams }
     | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
-    | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
@@ -250,7 +249,6 @@ export type PublicError =
   | { "code": "workspace_unavailable"; "params": EmptyErrorParams }
   | { "code": "task_worktree_unavailable"; "params": EmptyErrorParams }
   | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
-  | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }

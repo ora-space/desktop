@@ -761,17 +761,6 @@ pub async fn stream_contract(
             )
             .await?;
         }
-        "watchSpecs" => {
-            return crate::spec_commands::start_watch(
-                state,
-                request,
-                stream_call_id,
-                on_event,
-                lifecycle,
-                cancellation,
-            )
-            .await;
-        }
         _ => {
             return Err(CommandError::from_backend_with_lifecycle(
                 BackendError::new(

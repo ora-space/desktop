@@ -12,7 +12,6 @@ import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntim
 import type { AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
-import type { GetSpecCatalogRequest, ReadSpecRequest, ReadSpecResponse, SpecCatalogResponse, WatchSpecsRequest } from "./spec.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest, CreateWorkflowResponse, DeleteSnapshotRequest, DeleteSnapshotResponse, DeleteWorkflowRequest, DeleteWorkflowResponse, GetDraftRequest, GetDraftResponse, GetVersionRequest, GetVersionResponse, GetWorkflowRequest, GetWorkflowResponse, GetWorkflowSnapshotRequest, GetWorkflowSnapshotResponse, ListVersionsRequest, ListVersionsResponse, ListWorkflowsRequest, ListWorkflowsResponse, PublishWorkflowRequest, PublishWorkflowResponse, RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest, UpdateDraftResponse, UpdateWorkflowRequest, UpdateWorkflowResponse } from "./workflow.js";
 import type { CancelWorkflowRunRequest, CancelWorkflowRunResponse, CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest, ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse, RenameWorkflowRunRequest, RenameWorkflowRunResponse, RestartWorkflowRunRequest, RestartWorkflowRunResponse, StartWorkflowRunRequest, StartWorkflowRunResponse, UpdateWorkflowRunInputRequest, UpdateWorkflowRunInputResponse } from "./workflowRun.js";
@@ -105,9 +104,6 @@ export type RequestByOperation = {
   searchProject: SearchProjectRequest;
   watchProject: WatchProjectRequest;
   getGitIdentity: GetGitIdentityRequest;
-  getSpecCatalog: GetSpecCatalogRequest;
-  readSpec: ReadSpecRequest;
-  watchSpecs: WatchSpecsRequest;
   createWorkflow: CreateWorkflowRequest;
   getWorkflow: GetWorkflowRequest;
   listWorkflows: ListWorkflowsRequest;
@@ -218,9 +214,6 @@ export type ResponseByOperation = {
   searchProject: SearchWorkspaceResponse;
   watchProject: WorkspaceFileEventBatch;
   getGitIdentity: GitIdentityResponse;
-  getSpecCatalog: SpecCatalogResponse;
-  readSpec: ReadSpecResponse;
-  watchSpecs: WorkspaceFileEventBatch;
   createWorkflow: CreateWorkflowResponse;
   getWorkflow: GetWorkflowResponse;
   listWorkflows: ListWorkflowsResponse;
@@ -871,30 +864,6 @@ export const endpoints = {
     requestType: "GetGitIdentityRequest",
     responseType: "GitIdentityResponse",
     responseMode: "unary",
-  },
-  getSpecCatalog: {
-    operationName: "getSpecCatalog",
-    namespace: "spec",
-    memberName: "catalog",
-    requestType: "GetSpecCatalogRequest",
-    responseType: "SpecCatalogResponse",
-    responseMode: "unary",
-  },
-  readSpec: {
-    operationName: "readSpec",
-    namespace: "spec",
-    memberName: "read",
-    requestType: "ReadSpecRequest",
-    responseType: "ReadSpecResponse",
-    responseMode: "unary",
-  },
-  watchSpecs: {
-    operationName: "watchSpecs",
-    namespace: "spec",
-    memberName: "watch",
-    requestType: "WatchSpecsRequest",
-    responseType: "WorkspaceFileEventBatch",
-    responseMode: "stream",
   },
   createWorkflow: {
     operationName: "createWorkflow",

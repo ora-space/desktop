@@ -3,10 +3,10 @@ mod error;
 mod open_external;
 mod open_location;
 mod settings_commands;
-mod spec_commands;
 mod state;
 mod stream_forwarding;
 mod surface;
+mod task_commands;
 mod update;
 mod workspace_files;
 
@@ -151,13 +151,11 @@ fn bootstrap_desktop(
     };
     ora_process::initialize_reaper(binary_paths.reaper_path())
         .map_err(DesktopBootstrapError::ProcessReaper)?;
-    let ripgrep_path = binary_paths.ripgrep_path().to_path_buf();
     let backend_paths = BackendPaths {
         app_data_directory: app_data_directory.clone(),
         home_directory: home_directory.clone(),
         deno_path: binary_paths.deno_path().to_path_buf(),
         relative_path_base: desktop_relative_path_base(&app_data_directory),
-        ripgrep_path: ripgrep_path.clone(),
         timezone: resolved_timezone.timezone,
     };
     let home_directory = backend_paths.home_directory.clone();
@@ -175,7 +173,9 @@ fn bootstrap_desktop(
         log_level = %resolved_log_level.effective_level,
         log_level_source = resolved_log_level.source.as_str(),
     );
-    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
+    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(
+        binary_paths.ripgrep_path().to_path_buf(),
+    ));
     let surfaces = surface::SurfaceService::new(app.clone(), backend.plugin_gateway());
     let update = update::UpdateService::start(
         app.clone(),
@@ -611,7 +611,6 @@ mod tests {
             home_directory: root.to_path_buf(),
             deno_path: std::path::PathBuf::from("deno"),
             relative_path_base: root.to_path_buf(),
-            ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
         }
     }

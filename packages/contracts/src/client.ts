@@ -248,14 +248,6 @@ export function createContractsClient(
       watchProject: (request, options) =>
         executeStreamOperation("watchProject", request, transport, options),
     },
-    spec: {
-      catalog: (request, options) =>
-        executeOperation("getSpecCatalog", request, transport, options),
-      read: (request, options) =>
-        executeOperation("readSpec", request, transport, options),
-      watch: (request, options) =>
-        executeStreamOperation("watchSpecs", request, transport, options),
-    },
     gitIdentity: {
       get: (request, options) =>
         executeOperation("getGitIdentity", request, transport, options),

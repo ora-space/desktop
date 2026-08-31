@@ -110,7 +110,7 @@ jobs:
         with:
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # ora-fs spec tests spawn ripgrep by command name. Keep the downloaded
+      # ora-fs search tests spawn ripgrep by command name. Keep the downloaded
       # sidecar outside the repository and expose it through the job PATH.
       - name: Setup ripgrep
         run: |

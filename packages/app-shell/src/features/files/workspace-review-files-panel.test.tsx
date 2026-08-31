@@ -8,10 +8,6 @@ import { AppI18nProvider } from "../../i18n/i18n";
 import { createStubPlatform } from "../../test/stub-platform";
 import { WorkspaceReviewFilesPanel } from "./workspace-review-files-panel";
 
-vi.mock("../specs/specs-view", () => ({
-  SpecsContent: () => <div data-testid="specs-content">Specs content</div>,
-}));
-
 vi.mock("./workspace-files-view", () => ({
   WorkspaceFilesView: ({
     surface,
@@ -62,18 +58,6 @@ function renderPanel(props: {
 }
 
 describe("WorkspaceReviewFilesPanel", () => {
-  it("opens task files on explorer and exposes specs refresh only in the specs sub-view", async () => {
-    const user = userEvent.setup();
-    renderPanel({ taskId: "task-1" });
-
-    expect(screen.getByTestId("files-explorer")).toHaveTextContent("explorer");
-    await user.click(screen.getByRole("button", { name: "Specs" }));
-    expect(screen.getByTestId("specs-content")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /刷新 Specs|Refresh Specs/ }),
-    ).toBeInTheDocument();
-  });
-
   it("opens project files on explorer with search available when no task is selected", () => {
     renderPanel({});
 
@@ -114,11 +98,11 @@ describe("WorkspaceReviewFilesPanel", () => {
     );
   });
 
-  it("returns from Specs to Explorer for an unresolved artifact request", async () => {
+  it("returns to Explorer from search for an unresolved artifact request", async () => {
     const user = userEvent.setup();
     const view = renderPanel({ taskId: "task-1" });
-    await user.click(screen.getByRole("button", { name: "Specs" }));
-    expect(screen.getByTestId("specs-content")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /搜索|Search/ }));
+    expect(screen.getByTestId("files-explorer")).toHaveTextContent("search");
 
     view.rerender(
       <QueryClientProvider client={new QueryClient()}>
@@ -135,6 +119,8 @@ describe("WorkspaceReviewFilesPanel", () => {
         </PlatformProvider>
       </QueryClientProvider>,
     );
-    expect(screen.getByTestId("files-explorer")).toHaveTextContent("install");
+    expect(screen.getByTestId("files-explorer")).toHaveTextContent(
+      "explorer:project-1:task-1::install",
+    );
   });
 });

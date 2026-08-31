@@ -13,6 +13,5 @@
 - File reads are bounded and reject binary or invalid UTF-8 content.
 - Search runs through the injected `ora-process` runner, making ripgrep execution replaceable in tests.
 - Native watcher events are normalized into workspace-relative changes and can be debounced by the caller.
-- The `spec` module discovers Markdown/MDX through the same injected bundled ripgrep, supports explicit ignored sources, and resolves platform-selected directories without allowing workspace escape.
 
-The adapters are documented in [Task Workspace Files](../../docs/task-workspace-files.md) and [Specification management](../../docs/spec-management.md). Tests can inject a `ProcessSpawner` rather than starting ripgrep.
+The adapters are documented in [Task Workspace Files](../../docs/task-workspace-files.md). Tests can inject a `ProcessSpawner` rather than starting ripgrep.

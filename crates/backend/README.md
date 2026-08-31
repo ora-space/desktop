@@ -18,7 +18,7 @@
   `ora-application` use cases; raw SQLite keys and values remain inside `ora-db`, and request-time
   repository work runs on the blocking pool.
 - `WorkspaceDiffApi` composes the workspace-diff handlers with SQLite and Gitlancer, keyed by `WorkspaceId` for either an isolated task worktree or a project's main checkout. It resolves the workspace's live cwd and, when a `Worktree` row is recorded for it, uses the persisted creation commit as the stable diff baseline; a workspace with no such row has no baseline (only the `Unstaged`/`Staged` scopes apply) and its writes go through unverified.
-- `SpecApi` composes target resolution, automatic bounded ripgrep discovery, safe Markdown reads, and watcher-root resolution. Tauri remains a transport-only adapter.
+- Tauri remains a transport-only adapter.
 - Workspace diff reads, commits, and pushes preserve the same public error projection as the rest of the backend. Git and SQLite sources remain internal diagnostics and are rendered once by the adapter-owned request lifecycle.
 - Session creation, loading, structured ACP prompting, permissions, stopping, deletion, and model discovery delegate to the agent runtime. Creation also returns the provider's setup-time available-command catalog.
 - Relative local Workspace locations are resolved against a bootstrap-injected path base, not live process cwd. Desktop `tauri dev` starts in `src-tauri`; a shared `ORA_DATA_DIR` database stores locations relative to that data directory's parent.
@@ -32,11 +32,10 @@ Graph parsing, DAG scheduling, and node-run state belong to `ora-application`'s 
 
 Project and task deletion soft-delete their Workspace-owned descendants in one transaction and register durable Git cleanup jobs in that same transaction. Workflow-run deletion only cascades the run, node runs, and sessions bound to those node runs; it preserves the shared Workspace. The crate-owned `git_cleanup` worker executes task cleanup asynchronously — force-removing each deleted task's linked worktree and `ora/*` branch with at-least-once, idempotent semantics, replaying pending jobs and expired provisioning leases on every start. Deletion never touches provider-owned ACP history, and cleanup that cannot prove Ora ownership parks as `manual_attention` instead of removing the checkout.
 
-General-purpose filesystem browsing remains outside this crate. Specification filesystem access is composed here because it combines persisted project configuration with target ownership. Logging initialization and environment parsing belong to runtime composition roots. This crate provides the transport-neutral request lifecycle, while adapters decide where a request begins and completes.
+General-purpose filesystem browsing remains outside this crate. Logging initialization and environment parsing belong to runtime composition roots. This crate provides the transport-neutral request lifecycle, while adapters decide where a request begins and completes.
 
 Dropping the last backend owner shuts down provider supervisors and initiates bounded process-tree cleanup.
 
 The application event stream is deliberately not an event log: events are not persisted or replayed, a bounded queue may terminate a slow subscription, and the Desktop shell refetches database-backed queries after stream loss. Every active channel may subscribe to the same broadcast. Adapters that abort consumption may use `SessionEventStream::try_recv` to observe a buffered terminal error without waiting for the next event.
 
 See the [backend workflow module](src/workflow/README.md), [Application and Contracts Boundary](../../docs/application-contracts-boundary.md), [ACP Agent Runtime](../../docs/agent-runtime.md), and [Workflow](../../docs/workflow.md).
-See also [Specification management](../../docs/spec-management.md).

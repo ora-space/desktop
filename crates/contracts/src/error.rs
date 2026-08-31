@@ -141,7 +141,6 @@ pub enum PublicError {
     WorkspaceUnavailable(EmptyErrorParams),
     TaskWorktreeUnavailable(EmptyErrorParams),
     FileSystemPathNotFound(EmptyErrorParams),
-    SpecDocumentNotFound(EmptyErrorParams),
     WorktreeRootNotAbsolute(EmptyErrorParams),
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
@@ -255,7 +254,6 @@ impl PublicError {
             Self::WorkspaceUnavailable(_) => "workspace_unavailable",
             Self::TaskWorktreeUnavailable(_) => "task_worktree_unavailable",
             Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
-            Self::SpecDocumentNotFound(_) => "spec_document_not_found",
             Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
@@ -426,7 +424,6 @@ mod tests {
             PublicError::WorkspaceUnavailable(empty),
             PublicError::TaskWorktreeUnavailable(empty),
             PublicError::FileSystemPathNotFound(empty),
-            PublicError::SpecDocumentNotFound(empty),
             PublicError::WorktreeRootNotAbsolute(empty),
             PublicError::WorktreeRootNotDirectory(empty),
             PublicError::OpenLocationFailed(OpenLocationFailedParams {
@@ -529,7 +526,6 @@ mod tests {
                 | PublicError::WorkspaceUnavailable(_)
                 | PublicError::TaskWorktreeUnavailable(_)
                 | PublicError::FileSystemPathNotFound(_)
-                | PublicError::SpecDocumentNotFound(_)
                 | PublicError::WorktreeRootNotAbsolute(_)
                 | PublicError::WorktreeRootNotDirectory(_)
                 | PublicError::OpenLocationFailed(_)
@@ -595,7 +591,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 95);
+        assert_eq!(samples.len(), 94);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

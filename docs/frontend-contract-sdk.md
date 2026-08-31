@@ -31,7 +31,7 @@ Both carry a do-not-edit header. Everything else in the package — `client.ts`,
 
 `createContractsClient(transport)` returns a namespaced client whose shape is derived from the generated manifest: `ContractsClient` maps each endpoint's `namespace`/`memberName` pair into a nested object type. Because `createContractsClient` returns an object literal checked against that derived type, adding a route in Rust and regenerating without updating `client.ts` fails `tsc` with a missing-property error. The hand-written client stays in compile-time lockstep with Rust.
 
-Namespaces are `project`, `task`, `session`, `appEvents`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `spec`, `workflow`, and `workflowRun`. The `appEvents` namespace exposes `client.appEvents.watch({})`; the stream begins with `Ready`, then carries best-effort invalidations such as `SessionTitleUpdated`. The `spec` namespace keeps unary catalog/read/configuration calls and its workspace-event stream behind one target-tagged API.
+Namespaces are `project`, `task`, `session`, `appEvents`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `workflow`, and `workflowRun`. The `appEvents` namespace exposes `client.appEvents.watch({})`; the stream begins with `Ready`, then carries best-effort invalidations such as `SessionTitleUpdated`.
 
 For each call the client sends the operation name and the complete request DTO to the injected transport. It does not split, rename, or serialize request fields for a transport.
 

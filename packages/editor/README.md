@@ -20,4 +20,3 @@ or product chrome.
 ## Non-responsibilities
 
 - Chat send / HITL submit behavior (lives in `@ora/app-shell`).
-- Spec file editing.

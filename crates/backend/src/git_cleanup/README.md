@@ -44,7 +44,7 @@ Durable Git cleanup execution for aggregate deletion.
   deliberately do **not** hold use leases: deletion already refuses aggregates
   with running sessions or active runs at the database gate, and new
   admissions are rejected by row visibility. The lease protects short-lived
-  readers (diff, commit, push, spec reads) that resolved a checkout path
+  readers (diff, commit, push) that resolved a checkout path
   before a deletion committed.
 
 ## Failure semantics

@@ -70,5 +70,5 @@ Task Changes panel: parsed worktree patches, file tree, and git commit/push acti
 
 - Composer chip rendering or TipTap document ownership (handoff goes through
   `addComposerFileSelection` → `composer-file-context-store`).
-- Workspace file browsing (Files / Specs panels).
+- Workspace file browsing (Files panel).
 - Diff comment threads (removed).

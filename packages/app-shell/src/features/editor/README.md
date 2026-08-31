@@ -81,7 +81,6 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
 
 - Chat chrome (attachments, model picker, plus menu).
 - HITL gate / draft store ownership.
-- Spec document editing.
 - Read-only rendering of sent user/assistant history (owned by chat
   `MarkdownDocument` / `MarkdownMessage`).
 

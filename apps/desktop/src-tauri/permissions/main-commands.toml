@@ -24,8 +24,6 @@ commands.allow = [
     "list_project_directory",
     "read_project_file",
     "search_project",
-    "get_spec_catalog",
-    "read_spec",
     "warm_session",
     "set_session_config",
     "attach_session",

@@ -26,8 +26,7 @@ The layers remain narrow:
   `path:range` reference (the agent reads the body itself), and chat history
   reads that back into the same chip instead of replaying source. Diff-gutter
   quotes are the exception — they expand to a mini `diff --git` patch because
-  the change is not yet on disk. The same
-  Files panel hosts the Specs sub-view; see [Specification management](spec-management.md).
+  the change is not yet on disk.
   Chat inline artifact links open this panel through `openWorkspaceFile` and a
   `WorkspaceFileRequest` (`path` + `requestId` + optional
   `FileNavigationLocation` fields: line/column/endLine) so a second click on
@@ -81,7 +80,7 @@ bounded before reads or searches. The filesystem service is read-only and
 watcher changes are cache-invalidating batches rather than an event log.
 
 The Files panel opens Explorer by default for both task and project review
-contexts and keeps Specs as a dedicated read-only sub-view. Search and file
+contexts. Search and file
 reads are cancellable through the injected contracts client. A mounted
 watcher is stopped when the panel is unmounted or its Files scope (task vs
 project) changes.

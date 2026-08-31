@@ -483,12 +483,6 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "WatchWorkspaceRequest"
         | "WatchProjectRequest"
         | "WorkspaceFileEventBatch" => "file-system",
-        // spec
-        "GetSpecCatalogRequest"
-        | "SpecCatalogResponse"
-        | "ReadSpecRequest"
-        | "ReadSpecResponse"
-        | "WatchSpecsRequest" => "spec",
         // gitIdentity
         "GetGitIdentityRequest" | "GitIdentityResponse" => "git",
         // runtimeLogLevel

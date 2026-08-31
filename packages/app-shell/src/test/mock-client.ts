@@ -755,18 +755,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
           yield* [];
         })(),
     },
-    spec: {
-      catalog: async () => ({ documents: [], truncated: false }),
-      read: async (request) => ({
-        relativePath: request.relativePath,
-        content: "",
-        byteSize: 0,
-      }),
-      watch: () =>
-        (async function* () {
-          yield* [];
-        })(),
-    },
     gitIdentity: {
       get: async () => ({ name: "Test User", email: "test@ora.local" }),
     },

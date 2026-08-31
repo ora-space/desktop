@@ -376,7 +376,6 @@ mod tests {
             home_directory: temporary.path().to_path_buf(),
             deno_path: std::path::PathBuf::from("deno"),
             relative_path_base: temporary.path().to_path_buf(),
-            ripgrep_path: std::path::PathBuf::from("rg"),
             timezone: chrono_tz::UTC,
         })
         .expect("open shared backend")

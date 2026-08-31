@@ -12,7 +12,7 @@ forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A priva
 
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Backend failures use the direct `{ code, params, requestId }` payload without a public message or outer envelope. Local Tauri invocation failures never invent a request id.
 
-Task workspace lookup and Spec review are part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch, while `get_spec_catalog` and `read_spec` delegate unary work to the shared backend. `watch_specs` and `watchAppEvents` use the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams.
+Task workspace lookup is part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch. `watchAppEvents` uses the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams.
 
 Developer preferences use four unary commands in a separate settings command module: `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. They use the same lifecycle and error projection as other Desktop commands; no HTTP endpoint is involved.
 
