@@ -259,8 +259,10 @@ mod reqwest_integration {
     };
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
+    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
     use url::Url;
 
     fn sha256_bytes(data: &[u8]) -> [u8; 32] {
@@ -287,6 +289,114 @@ mod reqwest_integration {
             let _ = socket.flush().await;
         });
         Url::parse(&format!("http://127.0.0.1:{port}/pkg.orax")).unwrap()
+    }
+
+    /// Serves one HTTPS response from a certificate signed by a private test CA.
+    async fn serve_https_once(
+        body: &'static [u8],
+    ) -> (Url, rustls::pki_types::CertificateDer<'static>) {
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let ca = rcgen::CertifiedIssuer::self_signed(ca_params, ca_key).unwrap();
+        let server_key = rcgen::KeyPair::generate().unwrap();
+        let mut server_params =
+            rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+        server_params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        let server_cert = server_params.signed_by(&server_key, &ca).unwrap();
+        let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(server_key.serialize_der());
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![server_cert.der().clone()], private_key.into())
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let Ok(mut socket) = acceptor.accept(socket).await else {
+                return;
+            };
+            let mut buffer = [0_u8; 4096];
+            let _bytes_read = socket.read(&mut buffer).await.unwrap();
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(header.as_bytes()).await.unwrap();
+            socket.write_all(body).await.unwrap();
+            let _flush_result = socket.flush().await;
+        });
+        (
+            Url::parse(&format!("https://localhost:{port}/pkg.orax")).unwrap(),
+            ca.der().clone(),
+        )
+    }
+
+    /// Downloads through a private CA when that CA is explicitly trusted by the test client.
+    #[tokio::test]
+    async fn downloads_from_explicitly_trusted_private_ca() {
+        let payload: &'static [u8] = b"enterprise release package";
+        let (url, ca_root) = serve_https_once(payload).await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let destination = temp_dir.path().join("pkg.orax");
+        let downloader = ReqwestDownloader::new(Default::default()).with_extra_tls_root(ca_root);
+
+        let outcome = downloader
+            .download(DownloadRequest {
+                source: DownloadSource::Url(url),
+                destination: destination.clone(),
+                checksum: Some(Checksum::sha256(sha256_bytes(payload))),
+                options: DownloadOptions {
+                    max_retries: 0,
+                    ..DownloadOptions::default()
+                },
+                progress: None,
+                cancel: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.bytes, payload.len() as u64);
+        assert_eq!(std::fs::read(&destination).unwrap(), payload);
+    }
+
+    /// Rejects the same private CA when it has not been added to platform trust for the client.
+    #[tokio::test]
+    async fn rejects_untrusted_private_ca() {
+        let (url, _ca_root) = serve_https_once(b"untrusted release package").await;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let destination = temp_dir.path().join("pkg.orax");
+        let downloader = ReqwestDownloader::new(Default::default());
+
+        let error = downloader
+            .download(DownloadRequest {
+                source: DownloadSource::Url(url),
+                destination,
+                checksum: None,
+                options: DownloadOptions {
+                    max_retries: 0,
+                    ..DownloadOptions::default()
+                },
+                progress: None,
+                cancel: None,
+            })
+            .await
+            .unwrap_err();
+
+        let message = match error {
+            DownloadError::Network { source, .. } => source.to_string(),
+            other => panic!("expected network error, got {other:?}"),
+        };
+        assert!(
+            message.contains("invalid peer certificate"),
+            "expected certificate rejection, got: {message}"
+        );
     }
 
     /// Streams a payload from a loopback server into a destination and verifies bytes + checksum.

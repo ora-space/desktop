@@ -10,6 +10,7 @@ use std::error::Error as StdError;
 use std::fs::File;
 use std::future::Future;
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
@@ -35,6 +36,7 @@ const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 pub struct ReqwestDownloader {
     proxy_config: ProxyConfig,
     user_agent: String,
+    tls_extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
 }
 
 impl ReqwestDownloader {
@@ -43,7 +45,18 @@ impl ReqwestDownloader {
         Self {
             proxy_config,
             user_agent: DEFAULT_USER_AGENT.to_owned(),
+            tls_extra_roots: Vec::new(),
         }
+    }
+
+    /// Adds a private CA root to explicit test trust for deterministic HTTPS regression tests.
+    #[cfg(test)]
+    pub(crate) fn with_extra_tls_root(
+        mut self,
+        root: rustls::pki_types::CertificateDer<'static>,
+    ) -> Self {
+        self.tls_extra_roots.push(root);
+        self
     }
 
     /// Builds a downloader with an explicit User-Agent, useful for gateway/CDN identification.
@@ -206,7 +219,16 @@ impl ReqwestDownloader {
         options: &DownloadOptions,
         url: &Url,
     ) -> Result<reqwest::Client, DownloadError> {
-        let mut builder = reqwest::Client::builder().user_agent(&self.user_agent);
+        let tls_config =
+            platform_tls_config(&self.tls_extra_roots).map_err(|error| DownloadError::Network {
+                url: url.clone(),
+                source: std::io::Error::other(format!(
+                    "failed to initialize platform TLS verification: {error}"
+                )),
+            })?;
+        let mut builder = reqwest::Client::builder()
+            .use_preconfigured_tls(tls_config)
+            .user_agent(&self.user_agent);
         if let Some(connect) = options.connect_timeout {
             builder = builder.connect_timeout(connect);
         }
@@ -218,6 +240,40 @@ impl ReqwestDownloader {
         }
         builder.build().map_err(|error| network_error(url, error))
     }
+}
+
+/// Builds a Rustls client with certificate verification adapted to the host platform.
+///
+/// Copying native roots into a WebPKI store is insufficient on Windows because it bypasses the
+/// CryptoAPI chain engine, including enterprise policy and intermediate discovery. The explicit
+/// roots branch is test-only so HTTPS behavior can be exercised without modifying machine trust.
+fn platform_tls_config(
+    extra_roots: &[rustls::pki_types::CertificateDer<'static>],
+) -> Result<rustls::ClientConfig, String> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier: Arc<dyn rustls::client::danger::ServerCertVerifier> = if extra_roots.is_empty() {
+        Arc::new(
+            rustls_platform_verifier::Verifier::new(Arc::clone(&provider))
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        let mut roots = rustls::RootCertStore::empty();
+        for root in extra_roots.iter().cloned() {
+            roots.add(root).map_err(|error| error.to_string())?;
+        }
+        rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            Arc::clone(&provider),
+        )
+        .build()
+        .map_err(|error| error.to_string())?
+    };
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| error.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth())
 }
 
 impl HttpDownload for ReqwestDownloader {
