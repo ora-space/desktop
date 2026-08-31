@@ -4,7 +4,7 @@ import { warmTargetKey } from "./use-warm-session";
 import { useSessions } from "./use-sessions";
 
 /** The selection legs that decide which agent a chat surface is pointing at. */
-interface AgentSelection {
+export interface AgentSelection {
   projectId: string | null;
   taskId: string | null;
   sessionId: string | null;

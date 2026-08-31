@@ -1425,6 +1425,7 @@ export const translationResources = {
     "chat.pickTask": "请先选择或创建一个任务，然后开始对话",
     "chat.pickProject": "请先选择或创建一个项目，然后开始对话",
     "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
+    "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
     "chat.copy": "复制",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
@@ -3061,6 +3062,8 @@ export const translationResources = {
     "chat.pickTask": "Pick or create a task before starting a chat",
     "chat.pickProject": "Pick or create a project before starting a chat",
     "chat.pickAgent": "Pick an agent before starting a chat",
+    "chat.pickAvailableAgent":
+      "Pick an available agent and model before starting a chat",
     "chat.copy": "Copy",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",

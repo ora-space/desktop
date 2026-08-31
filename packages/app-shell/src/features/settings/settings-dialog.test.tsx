@@ -1,7 +1,7 @@
 import { createChatStore } from "@ora/chat";
 import type { ContractsClient } from "@ora/contracts";
 import { PlatformProvider } from "../../platform";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -209,7 +209,11 @@ describe("SettingsDialog developer options", () => {
     const client = createMockClient(createMockClientState());
     renderDialog(client);
 
-    useUiStore.getState().openSettingsAt("plugins");
+    // Deep-linking writes directly to the Zustand UI store; wrap it in act so
+    // the resulting SettingsDialog state update stays inside the test boundary.
+    act(() => {
+      useUiStore.getState().openSettingsAt("plugins");
+    });
 
     expect(
       await screen.findByRole("heading", { name: "Plugins" }),

@@ -58,6 +58,13 @@ interface ChatViewProps {
    * message for a state the user can fix from the context bar directly above it.
    */
   disabledHint?: string;
+  /**
+   * Why the send button alone is unavailable while the composer stays typable —
+   * the state is fixable from the agent/model picker next to the button, so
+   * typing and picking must keep working. Never applies at the same time as
+   * `disabledHint`, so the two hover bubbles never compete.
+   */
+  sendDisabledHint?: string;
   skills?: Skill[];
   roles?: Agent[];
   availableCommands?: acp.AvailableCommand[];
@@ -99,6 +106,7 @@ export function ChatView({
   composerActions,
   conversationNavigation,
   disabledHint,
+  sendDisabledHint,
   skills = [],
   roles = [],
   availableCommands = [],
@@ -279,6 +287,7 @@ export function ChatView({
                   disabled={disabled}
                   modelSelectorDisabled={modelSelectorDisabled}
                   modelSelectorSessionId={modelSelectorSessionId}
+                  sendDisabledHint={sendDisabledHint}
                   skills={skills}
                   roles={roles}
                   availableCommands={availableCommands}

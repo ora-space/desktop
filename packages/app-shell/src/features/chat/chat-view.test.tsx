@@ -70,6 +70,9 @@ async function flushComposerEffects(): Promise<void> {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // A test that set fake timers and was aborted by its own timeout would
+  // otherwise strand every later userEvent await on a clock nobody advances.
+  vi.useRealTimers();
   resetComposerSendAdoptionsForTests();
   useDraftSessionsStore.getState().clear();
   useComposerInputStore.getState().reset();
@@ -1776,6 +1779,208 @@ describe("Composer", () => {
 
     // Chip serialization already inserts a trailing space after the atom.
     expect(composerText(textarea)).toBe("check `src/mid.ts` please");
+  });
+});
+
+describe("Composer send gating", () => {
+  const SEND_HINT = /请先选择一个可用的Agent模型|Pick an available agent/;
+  const sendButton = () =>
+    screen.getByRole("button", { name: /发送消息|Send message/ });
+
+  it("keeps typing and attachments available while the send button is gated", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="hint"
+        />
+      </TooltipProvider>,
+    );
+
+    // Dimmed via aria-disabled rather than disabled, so the control stays in
+    // the tab order and keyboard users can reach the explanation.
+    expect(sendButton()).toHaveAttribute("aria-disabled", "true");
+    expect(sendButton()).toBeEnabled();
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "hello");
+
+    expect(composerText(textarea)).toBe("hello");
+    // The gated control is focusable, so a direct click reaches submit and has
+    // to be absorbed by the canSend guard rather than by the disabled state.
+    await user.click(sendButton());
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send on Enter while gated and parks the typed text", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="hint"
+        />
+      </TooltipProvider>,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "hello{Enter}");
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(composerText(textarea)).toBe("hello");
+  });
+
+  it("explains the gate on hover over the gated send button", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="请先选择一个可用的Agent模型"
+        />
+      </TooltipProvider>,
+    );
+
+    await user.hover(sendButton());
+    expect(await screen.findByText(SEND_HINT)).toBeVisible();
+  });
+
+  it("explains the gate on keyboard focus of the gated send button", async () => {
+    const onSend = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="请先选择一个可用的Agent模型"
+        />
+      </TooltipProvider>,
+    );
+
+    // Hover is unavailable to a keyboard-only user; tabbing to the dimmed
+    // button is what surfaces the hint there. The gated control keeps its tab
+    // stop precisely so this path exists.
+    act(() => sendButton().focus());
+    expect(await screen.findByText(SEND_HINT)).toBeVisible();
+  });
+
+  it("pins the hint open when a gated Enter refuses to send, then fades it", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="请先选择一个可用的Agent模型"
+        />
+      </TooltipProvider>,
+    );
+
+    await user.type(screen.getByRole("textbox"), "hello{Enter}");
+
+    expect(onSend).not.toHaveBeenCalled();
+    // The refusal is announced at the button, not swallowed silently — the
+    // keyboard send gets the same feedback a hover on the button would give.
+    expect(await screen.findByText(SEND_HINT)).toBeVisible();
+    // The pin is transient: the bubble retires itself after the pin window.
+    await waitFor(() => expect(screen.queryByText(SEND_HINT)).toBeNull(), {
+      timeout: 4_000,
+    });
+  });
+
+  it("retires a pinned hint the moment the gate lifts", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="请先选择一个可用的Agent模型"
+        />
+      </TooltipProvider>,
+    );
+
+    await user.type(screen.getByRole("textbox"), "hello{Enter}");
+    expect(await screen.findByText(SEND_HINT)).toBeVisible();
+
+    // A stale hint must never linger over a send button that works again, so
+    // the pin dies with the gate instead of outliving it to the pin timeout.
+    view.rerender(
+      <TooltipProvider>
+        <Composer onSend={onSend} isResponding={false} />
+      </TooltipProvider>,
+    );
+    await waitFor(() => expect(screen.queryByText(SEND_HINT)).toBeNull());
+  });
+
+  it("never attaches the hint to the stop control of a live turn", async () => {
+    const user = userEvent.setup();
+    const onStop = vi.fn();
+    renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={vi.fn()}
+          isResponding
+          onStop={onStop}
+          sendDisabledHint="hint"
+        />
+      </TooltipProvider>,
+    );
+
+    const stopButton = screen.getByRole("button", {
+      name: /正在启动|Starting/,
+    });
+    expect(stopButton).toBeEnabled();
+    await user.hover(stopButton);
+    expect(screen.queryByText(SEND_HINT)).toBeNull();
+
+    await user.click(stopButton);
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("lifts the gate on rerender so a later send is not blocked", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(
+      <TooltipProvider>
+        <Composer
+          onSend={onSend}
+          isResponding={false}
+          sendDisabledHint="hint"
+        />
+      </TooltipProvider>,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "hello");
+    expect(sendButton()).toHaveAttribute("aria-disabled", "true");
+
+    view.rerender(
+      <TooltipProvider>
+        <Composer onSend={onSend} isResponding={false} />
+      </TooltipProvider>,
+    );
+    expect(sendButton()).toBeEnabled();
+    await user.type(textarea, "{Enter}");
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+
+  it("does not send an empty composer on Enter now that submit checks canSend", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+
+    await user.type(screen.getByRole("textbox"), "{Enter}");
+
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
 

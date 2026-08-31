@@ -16,7 +16,7 @@ import {
   IconPlus,
   IconX,
 } from "@tabler/icons-react";
-import { Button } from "@ora/ui";
+import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -85,6 +85,12 @@ interface ComposerProps {
    */
   isStreaming?: boolean;
   disabled?: boolean;
+  /**
+   * Why the send button alone is unavailable while the composer stays typable:
+   * the state is fixable from the agent/model picker next to the button, so
+   * typing and picking must keep working. Surfaced as a tooltip on the button.
+   */
+  sendDisabledHint?: string;
   /** Allows the agent/model picker to remain actionable while message composition is blocked. */
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
@@ -113,6 +119,8 @@ const ACCEPTED_IMAGE_TYPES = new Set([
 ]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
+/** How long a refused send attempt keeps the hint bubble open before fading. */
+const SEND_HINT_PINNED_MS = 2_400;
 
 /**
  * The chat composer: a rounded input shell wrapping ComposerEditor with an
@@ -127,6 +135,7 @@ export function Composer({
   isResponding,
   isStreaming = false,
   disabled = false,
+  sendDisabledHint,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
   placeholder,
@@ -485,11 +494,66 @@ export function Composer({
     (visibleActions.length > 0 || fileMentionActive);
 
   const hasText = !query.isBlank;
+  // While a turn is live the button is the stop control, so a send hint must
+  // never attach to it even when the agent dropped out mid-turn.
+  const sendBlocked = !isResponding && sendDisabledHint !== undefined;
   const canSend =
-    (hasText || attachments.length > 0) && !isResponding && !disabled;
+    (hasText || attachments.length > 0) &&
+    !isResponding &&
+    !disabled &&
+    !sendBlocked;
+
+  // A gated send attempt must say why instead of refusing silently — a keyboard
+  // send has no hover to fall back on. The bubble is either held by the pointer
+  // or keyboard sitting on the control, or pinned briefly by the refusal itself.
+  const [sendHintEngaged, setSendHintEngaged] = useState(false);
+  const [sendHintPinned, setSendHintPinned] = useState(false);
+  const sendHintPinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // The pin belongs to a blocked button, so it dies the moment the gate lifts —
+  // otherwise a stale bubble could greet a re-blocked button with no new
+  // refusal. Settled in render rather than an effect (setState-in-effect), the
+  // same way the conversation-key sync above resets its per-surface state.
+  if (!sendBlocked && sendHintPinned) {
+    setSendHintPinned(false);
+    if (sendHintPinTimerRef.current !== null) {
+      clearTimeout(sendHintPinTimerRef.current);
+      sendHintPinTimerRef.current = null;
+    }
+  }
+  useEffect(
+    // Unmount only: a lingering pin timer must not set state on a removed
+    // composer. The gate-lift clear above handles every live transition.
+    () => () => {
+      if (sendHintPinTimerRef.current !== null) {
+        clearTimeout(sendHintPinTimerRef.current);
+        sendHintPinTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  /** Pins the refusal hint open briefly, restarting on every refused attempt. */
+  const pinSendHint = () => {
+    setSendHintPinned(true);
+    if (sendHintPinTimerRef.current !== null) {
+      clearTimeout(sendHintPinTimerRef.current);
+    }
+    sendHintPinTimerRef.current = setTimeout(() => {
+      sendHintPinTimerRef.current = null;
+      setSendHintPinned(false);
+    }, SEND_HINT_PINNED_MS);
+  };
 
   const submit = () => {
-    if (isResponding || disabled) return;
+    // One gate for button and Enter alike: the editor forwards Enter even on an
+    // empty document, which previously reached onSend("") and spent a warm
+    // handshake on a message nothing could deliver.
+    if (!canSend) {
+      if (sendBlocked) pinSendHint();
+      return;
+    }
     const text = (editorRef.current?.getText() ?? "").trim();
     const sentAttachments = attachments;
     const sentDoc = editorRef.current?.getJSON();
@@ -1006,31 +1070,69 @@ export function Composer({
                 sessionId={modelSelectorSessionId}
               />
             )}
-            <Button
-              size="icon"
-              // A live turn always stops on click, whether it is still starting up
-              // (spinner) or already streaming (stop icon); only idle sends.
-              aria-label={
-                isResponding
-                  ? isStreaming
-                    ? t("common.stop")
-                    : t("chat.starting")
-                  : t("chat.send")
-              }
-              disabled={isResponding ? onStop === undefined : !canSend}
-              onClick={isResponding ? onStop : submit}
-              className="size-8 rounded-full bg-foreground text-background shadow-sm transition-[background-color,color,box-shadow] duration-200 hover:bg-foreground/85 hover:shadow-md disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+            <Tooltip
+              // Controlled so the refusal can pin it open. `onOpenChange` is
+              // required for the `open` prop to take effect: without it Base UI
+              // keeps running on its internal hover/focus state and ignores it.
+              open={sendBlocked && (sendHintEngaged || sendHintPinned)}
+              onOpenChange={(nextOpen) => {
+                if (nextOpen) setSendHintEngaged(true);
+                else if (!sendHintPinned) setSendHintEngaged(false);
+              }}
             >
-              {isResponding ? (
-                isStreaming ? (
-                  <IconPlayerStop className="size-[18px]" />
-                ) : (
-                  <IconLoader2 className="size-[18px] animate-spin" />
-                )
-              ) : (
-                <IconArrowUp className="size-[18px]" />
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon"
+                    onMouseEnter={() => setSendHintEngaged(true)}
+                    onMouseLeave={() => setSendHintEngaged(false)}
+                    onFocus={() => setSendHintEngaged(true)}
+                    onBlur={() => setSendHintEngaged(false)}
+                    // A live turn always stops on click, whether it is still starting up
+                    // (spinner) or already streaming (stop icon); only idle sends.
+                    aria-label={
+                      isResponding
+                        ? isStreaming
+                          ? t("common.stop")
+                          : t("chat.starting")
+                        : t("chat.send")
+                    }
+                    // The gate dims the control instead of disabling it so it
+                    // stays tabbable: focus is the only way a keyboard user can
+                    // ask why the send refuses, and the tooltip opens on
+                    // keyboard focus. submit's canSend guard absorbs activation,
+                    // so the enabled control is still inert while gated.
+                    aria-disabled={sendBlocked || undefined}
+                    disabled={
+                      isResponding
+                        ? onStop === undefined
+                        : !sendBlocked && !canSend
+                    }
+                    onClick={isResponding ? onStop : submit}
+                    className={cn(
+                      "size-8 rounded-full bg-foreground text-background shadow-sm transition-[background-color,color,box-shadow] duration-200 hover:bg-foreground/85 hover:shadow-md disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none",
+                      sendBlocked &&
+                        "bg-muted text-muted-foreground shadow-none hover:bg-muted hover:shadow-none",
+                    )}
+                  >
+                    {isResponding ? (
+                      isStreaming ? (
+                        <IconPlayerStop className="size-[18px]" />
+                      ) : (
+                        <IconLoader2 className="size-[18px] animate-spin" />
+                      )
+                    ) : (
+                      <IconArrowUp className="size-[18px]" />
+                    )}
+                  </Button>
+                }
+              />
+              {sendBlocked && (
+                <TooltipContent side="top" sideOffset={8}>
+                  {sendDisabledHint}
+                </TooltipContent>
               )}
-            </Button>
+            </Tooltip>
           </div>
         </div>
       </div>

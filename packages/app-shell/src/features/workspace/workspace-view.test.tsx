@@ -365,6 +365,59 @@ describe("WorkspaceView", () => {
     );
   });
 
+  it("gates only the send button while the chosen agent is unreachable", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const entry = state.agentRuntimeStatuses.find(
+      (candidate) => candidate.agentRef === "ora-space.opencode",
+    );
+    entry!.status = "unavailable";
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const textbox = await screen.findByRole("textbox");
+    await user.type(textbox, "hello");
+    // With text typed the only reason left to refuse a send is the agent, so
+    // the gate — not the empty composer — is what dims the button here.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /发送消息|Send message/ }),
+      ).toHaveAttribute("aria-disabled", "true"),
+    );
+    expect(composerText(textbox)).toBe("hello");
+    // The state is fixable from the picker, so it must stay actionable.
+    expect(
+      screen.getByRole("button", { name: /选择模型|Select model/ }),
+    ).toBeEnabled();
+
+    await user.hover(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+    expect(
+      await screen.findByText(
+        /请先选择一个可用的Agent模型|Pick an available agent/,
+      ),
+    ).toBeVisible();
+  });
+
   it("does not repeat the default direct-chat mode in the composer context", async () => {
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora" }];

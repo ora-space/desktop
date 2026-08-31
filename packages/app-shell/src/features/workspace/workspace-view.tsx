@@ -27,6 +27,7 @@ import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
+import { useTargetAgentReadiness } from "../../state/hooks/use-target-agent-readiness";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { conversationKeyFor } from "../../state/stores/conversation-key";
@@ -155,6 +156,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // the one the composer and model picker are actually pointing at — a stale
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
+  // Must resolve before the early returns below: hooks cannot sit behind them,
+  // and the send gate reads it in the chat branch.
+  const targetAgentReadiness = useTargetAgentReadiness(selection);
   const chatStore = useChatStore();
   useWorkspaceDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
@@ -570,6 +574,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       (session
         ? session.status === "running" || conversation?.isLoaded === true
         : project !== undefined);
+    // The send button alone carries this hint: the composer must stay typable
+    // so the picker next to it can fix the state, and it only applies where the
+    // whole-composer hint does not, so the two bubbles never compete.
+    const sendDisabledHint =
+      canChat && targetAgentReadiness === "blocked"
+        ? t("chat.pickAvailableAgent")
+        : undefined;
     // A failed background session-create settles onto the draft conversation, so
     // the conversation error already covers the start-up failure path. A pending
     // send has no conversation to settle onto and carries its own.
@@ -666,6 +677,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
                   ? t("chat.pickProject")
                   : t("chat.pickAgent")
             }
+            sendDisabledHint={sendDisabledHint}
             // A persisted or optimistic session already fixes its project and
             // execution context, so the pickers only belong to a blank composer.
             contextBar={

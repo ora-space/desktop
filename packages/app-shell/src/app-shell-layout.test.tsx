@@ -97,7 +97,14 @@ describe("AppShell sidebar collapse", () => {
       />,
     );
 
-    const nameInput = await screen.findByLabelText("工作流名称");
+    // The editor hydrates several ticks after mount; under heavy parallel
+    // suite load the findBy default of 1s gives up long before the test-level
+    // timeout would, so this wait carries its own ceiling.
+    const nameInput = await screen.findByLabelText(
+      "工作流名称",
+      {},
+      { timeout: 10_000 },
+    );
     fireEvent.change(nameInput, { target: { value: "折叠后仍在" } });
     expect(nameInput).toHaveValue("折叠后仍在");
 
