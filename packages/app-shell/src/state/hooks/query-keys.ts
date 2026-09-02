@@ -1,4 +1,4 @@
-import type { WarmSessionTarget, WorkspaceDiffScope } from "@ora/contracts";
+import type { WorkspaceDiffScope } from "@ora/contracts";
 
 /**
  * Centralised react-query cache keys for the app shell.
@@ -57,27 +57,11 @@ export const queryKeys = {
     ["project-files", projectId, "file", path] as const,
   projectSearch: (projectId: string, kind: string, query: string) =>
     ["project-files", projectId, "search", kind, query] as const,
-  /**
-   * Mirrors the identity the backend keys warm sessions by, so two surfaces
-   * never share one cache entry and revisiting a surface reuses its session.
-   */
-  warmSession: (target: WarmSessionTarget | null, agentRef: string | null) =>
-    [
-      "warmSession",
-      agentRef ?? "none",
-      target?.type ?? "none",
-      targetId(target),
-    ] as const,
-  /** Every warm-session query whose model catalog belongs to one agent. */
-  warmSessionsForAgent: (agentRef: string) =>
-    ["warmSession", agentRef] as const,
+  agentModels: (agentRef: string | null, workspaceId: string | null) =>
+    ["agentModels", agentRef ?? "none", workspaceId ?? "none"] as const,
+  /** Every client-side discovery query backed by one agent plugin. */
+  agentModelsForAgent: (agentRef: string) => ["agentModels", agentRef] as const,
 };
-
-/** Extracts the identifier a warm target is scoped to, for cache-key purposes. */
-function targetId(target: WarmSessionTarget | null): string {
-  if (target === null) return "";
-  return target.workspaceId;
-}
 
 export type WorkspaceQueryKey =
   | readonly ["projects"]

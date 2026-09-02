@@ -102,16 +102,14 @@ export interface MockClientState {
   runtimeLogLevel: RuntimeLogLevelStateResponse;
   workflows: MockWorkflowRecord[];
   workflowRuns: MockWorkflowRunRecord[];
-  /** Warm sessions handed out but not yet attached, keyed by session id. */
-  warmSessions: Map<string, { agentRef: string; workspaceId: string }>;
-  /** What every warm and persisted session reports as its configuration. */
+  /** What every started session reports as its configuration. */
   configOptions: acp.SessionConfigOption[];
   /**
-   * Per-CLI warm-session config overrides for tests. A CLI mapped to `null`
-   * reports no model catalog (warm failed); a CLI mapped to an array uses
+   * Per-CLI model discovery overrides for tests. A CLI mapped to `null`
+   * reports no model catalog; a CLI mapped to an array uses
    * those options instead of the shared `configOptions`.
    */
-  warmModelsByCli?: Partial<Record<string, acp.SessionConfigOption[] | null>>;
+  agentModelsByCli?: Partial<Record<string, acp.SessionConfigOption[] | null>>;
 }
 
 /**
@@ -180,7 +178,6 @@ export function createMockClientState(): MockClientState {
     },
     workflows: [],
     workflowRuns: [],
-    warmSessions: new Map(),
     configOptions: [
       {
         id: "model",
@@ -383,44 +380,31 @@ export function createMockClient(state: MockClientState): ContractsClient {
       get: async (req) => ({
         session: state.sessions.find((s) => s.id === req.sessionId)!,
       }),
-      warm: async (req) => {
-        const sessionId = nextId(
-          "s",
-          state.sessions.length + state.warmSessions.size,
+      start: async (req) => {
+        const sessionId = nextId("s", state.sessions.length);
+        const perCli = state.agentModelsByCli?.[req.agentRef];
+        const configOptions = structuredClone(
+          perCli === undefined ? state.configOptions : (perCli ?? []),
         );
-        const workspaceId = req.target.workspaceId;
-        state.warmSessions.set(sessionId, {
-          agentRef: req.agentRef,
-          workspaceId,
-        });
-        const perCli = state.warmModelsByCli?.[req.agentRef];
-        return {
-          sessionId,
-          workspaceId,
-          // A CLI mapped to null reports an empty catalog, which is how the
-          // contract expresses "no models" after a failed warm handshake.
-          configOptions:
-            perCli === undefined ? state.configOptions : (perCli ?? []),
-        };
-      },
-      setConfig: async () => ({ configOptions: state.configOptions }),
-      attach: async (req) => {
+        if (req.model !== null) {
+          const option = configOptions.find(
+            (candidate) =>
+              candidate.type === "select" && candidate.category === "model",
+          );
+          if (option?.type === "select") option.currentValue = req.model;
+        }
         const session: Session = {
-          id: req.sessionId,
-          workspaceId:
-            state.warmSessions.get(req.sessionId)?.workspaceId ??
-            req.workspaceId,
-          agentRef:
-            state.warmSessions.get(req.sessionId)?.agentRef ??
-            "ora-space.opencode",
+          id: sessionId,
+          workspaceId: req.workspaceId,
+          agentRef: req.agentRef,
           status: "running",
           title: null,
           historyState: { type: "writable" },
         };
-        state.warmSessions.delete(req.sessionId);
         state.sessions.push(session);
-        return { session, availableCommands: [] };
+        return { session, availableCommands: [], configOptions };
       },
+      setConfig: async () => ({ configOptions: state.configOptions }),
       switchAgent: async (req) => {
         const session = state.sessions.find(
           (candidate) => candidate.id === req.sessionId,
@@ -483,6 +467,33 @@ export function createMockClient(state: MockClientState): ContractsClient {
     },
     agentRuntime: {
       getStatus: async () => ({ statuses: [...state.agentRuntimeStatuses] }),
+      listModels: async (req) => {
+        const options = state.agentModelsByCli?.[req.agentRef];
+        const configOptions =
+          options === undefined ? state.configOptions : options;
+        if (configOptions === null) return { models: [] };
+        const selector = configOptions.find(
+          (option) => option.type === "select" && option.category === "model",
+        );
+        if (selector?.type !== "select") return { models: [] };
+        return {
+          models: selector.options.flatMap((entry) =>
+            "group" in entry
+              ? entry.options.map((option) => ({
+                  id: option.value,
+                  displayName: option.name,
+                  default: option.value === selector.currentValue,
+                }))
+              : [
+                  {
+                    id: entry.value,
+                    displayName: entry.name,
+                    default: entry.value === selector.currentValue,
+                  },
+                ],
+          ),
+        };
+      },
     },
     plugin: {
       listInstalled: async () => ({ plugins: [...state.installedPlugins] }),

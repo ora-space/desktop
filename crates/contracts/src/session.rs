@@ -55,6 +55,7 @@ pub struct AgentModel {
 #[ts(export_to = "session.ts")]
 pub struct ListAgentModelsRequest {
     pub agent_ref: AgentRef,
+    pub workspace_id: String,
 }
 
 /// Returns the models one agent advertises outside any session.
@@ -120,48 +121,7 @@ pub struct Session {
     pub history_state: SessionHistoryState,
 }
 
-/// Selects the Workspace one warm session is created against.
-///
-/// Direct chats use the project's persisted main Workspace, so a warm request never
-/// carries a project-only fallback that would need to be converted into an implicit owner.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub enum WarmSessionTarget {
-    Workspace {
-        #[serde(rename = "workspaceId")]
-        workspace_id: String,
-    },
-}
-
-/// Requests the reusable warm provider session backing one chat surface.
-///
-/// The request carries no cwd: the backend derives it from `target` on every
-/// call, so a worktree that moved or was recreated invalidates the warm entry
-/// instead of silently addressing a stale directory.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct WarmSessionRequest {
-    pub target: WarmSessionTarget,
-    pub agent_ref: AgentRef,
-}
-
-/// Returns the warm session identifier together with the agent's current configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct WarmSessionResponse {
-    /// The final Ora session id. It is not persisted until `attachSession`
-    /// succeeds, so `getSession` and `listSessions` do not report it yet.
-    pub session_id: String,
-    /// The Workspace the backend resolved for this warm provider session.
-    pub workspace_id: String,
-    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
-    pub config_options: Vec<SessionConfigOption>,
-}
-
-/// Sets one selectable configuration option on a warm or persisted session.
+/// Sets one selectable configuration option on a persisted session.
 ///
 /// `value` is the chosen option's value id. Only id-valued options are
 /// expressible because Ora does not advertise the boolean config-option client
@@ -184,23 +144,27 @@ pub struct SetSessionConfigResponse {
     pub config_options: Vec<SessionConfigOption>,
 }
 
-/// Binds one warm session to its owning Workspace and persists the Ora record.
+/// Creates and persists one provider-backed session when the user first sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct AttachSessionRequest {
-    pub session_id: String,
+pub struct StartSessionRequest {
     pub workspace_id: String,
+    pub agent_ref: AgentRef,
+    /// The model value selected before a provider session existed.
+    pub model: Option<String>,
 }
 
-/// Returns the newly persisted session payload.
+/// Returns the newly persisted session and the authoritative handshake state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct AttachSessionResponse {
+pub struct StartSessionResponse {
     pub session: Session,
     #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").AvailableCommand>")]
     pub available_commands: Vec<AvailableCommand>,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// Identifies which session to fetch.
@@ -380,6 +344,8 @@ pub struct StopSessionResponse {
 pub struct SwitchSessionAgentRequest {
     pub session_id: String,
     pub agent_ref: AgentRef,
+    /// The model selected for the incoming agent before its session existed.
+    pub model: Option<String>,
 }
 
 /// Returns the session rebound to its new agent.
@@ -467,13 +433,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     SwitchSessionAgentResponse::export(config)?;
     ResumeSessionHistoryRequest::export(config)?;
     ResumeSessionHistoryResponse::export(config)?;
-    WarmSessionTarget::export(config)?;
-    WarmSessionRequest::export(config)?;
-    WarmSessionResponse::export(config)?;
     SetSessionConfigRequest::export(config)?;
     SetSessionConfigResponse::export(config)?;
-    AttachSessionRequest::export(config)?;
-    AttachSessionResponse::export(config)?;
+    StartSessionRequest::export(config)?;
+    StartSessionResponse::export(config)?;
     GetSessionRequest::export(config)?;
     GetSessionResponse::export(config)?;
     ListSessionsRequest::export(config)?;

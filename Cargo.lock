@@ -3243,6 +3243,7 @@ dependencies = [
  "ora-backend",
  "ora-contracts",
  "ora-db",
+ "ora-logging",
  "ora-plugin-protocol",
  "pretty_assertions",
  "serde",

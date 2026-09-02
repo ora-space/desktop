@@ -88,12 +88,10 @@ export function createContractsClient(
         executeOperation("deleteTask", request, transport, options),
     },
     session: {
-      warm: (request, options) =>
-        executeOperation("warmSession", request, transport, options),
+      start: (request, options) =>
+        executeOperation("startSession", request, transport, options),
       setConfig: (request, options) =>
         executeOperation("setSessionConfig", request, transport, options),
-      attach: (request, options) =>
-        executeOperation("attachSession", request, transport, options),
       get: (request, options) =>
         executeOperation("getSession", request, transport, options),
       list: (request, options) =>
@@ -129,6 +127,8 @@ export function createContractsClient(
     agentRuntime: {
       getStatus: (request, options) =>
         executeOperation("getAgentRuntimeStatus", request, transport, options),
+      listModels: (request, options) =>
+        executeOperation("listAgentModels", request, transport, options),
     },
     skill: {
       create: (request, options) =>

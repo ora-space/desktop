@@ -1,26 +1,31 @@
 mod actor;
+mod attach;
 mod connection;
 mod events;
 mod handoff;
 mod history;
+mod load;
 pub(crate) mod plugin_agent;
 mod replay;
 mod restart_circuit;
 mod routing;
 mod scheduling;
 mod session_followers;
+mod start;
 mod stream;
 mod support;
 mod title_acquisition;
-mod warm;
-mod warm_pool;
 
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod load_tests;
+#[cfg(test)]
 mod replaced_sessions_tests;
 
 use crate::app_event::AppEventPublisher;
+use attach::RebuiltBinding;
+use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
@@ -36,15 +41,14 @@ use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
-use ora_application::{Clock, SessionRepository};
+use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::{
-    AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest,
-    CancelSessionPromptResponse, DeleteSessionResponse, LoadSessionEvent, LoadSessionRequest,
-    PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
-    SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse,
-    SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
-    WarmSessionTarget,
+    CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionResponse,
+    LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest,
+    RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest,
+    ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse,
+    StartSessionRequest, StartSessionResponse, StopSessionRequest, StopSessionResponse,
+    SwitchSessionAgentRequest, SwitchSessionAgentResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
@@ -62,8 +66,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use warm::WarmSessions;
-use warm_pool::WarmKey;
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -71,23 +73,11 @@ const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
 const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Identifies the internal owner of a warm provider session.
-///
-/// Interactive sessions are single-window Desktop state. Workflow nodes keep
-/// their run and node identity so concurrent graph branches cannot claim one
-/// another's configured provider session without exposing that ownership in a
-/// frontend contract.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum WarmOwner {
-    Interactive,
-    WorkflowNode { run_id: String, node_id: String },
-}
-
 /// Repairs live sessions after the agent process behind them was replaced.
 ///
 /// Effect coordination restarts an Agent plugin's process so it re-reads a materialized surface,
 /// which silently invalidates every provider-side session that process was holding. Implementations
-/// detach those sessions so the next interaction re-establishes them through the ordinary load path
+/// detach those sessions so the next prompt re-establishes them through the ordinary attach path
 /// rather than prompting against an id the fresh process cannot resolve.
 ///
 /// The Effect worker depends on this capability rather than on the whole agent runtime, so a
@@ -119,6 +109,14 @@ impl ReplacedAgentSessions for AgentRuntimeManager {
             );
             return;
         };
+        // The replacement is also the one event that can change what the plugin would answer for
+        // this agent, and Ora keeps no model list of its own to correct. Published before the
+        // actor sweep so a poisoned registry cannot swallow it: the two are independent repairs.
+        self.inner
+            .app_events
+            .try_publish(ora_contracts::AppEvent::AgentModelsInvalidated {
+                agent_ref: agent.to_string(),
+            });
         let Ok(actors) = self.inner.actors.read() else {
             // A poisoned registry means an actor panicked; whatever it held is not trustworthy,
             // and the next interaction rebuilds the session from durable state regardless.
@@ -147,7 +145,6 @@ struct ManagerInner {
     next_operation_id: AtomicU64,
     connections: ConnectionSupervisors,
     sessions_root: PathBuf,
-    warm: WarmSessions,
     clock: SystemClock,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
@@ -216,12 +213,15 @@ struct RuntimeActor {
     commands: mpsc::UnboundedReceiver<RuntimeCommand>,
     recorder: SessionRecorder,
     sessions_root: PathBuf,
-    /// Whether the current provider binding still has to be told the history.
+    /// Opens provider sessions when a prompt needs one this actor does not hold.
+    connections: ConnectionSupervisors,
+    /// Whether the current provider binding still has to be told the conversation.
     ///
-    /// Switching agents rebinds eagerly but injects lazily, so this is answered
-    /// from the record when the actor opens and cleared once a prompt carries the
-    /// transcript across.
-    handoff_pending: bool,
+    /// A binding is established eagerly but told lazily, so this is answered from the record when
+    /// the actor opens and settled once a prompt carries the transcript across.
+    handoff: HandoffDebt,
+    /// A provider session built to replace one that could not be restored, not yet in the row.
+    rebuilt_binding: Option<RebuiltBinding>,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
     title_acquisition: TitleAcquisition,
@@ -239,6 +239,13 @@ struct OpenedRecorder {
     /// A history Ora cannot read is one it cannot safely extend: appending
     /// without knowing the positions already used would overwrite them.
     failure: Option<String>,
+}
+
+/// Controls whether a newly persisted session is visible before an owning workflow row commits.
+#[derive(Clone, Copy)]
+enum SessionVisibility {
+    Published,
+    UnpublishedWorkflow,
 }
 
 /// Groups the fixed dependencies the agent runtime is constructed from.
@@ -277,7 +284,6 @@ impl AgentRuntimeManager {
                 unpublished_workflow_sessions: RwLock::new(HashSet::new()),
                 lifecycle: tokio::sync::Mutex::new(()),
                 next_operation_id: AtomicU64::new(1),
-                warm: WarmSessions::new(connections.clone(), clock),
                 connections,
                 sessions_root,
                 clock,
@@ -288,40 +294,116 @@ impl AgentRuntimeManager {
         })
     }
 
-    /// Returns the warm provider session backing one chat surface.
-    ///
-    /// This deliberately avoids the lifecycle lock. Opening a chat surface is a
-    /// navigation-frequency operation now that every surface warms a session,
-    /// and serializing it against prompts would make browsing the workspace stall
-    /// unrelated conversations.
-    pub(crate) async fn warm_session(
+    /// Creates, configures, persists, and binds one session on first use.
+    pub(crate) async fn start_session(
         &self,
-        request: WarmSessionRequest,
-    ) -> Result<WarmSessionResponse, BackendError> {
-        self.warm_session_for_owner(request, WarmOwner::Interactive)
+        request: StartSessionRequest,
+    ) -> Result<StartSessionResponse, BackendError> {
+        self.start_session_with_visibility(request, SessionVisibility::Published)
             .await
     }
 
-    /// Returns a warm provider session for an explicitly owned internal workflow surface.
-    pub(crate) async fn warm_session_for_owner(
+    /// Starts a workflow-owned session while keeping it out of ordinary list snapshots.
+    pub(crate) async fn start_workflow_node_session(
         &self,
-        request: WarmSessionRequest,
-        owner: WarmOwner,
-    ) -> Result<WarmSessionResponse, BackendError> {
+        request: StartSessionRequest,
+    ) -> Result<StartSessionResponse, BackendError> {
+        self.start_session_with_visibility(request, SessionVisibility::UnpublishedWorkflow)
+            .await
+    }
+
+    /// Runs the only path allowed to create and persist a provider session.
+    async fn start_session_with_visibility(
+        &self,
+        request: StartSessionRequest,
+        visibility: SessionVisibility,
+    ) -> Result<StartSessionResponse, BackendError> {
+        let workspace_id = WorkspaceId::new(request.workspace_id);
         let agent_ref = domain_agent_ref(request.agent_ref)?;
-        let workspace_id = self.resolve_warm_workspace_id(&request.target)?;
-        let cwd = self.resolve_warm_cwd(&request.target)?;
-        let key = WarmKey {
-            target: request.target,
-            agent_ref,
-            owner,
-        };
-        let (session_id, config_options) = self.inner.warm.warm(key, cwd).await?;
-        Ok(WarmSessionResponse {
-            session_id: session_id.to_string(),
-            workspace_id: workspace_id.to_string(),
+        let cwd = self.workspace_cwd(&workspace_id)?;
+        let session_id = UuidSessionIdGenerator::new().generate_session_id();
+        let start::PendingProviderSession {
+            release,
+            agent_session_id,
+            list_session_supported,
+            channel,
+            available_commands,
             config_options,
-        })
+        } = self
+            .create_provider_session(&session_id, &agent_ref, &cwd, request.model.as_deref())
+            .await?;
+        let mut persisted = false;
+        let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
+
+        if unpublished {
+            self.unpublished_workflow_sessions_write()?
+                .insert(session_id.clone());
+        }
+        let result = async {
+            let _lifecycle = self.inner.lifecycle.lock().await;
+            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
+            let now = self.inner.clock.now_timestamp_millis();
+            let session = Session::new(
+                session_id.clone(),
+                workspace_id,
+                agent_ref,
+                agent_session_id,
+                SessionStatus::Running,
+                AuditFields::new(now, now, false),
+            );
+            let mut opened = self.open_recorder(&session)?;
+            let outcome = match opened.failure.take() {
+                Some(reason) => RecordOutcome::JustFailed { reason },
+                None => opened.recorder.record_meta(&session, &cwd),
+            };
+            SqliteSessionRepository::new(self.inner.pool.clone())
+                .create_session(session.clone())
+                .map_err(|source| {
+                    BackendError::internal("failed to persist agent CLI session", source)
+                })?;
+            persisted = true;
+            let session = self.settle_record(session, outcome);
+            let title_acquisition = TitleAcquisition::awaiting_first_prompt(list_session_supported);
+            self.insert_actor(
+                session.clone(),
+                ActorSetup {
+                    cwd,
+                    connection: supervisor,
+                    channel: Some(channel),
+                    recorder: opened.recorder,
+                    handoff: HandoffDebt::Settled,
+                    title_acquisition,
+                },
+            )?;
+            Ok::<_, BackendError>(StartSessionResponse {
+                session: contract_session(session),
+                available_commands,
+                config_options,
+            })
+        }
+        .await;
+
+        match result {
+            Ok(response) => {
+                release.commit();
+                Ok(response)
+            }
+            Err(error) => {
+                if persisted {
+                    let _ = SqliteSessionRepository::new(self.inner.pool.clone())
+                        .soft_delete_session(&session_id, self.inner.clock.now_timestamp_millis());
+                }
+                let _ = ora_history::remove_session_history(
+                    &self.inner.sessions_root,
+                    session_id.as_ref(),
+                );
+                if unpublished {
+                    self.unpublished_workflow_sessions_write()?
+                        .remove(&session_id);
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Brings the supervised agent set in line with the plugin packages installed right now.
@@ -335,21 +417,22 @@ impl AgentRuntimeManager {
 
     /// Reports the models one agent advertises before any session exists.
     ///
-    /// The list is whatever the agent published when its current connection came up. An agent
-    /// that has no pre-session model list returns an empty one rather than an error, because
-    /// "this agent does not advertise models" is a normal answer for built-in CLIs.
-    pub(crate) fn agent_models(
+    /// Discovery is delegated to the plugin on demand and is never cached by Ora.
+    pub(crate) async fn agent_models(
         &self,
         request: ora_contracts::ListAgentModelsRequest,
     ) -> Result<ora_contracts::ListAgentModelsResponse, BackendError> {
+        let cwd = self.workspace_cwd(&WorkspaceId::new(request.workspace_id))?;
         let supervisor = self
             .inner
             .connections
             .for_agent(&domain_agent_ref(request.agent_ref)?)?;
         let connection = supervisor.current()?;
+        let models = plugin_agent::list_models(&connection.runtime, &cwd)
+            .await
+            .map_err(|error| runtime_internal("agent_model_discovery_failed", error.to_string()))?;
         Ok(ora_contracts::ListAgentModelsResponse {
-            models: connection
-                .models
+            models: models
                 .iter()
                 .map(|model| ora_contracts::AgentModel {
                     id: model.id.clone(),
@@ -384,32 +467,13 @@ impl AgentRuntimeManager {
         }
     }
 
-    /// Discards the warm sessions belonging to chat surfaces that were deleted.
-    ///
-    /// Called when a Task or project goes away. Those surfaces can never be
-    /// requested again, so this is the only point at which their provider
-    /// sessions are returned to the agent.
-    pub(crate) async fn discard_warm_sessions(&self, targets: &[WarmSessionTarget]) {
-        self.inner.warm.discard(targets).await;
-    }
-
-    /// Applies one configuration option to a warm or persisted session.
+    /// Applies one configuration option to a persisted session.
     pub(crate) async fn set_session_config(
         &self,
         request: SetSessionConfigRequest,
     ) -> Result<SetSessionConfigResponse, BackendError> {
-        let session_id = SessionId::new(request.session_id.as_str());
         let config_id = SessionConfigId::new(request.config_id);
         let value = SessionConfigOptionValue::value_id(request.value);
-        if let Some(result) = self
-            .inner
-            .warm
-            .set_config(&session_id, config_id.clone(), value.clone())
-            .await
-        {
-            return result.map(|config_options| SetSessionConfigResponse { config_options });
-        }
-        // Not warm, so this is a persisted session whose actor owns its stream.
         let session = self.find_session(&request.session_id)?;
         if let Some(handle) = self.lookup_actor(&session.id)? {
             let (response, acknowledged) = oneshot::channel();
@@ -421,7 +485,7 @@ impl AgentRuntimeManager {
         }
         // The provider request remains direct because it is independent of the actor's
         // serialized prompt/load stream; only the title-polling attempt needs preemption.
-        let config_options = warm::request_config_option(
+        let config_options = start::request_config_option(
             &self.inner.connections,
             &session.agent_ref,
             &session.agent_session_id,
@@ -450,102 +514,6 @@ impl AgentRuntimeManager {
             .send(RuntimeCommand::AdoptUserTitle { title, response })
             .map_err(|_error| runtime_unavailable())?;
         acknowledged.await.map_err(|_error| runtime_unavailable())
-    }
-
-    /// Persists one warm session against the Workspace that owns it.
-    ///
-    /// `warm.take` only reserves the warm session; it stays in the pool until
-    /// `commit` below, which runs on the one path where the session is durably
-    /// persisted. Every other way out of this function — an error, or a caller
-    /// dropped mid-await — drops the reservation instead, which returns the
-    /// entry to the pool rather than stranding the client's id or pinning the
-    /// provider session behind it.
-    pub(crate) async fn attach_session(
-        &self,
-        request: AttachSessionRequest,
-    ) -> Result<AttachSessionResponse, BackendError> {
-        let session_id = SessionId::new(request.session_id.as_str());
-        let workspace_id = WorkspaceId::new(request.workspace_id);
-        let cwd = self.workspace_cwd(&workspace_id)?;
-        // The provider handshake a rebuild may need runs before the lifecycle
-        // lock is taken, so attaching never blocks other sessions on the network.
-        let reservation = self.inner.warm.take(&session_id, &cwd).await?;
-        let attachment = reservation.attachment();
-        let agent_ref = attachment.agent_ref.clone();
-        let agent_session_id = attachment.agent_session_id.clone();
-        let session_cwd = attachment.cwd.clone();
-        let available_commands = attachment.available_commands.clone();
-
-        let response = async {
-            let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
-            let channel =
-                supervisor.open_session_channel(&agent_session_id, session_id.as_ref())?;
-            let now = self.inner.clock.now_timestamp_millis();
-            let session = Session::new(
-                session_id.clone(),
-                workspace_id,
-                agent_ref,
-                agent_session_id,
-                SessionStatus::Running,
-                AuditFields::new(now, now, false),
-            );
-            SqliteSessionRepository::new(self.inner.pool.clone())
-                .create_session(session.clone())
-                .map_err(|source| {
-                    BackendError::internal("failed to persist agent CLI session", source)
-                })?;
-            ora_debug!(
-                session_id = %session.id,
-                agent_session_id = %session.agent_session_id,
-                "warm session attached",
-            );
-            // The header opens the file this conversation owns for the rest of its
-            // life, so it is written before the session can be prompted.
-            let mut opened = self.open_recorder(&session)?;
-            let outcome = match opened.failure.take() {
-                Some(reason) => RecordOutcome::JustFailed { reason },
-                None => opened.recorder.record_meta(&session, &session_cwd),
-            };
-            let session = self.settle_record(session, outcome);
-            let title_acquisition =
-                TitleAcquisition::awaiting_first_prompt(channel.connection.list_session_supported);
-            self.insert_actor(
-                session.clone(),
-                ActorSetup {
-                    cwd: session_cwd,
-                    connection: supervisor,
-                    channel: Some(channel),
-                    recorder: opened.recorder,
-                    handoff_pending: false,
-                    title_acquisition,
-                },
-            )?;
-            Ok::<_, BackendError>(AttachSessionResponse {
-                session: contract_session(session),
-                available_commands,
-            })
-        }
-        .await?;
-
-        reservation.commit();
-        Ok(response)
-    }
-
-    /// Attaches a workflow node Session while keeping it out of ordinary list snapshots.
-    pub(crate) async fn attach_workflow_node_session(
-        &self,
-        request: AttachSessionRequest,
-    ) -> Result<AttachSessionResponse, BackendError> {
-        let session_id = SessionId::new(request.session_id.as_str());
-        self.unpublished_workflow_sessions_write()?
-            .insert(session_id.clone());
-        let result = self.attach_session(request).await;
-        if result.is_err() {
-            self.unpublished_workflow_sessions_write()?
-                .remove(&session_id);
-        }
-        result
     }
 
     /// Captures workflow Sessions whose durable node-run binding is not visible yet.
@@ -590,14 +558,8 @@ impl AgentRuntimeManager {
 
     /// Moves one existing conversation onto a different agent CLI.
     ///
-    /// The binding comes from the warm pool, where the chosen CLI has been
-    /// sitting since the picker showed its models. Claiming it rather than
-    /// handshaking here is what lets the conversation land on the very session
-    /// the user configured, and it means the common case costs no round trip at
-    /// all. Like attaching, the claim runs before the lifecycle lock so a CLI
-    /// that is slow to answer never stalls unrelated sessions.
-    ///
-    /// Nothing is torn down until the claim succeeds, so a CLI that is
+    /// The incoming provider session is fully created before the lifecycle lock is taken.
+    /// Nothing is torn down until that handshake succeeds, so a CLI that is
     /// unavailable leaves the conversation exactly where it was. Only the binding
     /// changes: the identifier, the task, and the recorded history all continue.
     pub(crate) async fn switch_agent(
@@ -606,9 +568,6 @@ impl AgentRuntimeManager {
     ) -> Result<SwitchSessionAgentResponse, BackendError> {
         let session = self.find_session(&request.session_id)?;
         let target = domain_agent_ref(request.agent_ref)?;
-        // Refused before anything is claimed. Warming the CLI a session already
-        // runs on would build a second provider session only to replace the
-        // current binding with an indistinguishable one.
         if target == session.agent_ref {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,
@@ -620,27 +579,16 @@ impl AgentRuntimeManager {
             return Err(history_degraded());
         }
         let cwd = self.workspace_cwd(&session.workspace_id)?;
-        // Keyed by Workspace, the same way the picker warmed it: one warm session per
-        // chat surface and CLI, shared by every session under that Task rather
-        // than one per conversation.
-        let reservation = self
-            .inner
-            .warm
-            .claim(
-                WarmKey {
-                    target: WarmSessionTarget::Workspace {
-                        workspace_id: session.workspace_id.to_string(),
-                    },
-                    agent_ref: target.clone(),
-                    owner: WarmOwner::Interactive,
-                },
-                &cwd,
-            )
+        let start::PendingProviderSession {
+            release,
+            agent_session_id,
+            channel,
+            available_commands,
+            config_options,
+            ..
+        } = self
+            .create_provider_session(&session.id, &target, &cwd, request.model.as_deref())
             .await?;
-        let attachment = reservation.attachment();
-        let agent_session_id = attachment.agent_session_id.clone();
-        let available_commands = attachment.available_commands.clone();
-        let config_options = attachment.config_options.clone();
         // Only now is the move certain, so the old binding can be released. Its
         // context is not reusable afterwards: work done on the new agent would be
         // missing from it, and switching back re-injects the transcript instead.
@@ -649,8 +597,6 @@ impl AgentRuntimeManager {
         let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
             let supervisor = self.inner.connections.for_agent(&target)?;
-            let channel =
-                supervisor.open_session_channel(&agent_session_id, session.id.as_ref())?;
             let (session, recorder) = self
                 .rebind_to_provider(&session.id, &previous, &target, &agent_session_id)
                 .await?;
@@ -662,7 +608,7 @@ impl AgentRuntimeManager {
                     channel: Some(channel),
                     recorder,
                     // The new agent knows nothing; the next prompt carries the transcript.
-                    handoff_pending: true,
+                    handoff: HandoffDebt::Recorded,
                     title_acquisition: TitleAcquisition::locked(),
                 },
             )?;
@@ -674,17 +620,11 @@ impl AgentRuntimeManager {
         }
         .await?;
 
-        reservation.commit();
+        release.commit();
         Ok(response)
     }
 
-    /// Moves one stored session onto a provider binding that already exists.
-    ///
-    /// Separate from `switch_agent` because every step here can fail *after* the
-    /// provider session was claimed, and each of those failures owes it back to
-    /// the warm pool. Keeping them in one fallible region gives the caller a
-    /// single place to release the claim — dropping its reservation — instead of
-    /// a release per `?`.
+    /// Moves one stored session onto a freshly-created provider binding.
     async fn rebind_to_provider(
         &self,
         session_id: &SessionId,
@@ -850,27 +790,6 @@ impl AgentRuntimeManager {
         }
     }
 
-    /// Derives the directory a warm session must be created against.
-    fn resolve_warm_cwd(&self, target: &WarmSessionTarget) -> Result<PathBuf, BackendError> {
-        match target {
-            WarmSessionTarget::Workspace { workspace_id } => {
-                self.workspace_cwd(&WorkspaceId::new(workspace_id.as_str()))
-            }
-        }
-    }
-
-    /// Resolves the direct Workspace identity returned alongside a warm provider session.
-    fn resolve_warm_workspace_id(
-        &self,
-        target: &WarmSessionTarget,
-    ) -> Result<WorkspaceId, BackendError> {
-        match target {
-            WarmSessionTarget::Workspace { workspace_id } => {
-                Ok(WorkspaceId::new(workspace_id.as_str()))
-            }
-        }
-    }
-
     /// Resolves a workspace's execution directory without consulting a Task projection.
     pub(crate) fn workspace_cwd(
         &self,
@@ -883,14 +802,24 @@ impl AgentRuntimeManager {
         )
     }
 
-    /// Loads one session conversation, restoring or following its provider turn as needed.
+    /// Serves one session conversation from Ora's own record, following a live turn when there is one.
+    ///
+    /// Opening a conversation never touches ACP. The transcript belongs to Ora rather than to the
+    /// agent that produced it, so a session whose plugin was uninstalled — or whose CLI cannot
+    /// start — still reads, and no provider session is created for a reader who may never send
+    /// anything. The agent is reached by the first prompt instead.
+    ///
+    /// A live actor answers its own loads: only it knows the durable cutoff and the records of a
+    /// turn still streaming, which is what lets a load hand off from disk to live without a gap.
     pub(crate) async fn load_session(
         &self,
         request: LoadSessionRequest,
     ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
         let _lifecycle = self.inner.lifecycle.lock().await;
         let session = self.find_session(&request.session_id)?;
-        let handle = self.actor_for(session)?;
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            return load::detached_replay(&self.inner.sessions_root, session.id.as_ref());
+        };
         let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
         let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (accepted_sender, accepted) = oneshot::channel();
@@ -940,9 +869,10 @@ impl AgentRuntimeManager {
         }
         let _lifecycle = self.inner.lifecycle.lock().await;
         let session = self.find_session(&request.session_id)?;
-        if session.status != SessionStatus::Running {
-            return Err(session_stopped());
-        }
+        // Lifecycle status is not a precondition: a session that has only been read holds no
+        // provider, and acquiring one is part of sending rather than something the caller has to
+        // arrange first. The actor attaches, and reports its own failure if it cannot.
+        //
         // A session whose history stopped recording refuses new turns rather than
         // producing conversation that would never be part of the record.
         if let HistoryState::Degraded { .. } = session.history_state {
@@ -1080,7 +1010,11 @@ impl AgentRuntimeManager {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),
             None => session,
         };
-        let handoff_pending = opened.handoff_pending;
+        let handoff = if opened.handoff_pending {
+            HandoffDebt::Recorded
+        } else {
+            HandoffDebt::Settled
+        };
         self.insert_actor(
             session,
             ActorSetup {
@@ -1088,7 +1022,7 @@ impl AgentRuntimeManager {
                 connection,
                 channel: None,
                 recorder: opened.recorder,
-                handoff_pending,
+                handoff,
                 title_acquisition: TitleAcquisition::disabled(),
             },
         )
@@ -1132,7 +1066,9 @@ impl AgentRuntimeManager {
                 commands: receiver,
                 recorder: setup.recorder,
                 sessions_root: self.inner.sessions_root.clone(),
-                handoff_pending: setup.handoff_pending,
+                connections: self.inner.connections.clone(),
+                handoff: setup.handoff,
+                rebuilt_binding: None,
                 scheduler: self.inner.scheduler.clone(),
                 app_events: self.inner.app_events.clone(),
                 title_acquisition: setup.title_acquisition,
@@ -1173,7 +1109,7 @@ struct ActorSetup {
     connection: ConnectionSupervisor,
     channel: Option<SessionChannel>,
     recorder: SessionRecorder,
-    handoff_pending: bool,
+    handoff: HandoffDebt,
     title_acquisition: TitleAcquisition,
 }
 

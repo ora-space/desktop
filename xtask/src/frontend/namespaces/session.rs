@@ -6,11 +6,11 @@ const NAMESPACE: &str = "session";
 
 pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
-        operation_name: "warmSession",
+        operation_name: "startSession",
         namespace: NAMESPACE,
-        member_name: "warm",
-        request_type: "WarmSessionRequest",
-        response_type: "WarmSessionResponse",
+        member_name: "start",
+        request_type: "StartSessionRequest",
+        response_type: "StartSessionResponse",
     },
     FrontendEndpoint {
         operation_name: "setSessionConfig",
@@ -18,13 +18,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "setConfig",
         request_type: "SetSessionConfigRequest",
         response_type: "SetSessionConfigResponse",
-    },
-    FrontendEndpoint {
-        operation_name: "attachSession",
-        namespace: NAMESPACE,
-        member_name: "attach",
-        request_type: "AttachSessionRequest",
-        response_type: "AttachSessionResponse",
     },
     FrontendEndpoint {
         operation_name: "getSession",

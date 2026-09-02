@@ -276,9 +276,7 @@ export function useDeleteTask() {
 /**
  * Starts an additional provider session inside an existing Workspace and selects it.
  *
- * A provider session is warmed and then persisted in one step because there is
- * no chat surface here to warm it in advance; the model can still be changed
- * from the composer once the session is selected.
+ * The model can still be changed from the composer once the session is selected.
  */
 export function useCreateSession() {
   const client = useContractsClient();
@@ -292,23 +290,14 @@ export function useCreateSession() {
       workspaceId: string;
       agentCli: string;
     }) => {
-      const warmed = await client.session.warm({
-        target: { type: "workspace", workspaceId },
+      const response = await client.session.start({
+        workspaceId,
         agentRef: agentCli,
-      });
-      const response = await client.session.attach({
-        sessionId: warmed.sessionId,
-        workspaceId: warmed.workspaceId,
-      });
-      queryClient.removeQueries({
-        queryKey: queryKeys.warmSession(
-          { type: "workspace", workspaceId: warmed.workspaceId },
-          agentCli,
-        ),
+        model: null,
       });
       chatStore
         .getState()
-        .setConfigOptions(response.session.id, warmed.configOptions);
+        .setConfigOptions(response.session.id, response.configOptions);
       return response.session;
     },
     onSuccess: (session) => {

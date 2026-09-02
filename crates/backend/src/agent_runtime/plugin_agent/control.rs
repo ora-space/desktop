@@ -4,8 +4,8 @@ use std::time::Duration;
 use ora_logging::ora_warn;
 use ora_plugin_protocol::{
     AGENT_LIST_MODELS_METHOD, AGENT_NOT_INSTALLED_CODE, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AGENT_UNUSABLE_CODE, AgentListModelsResult, AgentModel, AgentProtocol, AgentStartContext,
-    AgentStartResult, EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD,
+    AGENT_UNUSABLE_CODE, AgentListModelsParams, AgentListModelsResult, AgentModel, AgentProtocol,
+    AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD,
     EFFECT_VERIFY_READY_METHOD, PluginEffectCoordination, SUPPORTED_ACP_VERSION,
 };
 use ora_plugin_runtime::{PluginRegistration, PluginRuntime, PluginRuntimeError};
@@ -21,6 +21,8 @@ pub(crate) use ora_plugin_protocol::AGENT_ACP_METHOD;
 /// cancellation grace, because teardown must never be the reason shutdown stalls: the plugin
 /// process is ended immediately afterwards whether or not it answered.
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Model discovery may start a one-shot agent process and therefore needs a dedicated budget.
+const AGENT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Reports why one agent plugin could not be brought up or queried.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -161,8 +163,19 @@ pub(crate) async fn stop_agent(runtime: &PluginRuntime, plugin_id: &str) {
 /// Reads the models one plugin offers for the agent and model pickers.
 pub(crate) async fn list_models(
     runtime: &PluginRuntime,
+    cwd: &Path,
 ) -> Result<Vec<PluginAgentModel>, PluginAgentError> {
-    let result = runtime.invoke(AGENT_LIST_MODELS_METHOD, json!({})).await?;
+    let params = serde_json::to_value(AgentListModelsParams {
+        cwd: cwd.to_path_buf(),
+    })
+    .map_err(|error| PluginAgentError::Failed(error.to_string()))?;
+    let result = runtime
+        .invoke_with_timeout(
+            AGENT_LIST_MODELS_METHOD,
+            params,
+            AGENT_MODEL_DISCOVERY_TIMEOUT,
+        )
+        .await?;
     let result: AgentListModelsResult = serde_json::from_value(result).map_err(|error| {
         PluginAgentError::Failed(format!(
             "invalid {AGENT_LIST_MODELS_METHOD} result: {error}"

@@ -9,7 +9,7 @@ import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourc
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
-import type { AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
+import type { CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StartSessionRequest, StartSessionResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
@@ -43,9 +43,8 @@ export type RequestByOperation = {
   updateTask: UpdateTaskRequest;
   deleteTask: DeleteTaskRequest;
   getTaskWorkspace: GetTaskWorkspaceRequest;
-  warmSession: WarmSessionRequest;
+  startSession: StartSessionRequest;
   setSessionConfig: SetSessionConfigRequest;
-  attachSession: AttachSessionRequest;
   getSession: GetSessionRequest;
   listSessions: ListSessionsRequest;
   loadSession: LoadSessionRequest;
@@ -58,6 +57,7 @@ export type RequestByOperation = {
   deleteSession: DeleteSessionRequest;
   renameSession: RenameSessionRequest;
   getAgentRuntimeStatus: GetAgentRuntimeStatusRequest;
+  listAgentModels: ListAgentModelsRequest;
   watchAppEvents: WatchAppEventsRequest;
   createSkill: CreateSkillRequest;
   getSkill: GetSkillRequest;
@@ -153,9 +153,8 @@ export type ResponseByOperation = {
   updateTask: UpdateTaskResponse;
   deleteTask: DeleteTaskResponse;
   getTaskWorkspace: GetTaskWorkspaceResponse;
-  warmSession: WarmSessionResponse;
+  startSession: StartSessionResponse;
   setSessionConfig: SetSessionConfigResponse;
-  attachSession: AttachSessionResponse;
   getSession: GetSessionResponse;
   listSessions: ListSessionsResponse;
   loadSession: LoadSessionEvent;
@@ -168,6 +167,7 @@ export type ResponseByOperation = {
   deleteSession: DeleteSessionResponse;
   renameSession: RenameSessionResponse;
   getAgentRuntimeStatus: GetAgentRuntimeStatusResponse;
+  listAgentModels: ListAgentModelsResponse;
   watchAppEvents: AppEvent;
   createSkill: CreateSkillResponse;
   getSkill: GetSkillResponse;
@@ -377,12 +377,12 @@ export const endpoints = {
     responseType: "GetTaskWorkspaceResponse",
     responseMode: "unary",
   },
-  warmSession: {
-    operationName: "warmSession",
+  startSession: {
+    operationName: "startSession",
     namespace: "session",
-    memberName: "warm",
-    requestType: "WarmSessionRequest",
-    responseType: "WarmSessionResponse",
+    memberName: "start",
+    requestType: "StartSessionRequest",
+    responseType: "StartSessionResponse",
     responseMode: "unary",
   },
   setSessionConfig: {
@@ -391,14 +391,6 @@ export const endpoints = {
     memberName: "setConfig",
     requestType: "SetSessionConfigRequest",
     responseType: "SetSessionConfigResponse",
-    responseMode: "unary",
-  },
-  attachSession: {
-    operationName: "attachSession",
-    namespace: "session",
-    memberName: "attach",
-    requestType: "AttachSessionRequest",
-    responseType: "AttachSessionResponse",
     responseMode: "unary",
   },
   getSession: {
@@ -495,6 +487,14 @@ export const endpoints = {
     memberName: "getStatus",
     requestType: "GetAgentRuntimeStatusRequest",
     responseType: "GetAgentRuntimeStatusResponse",
+    responseMode: "unary",
+  },
+  listAgentModels: {
+    operationName: "listAgentModels",
+    namespace: "agentRuntime",
+    memberName: "listModels",
+    requestType: "ListAgentModelsRequest",
+    responseType: "ListAgentModelsResponse",
     responseMode: "unary",
   },
   watchAppEvents: {

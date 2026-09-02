@@ -49,7 +49,7 @@ The layers remain narrow:
 
 ## Project checkout files (draft / no task)
 
-When a chat has a selected project but no task yet (blank or draft composer), Files panel Explorer/Search and `@` file mentions resolve against the **project checkout root** instead of a task worktree. The root is the same `resolve_project_cwd` path used for warm sessions and for tasks created in `project_root` mode on first send.
+When a chat has a selected project but no task yet (blank or draft composer), Files panel Explorer/Search and `@` file mentions resolve against the **project checkout root** instead of a task worktree. The same main Workspace supplies the working directory used for model discovery and first-send session creation.
 
 These operations reuse the same `ora-fs` list/search/read bounds and relative-path rules as the task APIs. Live watching uses `watchProject` against the project checkout the same way `watchWorkspace` watches a task worktree. When both `taskId` and `projectId` are present, Files and the composer prefer the task worktree so linked-worktree checkouts stay authoritative.
 

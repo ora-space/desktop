@@ -44,8 +44,8 @@ export interface SendMessageRequest {
    */
   agentText?: string;
   /**
-   * The session to stream into. Always known before sending, because a chat
-   * surface warms its session when it opens.
+   * The session to stream into. Always known before sending: a surface with no
+   * session yet creates one first and streams into the id that returns.
    */
   oraSessionId: string;
   /**
@@ -59,7 +59,7 @@ export interface SendMessageRequest {
   prepare?: () => Promise<PreparedSession>;
 }
 
-/** What persisting a warm session revealed about the agent behind it. */
+/** What creating or rebinding the session revealed about the agent behind it. */
 export interface PreparedSession {
   availableCommands: acp.AvailableCommand[];
 }
@@ -71,8 +71,8 @@ export interface ChatState {
   /**
    * Records the configuration selectors an agent reported for one session.
    *
-   * Used to seed a warm session's options before any turn exists, from a warm
-   * or attach response the store did not issue itself.
+   * Used to seed a session's options before any turn exists, from a start or
+   * switch response the store did not issue itself.
    */
   setConfigOptions(
     oraSessionId: string,
@@ -95,8 +95,8 @@ export interface ChatState {
    *
    * The agent's reply is authoritative rather than the requested value: an agent
    * that adjusted or rejected the choice describes the result, and that is what
-   * gets recorded. Works on a warm session as well as a persisted one, so a model
-   * can be chosen before the first message is sent.
+   * gets recorded. A model chosen before any session exists is client-side
+   * intent instead, applied by the call that creates the session.
    */
   setSessionConfig(
     oraSessionId: string,
@@ -323,8 +323,8 @@ export function createChatStore(
         }
         updateConversation(set, oraSessionId, () => ({
           ...staged.finish(),
-          // An agent that reports nothing on load leaves whatever the warm
-          // session already established, rather than blanking the picker.
+          // An agent that reports nothing on load leaves whatever session
+          // creation already established, rather than blanking the picker.
           configOptions: staged.configOptions ?? previous.configOptions,
           // Replay rebuilds the transcript from the provider, which knows
           // nothing about Ora's markers, so any earlier ones cannot be placed

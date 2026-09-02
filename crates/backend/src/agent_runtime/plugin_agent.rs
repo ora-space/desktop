@@ -6,7 +6,7 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use control::{PluginAgentError, PluginAgentModel, list_models, stop_agent};
+pub(crate) use control::{PluginAgentError, list_models, stop_agent};
 pub(crate) use effect::{coordinate, reactivate, verify_ready};
 pub(crate) use transport::PluginAcpTransport;
 

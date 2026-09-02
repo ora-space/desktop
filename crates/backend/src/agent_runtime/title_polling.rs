@@ -57,12 +57,12 @@ impl RuntimeActor {
                         return;
                     };
                     match command {
-                        RuntimeCommand::Load { operation_id, events, accepted } => {
+                        RuntimeCommand::Load { events, accepted, .. } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            // run_load resolves `accepted` only after the Running
-                            // row is persisted (see actor.rs for the ordering).
-                            self.run_load(operation_id, events, accepted).await;
+                            // Reading the record cannot disturb the provider, so the channel this
+                            // poll was using goes back to the actor untouched.
+                            self.run_load(events, accepted).await;
                             return;
                         }
                         RuntimeCommand::Prompt { operation_id, prompt, record_prompt, events, accepted } => {
@@ -152,7 +152,7 @@ impl RuntimeActor {
                                 .sessions
                                 .into_iter()
                                 .find(|session| {
-                                    session.session_id.0.as_ref() == self.session.agent_session_id.as_str()
+                                    session.session_id.0.as_ref() == self.provider_session_id()
                                 })
                                 .and_then(|session| session.title)
                             {

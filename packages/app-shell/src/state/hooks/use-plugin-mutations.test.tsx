@@ -9,7 +9,6 @@ import {
   createTestQueryClient,
   renderHookWithClient,
 } from "../../test/hook-harness";
-import { useAgentModelStore } from "../stores/agent-model-store";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { queryKeys } from "./query-keys";
 import { usePluginMutations } from "./use-plugin-mutations";
@@ -18,9 +17,7 @@ const AGENT_REF = "ora-space.opencode";
 const PLUGIN_ID = `official/${AGENT_REF}`;
 const TARGET = { type: "workspace" as const, workspaceId: "workspace-1" };
 
-beforeEach(() => {
-  useAgentModelStore.setState({ known: {} });
-});
+beforeEach(() => {});
 
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
@@ -64,9 +61,8 @@ describe("usePluginMutations", () => {
       },
     };
     const queryClient = createTestQueryClient();
-    const queryKey = queryKeys.warmSession(TARGET, AGENT_REF);
+    const queryKey = queryKeys.agentModels(AGENT_REF, TARGET.workspaceId);
     const loadModels = vi.fn(async () => ({ catalog: "current" }));
-    useAgentModelStore.getState().remember(AGENT_REF, state.configOptions);
 
     const { result } = renderHookWithClient(
       () => ({
@@ -101,7 +97,6 @@ describe("usePluginMutations", () => {
         ),
       ).toBe(false),
     );
-    expect(useAgentModelStore.getState().known[AGENT_REF]).toBeUndefined();
     expect(loadModels).toHaveBeenCalledOnce();
   });
 

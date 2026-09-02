@@ -268,7 +268,7 @@ function WorkflowEditorContent({
   const locale =
     i18n.resolvedLanguage === "en-US" ? ("en-US" as const) : ("zh-CN" as const);
   /**
-   * Uses backend-managed Agent/Skill catalogs and warm-session model discovery
+   * Uses backend-managed Agent/Skill catalogs and plugin-owned model discovery
    * for node configuration while preserving demo-only tool catalogs.
    */
   const capabilities = useMemo(() => {

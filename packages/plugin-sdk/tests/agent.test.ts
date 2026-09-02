@@ -50,13 +50,17 @@ function createTransportHarness(): {
 Deno.test("serves the whole agent contract over one run loop", async () => {
   const received: JsonValue[] = [];
   const effectCalls: unknown[] = [];
+  const discoveryContexts: unknown[] = [];
   let send: AcpSender | undefined;
   const plugin = defineAgent({
     start: (_context, sender) => {
       send = sender;
     },
     stop: () => {},
-    listModels: () => [{ id: "opus", displayName: "Opus" }],
+    listModels: (context) => {
+      discoveryContexts.push(context);
+      return [{ id: "opus", displayName: "Opus" }];
+    },
     onAcp: (frame) => {
       received.push(frame);
     },
@@ -125,13 +129,16 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     jsonrpc: "2.0",
     id: 2,
     method: "agent/list_models",
-    params: {},
+    params: { cwd: "/home/user/project" },
   });
   assertEquals((await harness.responses.next()).value, {
     jsonrpc: "2.0",
     id: 2,
     result: { models: [{ id: "opus", displayName: "Opus", default: false }] },
   });
+  // Discovery happens outside any session, so the directory the host resolved is the only thing
+  // telling a plugin which project it is answering for.
+  assertEquals(discoveryContexts, [{ cwd: "/home/user/project" }]);
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
 
   const coordination = {

@@ -162,7 +162,7 @@ const plugin = defineAgent({
     send = sender; // spawn the agent CLI here and own its lifetime
   },
   stop: () => {/* terminate the CLI this plugin spawned */},
-  listModels: () => [{ id: "opus", displayName: "Opus", default: true }],
+  listModels: ({ cwd }) => [{ id: "opus", displayName: "Opus", default: true }],
   onAcp: (frame) => {/* forward the frame to the CLI */},
   effects: {
     resources: [{
@@ -199,6 +199,45 @@ when the CLI is absent — Ora treats that as expected local configuration and
 retries quietly instead of reporting a fault. Throw `AGENT_UNUSABLE` instead
 when the CLI this package ships cannot run at all: that failure repeats on every
 attempt, so Ora reports it once and stops retrying that agent.
+
+### Model discovery
+
+`listModels` is called on demand — when a user opens a chat surface or a workflow
+inspector — never as part of bringing the agent up, and it receives the
+Workspace directory the models are being listed for. Ora keeps no copy of the
+answer: the plugin owns the catalog and decides when its own cache is stale.
+Returning an empty list is a valid answer for an agent that has no models to
+offer before a session exists; its models then arrive with the session's ACP
+`config_options` instead.
+
+Most agents only expose their models through ACP session configuration, which
+means discovery has to run one. Do that on a **separate, one-shot agent
+process**, and ask the host to start it:
+
+```ts
+listModels: async ({ cwd }) => {
+  const probe = await spawnAgentProcess(processes, {
+    packageCommand: "bin/opencode",
+    command: "opencode",
+  }, { args: ["acp", "--cwd", cwd], cwd });
+  // initialize → session/new(cwd) → read config_options → end the process
+}
+```
+
+Two constraints, both load-bearing:
+
+- **Not the connection you gave Ora.** `listModels` runs before Ora's own ACP
+  `initialize`, Ora's `initialize` is what declares the client capability that
+  decides whether the agent reports a model selector at all, and any request you
+  inject returns down the same pipe Ora is reading. A second process avoids all
+  three, and its probe session disappears with it — no `session/delete` needed.
+- **Not a process you spawn yourself.** Every plugin child process goes through
+  `ora/childprocess/spawn` (`createHostProcesses`), because the host owns the OS
+  handles, terminates process trees, and reclaims everything a plugin generation
+  left behind. Discovery is the likeliest thing to fail halfway — a missing CLI,
+  a timed-out handshake — and a failure outside that ownership leaves an orphan
+  agent process behind. A sandboxed plugin also cannot compute the host path of
+  its own bundled executable, which is why `packageCommand` exists.
 
 Effect locators are always Workspace-relative; Ora supplies and validates the
 absolute Workspace root when it coordinates a mutation. The canonical Plugin ID

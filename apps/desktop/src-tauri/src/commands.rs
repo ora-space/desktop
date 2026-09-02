@@ -491,16 +491,16 @@ fn read_project_file_backend(
 // session
 // =============================================================================
 
-/// Returns the warm provider session backing one chat surface.
+/// Creates and persists a provider session when a chat first sends.
 #[tauri::command]
-pub async fn warm_session(
+pub async fn start_session(
     state: State<'_, DesktopState>,
-    request: WarmSessionRequest,
-) -> Result<WarmSessionResponse, CommandError> {
-    run_async_backend("warm_session", state.backend.warm_session(request)).await
+    request: StartSessionRequest,
+) -> Result<StartSessionResponse, CommandError> {
+    run_async_backend("start_session", state.backend.start_session(request)).await
 }
 
-/// Applies one configuration option to a warm or persisted session.
+/// Applies one configuration option to a persisted session.
 #[tauri::command]
 pub async fn set_session_config(
     state: State<'_, DesktopState>,
@@ -513,14 +513,6 @@ pub async fn set_session_config(
     .await
 }
 
-/// Persists one warm session against the Task that now owns it.
-#[tauri::command]
-pub async fn attach_session(
-    state: State<'_, DesktopState>,
-    request: AttachSessionRequest,
-) -> Result<AttachSessionResponse, CommandError> {
-    run_async_backend("attach_session", state.backend.attach_session(request)).await
-}
 backend_command!(
     get_session,
     GetSessionRequest,
@@ -886,13 +878,18 @@ backend_command!(
     "Reports the live detection status of every application-scoped CLI runtime through the shared Backend."
 );
 
-backend_command!(
-    list_agent_models,
-    ListAgentModelsRequest,
-    ListAgentModelsResponse,
-    list_agent_models,
-    "Lists the models one agent advertises outside any session through the shared Backend."
-);
+/// Lists the models one agent discovers for a workspace outside any session.
+#[tauri::command]
+pub async fn list_agent_models(
+    state: State<'_, DesktopState>,
+    request: ListAgentModelsRequest,
+) -> Result<ListAgentModelsResponse, CommandError> {
+    run_async_backend(
+        "list_agent_models",
+        state.backend.list_agent_models(request),
+    )
+    .await
+}
 
 // =============================================================================
 // skill

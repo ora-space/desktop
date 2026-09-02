@@ -22,6 +22,7 @@ chrono-tz = { workspace = true }
 ora-backend = { workspace = true }
 ora-contracts = { workspace = true }
 ora-db = { workspace = true }
+ora-logging = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 

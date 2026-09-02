@@ -14,7 +14,9 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 - Reject, at handshake time, any plugin whose registration does not cover `agent/start`,
   `agent/stop`, `agent/list_models`, and the emitted `agent/acp`.
 - Call `agent/start` and confirm the plugin will speak a protocol version this host understands.
-- Read the plugin's pre-session model list through `agent/list_models`.
+- Read the plugin's pre-session model list through `agent/list_models`, on demand and with the
+  Workspace directory the caller resolved. This is not part of bringing a connection up, and it
+  carries its own timeout because a plugin may start a one-shot process to answer it.
 - Relay ACP messages in both directions as `agent/acp` notifications.
 - Ask the plugin to stop its agent before the lifecycle ends the plugin's process tree.
 - Convert registered Workspace-relative Skill locators into host-owned Effect Resources. The

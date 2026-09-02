@@ -27,19 +27,6 @@ export type AgentRuntimeStatus = { agentRef: string; status: AgentStatus };
 export type AgentStatus = "ready" | "starting" | "unavailable" | "failing";
 
 /**
- * Binds one warm session to its owning Workspace and persists the Ora record.
- */
-export type AttachSessionRequest = { sessionId: string; workspaceId: string };
-
-/**
- * Returns the newly persisted session payload.
- */
-export type AttachSessionResponse = {
-  session: Session;
-  availableCommands: Array<import("@agentclientprotocol/sdk").AvailableCommand>;
-};
-
-/**
  * Identifies a session whose currently active prompt should be cancelled.
  */
 export type CancelSessionPromptRequest = { sessionId: string };
@@ -84,7 +71,7 @@ export type GetSessionResponse = { session: Session };
 /**
  * Requests the pre-session model list of one application-scoped agent runtime.
  */
-export type ListAgentModelsRequest = { agentRef: string };
+export type ListAgentModelsRequest = { agentRef: string; workspaceId: string };
 
 /**
  * Returns the models one agent advertises outside any session.
@@ -245,7 +232,7 @@ export type SessionPermissionRequest = {
 export type SessionStatus = "running" | "stopped";
 
 /**
- * Sets one selectable configuration option on a warm or persisted session.
+ * Sets one selectable configuration option on a persisted session.
  *
  * `value` is the chosen option's value id. Only id-valued options are
  * expressible because Ora does not advertise the boolean config-option client
@@ -261,6 +248,27 @@ export type SetSessionConfigRequest = {
  * Returns the full option set after the agent applies the change.
  */
 export type SetSessionConfigResponse = {
+  configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
+};
+
+/**
+ * Creates and persists one provider-backed session when the user first sends.
+ */
+export type StartSessionRequest = {
+  workspaceId: string;
+  agentRef: string;
+  /**
+   * The model value selected before a provider session existed.
+   */
+  model: string | null;
+};
+
+/**
+ * Returns the newly persisted session and the authoritative handshake state.
+ */
+export type StartSessionResponse = {
+  session: Session;
+  availableCommands: Array<import("@agentclientprotocol/sdk").AvailableCommand>;
   configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
 };
 
@@ -281,7 +289,14 @@ export type StopSessionResponse = { session: Session };
  * history it has accumulated. The new agent starts with no context, so Ora's
  * recorded transcript is prepended to the next prompt sent into it.
  */
-export type SwitchSessionAgentRequest = { sessionId: string; agentRef: string };
+export type SwitchSessionAgentRequest = {
+  sessionId: string;
+  agentRef: string;
+  /**
+   * The model selected for the incoming agent before its session existed.
+   */
+  model: string | null;
+};
 
 /**
  * Returns the session rebound to its new agent.
@@ -296,39 +311,3 @@ export type SwitchSessionAgentResponse = {
   availableCommands: Array<import("@agentclientprotocol/sdk").AvailableCommand>;
   configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
 };
-
-/**
- * Requests the reusable warm provider session backing one chat surface.
- *
- * The request carries no cwd: the backend derives it from `target` on every
- * call, so a worktree that moved or was recreated invalidates the warm entry
- * instead of silently addressing a stale directory.
- */
-export type WarmSessionRequest = {
-  target: WarmSessionTarget;
-  agentRef: string;
-};
-
-/**
- * Returns the warm session identifier together with the agent's current configuration.
- */
-export type WarmSessionResponse = {
-  /**
-   * The final Ora session id. It is not persisted until `attachSession`
-   * succeeds, so `getSession` and `listSessions` do not report it yet.
-   */
-  sessionId: string;
-  /**
-   * The Workspace the backend resolved for this warm provider session.
-   */
-  workspaceId: string;
-  configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
-};
-
-/**
- * Selects the Workspace one warm session is created against.
- *
- * Direct chats use the project's persisted main Workspace, so a warm request never
- * carries a project-only fallback that would need to be converted into an implicit owner.
- */
-export type WarmSessionTarget = { "type": "workspace"; workspaceId: string };

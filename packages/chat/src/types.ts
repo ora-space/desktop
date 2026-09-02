@@ -108,8 +108,9 @@ export interface SessionConversation {
   /**
    * The agent's configuration selectors (model, and anything else it offers) with
    * their current values. Session-scoped rather than turn-scoped: they arrive
-   * with the warm session, are refreshed by `config_option_update`, and are the
-   * only source for what the model picker can show.
+   * when the session is created or loaded, are refreshed by
+   * `config_option_update`, and are the only source for what the model picker
+   * can show once a session exists.
    */
   configOptions: acp.SessionConfigOption[];
   /** Model switches recorded in this thread, oldest first. */

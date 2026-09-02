@@ -1,7 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ora/ui";
-import type { AttachSessionResponse, Session } from "@ora/contracts";
+import type { Session } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -19,23 +19,24 @@ import { useSkills } from "../../state/hooks/use-skills";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
-import {
-  useWarmSession,
-  warmTargetKey,
-} from "../../state/hooks/use-warm-session";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
-import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
+import {
+  chatSurfaceTargetKey,
+  useTargetAgentCli,
+} from "../../state/hooks/use-target-agent-cli";
 import { useTargetAgentReadiness } from "../../state/hooks/use-target-agent-readiness";
-import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
+import {
+  pendingModelKey,
+  usePendingAgentStore,
+} from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { conversationKeyFor } from "../../state/stores/conversation-key";
 import { useComposerPluginSelectionStore } from "../../state/stores/composer-plugin-selection-store";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import {
-  recoverFailedDraftSend,
   DraftSendAbandonedError,
   noteComposerSendAdoptedSession,
   reparkDraftComposerContent,
@@ -80,7 +81,7 @@ function errorMessage(error: unknown): string {
  * Names the chat surface a selection is looking at.
  *
  * Neither half is enough alone: `conversationKeyFor` identifies the direct project
- * Workspace while the warm target does not change when a send adopts its
+ * Workspace while the local target does not change when a send adopts its
  * session. Together they move on exactly the two transitions that must retire a
  * pending send — navigating elsewhere, and its own conversation taking over.
  */
@@ -90,7 +91,7 @@ function chatSurfaceKeyFor(selection: {
   sessionId: string | null;
   draftId: string | null;
 }): string {
-  return `${conversationKeyFor(selection)}|${warmTargetKey(selection) ?? ""}`;
+  return `${conversationKeyFor(selection)}|${chatSurfaceTargetKey(selection) ?? ""}`;
 }
 
 /** A sent message shown before its surface has a session to key it under. */
@@ -102,7 +103,7 @@ interface PendingSend {
 
 /**
  * Builds the turn that stands in for a message sent before this surface holds a
- * warm session id.
+ * persisted session id.
  *
  * Nothing can be keyed in the chat store under a session that does not exist
  * yet, so this turn is held by the view instead and is what puts the thread
@@ -152,9 +153,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
-  // Resolved the same way the picker shows it, so the session warmed here is
-  // the one the composer and model picker are actually pointing at — a stale
-  // read would warm a different agent than what is on screen.
+  // Resolved the same way the picker shows it, so first send and model intent
+  // target the same agent even while a switch remains client-side.
   const targetAgentCli = useTargetAgentCli(selection);
   // Must resolve before the early returns below: hooks cannot sit behind them,
   // and the send gate reads it in the chat branch.
@@ -172,13 +172,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     }
   };
   const queryClient = useQueryClient();
-  // Opens the provider session for this surface before anything is sent, so the
-  // model picker has real options and the send path skips the agent handshake.
-  const { sessionId: warmSessionId, ensureSession } = useWarmSession(
-    selection,
-    targetAgentCli,
-  );
-
   // A message sent before the handshake lands has no session to be keyed under,
   // so the view carries its turn until one exists. Holding it here is what lets
   // the composer slide down and the message appear on the send itself rather
@@ -209,11 +202,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       : (task?.workspaceId ?? selectedWorkspace?.id);
   const workspaceCwdQuery = useWorkspaceCwd(selectedWorkspaceId);
   const session = sessions.find((item) => item.id === selection.sessionId);
-  // Until the first message binds this surface to a persisted session, its
-  // conversation lives under the warm one — the same id the composer and the
-  // model picker act on. Resolving it the same way here is what lets anything
-  // reported before that first send reach the screen.
-  const conversationSessionId = selection.sessionId ?? warmSessionId;
+  const conversationSessionId = selection.sessionId;
   // Memoized: WorkspaceReviewLayout keys per-scope restore off this object's
   // identity, and this component re-renders on every streaming chat update.
   const reviewContext = useMemo<WorkspaceReviewContext>(
@@ -273,12 +262,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   ]);
 
   /**
-   * Sends into the selected session, or into the warm session this surface
-   * already holds, persisting it against its Task on the way.
+   * Sends into the selected session, or creates one atomically on first send.
    *
-   * The warm session's id is final from the moment the chat surface opens, so
-   * the optimistic turn is materialized under that id directly and nothing has
-   * to be re-keyed afterwards. `displayText` is what the transcript shows while
+   * `displayText` is what the transcript shows while
    * the agent receives `agentText` (used to hide a workflow reminder); images
    * remain structured prompt blocks.
    */
@@ -307,24 +293,19 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         pendingSwitch === undefined
           ? undefined
           : async () => {
+              const modelKey = pendingModelKey(selection, pendingSwitch);
               const response = await client.session.switchAgent({
                 sessionId: session.id,
                 agentRef: pendingSwitch,
+                model: usePendingAgentStore.getState().models[modelKey] ?? null,
               });
               usePendingAgentStore.getState().clearPendingSwitch(session.id);
-              // The claim consumed the warm entry, so this surface must warm a
-              // fresh one rather than keep an id the backend no longer knows.
-              queryClient.removeQueries({
-                queryKey: queryKeys.warmSession(
-                  { type: "workspace", workspaceId: session.workspaceId },
-                  pendingSwitch,
-                ),
-              });
+              usePendingAgentStore.getState().clearPendingModel(modelKey);
               queryClient.setQueryData<Session[]>(
                 queryKeys.sessions,
                 (current) => upsertById(current, response.session),
               );
-              // Recorded against the session being moved, not the warm one, so
+              // Recorded against the session being moved, so
               // the transcript is marked where the move actually takes effect.
               chatStore
                 .getState()
@@ -359,10 +340,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     const token = (pendingSendToken.current += 1);
     const surfaceKey = chatSurfaceKeyFor(selection);
     setPendingSend({ surfaceKey, turn: draftTurn(displayText, images) });
-    let warmed: Awaited<ReturnType<typeof ensureSession>>;
+    let started: Awaited<ReturnType<typeof client.session.start>>;
     const draftIdAtSend =
       useWorkspaceSelectionStore.getState().selection.draftId;
-    // Hide × for the whole handshake — bind only happens after warm returns.
+    // Hide × for the whole handshake and persistence operation.
     if (draftIdAtSend !== null) {
       useDraftSessionsStore.getState().beginSend(draftIdAtSend);
     }
@@ -384,7 +365,16 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       throw new DraftSendAbandonedError();
     };
     try {
-      warmed = await ensureSession();
+      if (selectedWorkspaceId === undefined) {
+        throw new Error("No workspace is available for this chat");
+      }
+      const modelKey = pendingModelKey(selection, targetAgentCli);
+      started = await client.session.start({
+        workspaceId: selectedWorkspaceId,
+        agentRef: targetAgentCli,
+        model: usePendingAgentStore.getState().models[modelKey] ?? null,
+      });
+      usePendingAgentStore.getState().clearPendingModel(modelKey);
     } catch (error) {
       // The message never reached an agent, so it stays on screen carrying the
       // failure rather than disappearing with the composer's optimistic clear.
@@ -420,38 +410,34 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     // not just cosmetic: proceeding would select the session below and drag the
     // user back to a chat they had left.
     if (token !== pendingSendToken.current) {
+      await client.session.delete({ sessionId: started.session.id });
       abandonDraftSend();
       return;
     }
-    const selectionAfterWarm = useWorkspaceSelectionStore.getState().selection;
+    const selectionAfterStart = useWorkspaceSelectionStore.getState().selection;
     if (
-      chatSurfaceKeyFor(selectionAfterWarm) !== surfaceKey ||
-      selectionAfterWarm.draftId !== draftIdAtSend
+      chatSurfaceKeyFor(selectionAfterStart) !== surfaceKey ||
+      selectionAfterStart.draftId !== draftIdAtSend
     ) {
+      await client.session.delete({ sessionId: started.session.id });
       abandonDraftSend();
       return;
     }
-    if (warmed === null) {
-      setPendingSend(null);
-      endDraftSend();
-      return;
-    }
-    // Rebound as a const so the narrowing survives into `prepare` below.
-    const sessionId = warmed.sessionId;
-    const workspaceId = warmed.workspaceId;
+    const sessionId = started.session.id;
+    const workspaceId = started.session.workspaceId;
     const draftId = draftIdAtSend;
     const projectId = project.id;
     const taskId = task?.id ?? null;
-    // True once attach has written a persisted session. Failures after that
-    // belong to the live chat — rolling the draft back would yank the user onto
-    // a row removeCommitted may already have deleted.
-    let sessionAttached = false;
     try {
+      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
+        upsertById(current, started.session),
+      );
+      chatStore.getState().setConfigOptions(sessionId, started.configOptions);
       if (draftId !== null) {
         useDraftSessionsStore.getState().bindToSession(draftId, sessionId);
       }
       // Composer hard-fail restore needs the adopted id even after the user
-      // navigates away mid-attach; cleared once that catch settles. Keyed by the
+      // navigates away during startup; cleared once that catch settles. Keyed by the
       // pre-rekey conversation so project/task landings (no draft) work too.
       noteComposerSendAdoptedSession(currentKey, sessionId);
       // Composer-local stores follow the conversation onto its final session id
@@ -472,27 +458,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         agentText,
         images,
         prepare: async () => {
-          let response: AttachSessionResponse;
-          try {
-            response = await client.session.attach({
-              sessionId,
-              workspaceId,
-            });
-          } finally {
-            // Attach consumes the warm entry on success and failure.
-            queryClient.removeQueries({
-              queryKey: queryKeys.warmSession(
-                { type: "workspace", workspaceId },
-                targetAgentCli,
-              ),
-            });
-          }
-          // Backend persistence is the recovery boundary: after attach succeeds,
-          // rolling back to a client draft could duplicate the real session.
-          sessionAttached = true;
           try {
             queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-              upsertById(current, response.session),
+              upsertById(current, started.session),
             );
           } finally {
             // Even a cache update failure must not leave a muted row pointing at
@@ -505,25 +473,24 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           if (taskId !== null) {
             useUiStore.getState().expandTask(taskId);
           }
-          return { availableCommands: response.availableCommands };
+          return { availableCommands: started.availableCommands };
         },
       });
       setPendingSend(null);
       await sent;
     } catch (error) {
-      // This catch includes the synchronous bind/rekey/select/send setup. Every
-      // pre-attach failure returns ownership to the draft instead of stranding
-      // it in sendInFlight.
-      if (draftId !== null && !sessionAttached) {
-        recoverFailedDraftSend({
-          draftId,
-          projectId,
-          taskId,
-          text: displayText,
-          images,
-          boundSessionId: sessionId,
-        });
+      // `start` already persisted the session before this block began, so a
+      // failure in the local setup under it cannot be answered by restoring the
+      // draft the way a failed handshake is: that would leave a real session
+      // behind a phantom draft row still pointing at it. Finish the commit
+      // instead and let the failure surface on the chat the user is now on.
+      const selectionStore = useWorkspaceSelectionStore.getState();
+      if (taskId === null) {
+        selectionStore.selectSessionBeforeTask(sessionId, projectId);
+      } else {
+        selectionStore.selectSession(sessionId, taskId, projectId);
       }
+      useDraftSessionsStore.getState().removeCommitted([sessionId]);
       throw error;
     } finally {
       endDraftSend();

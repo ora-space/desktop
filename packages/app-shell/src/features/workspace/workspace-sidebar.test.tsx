@@ -593,7 +593,7 @@ describe("WorkspaceSidebar", () => {
       .getState()
       .ensureEmptyDraft({ projectId: PROJECT.id, taskId: TASK.id });
     useDraftSessionsStore.getState().updateContent(id, { text: "sending" });
-    // Bind to a warm id that is not persisted yet so the muted row stays visible.
+    // Bind to a session id the list does not carry yet so the muted row stays visible.
     useDraftSessionsStore.getState().bindToSession(id, "pending-s");
     useWorkspaceSelectionStore
       .getState()

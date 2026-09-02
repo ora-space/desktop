@@ -74,7 +74,7 @@ export const useSettingsStore = create<SettingsState>()(
       // Tolerate partial/corrupt persisted state by merging over defaults. A stored agent
       // identity is carried forward unexamined: agents arrive with installed plugins, so this
       // build cannot know which identities are real, and the pickers already resolve a stored one
-      // against the live runtime before offering or warming it.
+      // against the live runtime before offering it or discovering its models.
       merge: (persisted, current) => {
         const persistedSettings = (
           persisted as Partial<SettingsState> | undefined

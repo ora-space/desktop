@@ -802,7 +802,7 @@ impl Backend {
         )
     }
 
-    /// Resolves the project checkout root used before a task exists (draft / warm chat).
+    /// Resolves the project checkout root used before a task exists (draft chat).
     ///
     /// Resolves the local directory backing one Workspace for host integrations.
     pub fn resolve_workspace_cwd(&self, workspace_id: &str) -> Result<PathBuf, BackendError> {
@@ -899,33 +899,16 @@ impl Backend {
     }
     /// Deletes one project through the shared application composition.
     ///
-    /// The delete cascades to the project's Workspaces and Tasks, so every chat
-    /// surface beneath it dies along with their warm sessions and histories are
-    /// discarded together. The Task identifiers are collected first because the
-    /// delete is what makes those rows invisible; both queries share one blocking
-    /// hop so that ordering cannot be broken by a scheduling decision.
+    /// The delete cascades to the project's Workspaces and Tasks and registers cleanup jobs.
     pub async fn delete_project(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
         let project = self.project.clone();
-        let pool = self.pool.clone();
-        let project_id = ora_domain::ProjectId::new(request.project_id.as_str());
-        let (response, workspace_ids) = spawn_repository_work(move || {
-            let workspace_ids = crate::task::workspace_ids_in_project(&pool, &project_id);
-            project
-                .delete(request)
-                .map(|response| (response, workspace_ids))
-        })
-        .await?;
-
-        let targets: Vec<WarmSessionTarget> = workspace_ids
-            .into_iter()
-            .map(|workspace_id| WarmSessionTarget::Workspace {
-                workspace_id: workspace_id.to_string(),
-            })
-            .collect();
-        self.agent_runtime.discard_warm_sessions(&targets).await;
+        // A project cascade deletes its Workspaces, Tasks, and Sessions in one transaction, which
+        // is the longest blocking repository operation the app issues; it stays off the async
+        // runtime's worker threads.
+        let response = spawn_repository_work(move || project.delete(request)).await?;
         // The cascade registered the cleanup jobs; this only trims their latency.
         self.git_cleanup.notify();
         Ok(response)
@@ -959,20 +942,13 @@ impl Backend {
     }
     /// Deletes one task through the shared application composition.
     ///
-    /// Discards the Task's warm session on the way out. Nothing else would: the
-    /// target is gone, so no request can name it again, and the pool's bounds
-    /// only reclaim an entry once enough new surfaces are opened to displace it.
+    /// The delete cascade registers the task's durable cleanup job.
     pub async fn delete_task(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
         let task = self.task.clone();
         let response = spawn_repository_work(move || task.delete(request)).await?;
-        self.agent_runtime
-            .discard_warm_sessions(&[WarmSessionTarget::Workspace {
-                workspace_id: response.workspace_id.clone(),
-            }])
-            .await;
         // The cascade registered the cleanup job; this only trims its latency.
         self.git_cleanup.notify();
         Ok(response)
@@ -1018,28 +994,20 @@ impl Backend {
     // session
     // =============================================================================
 
-    /// Returns the warm provider session backing one chat surface.
-    pub async fn warm_session(
+    /// Creates and persists a provider session on first use.
+    pub async fn start_session(
         &self,
-        request: WarmSessionRequest,
-    ) -> Result<WarmSessionResponse, BackendError> {
-        self.agent_runtime.warm_session(request).await
+        request: StartSessionRequest,
+    ) -> Result<StartSessionResponse, BackendError> {
+        self.agent_runtime.start_session(request).await
     }
 
-    /// Applies one configuration option to a warm or persisted session.
+    /// Applies one configuration option to a persisted session.
     pub async fn set_session_config(
         &self,
         request: SetSessionConfigRequest,
     ) -> Result<SetSessionConfigResponse, BackendError> {
         self.agent_runtime.set_session_config(request).await
-    }
-
-    /// Persists one warm session against the Task that now owns it.
-    pub async fn attach_session(
-        &self,
-        request: AttachSessionRequest,
-    ) -> Result<AttachSessionResponse, BackendError> {
-        self.agent_runtime.attach_session(request).await
     }
 
     /// Gets one session through the shared application composition.
@@ -1199,11 +1167,11 @@ impl Backend {
     }
 
     /// Lists the models one agent advertises outside any session.
-    pub fn list_agent_models(
+    pub async fn list_agent_models(
         &self,
         request: ListAgentModelsRequest,
     ) -> Result<ListAgentModelsResponse, BackendError> {
-        self.agent_runtime.agent_models(request)
+        self.agent_runtime.agent_models(request).await
     }
 
     // =============================================================================

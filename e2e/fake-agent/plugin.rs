@@ -2,17 +2,27 @@
 
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AgentEffectCoordinationContext, AgentEffectReadinessContext, AgentListModelsResult,
-    AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD,
-    EFFECT_VERIFY_READY_METHOD, INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, JSON_RPC_VERSION,
-    METHOD_NOT_FOUND_CODE, PluginEffectCoordination, PluginEffectResource,
+    AgentEffectCoordinationContext, AgentEffectReadinessContext, AgentListModelsParams,
+    AgentListModelsResult, AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD,
+    EFFECT_REACTIVATE_METHOD, EFFECT_VERIFY_READY_METHOD, INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE,
+    JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE, PluginEffectCoordination, PluginEffectResource,
     PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, SKILL_DIRECTORY_V1, read_message,
     write_message,
 };
 use serde_json::{Value, json};
+use std::fs::OpenOptions;
+use std::io::Write;
 use tokio::io::{stdin, stdout};
 
 use super::acp::{FakeAcpAgent, models};
+
+/// Journal of `agent/list_models` calls, written into the package root the host runs this from.
+///
+/// The host gives a plugin process no environment of its own and only sets the package root as
+/// its working directory, so this file is the one channel a test can read the plugin's own view
+/// of what it was asked. Recording every call is what lets a test assert both that discovery
+/// happened and that connection startup did not perform it.
+pub(super) const DISCOVERY_JOURNAL: &str = "list_models_calls.txt";
 
 /// Mutable process state shared by the outer plugin methods.
 #[derive(Default)]
@@ -119,6 +129,15 @@ impl FakePlugin {
                 Ok(json!({}))
             }
             AGENT_LIST_MODELS_METHOD => {
+                let context: AgentListModelsParams = serde_json::from_value(params)
+                    .map_err(|error| PluginError::invalid_params(method, error))?;
+                // Discovery without a directory is meaningless: a real plugin resolves the agent's
+                // per-project configuration from it, so an absent one must fail loudly here rather
+                // than answer with a catalog that belongs to nowhere.
+                if context.cwd.as_os_str().is_empty() {
+                    return Err(PluginError::invalid_params(method, "cwd must not be empty"));
+                }
+                record_discovery(&context.cwd.to_string_lossy());
                 serde_json::to_value(AgentListModelsResult { models: models() })
                     .map_err(PluginError::internal)
             }
@@ -189,5 +208,16 @@ impl PluginError {
             code: INTERNAL_ERROR_CODE,
             message: error.to_string(),
         }
+    }
+}
+
+/// Appends one discovery call's directory to the journal beside this package.
+fn record_discovery(cwd: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(DISCOVERY_JOURNAL)
+    {
+        let _ = writeln!(file, "{cwd}");
     }
 }

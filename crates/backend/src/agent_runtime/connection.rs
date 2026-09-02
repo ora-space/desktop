@@ -1,6 +1,4 @@
-use super::plugin_agent::{
-    self, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError, PluginAgentModel,
-};
+use super::plugin_agent::{self, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError};
 use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
 use super::{
@@ -77,6 +75,8 @@ impl AgentSource {
 #[derive(Clone)]
 pub(super) struct RuntimeConnection {
     pub client: AgentAcpClient,
+    /// The plugin control channel used for on-demand capabilities outside ACP.
+    pub runtime: PluginRuntime,
     pub generation: u64,
     pub load_session_supported: bool,
     /// Whether the agent advertises the bounded fallback used for first-title acquisition.
@@ -84,15 +84,10 @@ pub(super) struct RuntimeConnection {
     pub close_session_supported: bool,
     /// Whether the agent advertises `session/delete`.
     ///
-    /// Warm sessions Ora created but never handed to the user are removed with
+    /// Failed starts Ora created but never handed to the user are removed with
     /// it so unused provider history does not accumulate; agents without it fall
     /// back to `session/close`, which only detaches.
     pub delete_session_supported: bool,
-    /// Models this agent advertises outside any session, empty when it cannot advertise any.
-    ///
-    /// The list is read once per connection generation rather than on demand: it changes only
-    /// when the provider restarts, and a reconnect already refreshes it.
-    pub models: Arc<[PluginAgentModel]>,
 }
 
 #[derive(Clone)]
@@ -143,8 +138,8 @@ pub(super) struct ConnectionSupervisor {
 /// every agent is supplied by an installed plugin and which ones exist is not known at build time.
 ///
 /// The set is mutable because installing a plugin adds an agent while Ora is running. It is held
-/// behind a lock rather than rebuilt, so every existing clone — the warm pool, live session
-/// actors — observes an install or uninstall without being handed a new value.
+/// behind a lock rather than rebuilt, so every clone held by a live session actor observes an
+/// install or uninstall without being handed a new value.
 #[derive(Clone)]
 pub(super) struct ConnectionSupervisors {
     supervisors: Arc<RwLock<BTreeMap<AgentRef, ConnectionSupervisor>>>,
@@ -536,13 +531,11 @@ struct StartedAgent {
     process: AgentProcess,
     transport: PluginAcpTransport,
     messages: AcpMessages,
-    models: Vec<PluginAgentModel>,
 }
 
 struct SharedProcess {
     process: AgentProcess,
     client: AgentAcpClient,
-    models: Arc<[PluginAgentModel]>,
     inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
     load_session_supported: bool,
     list_session_supported: bool,
@@ -577,7 +570,7 @@ async fn run_supervisor(context: SupervisorContext) {
                 active_generation.store(generation, Ordering::Release);
                 let connection = RuntimeConnection {
                     client: process.client.clone(),
-                    models: process.models.clone(),
+                    runtime: process.process.runtime.clone(),
                     generation,
                     load_session_supported: process.load_session_supported,
                     list_session_supported: process.list_session_supported,
@@ -723,7 +716,6 @@ async fn spawn_initialized_process(
         process,
         transport,
         messages,
-        models,
     } = spawn_plugin_connection(&source.plugin_id, plugin_host, home_directory).await?;
     let peer = AcpPeer::spawn(messages, transport);
     // Config options are only sent by agents that see the client advertise them,
@@ -762,7 +754,6 @@ async fn spawn_initialized_process(
     Ok(SharedProcess {
         process,
         client,
-        models: models.into(),
         inbound,
         load_session_supported: response.agent_capabilities.load_session,
         list_session_supported: response
@@ -816,14 +807,6 @@ async fn spawn_plugin_connection(
         .map_err(|error| {
             StartFailure::Terminal(runtime_internal("agent_start_failed", error.to_string()))
         })?;
-    let models = match plugin_agent::list_models(&runtime).await {
-        Ok(models) => models,
-        Err(error) => {
-            plugin_agent::stop_agent(&runtime, &plugin_id.canonical()).await;
-            stop_plugin_runtime(plugin_host, plugin_id).await;
-            return Err(plugin_start_error(error));
-        }
-    };
     let transport = PluginAcpTransport::new(runtime.clone());
     Ok(StartedAgent {
         process: AgentProcess {
@@ -833,7 +816,6 @@ async fn spawn_plugin_connection(
         },
         transport,
         messages,
-        models,
     })
 }
 

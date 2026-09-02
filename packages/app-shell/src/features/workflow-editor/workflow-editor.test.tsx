@@ -121,7 +121,7 @@ function renderEditor(
   if (seedLibrary) {
     seedDemoWorkflows(state);
   }
-  // Model discovery needs a project cwd so warmSession can report real model catalogs.
+  // Model discovery resolves a Workspace, so the inspector needs one to ask against.
   state.projects = [{ id: "p1", name: "Demo" }];
   // Live Agent/Skill catalogs consumed by the workflow inspector's selectors.
   state.agents = [
@@ -216,7 +216,7 @@ function renderEditor(
       availability: "unavailable",
     },
   ];
-  // Warm-session model catalog consumed by the workflow inspector's model selector.
+  // Plugin-owned model catalog consumed by the workflow inspector's model selector.
   state.configOptions = [
     {
       id: "model",
@@ -1038,10 +1038,10 @@ describe("WorkflowEditor", () => {
         availability: "available",
       },
     ];
-    // NGA exists as a CLI but its warm session reports no model catalog, so
+    // NGA exists as a CLI but reports no model catalog, so
     // picking it must keep the node on NGA instead of snapping back to the
     // first CLI with discovered models.
-    state.warmModelsByCli = { "ora-space.nga": null };
+    state.agentModelsByCli = { "ora-space.nga": null };
     renderEditor(<WorkflowEditor />, state);
 
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");

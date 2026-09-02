@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   dismissSessionDraft,
-  recoverFailedDraftSend,
   reparkDraftComposerContent,
   resetComposerSendAdoptionsForTests,
   resolveNewChatScope,
@@ -234,7 +233,7 @@ describe("selectBoundDraftSession", () => {
   });
 });
 
-describe("recoverFailedDraftSend", () => {
+describe("reparkDraftComposerContent", () => {
   it("restores decoded image sizes so attachment limits remain accurate", () => {
     const id = startSessionDraft({ projectId: "p1", taskId: null });
 
@@ -283,119 +282,6 @@ describe("recoverFailedDraftSend", () => {
       images: [],
       doc,
     });
-  });
-
-  it("unbinds the dead warm id, reselects the draft, and re-parks the message", () => {
-    const id = startSessionDraft({ projectId: "p1", taskId: null });
-    useDraftSessionsStore.getState().updateContent(id, { text: "hello" });
-    useDraftSessionsStore.getState().bindToSession(id, "warm-dead");
-    useWorkspaceSelectionStore
-      .getState()
-      .selectSessionBeforeTask("warm-dead", "p1");
-    useComposerInputStore.getState().setInput("warm-dead", {
-      text: "stale",
-      images: [],
-    });
-
-    recoverFailedDraftSend({
-      draftId: id,
-      projectId: "p1",
-      taskId: "t-created",
-      text: "hello",
-      boundSessionId: "warm-dead",
-    });
-
-    const draft = useDraftSessionsStore
-      .getState()
-      .drafts.find((candidate) => candidate.id === id);
-    expect(draft).toEqual(
-      expect.objectContaining({
-        id,
-        pendingSessionId: null,
-        taskId: "t-created",
-        text: "hello",
-      }),
-    );
-    expect(useWorkspaceSelectionStore.getState().selection).toEqual({
-      projectId: "p1",
-      taskId: "t-created",
-      sessionId: null,
-      workflowRunId: null,
-      draftId: id,
-    });
-    expect(useComposerInputStore.getState().byKey[`draft:${id}`]?.text).toBe(
-      "hello",
-    );
-    expect(useComposerInputStore.getState().byKey["warm-dead"]).toBeUndefined();
-  });
-
-  it("moves plugin picks back onto the draft key", () => {
-    const id = startSessionDraft({ projectId: "p1", taskId: null });
-    useComposerPluginSelectionStore
-      .getState()
-      .addPlugin("warm-dead", "plugin-a");
-    useWorkspaceSelectionStore
-      .getState()
-      .selectSessionBeforeTask("warm-dead", "p1");
-    useDraftSessionsStore.getState().bindToSession(id, "warm-dead");
-
-    recoverFailedDraftSend({
-      draftId: id,
-      projectId: "p1",
-      taskId: null,
-      text: "retry me",
-      boundSessionId: "warm-dead",
-    });
-
-    const draftKey = `draft:${id}`;
-    expect(
-      useComposerPluginSelectionStore.getState().selectedIdsByConversation[
-        draftKey
-      ],
-    ).toEqual(["plugin-a"]);
-    expect(
-      useComposerPluginSelectionStore.getState().selectedIdsByConversation[
-        "warm-dead"
-      ],
-    ).toBeUndefined();
-  });
-
-  it("rekeys from the bound warm id even when selection already moved elsewhere", () => {
-    const id = startSessionDraft({ projectId: "p1", taskId: null });
-    useComposerPluginSelectionStore
-      .getState()
-      .addPlugin("warm-bound", "plugin-a");
-    useDraftSessionsStore.getState().bindToSession(id, "warm-bound");
-    // User left the in-flight chat for another session before attach failed.
-    useWorkspaceSelectionStore.getState().selectSession("other-s", "t1", "p1");
-    useComposerPluginSelectionStore
-      .getState()
-      .addPlugin("other-s", "plugin-other");
-
-    recoverFailedDraftSend({
-      draftId: id,
-      projectId: "p1",
-      taskId: null,
-      text: "retry me",
-      boundSessionId: "warm-bound",
-    });
-
-    const draftKey = `draft:${id}`;
-    expect(
-      useComposerPluginSelectionStore.getState().selectedIdsByConversation[
-        draftKey
-      ],
-    ).toEqual(["plugin-a"]);
-    expect(
-      useComposerPluginSelectionStore.getState().selectedIdsByConversation[
-        "warm-bound"
-      ],
-    ).toBeUndefined();
-    expect(
-      useComposerPluginSelectionStore.getState().selectedIdsByConversation[
-        "other-s"
-      ],
-    ).toEqual(["plugin-other"]);
   });
 });
 
