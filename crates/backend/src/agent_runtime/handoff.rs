@@ -3,6 +3,25 @@ use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use ora_history::{read_session_history, render_handoff};
 use ora_logging::{ora_debug, ora_warn};
 
+/// Whether the current provider binding still has to be told the conversation, and whether
+/// settling that debt is something the durable record has to remember.
+///
+/// The two owed states differ only in bookkeeping, never in what the agent receives. A switch
+/// between agents writes `AgentSwitched` before the transcript is delivered, so an interrupted
+/// delivery is still owed after a restart and its settlement writes a matching delivery line. A
+/// provider session Ora rebuilt under the *same* agent — because the old one could no longer be
+/// restored — writes nothing at all: the rebuilt binding is only persisted once the prompt
+/// carrying the transcript is accepted, so an interrupted delivery leaves the old binding in the
+/// row and the next prompt rebuilds and re-delivers on its own.
+pub(super) enum HandoffDebt {
+    /// Nothing owed: the provider behind this binding already holds the conversation.
+    Settled,
+    /// Owed, and an `AgentSwitched` line is waiting for its `HandoffDelivered`.
+    Recorded,
+    /// Owed in memory only, for a provider session rebuilt under the same agent.
+    Ephemeral,
+}
+
 /// The blocks to send a provider, paired with what their delivery would settle.
 ///
 /// Building the prompt and settling the handoff are deliberately separate steps,
@@ -20,9 +39,9 @@ pub(super) struct AgentPrompt {
     pub(super) settles_handoff: bool,
 }
 
-/// Builds the provider prompt, injecting the recorded transcript only after an agent switch.
+/// Builds the provider prompt, injecting the recorded transcript only when one is owed.
 pub(super) fn prompt_for_agent(actor: &RuntimeActor, prompt: &[ContentBlock]) -> AgentPrompt {
-    if !actor.handoff_pending {
+    if let HandoffDebt::Settled = actor.handoff {
         return AgentPrompt {
             blocks: prompt.to_vec(),
             settles_handoff: false,

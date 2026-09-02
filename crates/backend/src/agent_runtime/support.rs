@@ -96,12 +96,16 @@ pub(super) fn session_not_found(session_id: &str) -> BackendError {
     )
 }
 
-/// Builds the conflict returned when a prompt targets an unloaded logical session.
+/// Builds the conflict returned when a live session lost the provider channel it was using.
+///
+/// No longer a prompt precondition: sending attaches on its own. It survives because a live MCP
+/// refresh can find the channel already gone, and that is the same "this session is not attached
+/// to anything right now" answer the caller has always been given.
 pub(super) fn session_stopped() -> BackendError {
     BackendError::new(
         ErrorClassification::Conflict,
         PublicError::SessionStopped(EmptyErrorParams {}),
-        "session must be loaded before prompting",
+        "session is not attached to a provider",
     )
 }
 

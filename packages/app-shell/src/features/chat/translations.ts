@@ -5,7 +5,7 @@ export const chatTranslations = {
     "errors.agent_not_installed": "未安装提供该 Agent 的插件。",
     "errors.agent_runtime_unavailable": "Agent 运行时当前不可用。",
     "errors.session_busy": "会话正在处理其他操作。",
-    "errors.session_stopped": "请先加载会话再继续。",
+    "errors.session_stopped": "会话与 Agent 的连接已断开，请重试。",
     "errors.session_load_unsupported": "所选 Agent 不支持加载会话。",
     "errors.session_mcp_setup_failed": "无法为当前会话应用 MCP 配置。",
     "errors.session_history_degraded": "会话记录写入失败，恢复记录后才能继续。",
@@ -253,7 +253,8 @@ export const chatTranslations = {
       "The plugin that supplies this agent is not installed.",
     "errors.agent_runtime_unavailable": "The agent runtime is unavailable.",
     "errors.session_busy": "The session is busy with another operation.",
-    "errors.session_stopped": "Load the session before continuing.",
+    "errors.session_stopped":
+      "The session lost its connection to the agent. Try again.",
     "errors.session_load_unsupported":
       "The selected agent does not support loading sessions.",
     "errors.session_mcp_setup_failed":

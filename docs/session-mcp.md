@@ -1,8 +1,9 @@
 # Session MCP
 
 Ora delivers configured MCP plugins as **Session Runtime Input**, not as Effect Resources and not
-as Workspace files. Every ACP `session/new` and `session/load` — `startSession`, interactive restore,
-agent switch, workflow start, and live refresh — shares one Session Setup snapshot.
+as Workspace files. Every ACP `session/new` and `session/load` — `startSession`, the attach a prompt performs, the
+rebuild that replaces a provider session Ora could not restore, agent switch, workflow start, and
+live refresh — shares one Session Setup snapshot.
 
 ## ACP injection
 
@@ -16,8 +17,11 @@ current package version. HTTP maps to `McpServer::Http` and requires the Agent t
 MCP capability. `{ "context": "workspace" }` becomes the Session's absolute cwd; a literal `"."`
 stays `"."`. Env and headers use ACP name/value lists.
 
-A non-empty set requires `session/load`. If the Agent cannot load sessions, setup fails before
-any frame is sent. Ora does not fake restore with `session/new` or UI history replay.
+A non-empty set requires `session/load`, because that is the only frame that can carry a changed
+set to a Session already running. If the Agent cannot load sessions, setup fails before any frame
+is sent, and that includes the `session/new` Ora uses to rebuild a provider session it could not
+restore: a rebuild carries the real Snapshot or it does not happen. MCP is never approximated by
+an Agent's own replay or by the transcript Ora injects after a rebuild.
 
 ## Live refresh
 

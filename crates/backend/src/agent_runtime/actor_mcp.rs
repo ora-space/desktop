@@ -76,7 +76,9 @@ impl RuntimeActor {
     }
 
     /// Prompt admission: refresh first when Active is missing, stale, in-flight, or blocked.
-    pub(super) async fn ensure_current_mcp(&mut self) -> Result<(), BackendError> {
+    pub(in crate::agent_runtime) async fn ensure_current_mcp(
+        &mut self,
+    ) -> Result<(), BackendError> {
         let desired = crate::session_setup::resolve_session_mcp_revision(
             &self.session_mcp,
             &self.session_mcp,
@@ -115,7 +117,9 @@ impl RuntimeActor {
     }
 
     /// Resolves one Snapshot with the current connection's advertised MCP capabilities.
-    fn resolve_mcp_snapshot(&self) -> Result<SessionMcpSnapshot, BackendError> {
+    pub(in crate::agent_runtime) fn resolve_mcp_snapshot(
+        &self,
+    ) -> Result<SessionMcpSnapshot, BackendError> {
         let connection = self.connection.current()?;
         SessionSetup::resolve(
             &self.session_mcp,
@@ -188,15 +192,6 @@ impl RuntimeActor {
         Some(guard)
     }
 
-    /// Builds the ACP `session/load` used by both explicit restore and live MCP refresh.
-    fn mcp_load_request(&self, snapshot: &SessionMcpSnapshot) -> AcpLoadSessionRequest {
-        AcpLoadSessionRequest::new(
-            AcpSessionId::new(self.session.agent_session_id.clone()),
-            &self.cwd,
-        )
-        .mcp_servers(snapshot.servers().to_vec())
-    }
-
     /// Sends one live `session/load` carrying MCP and discards the agent's own replay.
     async fn reload_provider_mcp(
         &mut self,
@@ -215,11 +210,16 @@ impl RuntimeActor {
             return Ok(());
         }
         let client = channel.connection.client.clone();
-        let request = self.mcp_load_request(&snapshot);
+        // The live identity, not the row's: a session rebuilt for this turn is not persisted until
+        // the transcript reaches it, and refreshing MCP on the replaced id would reach nothing.
+        let agent_session_id = self.provider_session_id().to_string();
+        let request =
+            AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
+                .mcp_servers(snapshot.servers().to_vec());
         ora_debug!(session_id = %self.session.id, "session/load MCP refresh sent");
         let pending = match client
             .start_session_request::<_, LoadSessionResponse>(
-                AcpSessionId::new(self.session.agent_session_id.clone()),
+                AcpSessionId::new(agent_session_id),
                 AGENT_METHOD_NAMES.session_load,
                 &request,
             )
@@ -352,13 +352,8 @@ impl RuntimeActor {
         self.mark_stopped();
     }
 
-    /// Resolves the Snapshot that an explicit `session/load` must send with the restore.
-    pub(super) fn resolve_load_mcp_snapshot(&self) -> Result<SessionMcpSnapshot, BackendError> {
-        self.resolve_mcp_snapshot()
-    }
-
     /// Marks the Snapshot that was successfully loaded as this Session's Active revision.
-    pub(super) fn record_loaded_mcp(&mut self, snapshot: &SessionMcpSnapshot) {
+    pub(in crate::agent_runtime) fn record_loaded_mcp(&mut self, snapshot: &SessionMcpSnapshot) {
         let revision = snapshot.revision().clone();
         self.live_mcp = self
             .live_mcp

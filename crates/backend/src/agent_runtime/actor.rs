@@ -1,8 +1,5 @@
 use super::connection::AgentAcpClient;
-use super::events::{
-    drain_idle_events, drain_queued_prompt_events, settle_abandoned_session_response,
-    settle_cancelled_prompt,
-};
+use super::events::{drain_idle_events, drain_queued_prompt_events, settle_cancelled_prompt};
 use super::handoff::{AgentPrompt, prompt_for_agent};
 use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
@@ -17,14 +14,11 @@ mod title_polling;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::CancelNotification;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
-use agent_client_protocol_schema::v1::{
-    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
-    LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, SessionUpdate,
-};
+use agent_client_protocol_schema::v1::{CloseSessionRequest, CloseSessionResponse, SessionUpdate};
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, StopReason};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_logging::{ora_debug, ora_warn};
-use tokio::time::{Instant, timeout};
+use tokio::time::timeout;
 
 /// How far replaying Ora's record got before it stopped.
 ///
@@ -104,11 +98,9 @@ impl RuntimeActor {
             };
             match command {
                 RuntimeCommand::Load {
-                    operation_id,
-                    events,
-                    accepted,
+                    events, accepted, ..
                 } => {
-                    self.run_load(operation_id, events, accepted).await;
+                    self.run_load(events, accepted).await;
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
@@ -117,15 +109,22 @@ impl RuntimeActor {
                     events,
                     accepted,
                 } => {
-                    if self.channel.is_none() {
-                        let _ = accepted.send(Err(session_stopped()));
-                    } else if let Err(error) = self.ensure_current_mcp().await {
-                        let _ = accepted.send(Err(error));
-                    } else {
-                        let _ = accepted.send(Ok(()));
-                        self.run_prompt(operation_id, prompt, record_prompt, events)
-                            .await;
-                        self.refresh_idle_mcp_if_owed().await;
+                    // Conversations are opened without a provider, so a send is where one is
+                    // acquired. Admission waits on that: a prompt that cannot reach an agent, or
+                    // that cannot be given the MCP set configured right now, has to fail as the
+                    // send it was, not as a turn that started and produced nothing.
+                    match self.ensure_attached().await {
+                        Ok(setup) => {
+                            let _ = accepted.send(Ok(()));
+                            if publish_setup(&events, setup) {
+                                self.run_prompt(operation_id, prompt, record_prompt, events)
+                                    .await;
+                                self.refresh_idle_mcp_if_owed().await;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = accepted.send(Err(error));
+                        }
                     }
                 }
                 RuntimeCommand::McpDesiredMaybeChanged => {
@@ -163,278 +162,21 @@ impl RuntimeActor {
         }
     }
 
-    /// Re-registers a stopped session and streams provider history without replacing the process.
+    /// Streams Ora's record to a client that opened this conversation.
     ///
-    /// The admission signal is only sent after the Running row is persisted:
-    /// an aggregate-deletion cascade that runs after `accepted` resolves must
-    /// observe the Running session and refuse the delete, otherwise it could
-    /// remove the checkout while provider setup is still using it.
+    /// No provider call is made and no lifecycle state changes: a load is a read of the record Ora
+    /// owns, and whether this session is attached is decided by prompts alone. An actor already
+    /// holding a channel keeps it, and one holding none is not made to acquire one.
     async fn run_load(
         &mut self,
-        operation_id: u64,
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
     ) {
-        self.unload().await;
-        let running = match self.repository.update_session_status(
-            &self.session.id,
-            SessionStatus::Running,
-            self.clock.now_timestamp_millis(),
-        ) {
-            Ok(session) => session,
-            Err(_) => {
-                // The session (or its task/project) is no longer visible — a
-                // deletion won the race. Reject the admission itself so no
-                // caller proceeds against a removed checkout.
-                let _ = accepted.send(Err(session_not_found(self.session.id.as_ref())));
-                return;
-            }
-        };
-        let _ = accepted.send(Ok(()));
-        self.session = running;
-        let channel = match self
-            .connection
-            .open_session_channel(&self.session.agent_session_id, self.session.id.as_ref())
-        {
-            Ok(channel) => channel,
-            Err(error) => {
-                let _ = events.try_send(Err(error));
-                self.mark_stopped();
-                return;
-            }
-        };
-        if !channel.connection.load_session_supported {
-            let _ = events.try_send(Err(BackendError::new(
-                ErrorClassification::Conflict,
-                PublicError::SessionLoadUnsupported(EmptyErrorParams {}),
-                "agent CLI does not support session/load",
-            )));
-            self.mark_stopped();
+        if accepted.send(Ok(())).is_err() {
             return;
         }
-        let snapshot = match self.resolve_load_mcp_snapshot() {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                let _ = events.try_send(Err(error));
-                self.mark_stopped();
-                return;
-            }
-        };
-        self.run_load_on_channel(operation_id, events, channel, snapshot)
-            .await;
-    }
-
-    /// Completes provider load only after its ordered response fence follows all prior events.
-    ///
-    /// `session/load` is still called, but only so the agent restores the context
-    /// it needs to answer the next prompt. Its replay is drained and discarded:
-    /// what the client is shown comes from Ora's own record, which is the same
-    /// conversation whichever agent is currently bound to it.
-    async fn run_load_on_channel(
-        &mut self,
-        operation_id: u64,
-        events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
-        mut channel: SessionChannel,
-        snapshot: crate::session_setup::SessionMcpSnapshot,
-    ) {
-        let client = channel.connection.client.clone();
-        let request = AcpLoadSessionRequest::new(
-            AcpSessionId::new(self.session.agent_session_id.clone()),
-            &self.cwd,
-        )
-        .mcp_servers(snapshot.servers().to_vec());
-        ora_debug!(session_id = %self.session.id, "session/load sent");
-        let pending = match client
-            .start_session_request::<_, LoadSessionResponse>(
-                AcpSessionId::new(self.session.agent_session_id.clone()),
-                AGENT_METHOD_NAMES.session_load,
-                &request,
-            )
-            .await
-        {
-            Ok(pending) => pending,
-            Err(error) => {
-                let _ = events.try_send(Err(map_acp_error(error)));
-                self.isolate_channel(channel).await;
-                return;
-            }
-        };
-        let deadline = tokio::time::sleep(SESSION_SETUP_TIMEOUT);
-        tokio::pin!(deadline);
-        let mut input_state = ActiveInputState::default();
-        loop {
-            let input = tokio::select! {
-                // A response already accepted by the FIFO is more useful than a deadline that
-                // became ready at the same time; preceding events have already been consumed.
-                biased;
-                input = input_state.recv(
-                    &mut channel.events,
-                    &mut channel.controls,
-                    &mut self.commands,
-                ) => input,
-                _ = &mut deadline => {
-                    ora_debug!(session_id = %self.session.id, "session/load timed out");
-                    self.cancel(&client, &HashMap::new()).await;
-                    let _ = events.try_send(Err(runtime_internal(
-                        "agent_load_timeout",
-                        "agent CLI session load timed out",
-                    )));
-                    self.isolate_channel(channel).await;
-                    return;
-                }
-            };
-            match input {
-                ActiveInput::Event(SessionEvent::Update(update)) => {
-                    self.observe_session_update(&update.update);
-                    // The agent is reciting history Ora already owns. Draining it keeps the
-                    // queue clear and proves the provider is still working.
-                    deadline
-                        .as_mut()
-                        .reset(Instant::now() + SESSION_SETUP_TIMEOUT);
-                }
-                ActiveInput::Event(SessionEvent::Permission(permission)) => {
-                    let _ = client
-                        .respond(
-                            &permission.request_id,
-                            &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                        )
-                        .await;
-                    let _ = events.try_send(Err(runtime_internal(
-                        "agent_protocol_error",
-                        "permission request during session/load is unsupported",
-                    )));
-                    self.isolate_channel(channel).await;
-                    return;
-                }
-                ActiveInput::Event(SessionEvent::Response(response)) => {
-                    if !pending.matches_response(&response) {
-                        continue;
-                    }
-                    match pending.finish(response) {
-                        Ok(response) => {
-                            ora_debug!(session_id = %self.session.id, "session/load completed");
-                            // `session/load` reports configuration options in its reply rather
-                            // than as an update, so they stay ahead of the recorded replay.
-                            if let Some(config_options) = response.config_options
-                                && events
-                                    .send(Ok(LoadSessionEvent::SessionUpdate {
-                                        update: SessionUpdate::ConfigOptionUpdate(
-                                            ConfigOptionUpdate::new(config_options),
-                                        ),
-                                    }))
-                                    .await
-                                    .is_err()
-                            {
-                                self.isolate_channel(channel).await;
-                                return;
-                            }
-                            match self.replay_recorded_history(&events).await {
-                                Replay::Delivered
-                                    if events
-                                        .send(Ok(LoadSessionEvent::Completed))
-                                        .await
-                                        .is_ok() =>
-                                {
-                                    self.record_loaded_mcp(&snapshot);
-                                    self.channel = Some(channel);
-                                }
-                                // A replay that did not finish leaves the client without the
-                                // conversation it asked for, so the registration goes with it.
-                                Replay::Delivered | Replay::Unreadable | Replay::Abandoned => {
-                                    self.isolate_channel(channel).await;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            ora_debug!(session_id = %self.session.id, error = %error, "session/load failed");
-                            let _ = events.try_send(Err(map_acp_error(error)));
-                            self.isolate_channel(channel).await;
-                        }
-                    }
-                    return;
-                }
-                ActiveInput::Control(SessionControl::ConnectionLost(error)) => {
-                    self.fail_load(&events, error);
-                    return;
-                }
-                ActiveInput::Control(SessionControl::QueueOverflow) => {
-                    let _ = events.try_send(Err(runtime_internal(
-                        "agent_event_overflow",
-                        "session event queue overflowed",
-                    )));
-                    self.isolate_channel(channel).await;
-                    return;
-                }
-                ActiveInput::EventsClosed | ActiveInput::ControlsClosed => {
-                    self.fail_load(&events, runtime_unavailable());
-                    return;
-                }
-                ActiveInput::Command(RuntimeCommand::Cancel {
-                    operation_id: cancelled,
-                }) if cancelled == operation_id => {
-                    self.cancel(&client, &HashMap::new()).await;
-                    let _ = timeout(
-                        CANCELLATION_GRACE,
-                        settle_abandoned_session_response(self, &mut channel, &client, pending),
-                    )
-                    .await;
-                    self.isolate_channel(channel).await;
-                    return;
-                }
-                ActiveInput::Command(RuntimeCommand::Stop { response }) => {
-                    self.cancel(&client, &HashMap::new()).await;
-                    self.isolate_channel(channel).await;
-                    let _ = response.send(Ok(StopSessionResponse {
-                        session: contract_session(self.session.clone()),
-                    }));
-                    return;
-                }
-                ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
-                ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
-                    self.note_desired_mcp();
-                }
-                // The Effect barrier is what makes this unreachable while an operation is in
-                // flight: a consumer is only restarted after its plugin reported every turn
-                // finished. A replacement that still raced in leaves this request unanswered, and
-                // this loop's existing failure handling ends the operation and stops the session —
-                // the same repair the idle path performs, arrived at the slower way.
-                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { .. }) => {}
-                ActiveInput::Command(
-                    RuntimeCommand::Prompt { accepted, .. } | RuntimeCommand::Load { accepted, .. },
-                ) => {
-                    let _ = accepted.send(Err(session_busy()));
-                }
-                ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {
-                    let _ = response.send(Err(permission_not_pending()));
-                }
-                ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
-                    let _ = response.send(());
-                }
-                ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
-                    self.adopt_user_title(title);
-                    let _ = response.send(());
-                }
-                ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
-                ActiveInput::Command(RuntimeCommand::TitlePoll {
-                    attempt: PollAttempt::First,
-                }) => {
-                    self.title_acquisition.finish_attempt(PollAttempt::First);
-                }
-                ActiveInput::Command(RuntimeCommand::TitlePoll {
-                    attempt: PollAttempt::Final,
-                }) => {
-                    self.title_acquisition.finish_attempt(PollAttempt::Final);
-                    self.title_acquisition.close();
-                }
-                ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
-                    self.observe_session_update(&update);
-                }
-                ActiveInput::CommandsClosed => {
-                    self.cancel(&client, &HashMap::new()).await;
-                    self.isolate_channel(channel).await;
-                    return;
-                }
-            }
+        if let Replay::Delivered = self.replay_recorded_history(&events).await {
+            let _ = events.send(Ok(LoadSessionEvent::Completed)).await;
         }
     }
 
@@ -502,11 +244,12 @@ impl RuntimeActor {
             self.channel = Some(channel);
             return;
         }
-        let request = PromptRequest::new(self.session.agent_session_id.clone(), blocks);
+        let agent_session_id = self.provider_session_id().to_string();
+        let request = PromptRequest::new(agent_session_id.clone(), blocks);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let pending = match client
             .start_session_request::<_, PromptResponse>(
-                AcpSessionId::new(self.session.agent_session_id.clone()),
+                AcpSessionId::new(agent_session_id.clone()),
                 AGENT_METHOD_NAMES.session_prompt,
                 &request,
             )
@@ -531,14 +274,18 @@ impl RuntimeActor {
             // already holds it — the transcript's preamble, which tells its reader
             // the work belongs to a *different* agent, would be false if it did.
             //
-            // Recording it can itself fail, which degrades the session and leaves no
-            // delivery line behind. The next actor then reads the binding as still
-            // owing a handoff and sends it again, the harmless direction to be wrong in.
-            self.handoff_pending = false;
-            let outcome = self
-                .recorder
-                .record_handoff_delivered(self.session.agent_session_id.clone());
-            self.settle_record(outcome);
+            // It is also what earns a rebuilt binding its place in the row: the
+            // provider session is only worth pointing at once it has been told what
+            // the conversation is.
+            let debt = std::mem::replace(&mut self.handoff, HandoffDebt::Settled);
+            self.commit_rebuilt_binding();
+            if let HandoffDebt::Recorded = debt {
+                // Recording can itself fail, which degrades the session and leaves no
+                // delivery line behind. The next actor then reads the binding as still
+                // owing a handoff and sends it again, the harmless direction to be wrong in.
+                let outcome = self.recorder.record_handoff_delivered(agent_session_id);
+                self.settle_record(outcome);
+            }
         }
         let mut permissions = HashMap::new();
         let mut followers = SessionFollowers::new();
@@ -861,7 +608,7 @@ impl RuntimeActor {
     }
 
     /// Cancels the provider turn and settles every outstanding permission request.
-    async fn cancel(
+    pub(super) async fn cancel(
         &self,
         client: &AgentAcpClient,
         permissions: &HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
@@ -878,7 +625,7 @@ impl RuntimeActor {
         let _ = client
             .notify(
                 AGENT_METHOD_NAMES.session_cancel,
-                &CancelNotification::new(self.session.agent_session_id.clone()),
+                &CancelNotification::new(self.provider_session_id().to_string()),
             )
             .await;
     }
@@ -921,21 +668,11 @@ impl RuntimeActor {
                     .client
                     .request::<_, CloseSessionResponse>(
                         AGENT_METHOD_NAMES.session_close,
-                        &CloseSessionRequest::new(self.session.agent_session_id.clone()),
+                        &CloseSessionRequest::new(self.provider_session_id().to_string()),
                     ),
             )
             .await;
         }
-    }
-
-    /// Completes an interrupted load request with the connection-level failure.
-    fn fail_load(
-        &mut self,
-        events: &mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
-        error: BackendError,
-    ) {
-        let _ = events.try_send(Err(error));
-        self.mark_stopped();
     }
 
     /// Completes an interrupted prompt request with the connection-level failure.
@@ -952,10 +689,10 @@ impl RuntimeActor {
     ///
     /// The provider session died with the process, so the channel is dropped without `session/close`
     /// — that call would only ask a fresh agent to close an id it has never heard of. Detaching is
-    /// enough to repair the session rather than end it: a prompt is refused while no channel is
-    /// held, and the load that establishes one calls `session/load`, which is exactly the
-    /// re-establishment the replaced process needs. Without this the actor would keep a channel it
-    /// believes is live and prompt against a session id the new process cannot resolve.
+    /// enough to repair the session rather than end it: the next prompt attaches, which restores
+    /// the session on the fresh process or rebuilds it when that fails. Without this the actor
+    /// would keep a channel it believes is live and prompt against a session id the new process
+    /// cannot resolve.
     fn detach_replaced_agent(&mut self, agent: &ora_domain::AgentRef) {
         if self.session.agent_ref != *agent || self.channel.is_none() {
             return;
@@ -968,6 +705,19 @@ impl RuntimeActor {
         self.mark_stopped();
     }
 
+    /// Names the provider session this actor is talking to right now.
+    ///
+    /// Usually the binding in the row, but a session rebuilt after one that could not be restored
+    /// lives only in memory until the transcript is delivered. Reading it from here rather than
+    /// from the row is what keeps a status write — which refreshes the snapshot from the database —
+    /// from silently swapping the live identity back to the one being replaced.
+    pub(super) fn provider_session_id(&self) -> &str {
+        match &self.rebuilt_binding {
+            Some(rebuilt) => &rebuilt.agent_session_id,
+            None => &self.session.agent_session_id,
+        }
+    }
+
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
@@ -978,7 +728,7 @@ impl RuntimeActor {
     }
 
     /// Persists lifecycle status and refreshes the actor snapshot from the single-column result.
-    fn persist_session_status(&mut self, status: SessionStatus) {
+    pub(super) fn persist_session_status(&mut self, status: SessionStatus) {
         match self.repository.update_session_status(
             &self.session.id,
             status,
@@ -1088,6 +838,12 @@ mod tests {
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let (agent_ref, agent_source) = test_agent_source();
         let plugin_host = test_plugin_host(&pool, temporary.path());
+        let connections = ConnectionSupervisors::start(
+            plugin_host.clone(),
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
         let connection = ConnectionSupervisor::start(
             agent_ref.clone(),
             agent_source,
@@ -1125,7 +881,9 @@ mod tests {
             commands: command_receiver,
             recorder,
             sessions_root: temporary.path().join("sessions"),
-            handoff_pending: false,
+            connections,
+            handoff: HandoffDebt::Settled,
+            rebuilt_binding: None,
             scheduler: scheduler.clone(),
             app_events: AppEventHub::new().publisher(),
             title_acquisition: TitleAcquisition::disabled(),
@@ -1154,6 +912,12 @@ mod tests {
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let (agent_ref, agent_source) = test_agent_source();
         let plugin_host = test_plugin_host(&pool, temporary.path());
+        let connections = ConnectionSupervisors::start(
+            plugin_host.clone(),
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
         let connection = ConnectionSupervisor::start(
             agent_ref.clone(),
             agent_source,
@@ -1190,7 +954,9 @@ mod tests {
             commands: command_receiver,
             recorder,
             sessions_root: temporary.path().join("sessions"),
-            handoff_pending: false,
+            connections,
+            handoff: HandoffDebt::Settled,
+            rebuilt_binding: None,
             scheduler: scheduler.clone(),
             app_events: AppEventHub::new().publisher(),
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),
@@ -1209,6 +975,21 @@ mod tests {
         drop(actor);
         scheduler.shutdown().await;
     }
+}
+
+/// Sends one attach's setup updates ahead of its turn, reporting whether a client is still there.
+///
+/// A closed queue means the caller abandoned the send before it began, so the turn is dropped
+/// rather than started for nobody.
+fn publish_setup(
+    events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
+    setup: Vec<SessionUpdate>,
+) -> bool {
+    setup.into_iter().all(|update| {
+        events
+            .try_send(Ok(PromptSessionEvent::SessionUpdate { update }))
+            .is_ok()
+    })
 }
 
 /// Reports that the actor cannot accept a second operation while one is in flight.
