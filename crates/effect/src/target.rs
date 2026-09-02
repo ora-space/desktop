@@ -139,6 +139,16 @@ impl MaterializationFormat {
         Self("ora/skill-directory.v1".to_string())
     }
 
+    /// Returns the OpenCode project configuration merge format.
+    pub fn opencode_mcp_config_v1() -> Self {
+        Self("ora/opencode-mcp-config.v1".to_string())
+    }
+
+    /// Returns the Claude project MCP configuration merge format.
+    pub fn claude_mcp_config_v1() -> Self {
+        Self("ora/claude-mcp-config.v1".to_string())
+    }
+
     /// Refuses an empty format because unknown formats must never be guessed by an adapter.
     pub fn parse(value: impl Into<String>) -> Result<Self, DeclarationError> {
         let value = value.into();
@@ -167,11 +177,20 @@ pub struct FilesystemDirectoryDescriptor {
     pub relative_path: ResourcePath,
 }
 
+/// A validated Workspace-relative shared file interpreted by a merge adapter.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FilesystemFileDescriptor {
+    pub workspace_root: PathBuf,
+    pub relative_path: ResourcePath,
+    pub ownership_relative_path: ResourcePath,
+}
+
 /// Closed set of versioned Resource descriptors that Core stores but does not interpret.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "descriptor", rename_all = "snake_case")]
 pub enum VersionedResourceDescriptor {
     FilesystemDirectoryV1(FilesystemDirectoryDescriptor),
+    FilesystemFileV1(FilesystemFileDescriptor),
 }
 
 /// Lifecycle of one independently mutable external Resource.
@@ -206,6 +225,22 @@ impl MaterializationContract {
     pub fn skill_directory_v1() -> Self {
         Self {
             kind: "ora/skill-directory".to_string(),
+            version: 1,
+        }
+    }
+
+    /// Builds the first OpenCode shared JSON configuration contract.
+    pub fn opencode_mcp_config_v1() -> Self {
+        Self {
+            kind: "ora/opencode-mcp-config".to_string(),
+            version: 1,
+        }
+    }
+
+    /// Builds the first Claude shared JSON configuration contract.
+    pub fn claude_mcp_config_v1() -> Self {
+        Self {
+            kind: "ora/claude-mcp-config".to_string(),
             version: 1,
         }
     }
@@ -275,15 +310,18 @@ pub struct FilesystemResourceTemplate {
     pub materialization_contract: MaterializationContract,
     pub accepts: CapabilityRequirement,
     pub coordination: CoordinationRequirement,
+    pub ownership_relative_path: Option<ResourcePath>,
 }
 
 impl FilesystemResourceTemplate {
     /// Produces the adapter-normalized physical key used to merge shared declarations in a Scope.
     pub fn resource_key(&self) -> ResourceKey {
-        ResourceKey::from_normalized(format!(
-            "filesystem-directory:{}",
-            self.relative_path.as_str()
-        ))
+        let resource_kind = if self.ownership_relative_path.is_some() {
+            "filesystem-file"
+        } else {
+            "filesystem-directory"
+        };
+        ResourceKey::from_normalized(format!("{resource_kind}:{}", self.relative_path.as_str()))
     }
 }
 

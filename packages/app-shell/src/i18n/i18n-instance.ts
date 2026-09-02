@@ -758,6 +758,12 @@ export const translationResources = {
     "settings.plugins.invalidDeclaration": "配置声明无效",
     "settings.plugins.configuration.default": "默认值",
     "settings.plugins.configuration.notSet": "未设置",
+    "settings.plugins.configuration.configuredSecret": "已配置；输入新值以替换",
+    "settings.plugins.configuration.materialization.label": "Agent 物化",
+    "settings.plugins.configuration.materialization.incomplete": "配置不完整",
+    "settings.plugins.configuration.materialization.projecting": "正在同步",
+    "settings.plugins.configuration.materialization.current": "已同步",
+    "settings.plugins.configuration.materialization.blocked": "同步受阻",
     "settings.plugins.configuration.useDefault": "使用默认值",
     "settings.plugins.configuration.on": "开启",
     "settings.plugins.configuration.off": "关闭",
@@ -1413,6 +1419,8 @@ export const translationResources = {
     "chat.pickProject": "请先选择或创建一个项目，然后开始对话",
     "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
     "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
+    "chat.agentEffectsNotReady":
+      "Agent 正在同步项目技能与 MCP 配置，完成后即可发送",
     "chat.copy": "复制",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
@@ -2291,6 +2299,14 @@ export const translationResources = {
     "settings.plugins.invalidDeclaration": "Invalid configuration declaration",
     "settings.plugins.configuration.default": "Default",
     "settings.plugins.configuration.notSet": "Not set",
+    "settings.plugins.configuration.configuredSecret":
+      "Configured; enter a new value to replace",
+    "settings.plugins.configuration.materialization.label":
+      "Agent materialization",
+    "settings.plugins.configuration.materialization.incomplete": "Incomplete",
+    "settings.plugins.configuration.materialization.projecting": "Projecting",
+    "settings.plugins.configuration.materialization.current": "Current",
+    "settings.plugins.configuration.materialization.blocked": "Blocked",
     "settings.plugins.configuration.useDefault": "Use default",
     "settings.plugins.configuration.on": "On",
     "settings.plugins.configuration.off": "Off",
@@ -3037,6 +3053,8 @@ export const translationResources = {
     "chat.pickAgent": "Pick an agent before starting a chat",
     "chat.pickAvailableAgent":
       "Pick an available agent and model before starting a chat",
+    "chat.agentEffectsNotReady":
+      "The agent is syncing project Skills and MCP configuration",
     "chat.copy": "Copy",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",

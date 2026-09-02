@@ -5,8 +5,9 @@ use crate::DatabaseError;
 use ora_domain::{Workspace, WorkspaceLocation};
 use ora_effect::{
     ConsumerDeclaration, ConsumerIdentity, ConsumerRevisionId, Digest, EffectResourceId,
-    EffectScopeId, EffectTargetId, FilesystemDirectoryDescriptor, LocalTimestamp,
-    ResourceAdapterIdentity, TargetDeclaration, TargetResourceBinding, VersionedResourceDescriptor,
+    EffectScopeId, EffectTargetId, FilesystemDirectoryDescriptor, FilesystemFileDescriptor,
+    LocalTimestamp, ResourceAdapterIdentity, TargetDeclaration, TargetResourceBinding,
+    VersionedResourceDescriptor,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -323,11 +324,19 @@ fn upsert_resource(
 ) -> Result<EffectResourceId, DatabaseError> {
     let scope_id = scope.storage_key();
     let resource_key = template.resource_key();
-    let descriptor =
-        VersionedResourceDescriptor::FilesystemDirectoryV1(FilesystemDirectoryDescriptor {
+    let descriptor = match &template.ownership_relative_path {
+        Some(ownership_relative_path) => {
+            VersionedResourceDescriptor::FilesystemFileV1(FilesystemFileDescriptor {
+                workspace_root: std::path::PathBuf::from(workspace_path),
+                relative_path: template.relative_path.clone(),
+                ownership_relative_path: ownership_relative_path.clone(),
+            })
+        }
+        None => VersionedResourceDescriptor::FilesystemDirectoryV1(FilesystemDirectoryDescriptor {
             workspace_root: std::path::PathBuf::from(workspace_path),
             relative_path: template.relative_path.clone(),
-        });
+        }),
+    };
     let descriptor_json = effect_json(&descriptor)?;
     let existing = transaction
         .query_row(
@@ -357,7 +366,12 @@ fn upsert_resource(
         }
         None => {
             let id = EffectResourceId::random();
-            let adapter = ResourceAdapterIdentity::parse("ora/filesystem-directory")
+            let adapter_name = if template.ownership_relative_path.is_some() {
+                "ora/json-file-merge"
+            } else {
+                "ora/filesystem-directory"
+            };
+            let adapter = ResourceAdapterIdentity::parse(adapter_name)
                 .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
             transaction.execute(
                 "INSERT INTO effect_resources (

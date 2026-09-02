@@ -2,6 +2,7 @@
 //! process, plus one end-to-end check that stdout, stderr, and exit reach the plugin as
 //! notifications once a real `PluginRuntime` is attached.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,8 +26,26 @@ use tokio::time::timeout;
 
 use crate::childprocess::{
     CHILDPROCESS_CLOSE_STDIN_METHOD, CHILDPROCESS_KILL_METHOD, CHILDPROCESS_SPAWN_METHOD,
-    CHILDPROCESS_WRITE_METHOD, MAX_WRITE_BYTES, PluginProcessHost,
+    CHILDPROCESS_WRITE_METHOD, ChildProcessEnvironmentProvider, MAX_WRITE_BYTES, PluginProcessHost,
 };
+
+#[derive(Clone)]
+struct FixedEnvironmentProvider;
+
+impl ChildProcessEnvironmentProvider for FixedEnvironmentProvider {
+    fn environment(
+        &self,
+        plugin_id: &str,
+        workspace_root: &Path,
+    ) -> Result<BTreeMap<String, String>, String> {
+        assert_eq!(plugin_id, "plugin-a");
+        assert_eq!(workspace_root, Path::new("/work"));
+        Ok(BTreeMap::from([(
+            "ORA_MCP_AUTHORIZED".to_string(),
+            "secret".to_string(),
+        )]))
+    }
+}
 
 /// The `data.kind` classification of one failed call, as a plugin would branch on it.
 fn kind_of(error: &HostRequestError) -> String {
@@ -236,6 +255,55 @@ async fn spawn_returns_process_id_and_forwards_command_args_cwd_env() {
         vec![(OsStr::new("FOO"), OsStr::new("bar"))]
     );
     assert_eq!(result, json!({ "processId": "1", "pid": 100 }));
+}
+
+#[tokio::test]
+async fn spawn_injects_host_authorized_mcp_environment_after_binding_the_workspace() {
+    let spawner = FakeChildSpawner::new();
+    let host = PluginProcessHost::with_environment_provider(
+        "plugin-a",
+        PathBuf::from("package-root"),
+        spawner.clone(),
+        FixedEnvironmentProvider,
+    );
+
+    host.handle(
+        CHILDPROCESS_SPAWN_METHOD,
+        json!({ "command": "agent", "cwd": "/work", "env": { "PUBLIC": "value" } }),
+    )
+    .await
+    .expect("spawn succeeds");
+
+    assert_eq!(
+        spawner.calls()[0].envs().collect::<Vec<_>>(),
+        vec![
+            (OsStr::new("PUBLIC"), OsStr::new("value")),
+            (OsStr::new("ORA_MCP_AUTHORIZED"), OsStr::new("secret")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn spawn_rejects_plugin_supplied_reserved_mcp_environment() {
+    let spawner = FakeChildSpawner::new();
+    let host = PluginProcessHost::new("plugin-a", PathBuf::from("package-root"), spawner.clone());
+
+    let error = host
+        .handle(
+            CHILDPROCESS_SPAWN_METHOD,
+            json!({
+                "command": "agent",
+                "cwd": "/work",
+                "env": { "ORA_MCP_FORGED": "value" },
+            }),
+        )
+        .await
+        .expect_err("reserved variables are host-owned");
+
+    assert_eq!(
+        (kind_of(&error), spawner.calls().len()),
+        ("invalid_params".to_string(), 0)
+    );
 }
 
 /// Builds a package root holding one executable file, returning the root and its handler.

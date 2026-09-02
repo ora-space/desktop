@@ -170,7 +170,7 @@ fn accepts_the_skill_format_the_sdk_publishes() {
     );
 }
 
-/// Any other format is refused, rather than mapped onto the one Skill format that does exist.
+/// Any unknown format is refused instead of being mapped onto a supported Effect format.
 #[test]
 fn rejects_a_materialization_format_this_host_cannot_serve() {
     let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
@@ -182,7 +182,7 @@ fn rejects_a_materialization_format_this_host_cannot_serve() {
     assert_eq!(
         error,
         AgentEffectError::InvalidDeclaration(
-            "unsupported Skill materialization format skill_directory.v1".to_string()
+            "unsupported Effect materialization format skill_directory.v1".to_string()
         )
     );
 }

@@ -32,6 +32,8 @@ export {
   type NotificationHandler,
   Plugin,
   PluginMethodError,
+  CLAUDE_MCP_CONFIG_V1,
+  OPENCODE_MCP_CONFIG_V1,
   SKILL_DIRECTORY_V1,
 } from "./plugin.ts";
 export {

@@ -14,6 +14,8 @@ import {
   type PluginTransport,
   type RequestId,
   SKILL_DIRECTORY_V1,
+  OPENCODE_MCP_CONFIG_V1,
+  CLAUDE_MCP_CONFIG_V1,
 } from "./protocol/index.ts";
 
 export type MethodHandler = (
@@ -41,7 +43,7 @@ export interface HostRequestOptions {
  * the process when it does not match — a typo here is not a degraded mode, it is a plugin that
  * never starts, reported once as an invalid Effect declaration.
  */
-export { SKILL_DIRECTORY_V1 };
+export { CLAUDE_MCP_CONFIG_V1, OPENCODE_MCP_CONFIG_V1, SKILL_DIRECTORY_V1 };
 
 export type EffectResourceDeclaration =
   & Omit<
@@ -49,8 +51,11 @@ export type EffectResourceDeclaration =
     "materializationFormat"
   >
   & {
-    /** Narrowed to the literal the host accepts, so a wrong spelling fails at compile time. */
-    materializationFormat: typeof SKILL_DIRECTORY_V1;
+    /** Narrowed to the built-in formats the host accepts. */
+    materializationFormat:
+      | typeof SKILL_DIRECTORY_V1
+      | typeof OPENCODE_MCP_CONFIG_V1
+      | typeof CLAUDE_MCP_CONFIG_V1;
   };
 
 /**

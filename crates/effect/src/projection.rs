@@ -1,9 +1,12 @@
+use crate::McpEnvironmentBinding;
 use crate::{
     ConsumerRevisionId, DesiredEffectIdentity, Digest, EffectResourceId, EffectRevisionId,
     EffectTargetId, Fingerprint, Generation, ManagedIdentity, MaterializationContract,
     NativeResourceIdentity, ProjectionDigest, SkillName, SkillSourceKey,
 };
+use ora_domain::PluginId;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -38,11 +41,23 @@ pub struct SkillMaterializationInput {
     pub package_fingerprint: Fingerprint,
 }
 
+/// Secret-free input for merging one MCP server into a shared Agent configuration file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct McpMaterializationInput {
+    pub plugin_id: PluginId,
+    pub server_name: String,
+    pub configuration_revision: u64,
+    pub configuration: Value,
+    pub environment: BTreeMap<String, McpEnvironmentBinding>,
+}
+
 /// Closed set of adapter-validated versioned materialization inputs.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "input", rename_all = "snake_case")]
 pub enum VersionedMaterializationInput {
     SkillDirectoryV1(SkillMaterializationInput),
+    OpenCodeMcpConfigV1(McpMaterializationInput),
+    ClaudeMcpConfigV1(McpMaterializationInput),
 }
 
 /// One normalized Desired Effect result for an exact Resource and Consumer capability set.

@@ -76,7 +76,9 @@ fn validate_staged_skill(
     operation: &EffectOperation,
     staging: &Path,
 ) -> Result<(), SkillDirectoryError> {
-    let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload();
+    let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
+        return Err(SkillDirectoryError::UnsupportedAdapterPlan);
+    };
     let source_root = plan
         .source_root
         .as_ref()

@@ -147,6 +147,37 @@ impl EffectRepository for SqliteEffectRepository {
             .map_err(RepositoryError::new)
     }
 
+    fn load_consumer_target_status(
+        &self,
+        scope: &EffectScopeId,
+        consumer: &ora_effect::ConsumerIdentity,
+    ) -> Result<Option<(TargetStatus, Vec<EffectCondition>)>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let target = connection
+                    .query_row(
+                        "SELECT id FROM effect_targets
+                         WHERE scope_id = ?1 AND consumer_id = ?2 AND lifecycle = 'active'",
+                        params![scope.storage_key(), consumer.storage_key()],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                    .map(EffectTargetId::new);
+                target
+                    .map(|target| {
+                        let status = load_target_status(connection, &target)?.ok_or_else(|| {
+                            DatabaseError::CorruptEffectState(
+                                "active Effect Target has no status".to_string(),
+                            )
+                        })?;
+                        load_conditions(connection, &ConditionOwner::Target(target))
+                            .map(|conditions| (status, conditions))
+                    })
+                    .transpose()
+            })
+            .map_err(RepositoryError::new)
+    }
+
     fn request_reconcile(
         &self,
         target: &EffectTargetId,
@@ -365,6 +396,7 @@ fn insert_desired_effect(
 fn parameters_kind(parameters: &ora_effect::ValidatedEffectParameters) -> &'static str {
     match parameters {
         ora_effect::ValidatedEffectParameters::Skill(_) => "skill",
+        ora_effect::ValidatedEffectParameters::Mcp(_) => "mcp",
     }
 }
 

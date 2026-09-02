@@ -245,13 +245,46 @@ where
         declaration_fingerprint: &str,
         values: BTreeMap<String, SettingValue>,
     ) -> Result<ConfigurationDetails, ConfigurationError> {
+        self.save_preserving(
+            plugin_id,
+            package_root,
+            expected_revision,
+            declaration_fingerprint,
+            values,
+            &std::collections::BTreeSet::new(),
+        )
+    }
+
+    /// Replaces overrides while retaining only host-redacted Settings named by the UI.
+    pub fn save_preserving(
+        &self,
+        plugin_id: &str,
+        package_root: &Path,
+        expected_revision: u64,
+        declaration_fingerprint: &str,
+        mut values: BTreeMap<String, SettingValue>,
+        preserved_setting_ids: &std::collections::BTreeSet<String>,
+    ) -> Result<ConfigurationDetails, ConfigurationError> {
         let declaration = self
             .load_declaration(package_root)?
             .ok_or(ConfigurationError::NotDeclared)?;
         if declaration.fingerprint != declaration_fingerprint {
             return Err(ConfigurationError::DeclarationChanged);
         }
-        let field_errors = validate_values(&declaration, &values);
+        let declared_ids = declaration
+            .settings
+            .iter()
+            .map(|setting| setting.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut field_errors = preserved_setting_ids
+            .iter()
+            .filter(|setting_id| !declared_ids.contains(setting_id.as_str()))
+            .map(|setting_id| ConfigurationFieldError {
+                setting_id: setting_id.clone(),
+                error_code: "setting_not_declared".to_string(),
+            })
+            .collect::<Vec<_>>();
+        field_errors.extend(validate_values(&declaration, &values));
         if !field_errors.is_empty() {
             return Err(ConfigurationError::InvalidValues { field_errors });
         }
@@ -265,6 +298,11 @@ where
                 expected: expected_revision,
                 actual: current.revision,
             });
+        }
+        for setting_id in preserved_setting_ids {
+            if let Some(value) = current.values.get(setting_id) {
+                values.insert(setting_id.clone(), value.clone());
+            }
         }
         let revision = current
             .revision

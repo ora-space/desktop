@@ -69,6 +69,17 @@ pub enum PluginConfigurationCompleteness {
     Incomplete,
 }
 
+/// Aggregates one MCP plugin's materialization state across every active Agent Target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginMcpMaterializationStatus {
+    Incomplete,
+    Projecting,
+    Current,
+    Blocked,
+}
+
 /// Represents the exclusive list-facing Plugin Configuration state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
@@ -141,6 +152,8 @@ pub struct PluginSettingDetails {
     pub declaration: PluginSettingDeclaration,
     pub stored_value: Option<PluginSettingValue>,
     pub effective_value: Option<PluginSettingValue>,
+    /// True when the host deliberately withholds a value used by an MCP process.
+    pub redacted: bool,
     pub source: PluginSettingValueSource,
     pub value_error_code: Option<String>,
 }
@@ -156,6 +169,8 @@ pub struct PluginConfigurationDetails {
     pub declaration_fingerprint: String,
     pub settings: Vec<PluginSettingDetails>,
     pub summary: PluginConfigurationSummary,
+    /// Present only for MCP configuration files; non-MCP plugins have no projection state.
+    pub mcp_materialization: Option<PluginMcpMaterializationStatus>,
 }
 
 /// Represents the process-scoped lifecycle of one installed plugin.
@@ -560,6 +575,8 @@ pub struct SavePluginConfigurationRequest {
     pub expected_revision: u64,
     pub declaration_fingerprint: String,
     pub values: BTreeMap<String, PluginSettingValue>,
+    /// Host-redacted stored values that an unchanged editor must retain.
+    pub preserve_setting_ids: Vec<String>,
 }
 
 /// Returns the authoritative post-save editor snapshot and list summary.
@@ -608,6 +625,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
     PluginConfigurationCompleteness::export(config)?;
+    PluginMcpMaterializationStatus::export(config)?;
     PluginConfigurationSummary::export(config)?;
     PluginSettingType::export(config)?;
     PluginSettingValue::export(config)?;

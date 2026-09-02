@@ -2,7 +2,7 @@
 
 `ora-effect` owns Workspace-scoped Desired Effect convergence and the closed, strongly typed wire
 model persisted by the built-in implementation. Planning logic and concrete Resource adapters live
-in integration crates such as `ora-effect-skill`.
+in integration crates such as `ora-effect-skill` and `ora-effect-mcp`.
 
 ## Responsibilities
 
@@ -32,3 +32,9 @@ Built-in Consumer- and Resource-specific data is represented by closed versioned
 this crate, but interpreted only by its integration crate. Adding a built-in Effect kind therefore
 extends both the wire enum and its integration planner; it does not add kind-specific branches to
 the generic status, claim, watermark, or recovery state machines.
+
+`ora-effect-mcp` projects secret-free MCP server templates into Agent-native JSON/JSONC documents.
+The shared file adapter preserves user-owned entries and requires a matching ownership sidecar
+before it updates or removes an Ora-owned entry. Secret values remain outside Desired state,
+projections, journals, and project files; the host resolves them only when it launches the exact
+Agent process that consumes the verified projection.

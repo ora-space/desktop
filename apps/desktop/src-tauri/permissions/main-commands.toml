@@ -54,6 +54,7 @@ commands.allow = [
     "list_agents",
     "list_installed_plugins",
     "get_plugin_configuration",
+    "get_effect_target_status",
     "save_plugin_configuration",
     "reset_plugin_configuration",
     "list_available_plugins",

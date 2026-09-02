@@ -160,6 +160,7 @@ fn declaration(stable_key: &str) -> ConsumerDeclaration {
             readiness_contracts: BTreeSet::new(),
         },
         resources: vec![FilesystemResourceTemplate {
+            ownership_relative_path: None,
             relative_path: ResourcePath::parse(".agents/skills")
                 .unwrap_or_else(|error| panic!("resource path: {error}")),
             materialization_format: MaterializationFormat::skill_directory_v1(),

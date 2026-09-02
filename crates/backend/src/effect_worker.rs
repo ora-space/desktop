@@ -13,7 +13,7 @@ use ora_effect::{
     EffectTarget, EffectTargetId, LocalTimestamp, ReadinessReceipt, ReconcileOutcome,
     TargetProjection, WorkerIdentity,
 };
-use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
+use ora_effect_mcp::{BuiltinEffectPlanner, BuiltinResourceAdapter};
 use ora_logging::{ora_info, ora_warn};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -234,8 +234,8 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
         now: LocalTimestamp,
         lease_until: LocalTimestamp,
     ) {
-        let planner = SkillPlanner;
-        let resource_adapter = SkillDirectoryResourceAdapter;
+        let planner = BuiltinEffectPlanner;
+        let resource_adapter = BuiltinResourceAdapter;
         let consumer_adapter = PluginConsumerAdapter {
             plugin_host: self.plugin_host.as_ref(),
             sessions: self.sessions.as_ref(),

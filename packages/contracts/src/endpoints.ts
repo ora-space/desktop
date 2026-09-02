@@ -3,6 +3,7 @@ import type { CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, Delet
 import type { CommitAgentImportRequest, CommitAgentImportResponse, PrepareAgentImportRequest, PrepareAgentImportResponse } from "./agent-import.js";
 import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
+import type { GetEffectTargetStatusRequest, GetEffectTargetStatusResponse } from "./effect.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
@@ -59,6 +60,7 @@ export type RequestByOperation = {
   renameSession: RenameSessionRequest;
   getAgentRuntimeStatus: GetAgentRuntimeStatusRequest;
   watchAppEvents: WatchAppEventsRequest;
+  getEffectTargetStatus: GetEffectTargetStatusRequest;
   createSkill: CreateSkillRequest;
   getSkill: GetSkillRequest;
   listSkills: ListSkillsRequest;
@@ -169,6 +171,7 @@ export type ResponseByOperation = {
   renameSession: RenameSessionResponse;
   getAgentRuntimeStatus: GetAgentRuntimeStatusResponse;
   watchAppEvents: AppEvent;
+  getEffectTargetStatus: GetEffectTargetStatusResponse;
   createSkill: CreateSkillResponse;
   getSkill: GetSkillResponse;
   listSkills: ListSkillsResponse;
@@ -504,6 +507,14 @@ export const endpoints = {
     requestType: "WatchAppEventsRequest",
     responseType: "AppEvent",
     responseMode: "stream",
+  },
+  getEffectTargetStatus: {
+    operationName: "getEffectTargetStatus",
+    namespace: "effect",
+    memberName: "getTargetStatus",
+    requestType: "GetEffectTargetStatusRequest",
+    responseType: "GetEffectTargetStatusResponse",
+    responseMode: "unary",
   },
   createSkill: {
     operationName: "createSkill",

@@ -45,6 +45,7 @@ pub struct EffectTargetSelectorDto {
 #[ts(export_to = "effect.ts")]
 pub enum EffectParametersDto {
     Skill,
+    Mcp,
 }
 
 /// One stable item of intent selecting an exact immutable Effect Revision.
@@ -180,10 +181,20 @@ pub struct EffectTargetStatusDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(
+    tag = "selector",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 #[ts(export_to = "effect.ts")]
-pub struct GetEffectTargetStatusRequest {
-    pub target_id: String,
+pub enum GetEffectTargetStatusRequest {
+    Target {
+        target_id: String,
+    },
+    WorkspaceAgent {
+        workspace_id: String,
+        agent_plugin_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]

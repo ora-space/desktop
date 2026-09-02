@@ -9,6 +9,7 @@ members = [
     "crates/db",
     "crates/domain",
     "crates/effect",
+    "crates/effect-mcp",
     "crates/effect-skill",
     "crates/fs",
     "crates/gitlancer",
@@ -87,6 +88,7 @@ ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
 ora-effect = { path = "crates/effect" }
+ora-effect-mcp = { path = "crates/effect-mcp" }
 ora-effect-skill = { path = "crates/effect-skill" }
 ora-fs = { path = "crates/fs" }
 gitlancer = { path = "crates/gitlancer" }

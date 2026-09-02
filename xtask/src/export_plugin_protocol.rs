@@ -50,6 +50,8 @@ export const AGENT_NOT_INSTALLED = {AGENT_NOT_INSTALLED_CODE};\n\
 export const AGENT_UNUSABLE = {AGENT_UNUSABLE_CODE};\n\
 export const SUPPORTED_ACP_VERSION = {SUPPORTED_ACP_VERSION};\n\
 export const SKILL_DIRECTORY_V1 = {SKILL_DIRECTORY_V1:?} as const;\n\
+export const OPENCODE_MCP_CONFIG_V1 = {OPENCODE_MCP_CONFIG_V1:?} as const;\n\
+export const CLAUDE_MCP_CONFIG_V1 = {CLAUDE_MCP_CONFIG_V1:?} as const;\n\
 export const MAX_STORAGE_FILE_BYTES = {MAX_STORAGE_FILE_BYTES};\n\n\
 export const PLUGIN_METHODS = {{\n\
 \x20\x20register: {REGISTER_METHOD:?},\n\

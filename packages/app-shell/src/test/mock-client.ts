@@ -287,6 +287,22 @@ function requireWorkflowRecord(
  */
 export function createMockClient(state: MockClientState): ContractsClient {
   return {
+    effect: {
+      getTargetStatus: async () => ({
+        status: {
+          targetId: "mock-effect-target",
+          desiredGeneration: 1,
+          observedGeneration: 1,
+          appliedGeneration: 1,
+          readyGeneration: 1,
+          phase: "current",
+          statusVersion: 1,
+          recoveryOperationId: null,
+          updatedAt: 1n,
+          conditions: [],
+        },
+      }),
+    },
     project: {
       list: async () => ({ projects: [...state.projects] }),
       listBranches: async () => ({
@@ -503,6 +519,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
               req.mode === "reset_all" ? req.expectedRevision : 0n,
             declarationFingerprint: req.declarationFingerprint,
             values: {},
+            preserveSettingIds: [],
           }),
         ),
       }),
@@ -1118,6 +1135,7 @@ function commitPluginConfiguration(
     expectedRevision: bigint;
     declarationFingerprint: string;
     values: { [key in string]: PluginSettingValue };
+    preserveSettingIds: string[];
   },
 ): PluginConfigurationDetails {
   const current = state.pluginConfigurations.get(req.pluginId);
@@ -1139,6 +1157,7 @@ function commitPluginConfiguration(
         source: "stored" as const,
         valueErrorCode: null,
       };
+    if (req.preserveSettingIds.includes(field.declaration.id)) return field;
     return {
       ...field,
       storedValue: null,

@@ -11,9 +11,9 @@ use ora_effect::{
     CapabilityRequirement, ConditionGeneration, ConditionImpact, ConditionOwner, ConditionRetry,
     ConditionSubject, ConsumerIdentity, ConsumerKind, DesiredEffect, DesiredEffectIdentity,
     DesiredState, EffectCondition, EffectKind, EffectRepository, EffectRevisionId, EffectScopeId,
-    EffectTargetId, Generation, LocalTimestamp, ReconcileStage, ReplaceDesiredStateOutcome,
-    RepositoryError, SkillParameters, TargetInclusion, TargetPhase, TargetSelector,
-    ValidatedEffectParameters,
+    EffectTargetId, Generation, LocalTimestamp, McpParameters, ReconcileStage,
+    ReplaceDesiredStateOutcome, RepositoryError, SkillParameters, TargetInclusion, TargetPhase,
+    TargetSelector, ValidatedEffectParameters,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -111,11 +111,22 @@ where
         &self,
         request: GetEffectTargetStatusRequest,
     ) -> Result<GetEffectTargetStatusResponse, EffectApplicationError> {
-        let status = self
-            .repository
-            .load_target_status(&EffectTargetId::new(request.target_id))
-            .map_err(EffectApplicationError::Repository)?
-            .map(|(status, conditions)| map_target_status(status, conditions));
+        let status = match request {
+            GetEffectTargetStatusRequest::Target { target_id } => self
+                .repository
+                .load_target_status(&EffectTargetId::new(target_id)),
+            GetEffectTargetStatusRequest::WorkspaceAgent {
+                workspace_id,
+                agent_plugin_id,
+            } => {
+                let consumer = ConsumerIdentity::new(ConsumerKind::agent_plugin(), agent_plugin_id)
+                    .map_err(|_| EffectApplicationError::InvalidDesiredState)?;
+                self.repository
+                    .load_consumer_target_status(&workspace_scope(workspace_id), &consumer)
+            }
+        }
+        .map_err(EffectApplicationError::Repository)?
+        .map(|(status, conditions)| map_target_status(status, conditions));
         Ok(GetEffectTargetStatusResponse { status })
     }
 
@@ -148,6 +159,7 @@ fn map_desired_effect(effect: DesiredEffectDto) -> Result<DesiredEffect, EffectA
         revision: EffectRevisionId::new(effect.revision_id),
         parameters: match effect.parameters {
             EffectParametersDto::Skill => ValidatedEffectParameters::Skill(SkillParameters {}),
+            EffectParametersDto::Mcp => ValidatedEffectParameters::Mcp(McpParameters {}),
         },
         audience: map_selector(effect.audience)?,
     })
@@ -223,6 +235,7 @@ fn map_desired_effect_dto(effect: DesiredEffect) -> DesiredEffectDto {
         revision_id: effect.revision.to_string(),
         parameters: match effect.parameters {
             ValidatedEffectParameters::Skill(_) => EffectParametersDto::Skill,
+            ValidatedEffectParameters::Mcp(_) => EffectParametersDto::Mcp,
         },
         audience: map_selector_dto(effect.audience),
     }

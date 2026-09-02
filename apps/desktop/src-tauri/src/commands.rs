@@ -1049,6 +1049,13 @@ backend_command!(
     "Resets explicit overrides or recovers a damaged Plugin Configuration."
 );
 backend_command!(
+    get_effect_target_status,
+    GetEffectTargetStatusRequest,
+    GetEffectTargetStatusResponse,
+    get_effect_target_status,
+    "Loads one generic Effect Target status."
+);
+backend_command!(
     list_available_plugins,
     ListAvailablePluginsRequest,
     ListAvailablePluginsResponse,

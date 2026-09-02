@@ -118,6 +118,13 @@ pub trait EffectRepository {
         target: &EffectTargetId,
     ) -> Result<Option<(TargetStatus, Vec<crate::EffectCondition>)>, RepositoryError>;
 
+    /// Loads the active Target status selected by its stable Scope and Consumer identities.
+    fn load_consumer_target_status(
+        &self,
+        scope: &EffectScopeId,
+        consumer: &crate::ConsumerIdentity,
+    ) -> Result<Option<(TargetStatus, Vec<crate::EffectCondition>)>, RepositoryError>;
+
     /// Coalesces an explicit Target wakeup without mutating Desired State.
     fn request_reconcile(
         &self,

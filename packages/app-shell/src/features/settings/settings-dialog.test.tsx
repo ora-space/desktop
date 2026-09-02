@@ -168,11 +168,13 @@ describe("SettingsDialog developer options", () => {
           },
           storedValue: null,
           effectiveValue: null,
+          redacted: false,
           source: "absent",
           valueErrorCode: null,
         },
       ],
       summary: { state: "available", completeness: "incomplete" },
+      mcpMaterialization: null,
     });
     const user = userEvent.setup();
     renderDialog(createMockClient(state));

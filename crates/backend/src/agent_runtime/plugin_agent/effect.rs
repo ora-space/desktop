@@ -55,8 +55,9 @@ pub(crate) fn registered_consumer_declaration(
     }
     let consumer = ConsumerIdentity::new(ConsumerKind::agent_plugin(), plugin_id.canonical())
         .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
-    let materialization = MaterializationContract::skill_directory_v1();
     let coordination = CoordinationContract::agent_restart_v1();
+    let mut effect_protocols = BTreeMap::new();
+    let mut materialization_contracts = BTreeSet::new();
     let resources = registration
         .effect_resources
         .iter()
@@ -65,12 +66,41 @@ pub(crate) fn registered_consumer_declaration(
                 .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
             let format = MaterializationFormat::parse(&resource.materialization_format)
                 .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
-            if format != MaterializationFormat::skill_directory_v1() {
-                return Err(AgentEffectError::InvalidDeclaration(format!(
-                    "unsupported Skill materialization format {}",
-                    resource.materialization_format
-                )));
-            }
+            let (materialization, kind, ownership_relative_path) =
+                if format == MaterializationFormat::skill_directory_v1() {
+                    (
+                        MaterializationContract::skill_directory_v1(),
+                        EffectKind::skill(),
+                        None,
+                    )
+                } else if format == MaterializationFormat::opencode_mcp_config_v1() {
+                    (
+                        MaterializationContract::opencode_mcp_config_v1(),
+                        EffectKind::mcp(),
+                        Some(
+                            ResourcePath::parse(".opencode/.ora-mcp-managed.json").map_err(
+                                |error| AgentEffectError::InvalidDeclaration(error.to_string()),
+                            )?,
+                        ),
+                    )
+                } else if format == MaterializationFormat::claude_mcp_config_v1() {
+                    (
+                        MaterializationContract::claude_mcp_config_v1(),
+                        EffectKind::mcp(),
+                        Some(
+                            ResourcePath::parse(".claude/.ora-mcp-managed.json").map_err(
+                                |error| AgentEffectError::InvalidDeclaration(error.to_string()),
+                            )?,
+                        ),
+                    )
+                } else {
+                    return Err(AgentEffectError::InvalidDeclaration(format!(
+                        "unsupported Effect materialization format {}",
+                        resource.materialization_format
+                    )));
+                };
+            effect_protocols.insert(kind.clone(), 1);
+            materialization_contracts.insert(materialization.capability_key());
             let coordination = match resource.coordination {
                 PluginEffectCoordination::Uninterrupted => CoordinationRequirement::Uninterrupted,
                 PluginEffectCoordination::QuiesceBeforeMutation => {
@@ -82,10 +112,11 @@ pub(crate) fn registered_consumer_declaration(
                 materialization_format: format,
                 materialization_contract: materialization.clone(),
                 accepts: CapabilityRequirement {
-                    effect_protocols: BTreeMap::from([(EffectKind::skill(), 1)]),
+                    effect_protocols: BTreeMap::from([(kind, 1)]),
                     materialization_contracts: BTreeSet::from([materialization.capability_key()]),
                 },
                 coordination,
+                ownership_relative_path,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -94,8 +125,8 @@ pub(crate) fn registered_consumer_declaration(
         adapter: ConsumerAdapterIdentity::parse("ora/agent-plugin")
             .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?,
         capabilities: CapabilitySet {
-            effect_protocols: BTreeMap::from([(EffectKind::skill(), 1)]),
-            materialization_contracts: BTreeSet::from([materialization.capability_key()]),
+            effect_protocols,
+            materialization_contracts,
             coordination_contracts: BTreeSet::from([coordination.capability_key()]),
             readiness_contracts: BTreeSet::from(["ora/agent-target-ready.v1".to_string()]),
         },

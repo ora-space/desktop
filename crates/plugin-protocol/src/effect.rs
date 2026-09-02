@@ -7,8 +7,12 @@ pub const EFFECT_COORDINATE_METHOD: &str = "effect/coordinate";
 pub const EFFECT_REACTIVATE_METHOD: &str = "effect/reactivate";
 /// Method that confirms an Agent consumed one exact Target projection.
 pub const EFFECT_VERIFY_READY_METHOD: &str = "effect/verify_ready";
-/// The one Skill materialization format currently accepted from Agent plugins.
+/// Skill directory materialization format accepted from Agent plugins.
 pub const SKILL_DIRECTORY_V1: &str = "ora/skill-directory.v1";
+/// OpenCode shared project configuration materialization format.
+pub const OPENCODE_MCP_CONFIG_V1: &str = "ora/opencode-mcp-config.v1";
+/// Claude shared project configuration materialization format.
+pub const CLAUDE_MCP_CONFIG_V1: &str = "ora/claude-mcp-config.v1";
 
 /// Exact Target and Resource set sent around one mutation attempt.
 #[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]

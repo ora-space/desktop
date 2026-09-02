@@ -128,6 +128,7 @@ function clientWithPluginConfiguration(unavailable = false) {
         },
         storedValue: null,
         effectiveValue: null,
+        redacted: false,
         source: "absent",
         valueErrorCode: null,
       },
@@ -135,6 +136,7 @@ function clientWithPluginConfiguration(unavailable = false) {
     summary: unavailable
       ? { state: "unavailable", errorCode: "configuration_load_failed" }
       : { state: "available", completeness: "incomplete" },
+    mcpMaterialization: null,
   });
   return { state, client: createMockClient(state) };
 }
@@ -432,6 +434,7 @@ it("configures declared plugin settings and keeps the editor open after save", a
         },
         storedValue: null,
         effectiveValue: null,
+        redacted: false,
         source: "absent",
         valueErrorCode: null,
       },
@@ -447,6 +450,7 @@ it("configures declared plugin settings and keeps the editor open after save", a
         },
         storedValue: null,
         effectiveValue: 3,
+        redacted: false,
         source: "default",
         valueErrorCode: null,
       },
@@ -462,11 +466,13 @@ it("configures declared plugin settings and keeps the editor open after save", a
         },
         storedValue: null,
         effectiveValue: null,
+        redacted: false,
         source: "absent",
         valueErrorCode: null,
       },
     ],
     summary: { state: "available", completeness: "incomplete" },
+    mcpMaterialization: "current",
   });
   const client = createMockClient(state);
   const save = vi.spyOn(client.plugin, "saveConfiguration");
@@ -476,6 +482,7 @@ it("configures declared plugin settings and keeps the editor open after save", a
   await user.click(
     await screen.findByRole("button", { name: /配置|Configure/ }),
   );
+  expect(await screen.findByText(/已同步|Current/)).toBeInTheDocument();
   await user.type(await screen.findByLabelText(/Endpoint/), "https://api.test");
   expect(screen.getByLabelText(/Retries/)).toHaveValue("3");
   await user.selectOptions(screen.getByLabelText(/Enabled/), "false");

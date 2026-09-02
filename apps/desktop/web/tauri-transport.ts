@@ -122,6 +122,7 @@ const tauriCommands = {
   updateMarketplaceSource: "update_marketplace_source",
   listInstalledPlugins: "list_installed_plugins",
   getPluginConfiguration: "get_plugin_configuration",
+  getEffectTargetStatus: "get_effect_target_status",
   savePluginConfiguration: "save_plugin_configuration",
   resetPluginConfiguration: "reset_plugin_configuration",
   scanPlugins: "scan_plugins",

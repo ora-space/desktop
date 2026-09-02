@@ -52,6 +52,7 @@ desktop_command_registry! {
     commands::list_agents,
     commands::list_installed_plugins,
     commands::get_plugin_configuration,
+    commands::get_effect_target_status,
     commands::save_plugin_configuration,
     commands::reset_plugin_configuration,
     commands::list_available_plugins,

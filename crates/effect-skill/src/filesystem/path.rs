@@ -17,7 +17,10 @@ pub(super) fn resolve_resource_root(
     resource: &EffectResource,
     access: RootAccess,
 ) -> Result<Option<PathBuf>, SkillDirectoryError> {
-    let VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) = &resource.descriptor;
+    let VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) = &resource.descriptor
+    else {
+        return Err(SkillDirectoryError::UnsupportedResourceDescriptor);
+    };
     resolve_declared_root(
         &descriptor.workspace_root,
         &descriptor.relative_path,
@@ -99,7 +102,10 @@ pub(super) fn resolve_declared_root(
 
 /// Resolves the Resource root for intent preparation without creating it yet.
 pub(super) fn resource_root(resource: &EffectResource) -> Result<PathBuf, SkillDirectoryError> {
-    let VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) = &resource.descriptor;
+    let VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) = &resource.descriptor
+    else {
+        return Err(SkillDirectoryError::UnsupportedResourceDescriptor);
+    };
     resolve_declared_root(
         &descriptor.workspace_root,
         &descriptor.relative_path,

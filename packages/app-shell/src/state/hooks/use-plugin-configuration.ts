@@ -26,6 +26,8 @@ export function usePluginConfiguration(pluginId: string) {
         .getConfiguration({ pluginId })
         .then((response) => response.configuration),
     enabled: pluginId !== "",
+    refetchInterval: (current) =>
+      current.state.data?.mcpMaterialization === "projecting" ? 1_000 : false,
   });
 
   const adopt = (configuration: PluginConfigurationDetails) => {

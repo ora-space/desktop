@@ -25,9 +25,9 @@
 //! that distinction is the answer, and it lets a plugin fall back to `command` for the first case
 //! while treating the second as the deterministic package fault it is.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
@@ -66,6 +66,37 @@ pub(crate) const MAX_WRITE_BYTES: usize = MAX_STORAGE_FILE_BYTES as usize;
 /// Longest base64 string that can decode to `MAX_WRITE_BYTES`, checked before `BASE64.decode`
 /// allocates so an oversized payload is rejected without ever being decoded.
 const MAX_WRITE_BASE64_LEN: usize = MAX_WRITE_BYTES.div_ceil(3) * 4;
+
+/// Reserves the environment namespace populated by Ora after it verifies an MCP projection.
+const MCP_ENVIRONMENT_PREFIX: &str = "ORA_MCP_";
+
+/// Supplies narrowly scoped environment variables for one host-managed Agent subprocess.
+///
+/// Implementations must derive values from host-owned configuration and must never include a
+/// secret in an error. The host calls the provider only after binding the request to the calling
+/// plugin and its requested workspace directory.
+pub trait ChildProcessEnvironmentProvider: Clone + Send + Sync + 'static {
+    /// Returns the variables authorized for this Agent plugin in this workspace.
+    fn environment(
+        &self,
+        plugin_id: &str,
+        workspace_root: &Path,
+    ) -> Result<BTreeMap<String, String>, String>;
+}
+
+/// Leaves child-process environments unchanged when no host policy is configured.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoChildProcessEnvironment;
+
+impl ChildProcessEnvironmentProvider for NoChildProcessEnvironment {
+    fn environment(
+        &self,
+        _plugin_id: &str,
+        _workspace_root: &Path,
+    ) -> Result<BTreeMap<String, String>, String> {
+        Ok(BTreeMap::new())
+    }
+}
 
 /// One failed child-process call before it is rendered as a JSON-RPC error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,12 +147,13 @@ struct Tracked<P> {
     stderr_done: JoinHandle<()>,
 }
 
-struct Inner<S: ProcessSpawner> {
+struct Inner<S: ProcessSpawner, E: ChildProcessEnvironmentProvider> {
     plugin_id: String,
     /// Install root of the package this handler serves, and the boundary every `packageCommand`
     /// must resolve inside. Fixed by the launch, so a request can never widen it.
     package_root: PathBuf,
     spawner: S,
+    environment_provider: E,
     next_id: AtomicU64,
     tracked: StdMutex<HashMap<String, Tracked<S::Process>>>,
     /// Filled in once by [`PluginProcessHost::attach_runtime`] after the plugin connection this
@@ -138,15 +170,18 @@ struct Inner<S: ProcessSpawner> {
 /// Generic over [`ProcessSpawner`] for the same reason `DenoPluginRuntimeLauncher` is: production
 /// always uses [`ora_process::TokioProcessSpawner`], while tests inject a fake that never starts a
 /// real OS process.
-pub struct PluginProcessHost<S: ProcessSpawner>(Arc<Inner<S>>);
+pub struct PluginProcessHost<
+    S: ProcessSpawner,
+    E: ChildProcessEnvironmentProvider = NoChildProcessEnvironment,
+>(Arc<Inner<S, E>>);
 
-impl<S: ProcessSpawner> Clone for PluginProcessHost<S> {
+impl<S: ProcessSpawner, E: ChildProcessEnvironmentProvider> Clone for PluginProcessHost<S, E> {
     fn clone(&self) -> Self {
         Self(Arc::clone(&self.0))
     }
 }
 
-impl<S> PluginProcessHost<S>
+impl<S> PluginProcessHost<S, NoChildProcessEnvironment>
 where
     S: ProcessSpawner + Send + Sync + 'static,
     S::Process: Send + Sync + 'static,
@@ -157,11 +192,29 @@ where
     /// decides which tree a `packageCommand` may resolve inside, and taking it from a request
     /// would let a plugin name any directory on the host.
     pub fn new(plugin_id: impl Into<String>, package_root: PathBuf, spawner: S) -> Self {
+        Self::with_environment_provider(plugin_id, package_root, spawner, NoChildProcessEnvironment)
+    }
+}
+
+impl<S, E> PluginProcessHost<S, E>
+where
+    S: ProcessSpawner + Send + Sync + 'static,
+    S::Process: Send + Sync + 'static,
+    E: ChildProcessEnvironmentProvider,
+{
+    /// Binds a host-owned environment policy to one plugin process generation.
+    pub fn with_environment_provider(
+        plugin_id: impl Into<String>,
+        package_root: PathBuf,
+        spawner: S,
+        environment_provider: E,
+    ) -> Self {
         let (runtime, runtime_rx) = watch::channel(None);
         Self(Arc::new(Inner {
             plugin_id: plugin_id.into(),
             package_root,
             spawner,
+            environment_provider,
             next_id: AtomicU64::new(1),
             tracked: StdMutex::new(HashMap::new()),
             runtime,
@@ -282,10 +335,34 @@ where
             .stdin(ProcessStdio::Piped)
             .stdout(ProcessStdio::Piped)
             .stderr(ProcessStdio::Piped);
+        if request
+            .env
+            .iter()
+            .any(|(key, _)| key.starts_with(MCP_ENVIRONMENT_PREFIX))
+        {
+            return Err(ChildProcessError::new(
+                ChildProcessErrorKind::InvalidParams,
+                format!(
+                    "environment variable names beginning with `{MCP_ENVIRONMENT_PREFIX}` are reserved"
+                ),
+            )
+            .into());
+        }
+        let host_environment = match &request.cwd {
+            Some(workspace_root) => self
+                .0
+                .environment_provider
+                .environment(&self.0.plugin_id, workspace_root)
+                .map_err(|message| ChildProcessError::new(ChildProcessErrorKind::Io, message))?,
+            None => BTreeMap::new(),
+        };
         if let Some(cwd) = request.cwd {
             spec = spec.cwd(cwd);
         }
         for (key, value) in request.env {
+            spec = spec.env(key, value);
+        }
+        for (key, value) in host_environment {
             spec = spec.env(key, value);
         }
 
@@ -418,10 +495,11 @@ where
     }
 }
 
-impl<S> HostRequestHandler for PluginProcessHost<S>
+impl<S, E> HostRequestHandler for PluginProcessHost<S, E>
 where
     S: ProcessSpawner + Send + Sync + 'static,
     S::Process: Send + Sync + 'static,
+    E: ChildProcessEnvironmentProvider,
 {
     async fn handle(&self, method: &str, params: Value) -> Result<Value, HostRequestError> {
         match method {
@@ -455,14 +533,15 @@ async fn run_stdin_writer<W: AsyncWrite + Unpin>(
 }
 
 /// Forwards every chunk read from one spawned process's stdout or stderr as a notification.
-async fn pump_output<S, R>(
-    host: PluginProcessHost<S>,
+async fn pump_output<S, E, R>(
+    host: PluginProcessHost<S, E>,
     process_id: String,
     mut reader: R,
     method: &'static str,
 ) where
     S: ProcessSpawner + Send + Sync + 'static,
     S::Process: Send + Sync + 'static,
+    E: ChildProcessEnvironmentProvider,
     R: AsyncRead + Unpin,
 {
     let mut buffer = [0_u8; READ_CHUNK_BYTES];
@@ -485,10 +564,14 @@ async fn pump_output<S, R>(
 }
 
 /// Waits for one spawned process to exit, then reports it and stops tracking it.
-async fn watch_exit<S>(host: PluginProcessHost<S>, process_id: String, process: Arc<S::Process>)
-where
+async fn watch_exit<S, E>(
+    host: PluginProcessHost<S, E>,
+    process_id: String,
+    process: Arc<S::Process>,
+) where
     S: ProcessSpawner + Send + Sync + 'static,
     S::Process: Send + Sync + 'static,
+    E: ChildProcessEnvironmentProvider,
 {
     let status = process.wait().await;
     let tracked = host

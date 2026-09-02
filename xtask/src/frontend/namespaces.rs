@@ -5,6 +5,7 @@ mod agent_import;
 mod agent_runtime;
 mod app_events;
 mod developer_mode;
+mod effect;
 mod file_system;
 mod git;
 mod plugin;
@@ -34,6 +35,7 @@ pub(super) fn frontend_endpoints() -> Vec<FrontendEndpoint> {
         session::ENDPOINTS,
         agent_runtime::ENDPOINTS,
         app_events::ENDPOINTS,
+        effect::ENDPOINTS,
         skill::ENDPOINTS,
         skill_import::ENDPOINTS,
         agent::ENDPOINTS,

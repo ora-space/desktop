@@ -8,6 +8,7 @@ mod projection_persistence;
 mod queue;
 mod recovery;
 mod source;
+mod source_mcp;
 mod store;
 mod validation;
 
@@ -29,6 +30,7 @@ pub(crate) use source::{
     PublishedSkillRevision, advance_changed_scopes, publish_skill_revision, retire_skill_source,
     seed_scope_sources,
 };
+pub use source_mcp::{McpProjectionStatus, McpSourceProjection};
 
 /// Result of explicitly retiring one stable Effect source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

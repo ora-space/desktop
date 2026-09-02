@@ -55,11 +55,29 @@ pub struct FilesystemOperationPlan {
     pub backup_path: PathBuf,
 }
 
+/// Shared-file merge plan carrying only secret-free rendered configuration and exact paths.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct JsonMergeOperationPlan {
+    pub workspace_root: PathBuf,
+    pub resource_relative_path: crate::ResourcePath,
+    pub ownership_relative_path: crate::ResourcePath,
+    pub configuration_path: PathBuf,
+    pub ownership_path: PathBuf,
+    pub staging_path: PathBuf,
+    pub backup_path: PathBuf,
+    pub mutation: EffectMutation,
+    pub managed_identity: ManagedIdentity,
+    pub native_identity: NativeResourceIdentity,
+    pub desired_effect: Option<crate::DesiredEffectIdentity>,
+    pub input: Option<crate::McpMaterializationInput>,
+}
+
 /// Closed versioned operation payload set; Effect Core stores and sequences but does not inspect it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "plan", rename_all = "snake_case")]
 pub enum VersionedAdapterPlan {
     FilesystemDirectoryV1(FilesystemOperationPlan),
+    JsonMergeV1(Box<JsonMergeOperationPlan>),
 }
 
 /// Operation progress encodes legal timestamp combinations directly in its variants.

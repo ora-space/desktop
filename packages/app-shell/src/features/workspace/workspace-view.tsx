@@ -28,6 +28,7 @@ import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
 import { useTargetAgentReadiness } from "../../state/hooks/use-target-agent-readiness";
+import { useAgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { conversationKeyFor } from "../../state/stores/conversation-key";
@@ -158,7 +159,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const targetAgentCli = useTargetAgentCli(selection);
   // Must resolve before the early returns below: hooks cannot sit behind them,
   // and the send gate reads it in the chat branch.
-  const targetAgentReadiness = useTargetAgentReadiness(selection);
   const chatStore = useChatStore();
   useWorkspaceDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
@@ -207,6 +207,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     selection.workflowRunId !== null
       ? undefined
       : (task?.workspaceId ?? selectedWorkspace?.id);
+  const targetAgentReadiness = useTargetAgentReadiness(selection);
+  const agentEffectReadiness = useAgentEffectReadiness(
+    selectedWorkspaceId,
+    targetAgentCli,
+  );
   const workspaceCwdQuery = useWorkspaceCwd(selectedWorkspaceId);
   const session = sessions.find((item) => item.id === selection.sessionId);
   // Until the first message binds this surface to a persisted session, its
@@ -578,9 +583,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     // so the picker next to it can fix the state, and it only applies where the
     // whole-composer hint does not, so the two bubbles never compete.
     const sendDisabledHint =
-      canChat && targetAgentReadiness === "blocked"
-        ? t("chat.pickAvailableAgent")
-        : undefined;
+      canChat && agentEffectReadiness === "blocked"
+        ? t("chat.agentEffectsNotReady")
+        : canChat && targetAgentReadiness === "blocked"
+          ? t("chat.pickAvailableAgent")
+          : undefined;
     // A failed background session-create settles onto the draft conversation, so
     // the conversation error already covers the start-up failure path. A pending
     // send has no conversation to settle onto and carries its own.

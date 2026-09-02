@@ -12,6 +12,7 @@ mod marketplace_sources;
 mod plugin;
 mod plugin_configuration;
 mod plugin_gateway;
+mod plugin_mcp_environment;
 mod project;
 mod proxy;
 mod request_lifecycle;
@@ -34,5 +35,7 @@ pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdG
 pub use skill_reconciliation::SkillStorageReconciliationError;
 pub use user_config::BackendPreferredLogLevelStore;
 
+#[cfg(test)]
+mod local_agent_package_tests;
 #[cfg(test)]
 mod plugin_install_tests;

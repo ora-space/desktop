@@ -3116,6 +3116,7 @@ dependencies = [
  "ora-db",
  "ora-domain",
  "ora-effect",
+ "ora-effect-mcp",
  "ora-effect-skill",
  "ora-fs",
  "ora-history",
@@ -3273,6 +3274,22 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "uuid",
+]
+
+[[package]]
+name = "ora-effect-mcp"
+version = "0.0.0"
+dependencies = [
+ "ora-domain",
+ "ora-effect",
+ "ora-effect-skill",
+ "ora-plugin-config",
+ "ora-utils",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3578,6 +3595,7 @@ dependencies = [
  "rustls",
  "rustls-platform-verifier",
  "serde",
+ "serde_json",
  "sha2",
  "tar",
  "tempfile",

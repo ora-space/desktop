@@ -1,4 +1,6 @@
-use crate::childprocess::PluginProcessHost;
+use crate::childprocess::{
+    ChildProcessEnvironmentProvider, NoChildProcessEnvironment, PluginProcessHost,
+};
 use crate::ports::{
     LaunchedRuntime, PluginCallError, PluginLaunchRequest, PluginRuntime, PluginRuntimeExit,
     PluginRuntimeFailure, PluginRuntimeLauncher,
@@ -20,12 +22,12 @@ use std::time::Duration;
 /// `processes` is `None` for every non-agent plugin: those launch with zero Deno permissions
 /// specifically so they cannot start a process (see [`PluginLaunchRequest::allow_childprocess`]),
 /// and mounting the handler unconditionally would let a host request reopen that door.
-struct PluginHostRequests {
+struct PluginHostRequests<E: ChildProcessEnvironmentProvider> {
     storage: PluginStorage,
-    processes: Option<PluginProcessHost<TokioProcessSpawner>>,
+    processes: Option<PluginProcessHost<TokioProcessSpawner, E>>,
 }
 
-impl HostRequestHandler for PluginHostRequests {
+impl<E: ChildProcessEnvironmentProvider> HostRequestHandler for PluginHostRequests<E> {
     async fn handle(&self, method: &str, params: Value) -> Result<Value, HostRequestError> {
         if method.starts_with("ora/childprocess/") {
             match &self.processes {
@@ -57,15 +59,33 @@ impl Default for PluginRuntimeTimeouts {
 }
 
 /// Launches production Deno plugin processes through Ora's process-tree supervisor.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DenoPluginRuntimeLauncher {
+#[derive(Debug, Clone, Default)]
+pub struct DenoPluginRuntimeLauncher<E: ChildProcessEnvironmentProvider = NoChildProcessEnvironment>
+{
     timeouts: PluginRuntimeTimeouts,
+    environment_provider: E,
 }
 
-impl DenoPluginRuntimeLauncher {
+impl DenoPluginRuntimeLauncher<NoChildProcessEnvironment> {
     /// Creates a launcher with explicit process lifecycle timeouts.
     pub fn new(timeouts: PluginRuntimeTimeouts) -> Self {
-        Self { timeouts }
+        Self {
+            timeouts,
+            environment_provider: NoChildProcessEnvironment,
+        }
+    }
+}
+
+impl<E: ChildProcessEnvironmentProvider> DenoPluginRuntimeLauncher<E> {
+    /// Creates a launcher that injects host-authorized Agent subprocess environment variables.
+    pub fn with_environment_provider(
+        timeouts: PluginRuntimeTimeouts,
+        environment_provider: E,
+    ) -> Self {
+        Self {
+            timeouts,
+            environment_provider,
+        }
     }
 }
 
@@ -88,7 +108,7 @@ impl DenoPluginRuntime {
     }
 }
 
-impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
+impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRuntimeLauncher<E> {
     type Runtime = DenoPluginRuntime;
 
     /// Renders permissions, starts Deno in the package root with the storage handler bound to
@@ -99,6 +119,7 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let timeouts = self.timeouts;
+        let environment_provider = self.environment_provider.clone();
         async move {
             let permissions = request
                 .permissions
@@ -111,10 +132,11 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let processes = request.allow_childprocess.then(|| {
-                PluginProcessHost::new(
+                PluginProcessHost::with_environment_provider(
                     request.plugin_id.to_string(),
                     request.package_root.clone(),
                     TokioProcessSpawner::new(),
+                    environment_provider,
                 )
             });
             let host_requests = PluginHostRequests {
@@ -229,7 +251,7 @@ impl PluginRuntime for DenoPluginRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::PluginHostRequests;
+    use super::{NoChildProcessEnvironment, PluginHostRequests};
     use crate::childprocess::CHILDPROCESS_SPAWN_METHOD;
     use crate::storage::PluginStorage;
     use ora_plugin_runtime::{HostRequestError, HostRequestHandler};
@@ -241,7 +263,7 @@ mod tests {
     /// must fail the same way an entirely unknown method would rather than reach a spawner.
     #[tokio::test]
     async fn childprocess_methods_are_unknown_without_the_processes_handler() {
-        let host_requests = PluginHostRequests {
+        let host_requests: PluginHostRequests<NoChildProcessEnvironment> = PluginHostRequests {
             storage: PluginStorage::new(PathBuf::from(".")),
             processes: None,
         };

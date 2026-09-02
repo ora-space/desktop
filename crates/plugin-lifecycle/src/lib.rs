@@ -14,7 +14,8 @@ mod uninstall;
 
 pub use childprocess::{
     CHILDPROCESS_CLOSE_STDIN_METHOD, CHILDPROCESS_KILL_METHOD, CHILDPROCESS_SPAWN_METHOD,
-    CHILDPROCESS_WRITE_METHOD, PluginProcessHost,
+    CHILDPROCESS_WRITE_METHOD, ChildProcessEnvironmentProvider, NoChildProcessEnvironment,
+    PluginProcessHost,
 };
 pub use connection::{ConnectionError, PluginGenerationKey, PluginGenerationLease};
 pub use data_dir::PluginDataDirectories;

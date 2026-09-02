@@ -1,5 +1,5 @@
 use super::*;
-use ora_domain::{Namespace, WorkspaceId};
+use ora_domain::{Namespace, PluginId, WorkspaceId};
 use ora_effect::*;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,6 +160,109 @@ fn retiring_target_projects_no_desired_contribution_but_keeps_cleanup_binding() 
 }
 
 #[test]
+fn skill_planner_routes_only_skill_effects_to_skill_bindings() {
+    let (target, mut consumer_revision, mut declaration, skill_resource) =
+        target_facts(TargetLifecycle::Active);
+    consumer_revision
+        .capabilities
+        .effect_protocols
+        .insert(EffectKind::mcp(), 1);
+    consumer_revision
+        .capabilities
+        .materialization_contracts
+        .insert(MaterializationContract::opencode_mcp_config_v1().capability_key());
+    let mcp_resource = EffectResource {
+        identity: EffectResourceId::new("resource-mcp"),
+        scope: scope(),
+        resource_key: ResourceKey::parse("filesystem-file:.opencode/opencode.json")
+            .expect("resource key"),
+        adapter: ResourceAdapterIdentity::parse("ora/json-file-merge").expect("adapter identity"),
+        descriptor: VersionedResourceDescriptor::FilesystemFileV1(FilesystemFileDescriptor {
+            workspace_root: PathBuf::from("/workspace"),
+            relative_path: ResourcePath::parse(".opencode/opencode.json").expect("config path"),
+            ownership_relative_path: ResourcePath::parse(".opencode/.ora-mcp-managed.json")
+                .expect("sidecar path"),
+        }),
+        format: MaterializationFormat::opencode_mcp_config_v1(),
+        lifecycle: ResourceLifecycle::Active,
+    };
+    declaration.bindings.insert(
+        mcp_resource.identity.clone(),
+        TargetResourceBinding {
+            target: target.identity.clone(),
+            resource: mcp_resource.identity.clone(),
+            materialization_contract: MaterializationContract::opencode_mcp_config_v1(),
+            accepts: CapabilityRequirement::default(),
+            coordination: CoordinationRequirement::Uninterrupted,
+        },
+    );
+    let (skill_desired, skill_revision) = desired_skill();
+    let mcp_revision_id = EffectRevisionId::new("revision-mcp");
+    let mcp_desired = DesiredEffect {
+        identity: DesiredEffectIdentity::new("desired-mcp"),
+        revision: mcp_revision_id.clone(),
+        parameters: ValidatedEffectParameters::Mcp(McpParameters::default()),
+        audience: TargetSelector::default(),
+    };
+    let mcp_revision = EffectRevision {
+        identity: mcp_revision_id,
+        source: EffectSourceIdentity::new("source-mcp"),
+        revision_key: SourceRevisionKey::parse("1").expect("revision key"),
+        definition: ValidatedEffectDefinition::Mcp(McpTemplateDefinition {
+            plugin_id: PluginId::parse("official/example.mcp").expect("plugin id"),
+            server_name: "mcp".to_string(),
+            configuration_revision: 1,
+            opencode: serde_json::json!({"type":"remote","url":"https://example.test"}),
+            claude: serde_json::json!({"type":"http","url":"https://example.test"}),
+            opencode_environment: BTreeMap::new(),
+            claude_environment: BTreeMap::new(),
+        }),
+        digest: Digest::sha256(b"mcp revision"),
+        availability: RevisionAvailability::Available,
+    };
+    let desired_state = DesiredState::normalized(
+        scope(),
+        Generation::new(1),
+        [skill_desired.clone(), mcp_desired],
+    )
+    .expect("desired state");
+    let PlanningResult::Projected(projection) = SkillPlanner
+        .project_target(TargetPlanningInput {
+            desired: &desired_state,
+            target: &target,
+            consumer_revision: &consumer_revision,
+            declaration: &declaration,
+            resources: &BTreeMap::from([
+                (skill_resource.identity.clone(), skill_resource.clone()),
+                (mcp_resource.identity.clone(), mcp_resource),
+            ]),
+            revisions: &BTreeMap::from([
+                (skill_revision.identity.clone(), skill_revision),
+                (mcp_revision.identity.clone(), mcp_revision),
+            ]),
+        })
+        .expect("target projection")
+    else {
+        panic!("Skill projection must remain valid in a mixed Target");
+    };
+
+    assert_eq!(
+        (
+            projection.desired_effects,
+            projection
+                .resource_requirements
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+        ),
+        (
+            BTreeSet::from([skill_desired.identity]),
+            vec![skill_resource.identity],
+        )
+    );
+}
+
+#[test]
 fn unowned_observed_item_is_preserved_and_never_becomes_a_mutation() {
     let resource = resource();
     let native_identity = NativeResourceIdentity::parse("foreign")
@@ -308,6 +411,7 @@ fn shared_resource_rejects_incompatible_materialization_contracts() {
 #[test]
 fn identical_physical_declarations_share_a_resource_key_without_sharing_targets() {
     let template = FilesystemResourceTemplate {
+        ownership_relative_path: None,
         relative_path: ResourcePath::parse(".agents/skills")
             .unwrap_or_else(|error| panic!("resource path: {error}")),
         materialization_format: MaterializationFormat::skill_directory_v1(),

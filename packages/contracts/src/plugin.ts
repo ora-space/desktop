@@ -283,6 +283,10 @@ export type PluginConfigurationDetails = {
   declarationFingerprint: string;
   settings: Array<PluginSettingDetails>;
   summary: PluginConfigurationSummary;
+  /**
+   * Present only for MCP configuration files; non-MCP plugins have no projection state.
+   */
+  mcpMaterialization: PluginMcpMaterializationStatus | null;
 };
 
 /**
@@ -318,6 +322,15 @@ export type PluginInstallationValidity = { "validity": "valid" } | {
 };
 
 /**
+ * Aggregates one MCP plugin's materialization state across every active Agent Target.
+ */
+export type PluginMcpMaterializationStatus =
+  | "incomplete"
+  | "projecting"
+  | "current"
+  | "blocked";
+
+/**
  * Represents the process-scoped lifecycle of one installed plugin.
  */
 export type PluginRuntimeStatus =
@@ -346,6 +359,10 @@ export type PluginSettingDetails = {
   declaration: PluginSettingDeclaration;
   storedValue: PluginSettingValue | null;
   effectiveValue: PluginSettingValue | null;
+  /**
+   * True when the host deliberately withholds a value used by an MCP process.
+   */
+  redacted: boolean;
   source: PluginSettingValueSource;
   valueErrorCode: string | null;
 };
@@ -412,6 +429,10 @@ export type SavePluginConfigurationRequest = {
   expectedRevision: bigint;
   declarationFingerprint: string;
   values: { [key in string]: PluginSettingValue };
+  /**
+   * Host-redacted stored values that an unchanged editor must retain.
+   */
+  preserveSettingIds: Array<string>;
 };
 
 /**

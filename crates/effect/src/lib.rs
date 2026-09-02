@@ -15,9 +15,10 @@ mod tests;
 
 pub use desired::{
     CapabilityRequirement, DesiredEffect, DesiredState, DesiredStateError, EffectPublication,
-    EffectRevision, EffectSource, EffectSourceLifecycle, RevisionAvailability, SkillDefinition,
-    SkillParameters, SkillSourceKey, SkillSourceKind, StableReason, TargetInclusion,
-    TargetSelector, ValidatedEffectDefinition, ValidatedEffectParameters,
+    EffectRevision, EffectSource, EffectSourceLifecycle, McpEnvironmentBinding,
+    McpEnvironmentEncoding, McpParameters, McpTemplateDefinition, RevisionAvailability,
+    SkillDefinition, SkillParameters, SkillSourceKey, SkillSourceKind, StableReason,
+    TargetInclusion, TargetSelector, ValidatedEffectDefinition, ValidatedEffectParameters,
 };
 pub use identity::{
     ArtifactId, AuditEventId, ConditionId, ConsumerAdapterIdentity, ConsumerIdentity, ConsumerKind,
@@ -31,9 +32,9 @@ pub use operation::{
     ArtifactRole, ArtifactState, AuditGeneration, AuditInitiator, AuditScope, CoordinationPlan,
     CoordinationReceipt, CoordinationReceiptState, EffectAuditEvent, EffectMutation,
     EffectOperation, EffectOperationIntent, ExactPlannedState, ExactPreviousState,
-    FilesystemOperationPlan, OperationArtifact, OperationProgress, OperationTransitionError,
-    ReconcileAttempt, ReconcileAttemptIntent, ReconcileAttemptPhase, VersionedAdapterPlan,
-    VersionedResourceLocator, VersionedSafeAuditPayload,
+    FilesystemOperationPlan, JsonMergeOperationPlan, OperationArtifact, OperationProgress,
+    OperationTransitionError, ReconcileAttempt, ReconcileAttemptIntent, ReconcileAttemptPhase,
+    VersionedAdapterPlan, VersionedResourceLocator, VersionedSafeAuditPayload,
 };
 pub use planner::{
     EffectPlanner, PlannedMutation, PlannedResourceChange, PlannerError, PlanningResult,
@@ -46,9 +47,9 @@ pub use ports::{
     ResourceAdapterError, VerificationReceipt,
 };
 pub use projection::{
-    ManagedItem, ObservedItem, OwnershipEvidence, PreservedItem, ResolvedMaterialization,
-    ResourceObservation, ResourceProjection, ResourceRequirement, SkillMaterializationInput,
-    TargetProjection, VersionedMaterializationInput,
+    ManagedItem, McpMaterializationInput, ObservedItem, OwnershipEvidence, PreservedItem,
+    ResolvedMaterialization, ResourceObservation, ResourceProjection, ResourceRequirement,
+    SkillMaterializationInput, TargetProjection, VersionedMaterializationInput,
 };
 pub use reconcile::{
     EffectReconciler, ReconcileError, ReconcileOutcome, recovery_condition,
@@ -65,7 +66,8 @@ pub use status::{
 pub use target::{
     CapabilitySet, Consumer, ConsumerDeclaration, ConsumerLifecycle, ConsumerRevision,
     CoordinationContract, CoordinationRequirement, DeclarationError, EffectResource, EffectScope,
-    EffectScopeLifecycle, EffectTarget, FilesystemDirectoryDescriptor, FilesystemResourceTemplate,
-    MaterializationContract, MaterializationFormat, ResourceLifecycle, ResourcePath,
-    TargetDeclaration, TargetLifecycle, TargetResourceBinding, VersionedResourceDescriptor,
+    EffectScopeLifecycle, EffectTarget, FilesystemDirectoryDescriptor, FilesystemFileDescriptor,
+    FilesystemResourceTemplate, MaterializationContract, MaterializationFormat, ResourceLifecycle,
+    ResourcePath, TargetDeclaration, TargetLifecycle, TargetResourceBinding,
+    VersionedResourceDescriptor,
 };

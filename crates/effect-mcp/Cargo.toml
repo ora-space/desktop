@@ -1,0 +1,25 @@
+[package]
+name = "ora-effect-mcp"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_effect_mcp"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-domain = { workspace = true }
+ora-effect = { workspace = true }
+ora-effect-skill = { workspace = true }
+ora-plugin-config = { workspace = true }
+ora-utils = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

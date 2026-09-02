@@ -26,6 +26,7 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 tempfile = { workspace = true }

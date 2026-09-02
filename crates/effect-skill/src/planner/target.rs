@@ -1,8 +1,8 @@
 use super::{SkillPlanner, blocking_condition, digest_serializable};
 use ora_effect::{
-    ConditionOwner, ConditionRetry, ConditionSubject, DesiredEffectIdentity, EffectResourceId,
-    MaterializationContract, PlannerError, PlanningResult, ProjectionDigest, ResourceRequirement,
-    RevisionAvailability, TargetPlanningInput, TargetProjection,
+    ConditionOwner, ConditionRetry, ConditionSubject, DesiredEffectIdentity, EffectKind,
+    EffectResourceId, MaterializationContract, PlannerError, PlanningResult, ProjectionDigest,
+    ResourceRequirement, RevisionAvailability, TargetPlanningInput, TargetProjection,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,6 +25,12 @@ impl SkillPlanner {
                 &input.target.consumer,
                 &input.consumer_revision.capabilities,
             ) {
+                continue;
+            }
+            // A kind planner owns only its kind. The composite planner combines these selections
+            // into one Target projection, so routing every selected Effect to every Resource would
+            // feed MCP revisions into the Skill directory planner.
+            if desired.parameters.kind() != EffectKind::skill() {
                 continue;
             }
             let Some(revision) = input.revisions.get(&desired.revision) else {
@@ -108,14 +114,6 @@ impl SkillPlanner {
                 continue;
             }
             if binding.materialization_contract != MaterializationContract::skill_directory_v1() {
-                conditions.push(blocking_condition(
-                    owner.clone(),
-                    ConditionSubject::Resource(binding.resource.clone()),
-                    "unsupported_materialization_contract",
-                    input.desired.generation,
-                    "The Skill planner does not support the declared materialization contract.",
-                    ConditionRetry::OnChange,
-                ));
                 continue;
             }
             let contract = binding.materialization_contract.clone();

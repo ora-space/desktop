@@ -46,7 +46,7 @@ export type EffectConsumerRefDto = { kind: string; stableKey: string };
 /**
  * Closed transport representation of validated kind-specific Effect parameters.
  */
-export type EffectParametersDto = { "kind": "skill" };
+export type EffectParametersDto = { "kind": "skill" } | { "kind": "mcp" };
 
 /**
  * One exact Effect protocol version required from a Consumer Revision.
@@ -115,7 +115,14 @@ export type GetEffectStateRequest = { workspaceId: string };
 
 export type GetEffectStateResponse = { state: EffectStateDto };
 
-export type GetEffectTargetStatusRequest = { targetId: string };
+export type GetEffectTargetStatusRequest = {
+  "selector": "target";
+  targetId: string;
+} | {
+  "selector": "workspace_agent";
+  workspaceId: string;
+  agentPluginId: string;
+};
 
 export type GetEffectTargetStatusResponse = {
   status: EffectTargetStatusDto | null;

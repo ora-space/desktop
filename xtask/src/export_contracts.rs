@@ -349,6 +349,7 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "PluginConfigurationDetails"
         | "PluginConfigurationFieldError"
         | "PluginConfigurationSummary"
+        | "PluginMcpMaterializationStatus"
         | "PluginDataDisposition"
         | "PluginInstallationValidity"
         | "PluginSettingDeclaration"
@@ -490,6 +491,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         "GetRuntimeLogLevelRequest"
         | "SetRuntimeLogLevelRequest"
         | "RuntimeLogLevelStateResponse" => "runtimeLogLevel",
+        // effect
+        "GetEffectTargetStatusRequest" | "GetEffectTargetStatusResponse" => "effect",
         // developerMode
         "GetDeveloperModeRequest" | "SetDeveloperModeRequest" | "DeveloperModeResponse" => {
             "developerMode"
