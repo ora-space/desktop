@@ -136,7 +136,6 @@ function clientWithPluginConfiguration(unavailable = false) {
     summary: unavailable
       ? { state: "unavailable", errorCode: "configuration_load_failed" }
       : { state: "available", completeness: "incomplete" },
-    mcpMaterialization: null,
   });
   return { state, client: createMockClient(state) };
 }
@@ -472,7 +471,6 @@ it("configures declared plugin settings and keeps the editor open after save", a
       },
     ],
     summary: { state: "available", completeness: "incomplete" },
-    mcpMaterialization: "current",
   });
   const client = createMockClient(state);
   const save = vi.spyOn(client.plugin, "saveConfiguration");

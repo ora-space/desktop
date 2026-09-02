@@ -45,11 +45,6 @@ impl EffectKind {
         Self("ora/skill".to_string())
     }
 
-    /// Builds the built-in, namespaced MCP configuration identity.
-    pub fn mcp() -> Self {
-        Self("ora/mcp".to_string())
-    }
-
     /// Validates a stable namespaced identity before it enters planning or persistence.
     pub fn parse(value: impl Into<String>) -> Result<Self, IdentityError> {
         let value = value.into();

@@ -2,7 +2,7 @@ use super::mapping::{effect_json, generation_from_sql, generation_to_sql};
 use crate::DatabaseError;
 use ora_effect::{
     DesiredEffectIdentity, Digest, EffectKind, EffectRevisionId, EffectScopeId, Fingerprint,
-    Generation, McpParameters, SkillDefinition, SkillParameters, SkillSourceKey, SkillSourceKind,
+    Generation, SkillDefinition, SkillParameters, SkillSourceKey, SkillSourceKind,
     SourceRevisionKey, TargetSelector, ValidatedEffectDefinition, ValidatedEffectParameters,
 };
 use rusqlite::{Connection, OptionalExtension, params};
@@ -150,12 +150,8 @@ pub(crate) fn seed_scope_sources(
     let selector = effect_json(&TargetSelector::default())?;
     let skill_parameters =
         effect_json(&ValidatedEffectParameters::Skill(SkillParameters::default()))?;
-    let mcp_parameters = effect_json(&ValidatedEffectParameters::Mcp(McpParameters::default()))?;
     let mut inserted = 0;
-    for (kind, parameters_kind, parameters) in [
-        (EffectKind::skill(), "skill", skill_parameters),
-        (EffectKind::mcp(), "mcp", mcp_parameters),
-    ] {
+    for (kind, parameters_kind, parameters) in [(EffectKind::skill(), "skill", skill_parameters)] {
         inserted += connection.execute(
             "INSERT INTO effect_desired_effects (
              id, scope_id, revision_id, parameters_kind, parameters_version, parameters_json,

@@ -3,14 +3,12 @@ use crate::plugin::PluginApi;
 use ora_contracts::{
     EmptyErrorParams, GetPluginConfigurationRequest, GetPluginConfigurationResponse,
     PluginConfigurationCompleteness, PluginConfigurationDetails, PluginConfigurationFieldError,
-    PluginConfigurationSummary, PluginConfigurationValidationParams,
-    PluginMcpMaterializationStatus, PluginSettingDeclaration, PluginSettingDetails,
-    PluginSettingType, PluginSettingValue, PluginSettingValueSource, PublicError,
-    ResetPluginConfigurationMode, ResetPluginConfigurationRequest,
+    PluginConfigurationSummary, PluginConfigurationValidationParams, PluginSettingDeclaration,
+    PluginSettingDetails, PluginSettingType, PluginSettingValue, PluginSettingValueSource,
+    PublicError, ResetPluginConfigurationMode, ResetPluginConfigurationRequest,
     ResetPluginConfigurationResponse, SavePluginConfigurationRequest,
     SavePluginConfigurationResponse,
 };
-use ora_db::McpProjectionStatus;
 use ora_plugin_config::{
     CompiledConfigurationFile, ConfigurationCompleteness, ConfigurationDetails, ConfigurationError,
     ConfigurationSummary, EffectiveValueSource, SettingType, SettingValue,
@@ -39,17 +37,11 @@ impl PluginApi {
                 )
             })?;
         let redacted = mcp_bound_settings(&request.plugin_id, &package_root, details.revision)?;
-        let materialization = self.mcp_materialization_status(
-            &request.plugin_id,
-            &details.summary,
-            redacted.is_some(),
-        )?;
         Ok(GetPluginConfigurationResponse {
             configuration: configuration_details(
                 &request.plugin_id,
                 details,
                 redacted.as_ref().unwrap_or(&BTreeSet::new()),
-                materialization,
             )?,
         })
     }
@@ -95,20 +87,14 @@ impl PluginApi {
                 &request.preserve_setting_ids.into_iter().collect(),
             )
             .map_err(configuration_error)?;
-        self.sync_plugin_mcp(&request.plugin_id)?;
+        self.notify_mcp_desired_changed();
         self.notify_effect_reconcile();
         let redacted = mcp_bound_settings(&request.plugin_id, &package_root, details.revision)?;
-        let materialization = self.mcp_materialization_status(
-            &request.plugin_id,
-            &details.summary,
-            redacted.is_some(),
-        )?;
         Ok(SavePluginConfigurationResponse {
             configuration: configuration_details(
                 &request.plugin_id,
                 details,
                 redacted.as_ref().unwrap_or(&BTreeSet::new()),
-                materialization,
             )?,
         })
     }
@@ -149,57 +135,16 @@ impl PluginApi {
             }
         }
         .map_err(configuration_error)?;
-        self.sync_plugin_mcp(&request.plugin_id)?;
+        self.notify_mcp_desired_changed();
         self.notify_effect_reconcile();
         let redacted = mcp_bound_settings(&request.plugin_id, &package_root, details.revision)?;
-        let materialization = self.mcp_materialization_status(
-            &request.plugin_id,
-            &details.summary,
-            redacted.is_some(),
-        )?;
         Ok(ResetPluginConfigurationResponse {
             configuration: configuration_details(
                 &request.plugin_id,
                 details,
                 redacted.as_ref().unwrap_or(&BTreeSet::new()),
-                materialization,
             )?,
         })
-    }
-
-    /// Combines configuration completeness with every active Target's projection evidence.
-    fn mcp_materialization_status(
-        &self,
-        plugin_id: &str,
-        summary: &ConfigurationSummary,
-        is_mcp: bool,
-    ) -> Result<Option<PluginMcpMaterializationStatus>, BackendError> {
-        if !is_mcp {
-            return Ok(None);
-        }
-        if !matches!(
-            summary,
-            ConfigurationSummary::Available {
-                completeness: ConfigurationCompleteness::Complete
-            }
-        ) {
-            return Ok(Some(PluginMcpMaterializationStatus::Incomplete));
-        }
-        let plugin_id = ora_domain::PluginId::parse(plugin_id).map_err(|error| {
-            BackendError::internal("failed to resolve MCP materialization status", error)
-        })?;
-        self.effect_repository
-            .plugin_mcp_projection_status(&plugin_id)
-            .map(|status| {
-                Some(match status {
-                    McpProjectionStatus::Projecting => PluginMcpMaterializationStatus::Projecting,
-                    McpProjectionStatus::Current => PluginMcpMaterializationStatus::Current,
-                    McpProjectionStatus::Blocked => PluginMcpMaterializationStatus::Blocked,
-                })
-            })
-            .map_err(|error| {
-                BackendError::internal("failed to load MCP materialization status", error)
-            })
     }
 }
 
@@ -208,7 +153,6 @@ fn configuration_details(
     plugin_id: &str,
     details: ConfigurationDetails,
     redacted_setting_ids: &BTreeSet<String>,
-    mcp_materialization: Option<PluginMcpMaterializationStatus>,
 ) -> Result<PluginConfigurationDetails, BackendError> {
     let settings = details
         .settings
@@ -270,15 +214,14 @@ fn configuration_details(
         declaration_fingerprint: details.declaration.fingerprint,
         settings,
         summary: contract_configuration_summary(details.summary),
-        mcp_materialization,
     })
 }
 
-/// Identifies every Setting whose value is substituted into an MCP runtime template.
+/// Identifies every MCP Setting so the editor DTO never carries those values.
 fn mcp_bound_settings(
-    plugin_id: &str,
+    _plugin_id: &str,
     package_root: &std::path::Path,
-    configuration_revision: u64,
+    _configuration_revision: u64,
 ) -> Result<Option<BTreeSet<String>>, BackendError> {
     let configuration =
         ora_plugin_config::ConfigurationService::configuration_file_from_package(package_root)
@@ -286,25 +229,18 @@ fn mcp_bound_settings(
     let Some(CompiledConfigurationFile::Mcp(configuration)) = configuration else {
         return Ok(None);
     };
-    let plugin_id = ora_domain::PluginId::parse(plugin_id).map_err(|error| {
-        BackendError::internal("failed to resolve MCP configuration redaction", error)
-    })?;
-    let template = ora_effect_mcp::resolve_template(
-        &plugin_id,
-        &configuration,
-        configuration_revision,
-        package_root,
-    )
-    .map_err(|error| {
-        BackendError::internal("failed to resolve MCP configuration redaction", error)
-    })?;
     Ok(Some(
-        template
-            .opencode_environment
-            .values()
-            .chain(template.claude_environment.values())
-            .map(|binding| binding.setting_id.clone())
-            .collect(),
+        configuration
+            .settings
+            .as_ref()
+            .map(|declaration| {
+                declaration
+                    .settings
+                    .iter()
+                    .map(|setting| setting.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
     ))
 }
 

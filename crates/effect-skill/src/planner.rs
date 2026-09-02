@@ -92,18 +92,7 @@ impl EffectPlanner for SkillPlanner {
                 ));
                 continue;
             };
-            let ora_effect::ValidatedEffectDefinition::Skill(definition) = &revision.definition
-            else {
-                conditions.push(blocking_condition(
-                    owner.clone(),
-                    ConditionSubject::DesiredEffect(desired_id.clone()),
-                    "effect_kind_mismatch",
-                    input.generation,
-                    "The Skill Resource received a non-Skill Effect.",
-                    ConditionRetry::OnChange,
-                ));
-                continue;
-            };
+            let ora_effect::ValidatedEffectDefinition::Skill(definition) = &revision.definition;
             let native_identity =
                 NativeResourceIdentity::parse(definition.source.name.canonical())?;
             if let Some(previous) =

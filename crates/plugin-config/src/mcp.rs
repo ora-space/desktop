@@ -3,12 +3,17 @@
 //!
 //! The compiled value is static install-time truth only: it proves the declaration is legal, not
 //! that the user filled Settings, that a remote endpoint is reachable, or that any Agent loaded
-//! the MCP. Resolution against `store.json` (`ResolvedMcp`) is a later, separate step and is
-//! deliberately not modeled here.
+//! the MCP. Binding resolution against `store.json` lives in [`resolve`]; ACP Session mapping
+//! belongs to the Session MCP setup boundary, not this compiler.
 
+mod resolve;
 #[cfg(test)]
 mod tests;
 mod transport;
+
+pub use resolve::{
+    ResolveMcpBindingError, ResolvedMcpArgument, ResolvedMcpTransport, resolve_mcp_transport,
+};
 
 use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, compile_declaration,

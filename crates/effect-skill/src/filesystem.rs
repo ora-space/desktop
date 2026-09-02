@@ -77,19 +77,10 @@ impl SkillDirectoryResourceAdapter {
             .join(operation_id.as_str());
         let staging_path = operation_root.join("staging");
         let backup_path = operation_root.join("backup");
-        let source_root = mutation
-            .input
-            .as_ref()
-            .map(|input| match input {
-                VersionedMaterializationInput::SkillDirectoryV1(input) => {
-                    Ok(input.package_root.clone())
-                }
-                VersionedMaterializationInput::OpenCodeMcpConfigV1(_)
-                | VersionedMaterializationInput::ClaudeMcpConfigV1(_) => {
-                    Err(SkillDirectoryError::UnsupportedMaterializationInput)
-                }
-            })
-            .transpose()?;
+        let source_root = mutation.input.as_ref().map(|input| {
+            let VersionedMaterializationInput::SkillDirectoryV1(input) = input;
+            input.package_root.clone()
+        });
         let payload = VersionedAdapterPlan::FilesystemDirectoryV1(FilesystemOperationPlan {
             workspace_root: descriptor.workspace_root.clone(),
             resource_relative_path: descriptor.relative_path.clone(),
@@ -408,8 +399,6 @@ pub enum SkillDirectoryError {
     Operation(#[from] ora_effect::OperationTransitionError),
     #[error("Skill adapter received a non-directory Resource descriptor")]
     UnsupportedResourceDescriptor,
-    #[error("Skill adapter received a non-Skill materialization input")]
-    UnsupportedMaterializationInput,
     #[error("Skill adapter received a non-directory operation plan")]
     UnsupportedAdapterPlan,
     #[error("Workspace root is unavailable: {path:?}")]

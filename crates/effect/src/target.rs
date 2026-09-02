@@ -139,16 +139,6 @@ impl MaterializationFormat {
         Self("ora/skill-directory.v1".to_string())
     }
 
-    /// Returns the OpenCode project configuration merge format.
-    pub fn opencode_mcp_config_v1() -> Self {
-        Self("ora/opencode-mcp-config.v1".to_string())
-    }
-
-    /// Returns the Claude project MCP configuration merge format.
-    pub fn claude_mcp_config_v1() -> Self {
-        Self("ora/claude-mcp-config.v1".to_string())
-    }
-
     /// Refuses an empty format because unknown formats must never be guessed by an adapter.
     pub fn parse(value: impl Into<String>) -> Result<Self, DeclarationError> {
         let value = value.into();
@@ -225,22 +215,6 @@ impl MaterializationContract {
     pub fn skill_directory_v1() -> Self {
         Self {
             kind: "ora/skill-directory".to_string(),
-            version: 1,
-        }
-    }
-
-    /// Builds the first OpenCode shared JSON configuration contract.
-    pub fn opencode_mcp_config_v1() -> Self {
-        Self {
-            kind: "ora/opencode-mcp-config".to_string(),
-            version: 1,
-        }
-    }
-
-    /// Builds the first Claude shared JSON configuration contract.
-    pub fn claude_mcp_config_v1() -> Self {
-        Self {
-            kind: "ora/claude-mcp-config".to_string(),
             version: 1,
         }
     }

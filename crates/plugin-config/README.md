@@ -29,9 +29,8 @@ must not contain a fragment. Bound text — stdio argument and environment liter
 Setting-reference prefix/suffix on args, env, and headers — must not contain control characters
 (including CR/LF).
 
-The crate does not render UI, expose filesystem paths to frontend callers, start plugins, or pass
-configuration to Agent processes. Callers supply package identity and roots; lifecycle and backend
-layers map the resulting value-oriented types into their own contracts.
+The crate does not render UI, expose filesystem paths to frontend callers, or start plugins.
+ACP `mcpServers` mapping and live Session refresh belong to `ora-backend` Session setup.
 
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that
 cannot be traversed as a directory (`NotADirectory`), is reported as undeclared rather than as a

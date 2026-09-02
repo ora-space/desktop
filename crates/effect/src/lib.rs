@@ -15,10 +15,9 @@ mod tests;
 
 pub use desired::{
     CapabilityRequirement, DesiredEffect, DesiredState, DesiredStateError, EffectPublication,
-    EffectRevision, EffectSource, EffectSourceLifecycle, McpEnvironmentBinding,
-    McpEnvironmentEncoding, McpParameters, McpTemplateDefinition, RevisionAvailability,
-    SkillDefinition, SkillParameters, SkillSourceKey, SkillSourceKind, StableReason,
-    TargetInclusion, TargetSelector, ValidatedEffectDefinition, ValidatedEffectParameters,
+    EffectRevision, EffectSource, EffectSourceLifecycle, RevisionAvailability, SkillDefinition,
+    SkillParameters, SkillSourceKey, SkillSourceKind, StableReason, TargetInclusion,
+    TargetSelector, ValidatedEffectDefinition, ValidatedEffectParameters,
 };
 pub use identity::{
     ArtifactId, AuditEventId, ConditionId, ConsumerAdapterIdentity, ConsumerIdentity, ConsumerKind,
@@ -47,9 +46,9 @@ pub use ports::{
     ResourceAdapterError, VerificationReceipt,
 };
 pub use projection::{
-    ManagedItem, McpMaterializationInput, ObservedItem, OwnershipEvidence, PreservedItem,
-    ResolvedMaterialization, ResourceObservation, ResourceProjection, ResourceRequirement,
-    SkillMaterializationInput, TargetProjection, VersionedMaterializationInput,
+    ManagedItem, ObservedItem, OwnershipEvidence, PreservedItem, ResolvedMaterialization,
+    ResourceObservation, ResourceProjection, ResourceRequirement, SkillMaterializationInput,
+    TargetProjection, VersionedMaterializationInput,
 };
 pub use reconcile::{
     EffectReconciler, ReconcileError, ReconcileOutcome, recovery_condition,

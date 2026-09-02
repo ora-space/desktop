@@ -19,7 +19,6 @@ ora-contracts = { workspace = true }
 ora-db = { workspace = true }
 ora-domain = { workspace = true }
 ora-effect = { workspace = true }
-ora-effect-mcp = { workspace = true }
 ora-effect-skill = { workspace = true }
 ora-fs = { workspace = true }
 ora-history = { workspace = true }
@@ -37,6 +36,7 @@ ora-scheduler = { workspace = true }
 ora-skill-package = { workspace = true }
 ora-utils = { workspace = true, features = ["http-reqwest"] }
 ora-user-config = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 similar = { workspace = true }

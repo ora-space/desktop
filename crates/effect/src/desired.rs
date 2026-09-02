@@ -2,9 +2,8 @@ use crate::{
     ConsumerIdentity, DesiredEffectIdentity, Digest, EffectKind, EffectRevisionId, EffectScopeId,
     EffectSourceIdentity, Fingerprint, Generation, SkillName, SourceRevisionKey,
 };
-use ora_domain::{Namespace, PluginId};
+use ora_domain::Namespace;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -89,45 +88,11 @@ pub struct SkillDefinition {
     pub package_root: PathBuf,
 }
 
-/// Selects the environment escaping required by one Agent configuration parser.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpEnvironmentEncoding {
-    /// OpenCode substitutes environment text before parsing JSON, so the injected value must be
-    /// escaped as JSON string content without surrounding quotes.
-    JsonStringContent,
-    /// Claude expands `${VAR}` after parsing and therefore receives the raw value.
-    Raw,
-}
-
-/// Describes how the host derives one process-only environment value from `store.json`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct McpEnvironmentBinding {
-    pub variable: String,
-    pub setting_id: String,
-    pub prefix: String,
-    pub suffix: String,
-    pub encoding: McpEnvironmentEncoding,
-}
-
-/// Holds a secret-free MCP rendering for each compatible Agent configuration format.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct McpTemplateDefinition {
-    pub plugin_id: PluginId,
-    pub server_name: String,
-    pub configuration_revision: u64,
-    pub opencode: Value,
-    pub claude: Value,
-    pub opencode_environment: BTreeMap<String, McpEnvironmentBinding>,
-    pub claude_environment: BTreeMap<String, McpEnvironmentBinding>,
-}
-
 /// Closed set of validated built-in definitions; adding a kind requires adding its typed branch.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "definition", rename_all = "snake_case")]
 pub enum ValidatedEffectDefinition {
     Skill(SkillDefinition),
-    Mcp(McpTemplateDefinition),
 }
 
 impl ValidatedEffectDefinition {
@@ -135,7 +100,6 @@ impl ValidatedEffectDefinition {
     pub fn kind(&self) -> EffectKind {
         match self {
             Self::Skill(_) => EffectKind::skill(),
-            Self::Mcp(_) => EffectKind::mcp(),
         }
     }
 }
@@ -155,17 +119,11 @@ pub struct EffectRevision {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SkillParameters {}
 
-/// MCP selection currently has no Scope-local parameters; configuration revision lives in the
-/// immutable definition so a store change creates a new revision instead of mutating intent.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct McpParameters {}
-
 /// Closed set of kind-specific parameters, preventing arbitrary JSON branches in Effect Core.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "parameters", rename_all = "snake_case")]
 pub enum ValidatedEffectParameters {
     Skill(SkillParameters),
-    Mcp(McpParameters),
 }
 
 impl ValidatedEffectParameters {
@@ -173,7 +131,6 @@ impl ValidatedEffectParameters {
     pub fn kind(&self) -> EffectKind {
         match self {
             Self::Skill(_) => EffectKind::skill(),
-            Self::Mcp(_) => EffectKind::mcp(),
         }
     }
 }

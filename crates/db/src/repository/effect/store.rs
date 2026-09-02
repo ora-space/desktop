@@ -396,7 +396,6 @@ fn insert_desired_effect(
 fn parameters_kind(parameters: &ora_effect::ValidatedEffectParameters) -> &'static str {
     match parameters {
         ora_effect::ValidatedEffectParameters::Skill(_) => "skill",
-        ora_effect::ValidatedEffectParameters::Mcp(_) => "mcp",
     }
 }
 

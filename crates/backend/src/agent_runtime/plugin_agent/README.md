@@ -17,9 +17,10 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 - Read the plugin's pre-session model list through `agent/list_models`.
 - Relay ACP messages in both directions as `agent/acp` notifications.
 - Ask the plugin to stop its agent before the lifecycle ends the plugin's process tree.
-- Convert registered Workspace-relative Skill and MCP configuration locators into host-owned
-  Effect Resources. The canonical Plugin ID is the consumer identity; a plugin never chooses that
-  persisted identity.
+- Convert registered Workspace-relative Skill locators into host-owned Effect
+  Resources. MCP is not an Effect Resource: configured MCP plugins are delivered
+  through ACP `session/new` and `session/load` `mcpServers`. The canonical Plugin
+  ID is the consumer identity; a plugin never chooses that persisted identity.
 - Define `effect/coordinate`, `effect/reactivate`, and `effect/verify_ready` as the generic Consumer
   adapter boundary.
 
@@ -121,12 +122,9 @@ Consumer with existing Workspaces immediately, and every worker pass pairs the c
 snapshot with Workspaces created later. This level-triggered pairing prevents a one-shot process
 event from leaving a Workspace without its Target.
 
-MCP projections contain deterministic `ORA_MCP_*` references rather than configuration values.
-Only the lifecycle launcher may resolve those references. Before injecting a value, the backend
-revalidates the Agent identity, Workspace containment, ownership evidence, file fingerprint,
-installed MCP revision, configuration-store revision, and rendered template. Agent plugins cannot
-supply reserved `ORA_MCP_*` variables themselves, so a forged plugin request cannot bypass that
-provenance check or expose another Target's settings.
+MCP is not projected into Workspace files and is not injected as `ORA_MCP_*`
+environment variables. Session MCP setup lives in `session_setup` and is
+described in [Session MCP](../../../../../docs/session-mcp.md).
 
 ## Sandboxing
 

@@ -67,7 +67,8 @@ pub(crate) const MAX_WRITE_BYTES: usize = MAX_STORAGE_FILE_BYTES as usize;
 /// allocates so an oversized payload is rejected without ever being decoded.
 const MAX_WRITE_BASE64_LEN: usize = MAX_WRITE_BYTES.div_ceil(3) * 4;
 
-/// Reserves the environment namespace populated by Ora after it verifies an MCP projection.
+/// Reserves the `ORA_MCP_*` environment namespace so a plugin cannot smuggle
+/// host-owned MCP secrets through a child-process spawn request.
 const MCP_ENVIRONMENT_PREFIX: &str = "ORA_MCP_";
 
 /// Supplies narrowly scoped environment variables for one host-managed Agent subprocess.

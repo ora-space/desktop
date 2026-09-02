@@ -45,7 +45,6 @@ pub struct EffectTargetSelectorDto {
 #[ts(export_to = "effect.ts")]
 pub enum EffectParametersDto {
     Skill,
-    Mcp,
 }
 
 /// One stable item of intent selecting an exact immutable Effect Revision.

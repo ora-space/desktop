@@ -3,7 +3,6 @@ use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
-use crate::plugin_mcp_environment::BackendMcpEnvironmentProvider;
 use crate::proxy;
 use crate::user_config::UserConfigApi;
 use gitlancer::{CliGitRunner, Git};
@@ -22,15 +21,13 @@ use ora_contracts::{
     UpdatePluginResponse,
 };
 use ora_db::{
-    McpSourceProjection, PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
+    PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
     SqlitePluginMarketplaceSourceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::PluginId;
-use ora_effect::SourceRevisionKey;
 use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest, LocalTimestamp};
-use ora_effect_mcp::resolve_template;
 use ora_logging::{ora_debug, ora_info, ora_warn};
-use ora_plugin_config::{ConfigurationCompleteness, ConfigurationService, ConfigurationSummary};
+use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
     ConnectionError, DenoPluginRuntime, DenoPluginRuntimeLauncher, InboundNotification,
     PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
@@ -50,11 +47,8 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 /// The concrete lifecycle composition the backend runs.
-pub(crate) type BackendPluginLifecycle = PluginLifecycle<
-    DenoPluginRuntimeLauncher<BackendMcpEnvironmentProvider>,
-    AppEventPublisher,
-    BroadcastNotificationSink,
->;
+pub(crate) type BackendPluginLifecycle =
+    PluginLifecycle<DenoPluginRuntimeLauncher, AppEventPublisher, BroadcastNotificationSink>;
 
 /// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
 ///
@@ -183,6 +177,8 @@ pub(crate) struct PluginApi {
     /// Its absence only costs latency: a declaration change is already durable before the wake
     /// would fire, so the worker's periodic scan still converges the surface.
     effect_reconcile: OnceLock<EffectWorkerHandle>,
+    /// Secret-free wakeup that asks live Sessions to re-read Desired MCP.
+    mcp_wakeup: OnceLock<Arc<dyn Fn() + Send + Sync>>,
     clock: SystemClock,
 }
 
@@ -217,10 +213,7 @@ impl PluginApi {
                 data_directory: home_directory.clone(),
                 deno_path,
             },
-            DenoPluginRuntimeLauncher::with_environment_provider(
-                PluginRuntimeTimeouts::default(),
-                BackendMcpEnvironmentProvider::new(home_directory.clone()),
-            ),
+            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
             notifications.clone(),
         )
@@ -240,6 +233,7 @@ impl PluginApi {
             workspace_repository: SqliteWorkspaceRepository::new(pool),
             agent_effect_declarations: Mutex::new(BTreeMap::new()),
             effect_reconcile: OnceLock::new(),
+            mcp_wakeup: OnceLock::new(),
             clock,
         })
     }
@@ -259,6 +253,23 @@ impl PluginApi {
         }
     }
 
+    /// Connects the Session runtime wakeup once the agent runtime exists.
+    pub(crate) fn set_mcp_wakeup(&self, wakeup: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.mcp_wakeup.set(wakeup);
+    }
+
+    /// Asks every Live Session to re-read Desired MCP without carrying Setting values.
+    pub(crate) fn notify_mcp_desired_changed(&self) {
+        if let Some(wakeup) = self.mcp_wakeup.get() {
+            wakeup();
+        }
+    }
+
+    /// Returns the plugin data root used to rediscover installed packages.
+    pub(crate) fn home_directory(&self) -> &Path {
+        &self.home_directory
+    }
+
     /// Rebuilds catalog projections for every Skill plugin already installed on disk.
     pub(crate) fn sync_installed_skills(&self) -> Result<(), BackendError> {
         let manager = PluginManager::discover(&self.home_directory);
@@ -270,20 +281,6 @@ impl PluginApi {
         Ok(())
     }
 
-    /// Rebuilds configured MCP Effect sources from the complete installed-package snapshot.
-    pub(crate) fn sync_installed_mcps(&self) -> Result<(), BackendError> {
-        let manager = PluginManager::discover(&self.home_directory);
-        let mut active = std::collections::BTreeSet::new();
-        for plugin in manager.installed_plugins() {
-            if matches!(plugin.contributes, PluginContribution::Mcp(_)) {
-                active.insert(plugin.id.canonical());
-                self.persist_discovered_plugin_mcp(plugin)?;
-            }
-        }
-        self.effect_repository
-            .retire_unlisted_plugin_mcps(&active, self.clock.now_timestamp_millis())
-            .map_err(|error| BackendError::internal("failed to retire stale MCP Effects", error))
-    }
     /// Returns the cached marketplace registry index, or an empty catalog when absent.
     pub(crate) fn list_available_plugins(
         &self,
@@ -527,7 +524,7 @@ impl PluginApi {
             .scan_plugins(request)
             .await
             .map_err(BackendError::from)?;
-        self.sync_installed_mcps()?;
+        self.notify_mcp_desired_changed();
         Ok(response)
     }
 
@@ -646,10 +643,8 @@ impl PluginApi {
         self.skill_repository
             .remove_plugin_skills(&plugin_id, self.clock.now_timestamp_millis())
             .map_err(|error| BackendError::internal("failed to remove plugin Skills", error))?;
-        self.effect_repository
-            .replace_plugin_mcp(&plugin_id, None, self.clock.now_timestamp_millis())
-            .map_err(|error| BackendError::internal("failed to retire plugin MCP", error))?;
         self.replace_agent_effect_declaration(plugin_id, None)?;
+        self.notify_mcp_desired_changed();
         Ok(response)
     }
     /// Installs a marketplace plugin by resolving its release manifest from the synced sources and
@@ -895,7 +890,7 @@ impl PluginApi {
         if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
             ora_warn!(plugin_id = %plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
         }
-        self.sync_plugin_mcp(plugin_id)?;
+        self.notify_mcp_desired_changed();
         // A second Hook with the same bare command still makes PATH resolution ambiguous, so the
         // typed outcome carries the colliding identity instead of looking like an ordinary success.
         if let Some(conflict) = self.detect_hook_command_conflict(plugin_id) {
@@ -959,88 +954,6 @@ impl PluginApi {
                 )
             })?;
         self.persist_discovered_plugin_skills(plugin)
-    }
-
-    /// Publishes or retires one MCP source after a package or configuration transition.
-    pub(crate) fn sync_plugin_mcp(&self, plugin_id: &str) -> Result<(), BackendError> {
-        let plugin_id = PluginId::parse(plugin_id)
-            .map_err(|error| BackendError::internal("invalid MCP plugin identity", error))?;
-        let manager = PluginManager::discover(&self.home_directory);
-        let Some(plugin) = manager
-            .installed_plugins()
-            .iter()
-            .find(|plugin| plugin.id == plugin_id)
-        else {
-            return self
-                .effect_repository
-                .replace_plugin_mcp(&plugin_id, None, self.clock.now_timestamp_millis())
-                .map_err(|error| BackendError::internal("failed to retire missing MCP", error));
-        };
-        self.persist_discovered_plugin_mcp(plugin)
-    }
-
-    /// Resolves one installed MCP into a secret-free immutable Effect definition.
-    fn persist_discovered_plugin_mcp(
-        &self,
-        plugin: &ora_plugin_manager::InstalledPlugin,
-    ) -> Result<(), BackendError> {
-        let PluginContribution::Mcp(descriptor) = &plugin.contributes else {
-            return self
-                .effect_repository
-                .replace_plugin_mcp(&plugin.id, None, self.clock.now_timestamp_millis())
-                .map_err(|error| {
-                    BackendError::internal("failed to clear stale MCP Effect", error)
-                });
-        };
-        let configuration_revision = match descriptor.configuration.settings {
-            None => Some(0),
-            Some(_) => match self
-                .configuration
-                .get(&plugin.id.canonical(), &plugin.package_root)
-            {
-                Ok(Some(details))
-                    if details.summary
-                        == ConfigurationSummary::Available {
-                            completeness: ConfigurationCompleteness::Complete,
-                        } =>
-                {
-                    Some(details.revision)
-                }
-                Ok(Some(_)) | Ok(None) | Err(_) => None,
-            },
-        };
-        let projection = configuration_revision
-            .map(
-                |configuration_revision| -> Result<McpSourceProjection, BackendError> {
-                    let definition = resolve_template(
-                        &plugin.id,
-                        &descriptor.configuration,
-                        configuration_revision,
-                        &plugin.package_root,
-                    )
-                    .map_err(|error| {
-                        BackendError::internal("failed to resolve configured MCP template", error)
-                    })?;
-                    let revision_key = SourceRevisionKey::parse(format!(
-                        "{}:{configuration_revision}",
-                        plugin.version
-                    ))
-                    .map_err(|error| BackendError::internal("invalid MCP revision key", error))?;
-                    Ok(McpSourceProjection {
-                        plugin_id: plugin.id.clone(),
-                        revision_key,
-                        definition,
-                    })
-                },
-            )
-            .transpose()?;
-        self.effect_repository
-            .replace_plugin_mcp(
-                &plugin.id,
-                projection.as_ref(),
-                self.clock.now_timestamp_millis(),
-            )
-            .map_err(|error| BackendError::internal("failed to publish MCP Effect", error))
     }
 
     /// Persists one already-discovered Skill plugin without exposing package layout to callers.

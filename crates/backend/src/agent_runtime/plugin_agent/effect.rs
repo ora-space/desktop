@@ -58,68 +58,50 @@ pub(crate) fn registered_consumer_declaration(
     let coordination = CoordinationContract::agent_restart_v1();
     let mut effect_protocols = BTreeMap::new();
     let mut materialization_contracts = BTreeSet::new();
-    let resources = registration
-        .effect_resources
-        .iter()
-        .map(|resource| {
-            let relative_path = ResourcePath::parse(&resource.workspace_relative_path)
-                .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
-            let format = MaterializationFormat::parse(&resource.materialization_format)
-                .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
-            let (materialization, kind, ownership_relative_path) =
-                if format == MaterializationFormat::skill_directory_v1() {
-                    (
-                        MaterializationContract::skill_directory_v1(),
-                        EffectKind::skill(),
-                        None,
-                    )
-                } else if format == MaterializationFormat::opencode_mcp_config_v1() {
-                    (
-                        MaterializationContract::opencode_mcp_config_v1(),
-                        EffectKind::mcp(),
-                        Some(
-                            ResourcePath::parse(".opencode/.ora-mcp-managed.json").map_err(
-                                |error| AgentEffectError::InvalidDeclaration(error.to_string()),
-                            )?,
-                        ),
-                    )
-                } else if format == MaterializationFormat::claude_mcp_config_v1() {
-                    (
-                        MaterializationContract::claude_mcp_config_v1(),
-                        EffectKind::mcp(),
-                        Some(
-                            ResourcePath::parse(".claude/.ora-mcp-managed.json").map_err(
-                                |error| AgentEffectError::InvalidDeclaration(error.to_string()),
-                            )?,
-                        ),
-                    )
-                } else {
-                    return Err(AgentEffectError::InvalidDeclaration(format!(
-                        "unsupported Effect materialization format {}",
-                        resource.materialization_format
-                    )));
-                };
-            effect_protocols.insert(kind.clone(), 1);
-            materialization_contracts.insert(materialization.capability_key());
-            let coordination = match resource.coordination {
-                PluginEffectCoordination::Uninterrupted => CoordinationRequirement::Uninterrupted,
-                PluginEffectCoordination::QuiesceBeforeMutation => {
-                    CoordinationRequirement::QuiesceBeforeMutation(coordination.clone())
-                }
-            };
-            Ok(FilesystemResourceTemplate {
-                relative_path,
-                materialization_format: format,
-                materialization_contract: materialization.clone(),
-                accepts: CapabilityRequirement {
-                    effect_protocols: BTreeMap::from([(kind, 1)]),
-                    materialization_contracts: BTreeSet::from([materialization.capability_key()]),
-                },
-                coordination,
-                ownership_relative_path,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut resources = Vec::new();
+    for resource in &registration.effect_resources {
+        let relative_path = ResourcePath::parse(&resource.workspace_relative_path)
+            .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
+        let format = MaterializationFormat::parse(&resource.materialization_format)
+            .map_err(|error| AgentEffectError::InvalidDeclaration(error.to_string()))?;
+        // Unpublished MCP file-materialization agents declared these formats. Skip them so Skill
+        // Effect still registers without treating MCP as an Effect Resource.
+        if resource.materialization_format == "ora/opencode-mcp-config.v1"
+            || resource.materialization_format == "ora/claude-mcp-config.v1"
+        {
+            continue;
+        }
+        if format != MaterializationFormat::skill_directory_v1() {
+            return Err(AgentEffectError::InvalidDeclaration(format!(
+                "unsupported Effect materialization format {}",
+                resource.materialization_format
+            )));
+        }
+        let materialization = MaterializationContract::skill_directory_v1();
+        let kind = EffectKind::skill();
+        effect_protocols.insert(kind.clone(), 1);
+        materialization_contracts.insert(materialization.capability_key());
+        let coordination = match resource.coordination {
+            PluginEffectCoordination::Uninterrupted => CoordinationRequirement::Uninterrupted,
+            PluginEffectCoordination::QuiesceBeforeMutation => {
+                CoordinationRequirement::QuiesceBeforeMutation(coordination.clone())
+            }
+        };
+        resources.push(FilesystemResourceTemplate {
+            relative_path,
+            materialization_format: format,
+            materialization_contract: materialization.clone(),
+            accepts: CapabilityRequirement {
+                effect_protocols: BTreeMap::from([(kind, 1)]),
+                materialization_contracts: BTreeSet::from([materialization.capability_key()]),
+            },
+            coordination,
+            ownership_relative_path: None,
+        });
+    }
+    if resources.is_empty() {
+        return Ok(None);
+    }
     Ok(Some(ConsumerDeclaration {
         consumer,
         adapter: ConsumerAdapterIdentity::parse("ora/agent-plugin")

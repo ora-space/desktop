@@ -283,10 +283,6 @@ export type PluginConfigurationDetails = {
   declarationFingerprint: string;
   settings: Array<PluginSettingDetails>;
   summary: PluginConfigurationSummary;
-  /**
-   * Present only for MCP configuration files; non-MCP plugins have no projection state.
-   */
-  mcpMaterialization: PluginMcpMaterializationStatus | null;
 };
 
 /**
@@ -320,15 +316,6 @@ export type PluginInstallationValidity = { "validity": "valid" } | {
   "validity": "invalid_declaration";
   errorCode: string;
 };
-
-/**
- * Aggregates one MCP plugin's materialization state across every active Agent Target.
- */
-export type PluginMcpMaterializationStatus =
-  | "incomplete"
-  | "projecting"
-  | "current"
-  | "blocked";
 
 /**
  * Represents the process-scoped lifecycle of one installed plugin.

@@ -13,6 +13,7 @@ use super::warm_pool::{
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
+use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpHost, SessionSetup};
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::AvailableCommand;
 use agent_client_protocol_schema::v1::{
@@ -54,6 +55,7 @@ pub(super) struct WarmSessions {
     gates: StdMutex<HashMap<WarmKey, Arc<Mutex<()>>>>,
     connections: ConnectionSupervisors,
     clock: SystemClock,
+    session_mcp: SessionMcpHost,
 }
 
 /// A warm session ready to be bound to an Ora session.
@@ -68,6 +70,8 @@ pub(super) struct WarmAttachment {
     /// configuration only while creating or loading a session, so the claim is
     /// the last point at which the incoming agent's model list can be learned.
     pub config_options: Vec<SessionConfigOption>,
+    /// Secret-free MCP revision actually sent with this provider session's `session/new`.
+    pub mcp_revision: crate::session_setup::SessionMcpRevision,
 }
 
 /// A warm session held for one attach attempt, returned to the pool on drop.
@@ -150,12 +154,17 @@ fn lock_pool(pool: &StdMutex<WarmPool>) -> MutexGuard<'_, WarmPool> {
 }
 
 impl WarmSessions {
-    pub(super) fn new(connections: ConnectionSupervisors, clock: SystemClock) -> Self {
+    pub(super) fn new(
+        connections: ConnectionSupervisors,
+        clock: SystemClock,
+        session_mcp: SessionMcpHost,
+    ) -> Self {
         Self {
             pool: StdMutex::new(WarmPool::default()),
             gates: StdMutex::new(HashMap::new()),
             connections,
             clock,
+            session_mcp,
         }
     }
 
@@ -192,6 +201,7 @@ impl WarmSessions {
                     agent_session_id,
                     config_options,
                     available_commands,
+                    mcp_revision,
                 } = self.create(&key.agent_ref, &session_id, &cwd).await?;
                 let config_options = self
                     .replay(&key.agent_ref, &agent_session_id, replay, config_options)
@@ -202,6 +212,7 @@ impl WarmSessions {
                         agent_session_id: agent_session_id.clone(),
                         config_options: config_options.clone(),
                         available_commands,
+                        mcp_revision,
                     },
                     connection.generation,
                     self.clock.now_timestamp_millis(),
@@ -307,6 +318,7 @@ impl WarmSessions {
                         cwd: attached.cwd,
                         available_commands: attached.available_commands,
                         config_options: attached.config_options,
+                        mcp_revision: attached.mcp_revision,
                     },
                 ));
             }
@@ -331,6 +343,7 @@ impl WarmSessions {
                 agent_session_id: created.agent_session_id.clone(),
                 config_options: config_options.clone(),
                 available_commands: created.available_commands.clone(),
+                mcp_revision: created.mcp_revision.clone(),
             },
             connection.generation,
             self.clock.now_timestamp_millis(),
@@ -357,6 +370,7 @@ impl WarmSessions {
                 cwd: cwd.to_path_buf(),
                 available_commands: created.available_commands,
                 config_options,
+                mcp_revision: created.mcp_revision,
             },
         );
         self.release(superseded).await;
@@ -408,6 +422,7 @@ impl WarmSessions {
                         cwd: attached.cwd,
                         available_commands: attached.available_commands,
                         config_options: attached.config_options,
+                        mcp_revision: attached.mcp_revision,
                     },
                 ));
             }
@@ -430,6 +445,7 @@ impl WarmSessions {
                 agent_session_id: created.agent_session_id.clone(),
                 config_options: config_options.clone(),
                 available_commands: created.available_commands.clone(),
+                mcp_revision: created.mcp_revision.clone(),
             },
             connection.generation,
             self.clock.now_timestamp_millis(),
@@ -456,6 +472,7 @@ impl WarmSessions {
                 cwd,
                 available_commands: created.available_commands,
                 config_options,
+                mcp_revision: created.mcp_revision,
             },
         );
         self.release(superseded).await;
@@ -518,12 +535,22 @@ impl WarmSessions {
     ) -> Result<CreatedProvider, BackendError> {
         let supervisor = self.connections.for_agent(agent_ref)?;
         let connection = supervisor.current()?;
+        let setup = SessionSetup::resolve(
+            &self.session_mcp,
+            cwd,
+            AgentSessionMcpCapabilities::new(
+                connection.load_session_supported,
+                connection.http_mcp_supported,
+            ),
+        )
+        .map_err(crate::session_setup::SessionMcpError::into_backend)?;
+        let mcp_revision = setup.mcp.revision().clone();
         let _setup = supervisor.begin_session_setup();
         let response = timeout(
             SESSION_SETUP_TIMEOUT,
             connection.client.request::<_, NewSessionResponse>(
                 AGENT_METHOD_NAMES.session_new,
-                &NewSessionRequest::new(cwd),
+                &NewSessionRequest::new(cwd).mcp_servers(setup.mcp.into_servers()),
             ),
         )
         .await
@@ -546,6 +573,7 @@ impl WarmSessions {
             agent_session_id: response.session_id.to_string(),
             config_options: response.config_options.unwrap_or_default(),
             available_commands,
+            mcp_revision,
         })
     }
 
@@ -677,6 +705,7 @@ mod tests {
     use super::{WarmAttachment, WarmPool, WarmReservation, lock_pool};
     use crate::agent_runtime::WarmOwner;
     use crate::agent_runtime::warm_pool::{AttachedWarm, CreatedProvider, Reservation, WarmKey};
+    use crate::session_setup::SessionMcpRevision;
     use ora_contracts::WarmSessionTarget;
     use ora_domain::{AgentRef, SessionId};
     use pretty_assertions::assert_eq;
@@ -710,6 +739,7 @@ mod tests {
                 agent_session_id: "agent-session-1".to_string(),
                 config_options: Vec::new(),
                 available_commands: Vec::new(),
+                mcp_revision: SessionMcpRevision::default(),
             },
             GENERATION,
             0,
@@ -725,6 +755,7 @@ mod tests {
             cwd: PathBuf::from("/repo"),
             available_commands: Vec::new(),
             config_options: Vec::new(),
+            mcp_revision: SessionMcpRevision::default(),
         }
     }
 
@@ -750,6 +781,7 @@ mod tests {
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],
                 config_options: vec![],
+                mcp_revision: SessionMcpRevision::default(),
             })
         );
     }

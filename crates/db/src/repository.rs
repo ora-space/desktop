@@ -20,9 +20,7 @@ mod worktree_provisioning_lease;
 pub use agent_definition::SqliteAgentDefinitionRepository;
 pub use cascade::{CascadeDeleteOutcome, SqliteCascadeRepository};
 pub use connection::RepositoryPool;
-pub use effect::{
-    McpProjectionStatus, McpSourceProjection, SourceMutationOutcome, SqliteEffectRepository,
-};
+pub use effect::{SourceMutationOutcome, SqliteEffectRepository};
 pub use git_cleanup_job::SqliteGitCleanupJobRepository;
 pub use marketplace_source::{
     PluginMarketplaceSourceRecord, SqlitePluginMarketplaceSourceRepository,

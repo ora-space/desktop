@@ -198,6 +198,59 @@ fn declares_no_consumer_for_a_plugin_that_owns_nothing_on_disk() {
     );
 }
 
+/// Unpublished MCP file-materialization formats are ignored so Skill Effect still registers.
+#[test]
+fn skips_unpublished_mcp_file_materialization_resources() {
+    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
+    let mut registration = complete_registration();
+    registration.effect_resources = vec![
+        PluginEffectResource {
+            workspace_relative_path: ".opencode/opencode.json".to_string(),
+            materialization_format: "ora/opencode-mcp-config.v1".to_string(),
+            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
+        },
+        PluginEffectResource {
+            workspace_relative_path: ".claude/.mcp.json".to_string(),
+            materialization_format: "ora/claude-mcp-config.v1".to_string(),
+            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
+        },
+        PluginEffectResource {
+            workspace_relative_path: ".opencode/skills".to_string(),
+            materialization_format: SKILL_DIRECTORY_FORMAT.to_string(),
+            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
+        },
+    ];
+
+    let declaration = registered_consumer_declaration(&plugin_id, &registration)
+        .expect("MCP formats are skipped")
+        .expect("Skill Resource remains");
+    assert_eq!(
+        declaration
+            .resources
+            .iter()
+            .map(|resource| resource.materialization_format.as_str())
+            .collect::<Vec<_>>(),
+        vec![SKILL_DIRECTORY_FORMAT]
+    );
+}
+
+/// An agent that only declared the unpublished MCP Resource is not an Effect Consumer.
+#[test]
+fn treats_mcp_only_materialization_as_no_consumer() {
+    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
+    let mut registration = complete_registration();
+    registration.effect_resources = vec![PluginEffectResource {
+        workspace_relative_path: ".opencode/opencode.json".to_string(),
+        materialization_format: "ora/opencode-mcp-config.v1".to_string(),
+        coordination: PluginEffectCoordination::QuiesceBeforeMutation,
+    }];
+
+    assert_eq!(
+        registered_consumer_declaration(&plugin_id, &registration),
+        Ok(None)
+    );
+}
+
 /// Frames that arrived before the agent started belong to no connection and are dropped.
 #[tokio::test]
 async fn discards_frames_that_arrived_before_the_agent_started() {

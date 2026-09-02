@@ -9,6 +9,13 @@ export const taskBaseBranchNotFoundParamsSchema = z.object({
     branchName: z.string()
 });
 
+export const sessionMcpSetupFailedParamsSchema = z.object({
+    errorCode: z.string(),
+    pluginId: z.string().nullable(),
+    settingId: z.string().nullable(),
+    transport: z.string().nullable()
+});
+
 export const skillFolderConflictParamsSchema = z.object({
     name: z.string()
 });
@@ -141,6 +148,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("session_load_unsupported"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("session_mcp_setup_failed"),
+        "params": sessionMcpSetupFailedParamsSchema
     }), z.object({
         "code": z.literal("session_history_degraded"),
         "params": emptyErrorParamsSchema
@@ -446,6 +456,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("session_load_unsupported"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("session_mcp_setup_failed"),
+        "params": sessionMcpSetupFailedParamsSchema
     }), z.object({
         "code": z.literal("session_history_degraded"),
         "params": emptyErrorParamsSchema

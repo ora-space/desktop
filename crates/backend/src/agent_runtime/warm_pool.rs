@@ -75,6 +75,7 @@ struct WarmEntry {
     /// it lets the attach response describe the commands without a second
     /// handshake.
     available_commands: Vec<AvailableCommand>,
+    mcp_revision: crate::session_setup::SessionMcpRevision,
     last_used_at: i64,
     /// Set while an attach attempt holds this entry, so `lookup` skips it
     /// instead of handing its provider session to a second caller, and so a
@@ -147,6 +148,8 @@ pub(super) struct AttachedWarm {
     /// happened long before the claim. Attaching ignores it — that client read
     /// the same list from its own warm response.
     pub config_options: Vec<SessionConfigOption>,
+    /// Secret-free MCP revision actually sent with this provider session's `session/new`.
+    pub mcp_revision: crate::session_setup::SessionMcpRevision,
 }
 
 /// Everything one completed `session/new` handshake produced.
@@ -155,6 +158,7 @@ pub(super) struct CreatedProvider {
     pub agent_session_id: String,
     pub config_options: Vec<SessionConfigOption>,
     pub available_commands: Vec<AvailableCommand>,
+    pub mcp_revision: crate::session_setup::SessionMcpRevision,
 }
 
 /// What one attach attempt found when reserving a warm session.
@@ -263,6 +267,7 @@ impl WarmPool {
             cwd: entry.cwd.clone(),
             available_commands: entry.available_commands.clone(),
             config_options: entry.config_options.clone(),
+            mcp_revision: entry.mcp_revision.clone(),
         };
         self.entries[index].reserved = true;
         (ClaimDecision::Held(attached), released)
@@ -295,6 +300,7 @@ impl WarmPool {
                 desired_config: HashMap::new(),
                 config_options: Vec::new(),
                 available_commands: Vec::new(),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
                 last_used_at: now,
                 reserved: false,
             });
@@ -347,6 +353,7 @@ impl WarmPool {
         });
         entry.config_options = created.config_options;
         entry.available_commands = created.available_commands;
+        entry.mcp_revision = created.mcp_revision;
         entry.last_used_at = now;
         Install::Accepted(released)
     }
@@ -427,6 +434,7 @@ impl WarmPool {
             cwd: entry.cwd.clone(),
             available_commands: entry.available_commands.clone(),
             config_options: entry.config_options.clone(),
+            mcp_revision: entry.mcp_revision.clone(),
         };
         self.entries[index].reserved = true;
         Reservation::Held(attached)
@@ -484,6 +492,7 @@ impl WarmPool {
         });
         entry.config_options = created.config_options;
         entry.available_commands = created.available_commands;
+        entry.mcp_revision = created.mcp_revision;
         entry.reserved = true;
         entry.last_used_at = now;
         Install::Accepted(released)
@@ -702,6 +711,7 @@ mod tests {
                 agent_session_id: format!("agent-{id}"),
                 config_options: model_options("fast"),
                 available_commands: Vec::new(),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
             },
             GENERATION,
             now,
@@ -1123,6 +1133,7 @@ mod tests {
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo"),
                     available_commands: vec![],
+                    mcp_revision: crate::session_setup::SessionMcpRevision::default(),
                     config_options: model_options("fast"),
                 }),
                 WarmDecision::Create(CreatePlan {
@@ -1176,6 +1187,7 @@ mod tests {
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo"),
                     available_commands: vec![],
+                    mcp_revision: crate::session_setup::SessionMcpRevision::default(),
                     config_options: model_options("fast"),
                 }),
                 None,
@@ -1261,6 +1273,7 @@ mod tests {
                 agent_session_id: "agent-session-2".to_string(),
                 config_options: model_options("fast"),
                 available_commands: Vec::new(),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
             },
             GENERATION,
             5,
@@ -1294,6 +1307,7 @@ mod tests {
                 agent_session_id: "agent-session-2".to_string(),
                 config_options: model_options("fast"),
                 available_commands: Vec::new(),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
             },
             GENERATION,
             5,
@@ -1335,6 +1349,7 @@ mod tests {
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo/old"),
                     available_commands: vec![],
+                    mcp_revision: crate::session_setup::SessionMcpRevision::default(),
                     config_options: model_options("fast"),
                 }),
             )
@@ -1390,6 +1405,7 @@ mod tests {
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],
                 config_options: model_options("fast"),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
             })
         );
     }
@@ -1439,6 +1455,7 @@ mod tests {
                 agent_session_id: "agent-session-2".to_string(),
                 config_options: model_options("fast"),
                 available_commands: Vec::new(),
+                mcp_revision: crate::session_setup::SessionMcpRevision::default(),
             },
             GENERATION,
             5,

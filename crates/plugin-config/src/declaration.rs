@@ -52,6 +52,20 @@ pub enum SettingValue {
     Boolean(bool),
 }
 
+impl SettingValue {
+    /// Renders one Setting as the string every MCP transport position ultimately requires.
+    ///
+    /// Arguments, environment values, and HTTP headers are all strings on the wire, so Number
+    /// and Boolean use their canonical JSON spelling rather than a locale-dependent display.
+    pub fn as_runtime_text(&self) -> String {
+        match self {
+            Self::String(value) => value.clone(),
+            Self::Number(value) => value.to_string(),
+            Self::Boolean(value) => value.to_string(),
+        }
+    }
+}
+
 /// Reports a declaration that cannot be interpreted without ambiguity.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CompileDeclarationError {

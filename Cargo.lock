@@ -3116,7 +3116,6 @@ dependencies = [
  "ora-db",
  "ora-domain",
  "ora-effect",
- "ora-effect-mcp",
  "ora-effect-skill",
  "ora-fs",
  "ora-history",
@@ -3136,6 +3135,7 @@ dependencies = [
  "ora-user-config",
  "ora-utils",
  "pretty_assertions",
+ "semver",
  "serde",
  "serde_json",
  "similar",
@@ -3274,22 +3274,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "uuid",
-]
-
-[[package]]
-name = "ora-effect-mcp"
-version = "0.0.0"
-dependencies = [
- "ora-domain",
- "ora-effect",
- "ora-effect-skill",
- "ora-plugin-config",
- "ora-utils",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -26,8 +26,8 @@ live in `packages/`. All Rust packages share the root Cargo workspace.
   and configuration
 - [ACP Agent Runtime](docs/agent-runtime.md) — provider supervision, session
   lifecycle, agent switching, and flow control
-- [MCP Effect Materialization](docs/effect-mcp-state.md) — MCP desired state,
-  shared Agent configuration files, readiness, and secret injection boundaries
+- [Session MCP](docs/session-mcp.md) — ACP `mcpServers` injection, live refresh,
+  prompt admission, and the boundary that keeps MCP out of Workspace files
 - [Session History](crates/history/README.md) — Ora's own conversation record
   and the handoff between agents
 - [Runtime Logging](docs/runtime-logging.md) — configuration, JSON event

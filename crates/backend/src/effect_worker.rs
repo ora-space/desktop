@@ -4,6 +4,7 @@ use crate::agent_runtime::{ReplacedAgentSessions, plugin_agent};
 use crate::clock::SystemClock;
 use crate::effect_registration::converge_workspace_targets;
 use crate::plugin::PluginApi;
+use crate::session_setup::BarrierReason;
 use ora_application::Clock;
 use ora_db::{RepositoryPool, SqliteEffectRepository, SqliteWorkspaceRepository};
 use ora_domain::PluginId;
@@ -13,10 +14,10 @@ use ora_effect::{
     EffectTarget, EffectTargetId, LocalTimestamp, ReadinessReceipt, ReconcileOutcome,
     TargetProjection, WorkerIdentity,
 };
-use ora_effect_mcp::{BuiltinEffectPlanner, BuiltinResourceAdapter};
+use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
 use ora_logging::{ora_info, ora_warn};
 use serde_json::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -234,13 +235,14 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
         now: LocalTimestamp,
         lease_until: LocalTimestamp,
     ) {
-        let planner = BuiltinEffectPlanner;
-        let resource_adapter = BuiltinResourceAdapter;
+        let planner = SkillPlanner;
+        let resource_adapter = SkillDirectoryResourceAdapter;
         let consumer_adapter = PluginConsumerAdapter {
             plugin_host: self.plugin_host.as_ref(),
             sessions: self.sessions.as_ref(),
             runtime,
             coordinated: Mutex::new(BTreeSet::new()),
+            held_barriers: Mutex::new(HashMap::new()),
         };
         let reconciler = EffectReconciler::new(
             &self.repository,
@@ -312,6 +314,7 @@ struct PluginConsumerAdapter<'a, Sessions> {
     sessions: &'a Sessions,
     runtime: &'a Handle,
     coordinated: Mutex<BTreeSet<EffectTargetId>>,
+    held_barriers: Mutex<HashMap<PluginId, crate::session_setup::BarrierGuard>>,
 }
 
 impl<Sessions> PluginConsumerAdapter<'_, Sessions> {
@@ -356,6 +359,18 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
         plan: &CoordinationPlan,
     ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
         let contract = self.coordination_contract(target, plan)?;
+        let plugin_id =
+            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
+        let barrier = self.runtime.block_on(
+            self.sessions
+                .session_barriers()
+                .for_plugin(&plugin_id)
+                .acquire(BarrierReason::EffectMutation),
+        );
+        self.held_barriers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plugin_id, barrier);
         let proof = match self.running_runtime(target)? {
             Some(runtime) => {
                 let receipt = self
@@ -397,9 +412,15 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&target.identity);
+        let plugin_id =
+            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
+        drop(
+            self.held_barriers
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&plugin_id),
+        );
         if was_coordinated {
-            let plugin_id =
-                PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
             self.sessions
                 .detach_sessions_for_replaced_plugin(&plugin_id);
         }

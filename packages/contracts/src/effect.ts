@@ -46,7 +46,7 @@ export type EffectConsumerRefDto = { kind: string; stableKey: string };
 /**
  * Closed transport representation of validated kind-specific Effect parameters.
  */
-export type EffectParametersDto = { "kind": "skill" } | { "kind": "mcp" };
+export type EffectParametersDto = { "kind": "skill" };
 
 /**
  * One exact Effect protocol version required from a Consumer Revision.

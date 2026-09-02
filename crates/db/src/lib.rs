@@ -19,13 +19,12 @@ pub use error::{DatabaseError, MigrationDirection};
 pub use location::DatabaseLocation;
 pub use migration::{AppliedMigration, Migration, MigrationCatalog, default_migration_catalog};
 pub use repository::{
-    CascadeDeleteOutcome, McpProjectionStatus, McpSourceProjection, PluginMarketplaceSourceRecord,
-    PluginSkillProjection, RepositoryPool, SourceMutationOutcome, SqliteAgentDefinitionRepository,
-    SqliteCascadeRepository, SqliteEffectRepository, SqliteGitCleanupJobRepository,
-    SqlitePluginMarketplaceSourceRepository, SqliteProjectRepository, SqliteSessionRepository,
-    SqliteSkillRepository, SqliteTaskRepository, SqliteTaskWorkspaceRepository,
-    SqliteUserConfigRepository, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository,
-    SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+    CascadeDeleteOutcome, PluginMarketplaceSourceRecord, PluginSkillProjection, RepositoryPool,
+    SourceMutationOutcome, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
+    SqliteEffectRepository, SqliteGitCleanupJobRepository, SqlitePluginMarketplaceSourceRepository,
+    SqliteProjectRepository, SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository,
+    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository, SqliteWorkflowRepository,
+    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
 pub use time::{SystemTimestampSource, TimestampSource};

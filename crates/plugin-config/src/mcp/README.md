@@ -29,7 +29,9 @@ must not — belongs to `ora-plugin-manager`.
   Hook shape, and those packages must — belongs to `ora-plugin-manager`.
 - Filesystem containment of a stdio command or Hook executable inside the installed package
   belongs to `ora-plugin-manager`.
-- `ResolvedMcp`, `ResolvedHook`, Agent materialization, and workspace selection are later slices.
+- Binding Setting values onto a compiled transport (`resolve_mcp_transport`) stays in this crate;
+  ACP `mcpServers` mapping, Session cwd substitution, and live refresh belong to Session setup.
+- Hook runtime execution and workspace selection are later slices.
 
 ## Failure semantics
 

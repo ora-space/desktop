@@ -162,9 +162,6 @@ impl Backend {
         plugin
             .sync_installed_skills()
             .map_err(BackendBootstrapError::PluginSkillCatalog)?;
-        plugin
-            .sync_installed_mcps()
-            .map_err(BackendBootstrapError::PluginSkillCatalog)?;
         let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(configured_worktree_root));
         // Side files holding the worktree baseline an interactive node diffs at completion.
@@ -183,6 +180,10 @@ impl Backend {
             })
             .map_err(BackendBootstrapError::AgentRuntime)?,
         );
+        plugin.set_mcp_wakeup({
+            let runtime = agent_runtime.clone();
+            Arc::new(move || runtime.notify_mcp_desired_changed())
+        });
         // Build the run engine before the crash sweep so recovery can resume stalled runs.
         let workflow_run_assembly = build_workflow_run_engine(
             agent_runtime.clone(),

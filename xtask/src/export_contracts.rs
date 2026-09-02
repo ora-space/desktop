@@ -349,7 +349,6 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "PluginConfigurationDetails"
         | "PluginConfigurationFieldError"
         | "PluginConfigurationSummary"
-        | "PluginMcpMaterializationStatus"
         | "PluginDataDisposition"
         | "PluginInstallationValidity"
         | "PluginSettingDeclaration"

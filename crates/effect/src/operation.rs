@@ -69,7 +69,7 @@ pub struct JsonMergeOperationPlan {
     pub managed_identity: ManagedIdentity,
     pub native_identity: NativeResourceIdentity,
     pub desired_effect: Option<crate::DesiredEffectIdentity>,
-    pub input: Option<crate::McpMaterializationInput>,
+    pub input: Option<Value>,
 }
 
 /// Closed versioned operation payload set; Effect Core stores and sequences but does not inspect it.

@@ -68,8 +68,13 @@ impl RuntimeActor {
                         RuntimeCommand::Prompt { operation_id, prompt, record_prompt, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            let _ = accepted.send(Ok(()));
-                            self.run_prompt(operation_id, prompt, record_prompt, events).await;
+                            if let Err(error) = self.ensure_current_mcp().await {
+                                let _ = accepted.send(Err(error));
+                            } else {
+                                let _ = accepted.send(Ok(()));
+                                self.run_prompt(operation_id, prompt, record_prompt, events).await;
+                                self.refresh_idle_mcp_if_owed().await;
+                            }
                             return;
                         }
                         RuntimeCommand::Stop { response } => {
@@ -94,6 +99,12 @@ impl RuntimeActor {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             self.detach_replaced_agent(&agent);
+                            return;
+                        }
+                        RuntimeCommand::McpDesiredMaybeChanged => {
+                            self.channel = Some(channel);
+                            self.title_acquisition.preempt_attempt(attempt);
+                            self.on_idle_mcp_desired_changed().await;
                             return;
                         }
                         RuntimeCommand::Cancel { .. } => {

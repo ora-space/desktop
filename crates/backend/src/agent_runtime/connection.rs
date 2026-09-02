@@ -79,6 +79,8 @@ pub(super) struct RuntimeConnection {
     pub client: AgentAcpClient,
     pub generation: u64,
     pub load_session_supported: bool,
+    /// Whether initialize advertised ACP HTTP MCP servers.
+    pub http_mcp_supported: bool,
     /// Whether the agent advertises the bounded fallback used for first-title acquisition.
     pub list_session_supported: bool,
     pub close_session_supported: bool,
@@ -545,6 +547,7 @@ struct SharedProcess {
     models: Arc<[PluginAgentModel]>,
     inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
     load_session_supported: bool,
+    http_mcp_supported: bool,
     list_session_supported: bool,
     close_session_supported: bool,
     delete_session_supported: bool,
@@ -580,6 +583,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     models: process.models.clone(),
                     generation,
                     load_session_supported: process.load_session_supported,
+                    http_mcp_supported: process.http_mcp_supported,
                     list_session_supported: process.list_session_supported,
                     close_session_supported: process.close_session_supported,
                     delete_session_supported: process.delete_session_supported,
@@ -765,6 +769,7 @@ async fn spawn_initialized_process(
         models: models.into(),
         inbound,
         load_session_supported: response.agent_capabilities.load_session,
+        http_mcp_supported: response.agent_capabilities.mcp_capabilities.http,
         list_session_supported: response
             .agent_capabilities
             .session_capabilities

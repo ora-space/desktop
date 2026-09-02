@@ -41,7 +41,7 @@ impl ChildProcessEnvironmentProvider for FixedEnvironmentProvider {
         assert_eq!(plugin_id, "plugin-a");
         assert_eq!(workspace_root, Path::new("/work"));
         Ok(BTreeMap::from([(
-            "ORA_MCP_AUTHORIZED".to_string(),
+            "HOST_INJECTED".to_string(),
             "secret".to_string(),
         )]))
     }
@@ -258,7 +258,7 @@ async fn spawn_returns_process_id_and_forwards_command_args_cwd_env() {
 }
 
 #[tokio::test]
-async fn spawn_injects_host_authorized_mcp_environment_after_binding_the_workspace() {
+async fn spawn_injects_host_environment_after_binding_the_workspace() {
     let spawner = FakeChildSpawner::new();
     let host = PluginProcessHost::with_environment_provider(
         "plugin-a",
@@ -278,7 +278,7 @@ async fn spawn_injects_host_authorized_mcp_environment_after_binding_the_workspa
         spawner.calls()[0].envs().collect::<Vec<_>>(),
         vec![
             (OsStr::new("PUBLIC"), OsStr::new("value")),
-            (OsStr::new("ORA_MCP_AUTHORIZED"), OsStr::new("secret")),
+            (OsStr::new("HOST_INJECTED"), OsStr::new("secret")),
         ]
     );
 }

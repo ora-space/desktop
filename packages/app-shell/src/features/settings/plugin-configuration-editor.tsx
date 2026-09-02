@@ -260,34 +260,6 @@ function LoadedConfigurationEditor({
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.plugins.configuration.description")}
         </p>
-        {details.mcpMaterialization !== null && (
-          <div className="mt-3 flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">
-              {t("settings.plugins.configuration.materialization.label")}
-            </span>
-            <Badge
-              variant={
-                details.mcpMaterialization === "blocked"
-                  ? "destructive"
-                  : "secondary"
-              }
-            >
-              {details.mcpMaterialization === "incomplete"
-                ? t("settings.plugins.configuration.materialization.incomplete")
-                : details.mcpMaterialization === "projecting"
-                  ? t(
-                      "settings.plugins.configuration.materialization.projecting",
-                    )
-                  : details.mcpMaterialization === "current"
-                    ? t(
-                        "settings.plugins.configuration.materialization.current",
-                      )
-                    : t(
-                        "settings.plugins.configuration.materialization.blocked",
-                      )}
-            </Badge>
-          </div>
-        )}
       </header>
 
       <div className="space-y-5">

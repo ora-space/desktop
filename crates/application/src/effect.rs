@@ -11,9 +11,9 @@ use ora_effect::{
     CapabilityRequirement, ConditionGeneration, ConditionImpact, ConditionOwner, ConditionRetry,
     ConditionSubject, ConsumerIdentity, ConsumerKind, DesiredEffect, DesiredEffectIdentity,
     DesiredState, EffectCondition, EffectKind, EffectRepository, EffectRevisionId, EffectScopeId,
-    EffectTargetId, Generation, LocalTimestamp, McpParameters, ReconcileStage,
-    ReplaceDesiredStateOutcome, RepositoryError, SkillParameters, TargetInclusion, TargetPhase,
-    TargetSelector, ValidatedEffectParameters,
+    EffectTargetId, Generation, LocalTimestamp, ReconcileStage, ReplaceDesiredStateOutcome,
+    RepositoryError, SkillParameters, TargetInclusion, TargetPhase, TargetSelector,
+    ValidatedEffectParameters,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -159,7 +159,6 @@ fn map_desired_effect(effect: DesiredEffectDto) -> Result<DesiredEffect, EffectA
         revision: EffectRevisionId::new(effect.revision_id),
         parameters: match effect.parameters {
             EffectParametersDto::Skill => ValidatedEffectParameters::Skill(SkillParameters {}),
-            EffectParametersDto::Mcp => ValidatedEffectParameters::Mcp(McpParameters {}),
         },
         audience: map_selector(effect.audience)?,
     })
@@ -235,7 +234,6 @@ fn map_desired_effect_dto(effect: DesiredEffect) -> DesiredEffectDto {
         revision_id: effect.revision.to_string(),
         parameters: match effect.parameters {
             ValidatedEffectParameters::Skill(_) => EffectParametersDto::Skill,
-            ValidatedEffectParameters::Mcp(_) => EffectParametersDto::Mcp,
         },
         audience: map_selector_dto(effect.audience),
     }
