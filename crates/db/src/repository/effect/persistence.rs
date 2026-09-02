@@ -187,7 +187,7 @@ pub(super) fn complete_request(
              SET state = 'pending', claim_token = NULL, claim_worker = NULL, lease_until = NULL,
                  retry_count = 0, retry_attempt = NULL, not_before = NULL,
                  blocked_conditions_json = NULL, resume_trigger_version = NULL,
-                 resume_trigger_json = NULL, updated_at = ?3
+                 resume_trigger_json = NULL, updated_at = MAX(updated_at, ?3)
              WHERE target_id = ?1 AND claim_token = ?2",
             params![
                 target.as_str(),

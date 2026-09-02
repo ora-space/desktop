@@ -1022,7 +1022,6 @@ impl Drop for RuntimeActor {
 
 #[cfg(test)]
 mod tests {
-    use super::super::connection::AgentSource;
     use super::*;
     use crate::agent_runtime::connection::ConnectionSupervisor;
     use crate::agent_runtime::title_acquisition::TitleAcquisition;
@@ -1071,13 +1070,13 @@ mod tests {
     }
 
     /// Names one installed agent package the supervisor fixtures bind their sessions to.
-    fn test_agent_source() -> (AgentRef, AgentSource) {
+    ///
+    /// The agent identity is the package's whole canonical plugin id, which is exactly what a
+    /// session persists in `agent_cli`.
+    fn test_agent_source() -> (AgentRef, PluginId) {
         (
-            AgentRef::parse("ora-space.codex").expect("agent identity"),
-            AgentSource {
-                plugin_id: PluginId::new("official", "ora-space.codex").expect("plugin id"),
-                package_name: "ora-space.codex".to_string(),
-            },
+            AgentRef::parse("official/ora-space.codex").expect("agent identity"),
+            PluginId::new("official", "ora-space.codex").expect("plugin id"),
         )
     }
 

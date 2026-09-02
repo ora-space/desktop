@@ -26,13 +26,6 @@ pub struct FilesystemSkillStorage {
     fail_next_journal_phase_update: Arc<AtomicBool>,
 }
 
-/// Selects whether a recursive package copy participates in a durable mutation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CopyDurability {
-    Durable,
-    Transient,
-}
-
 impl FilesystemSkillStorage {
     /// Builds storage rooted at the formal skill directory parent.
     pub fn new(skills_root: PathBuf) -> Self {
@@ -58,28 +51,6 @@ impl FilesystemSkillStorage {
     /// Returns the reserved root used for one transaction artifact kind.
     fn reserved_root(&self, kind: &str) -> PathBuf {
         self.skills_root.join(kind)
-    }
-
-    /// Copies the entire formal package of one skill into `destination`, overwriting existing files.
-    ///
-    /// Used by workflow deployment to materialize skills into capability-selected Agent discovery
-    /// directories. `destination` is created when missing.
-    pub fn copy_package_to(&self, name: &str, destination: &Path) -> Result<(), SkillStorageError> {
-        let source = self.formal_path(name);
-        if !source.is_dir() {
-            return Err(SkillStorageError::FormalDirectoryMissing {
-                name: name.to_string(),
-            });
-        }
-        fs::create_dir_all(destination).map_err(map_storage_error)?;
-        copy_dir_contents(&source, destination, CopyDurability::Transient).map_err(|source| {
-            SkillStorageError::OperationFailed {
-                message: format!(
-                    "failed to copy skill {name} to {}: {source}",
-                    destination.display()
-                ),
-            }
-        })
     }
 
     /// Writes a journal marker with the current phase, ensuring the journal root exists.
@@ -170,7 +141,7 @@ impl SkillStorage for FilesystemSkillStorage {
                 name: name.to_string(),
             });
         }
-        copy_dir_contents(&source, staging, CopyDurability::Durable).map_err(map_storage_error)
+        copy_dir_contents(&source, staging).map_err(map_storage_error)
     }
 
     fn write_file(
@@ -516,11 +487,7 @@ fn best_effort_cleanup(journal: &Path, leftover: &Path) {
 /// Symbolic links and special files are not recreated. Files are written through a fresh
 /// `File::create` so the destination gets application-defined default permissions rather than
 /// inheriting the source's ownership, mode, or timestamps (spec: no metadata preservation).
-fn copy_dir_contents(
-    source: &Path,
-    destination: &Path,
-    durability: CopyDurability,
-) -> std::io::Result<()> {
+fn copy_dir_contents(source: &Path, destination: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
@@ -528,19 +495,15 @@ fn copy_dir_contents(
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             fs::create_dir_all(&destination_path)?;
-            copy_dir_contents(&source_path, &destination_path, durability)?;
-            if durability == CopyDurability::Durable {
-                super::durability::sync_directory(&destination_path)?;
-            }
+            copy_dir_contents(&source_path, &destination_path)?;
+            super::durability::sync_directory(&destination_path)?;
         } else if file_type.is_file() {
             {
                 let mut input = fs::File::open(&source_path)?;
                 let mut output = fs::File::create(&destination_path)?;
                 std::io::copy(&mut input, &mut output)?;
             }
-            if durability == CopyDurability::Durable {
-                super::durability::persist_file(&destination_path)?;
-            }
+            super::durability::persist_file(&destination_path)?;
         }
     }
     Ok(())

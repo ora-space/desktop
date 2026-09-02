@@ -13,9 +13,9 @@ real Ora session.
 - **Engine persistence port** (`ports.rs`): the `WorkflowRunEngineRepository` trait that the run
   engine uses, implemented in `ora-db`.
 - **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
-  deploy flow calls to validate roles and materialize skills into a run worktree's initial state.
-  It returns the actual per-node skill placements as a receipt rather than exposing a directory
-  convention to later execution layers.
+  deploy flow calls to validate roles and resolve Effect-owned skill placements. It returns the
+  actual per-node placements as a receipt rather than exposing a directory convention to later
+  execution layers.
 - **Skill delivery model** (`skill_delivery.rs`): Agent capability, non-empty validated discovery
   roots, frozen materialization bindings, and the typed workflow-run payload shared by deployment
   and node execution.
@@ -27,9 +27,9 @@ real Ora session.
 
 - Does not persist anything itself; it only defines the persistence port.
 - Does not drive Ora sessions; agent execution is delegated through `NodeExecutor`.
-- Does not resolve roles or materialize skills; those are wired by the backend at deploy time
-  (when the run worktree is created) through `WorkflowRunWorktreeInitializer`, so `start` only
-  validates graph executability.
+- Does not resolve roles or materialize skills; role and skill binding validation is wired by the
+  backend at deploy time through `WorkflowRunWorktreeInitializer`, while Effect independently owns
+  physical Skill materialization. `start` therefore only validates graph executability.
 - Does not run the workflow-run CRUD handlers (see the parent `workflow_run` module).
 
 ## Public boundary

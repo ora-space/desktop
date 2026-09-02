@@ -6,19 +6,14 @@ use ora_application::{
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository};
 use ora_domain::{AgentDefinitionId, AgentRef, Namespace, SkillId};
-use ora_skill_package::{parse_manifest, rewrite_manifest};
 use ora_utils::path::StrictRelativePath;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Upper bound for a SKILL.md manifest read during materialization.
-const MAX_SKILL_MANIFEST_BYTES: u64 = 1024 * 1024;
-
 /// Current host capability used until Agent plugins publish their own discovery roots.
 ///
-/// Keeping the default behind [`AgentSkillDeliveryProvider`] means workflow materialization and
-/// prompt rendering already consume resolved placements and will not change when plugin-backed
-/// capabilities replace this implementation.
+/// Keeping the default behind [`AgentSkillDeliveryProvider`] means workflow validation and prompt
+/// rendering consume the same placements that the Effect subsystem materializes.
 #[derive(Clone)]
 pub struct SharedAgentSkillDeliveryProvider {
     discovery_roots: SkillDiscoveryRoots,
@@ -49,12 +44,12 @@ impl AgentSkillDeliveryProvider for SharedAgentSkillDeliveryProvider {
     }
 }
 
-/// Validates and materializes a run workspace's initial state at deploy time.
+/// Validates a run workspace's roles and skill bindings at deploy time.
 ///
 /// Roles and skills are deploy hard-dependencies: every agent's role must resolve in the agents
-/// catalog and every enabled skill must exist in the catalog. Enabled skills are copied into
-/// `<workspace>/.agents/skills/<normalized>/`, where agent CLIs auto-discover them, so the workspace
-/// is complete from the moment the run is created and `start` needs no re-validation.
+/// catalog and every enabled skill must exist in the catalog. The Effect subsystem owns physical
+/// package materialization; this initializer only freezes the invocation names and Effect-owned
+/// discovery paths that execution uses to build the prompt.
 #[derive(Clone)]
 pub struct SkillRoleWorkspaceInitializer<DeliveryProvider = SharedAgentSkillDeliveryProvider> {
     skills_root: PathBuf,
@@ -99,7 +94,7 @@ where
     fn initialize_workspace(
         &self,
         graph: &WorkflowGraph,
-        workspace_root: &Path,
+        _workspace_root: &Path,
     ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
         let roles = collect_roles(graph);
 
@@ -114,13 +109,7 @@ where
 
         let storage = FilesystemSkillStorage::new(self.skills_root.clone());
         let skill_repository = SqliteSkillRepository::new(self.pool.clone());
-        materialize_graph_skills(
-            &storage,
-            &skill_repository,
-            &self.delivery_provider,
-            graph,
-            workspace_root,
-        )
+        resolve_graph_skill_bindings(&storage, &skill_repository, &self.delivery_provider, graph)
     }
 }
 
@@ -157,20 +146,18 @@ fn collect_roles(graph: &WorkflowGraph) -> Vec<String> {
     roles
 }
 
-/// Materializes every node's enabled skills according to its Agent capability and returns the
-/// immutable bindings later consumed by the executor and prompt renderer.
-fn materialize_graph_skills<DeliveryProvider>(
+/// Resolves every node's enabled skills to the Effect-owned paths later consumed by execution.
+fn resolve_graph_skill_bindings<DeliveryProvider>(
     storage: &FilesystemSkillStorage,
     skill_repository: &SqliteSkillRepository,
     delivery_provider: &DeliveryProvider,
     graph: &WorkflowGraph,
-    worktree_root: &Path,
 ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError>
 where
     DeliveryProvider: AgentSkillDeliveryProvider,
 {
     let mut receipt = SkillMaterializationReceipt::default();
-    let mut copied_packages = HashMap::<StrictRelativePath, String>::new();
+    let mut resolved_packages = HashMap::<StrictRelativePath, String>::new();
     for node in graph
         .nodes()
         .filter(|node| node.node_type == NodeType::Agent)
@@ -216,7 +203,7 @@ where
                 .map(|root| root.append_segment(&invocation_name))
                 .collect::<Vec<_>>();
             for package_path in &package_paths {
-                if let Some(existing_catalog_name) = copied_packages.get(package_path) {
+                if let Some(existing_catalog_name) = resolved_packages.get(package_path) {
                     if existing_catalog_name != &catalog_name {
                         return Err(StartPrerequisitesError::SkillMaterializationError {
                             message: format!(
@@ -226,14 +213,7 @@ where
                     }
                     continue;
                 }
-                copy_skill_package(
-                    storage,
-                    &catalog_name,
-                    worktree_root,
-                    package_path,
-                    &invocation_name,
-                )?;
-                copied_packages.insert(package_path.clone(), catalog_name.clone());
+                resolved_packages.insert(package_path.clone(), catalog_name.clone());
             }
             receipt.bindings.push(MaterializedSkillBinding {
                 node_id: node.id.clone(),
@@ -244,50 +224,6 @@ where
         }
     }
     Ok(receipt)
-}
-
-/// Resolves one enabled skill against the catalog and copies it into the worktree.
-///
-/// The catalog name comes from `resolve_skill_catalog_name`; the worktree directory uses its
-/// normalized form so agent CLIs discover the package as `/name`.
-#[cfg(test)]
-fn materialize_skill(
-    storage: &FilesystemSkillStorage,
-    skill_repository: Option<&SqliteSkillRepository>,
-    worktree_root: &Path,
-    skill_id: &str,
-) -> Result<(), StartPrerequisitesError> {
-    let catalog_name = resolve_skill_catalog_name(storage, skill_repository, skill_id)?;
-    let dir_name = normalize_skill_name(&catalog_name);
-    let package_path = StrictRelativePath::parse(".agents/skills")
-        .expect("the built-in shared skill root is valid")
-        .append_segment(&dir_name);
-    copy_skill_package(
-        storage,
-        &catalog_name,
-        worktree_root,
-        &package_path,
-        &dir_name,
-    )
-}
-
-/// Copies one resolved package to its capability-selected worktree path and aligns its manifest
-/// name with the executable slash command.
-fn copy_skill_package(
-    storage: &FilesystemSkillStorage,
-    catalog_name: &str,
-    worktree_root: &Path,
-    package_path: &StrictRelativePath,
-    invocation_name: &str,
-) -> Result<(), StartPrerequisitesError> {
-    let target = package_path.to_path(worktree_root);
-    storage
-        .copy_package_to(catalog_name, &target)
-        .map_err(|error| StartPrerequisitesError::SkillMaterializationError {
-            message: error.to_string(),
-        })?;
-    rewrite_manifest_name(&target, invocation_name)
-        .map_err(|message| StartPrerequisitesError::SkillMaterializationError { message })
 }
 
 /// Resolves one enabled skill id to its catalog name.
@@ -335,7 +271,7 @@ fn skill_package_usable(
 }
 
 /// Resolves an enabled skill id to the executable `/name` the agent CLI uses to invoke it: the
-/// normalized catalog name, matching the directory it was materialized into.
+/// normalized catalog name, matching the directory materialized by the Effect subsystem.
 #[cfg(test)]
 fn resolve_executable_skill_name(
     storage: &FilesystemSkillStorage,
@@ -349,23 +285,9 @@ fn resolve_executable_skill_name(
     )?))
 }
 
-/// Normalizes a catalog name for the `.agents/skills/` directory: lowercase, `_` becomes `-`.
+/// Normalizes a catalog name for an Agent discovery directory: lowercase, `_` becomes `-`.
 fn normalize_skill_name(name: &str) -> String {
     name.to_lowercase().replace('_', "-")
-}
-
-/// Rewrites the copied `SKILL.md` frontmatter `name` when it differs from the target directory.
-fn rewrite_manifest_name(target: &Path, dir_name: &str) -> Result<(), String> {
-    let manifest_path = target.join("SKILL.md");
-    let bytes = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
-    let manifest = parse_manifest(&bytes, MAX_SKILL_MANIFEST_BYTES)
-        .map_err(|error| format!("invalid SKILL.md in {}: {error}", manifest_path.display()))?;
-    if manifest.name == dir_name {
-        return Ok(());
-    }
-    let rewritten = rewrite_manifest(&bytes, dir_name, &manifest.description)
-        .map_err(|error| format!("failed to rewrite SKILL.md name: {error}"))?;
-    std::fs::write(&manifest_path, rewritten).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -389,7 +311,7 @@ mod tests {
         }
     }
 
-    /// Opens an isolated repository pool used by capability-driven materialization tests.
+    /// Opens an isolated repository pool used by capability-driven binding tests.
     fn test_pool(temp: &TempDir) -> RepositoryPool {
         DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
@@ -423,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_workspace_materializes_skills_into_the_given_workspace() {
+    fn initialize_workspace_records_skill_bindings_without_copying_packages() {
         let temp = TempDir::new().unwrap();
         let skills_root = temp.path().join("skills");
         let skill_dir = skills_root.join("sfmea_review");
@@ -450,15 +372,7 @@ mod tests {
 
         let receipt = initializer.initialize_workspace(&graph, &worktree).unwrap();
 
-        assert!(
-            worktree
-                .join(".agents")
-                .join("skills")
-                .join("sfmea-review")
-                .join("SKILL.md")
-                .is_file(),
-            "enabled skill is materialized into the worktree's initial state"
-        );
+        assert!(!worktree.join(".agents").exists());
         assert_eq!(
             receipt,
             SkillMaterializationReceipt {
@@ -474,8 +388,8 @@ mod tests {
         );
     }
 
-    /// An injected Agent capability controls both physical copies and the persisted placement
-    /// receipt without any prompt-layer directory convention.
+    /// An injected Agent capability controls the persisted placement receipt without any
+    /// prompt-layer directory convention or workflow-owned filesystem writes.
     #[test]
     fn injected_agent_capability_controls_placements_and_the_frozen_receipt() {
         let temp = TempDir::new().unwrap();
@@ -528,9 +442,9 @@ mod tests {
         assert_eq!(
             package_paths
                 .iter()
-                .map(|path| path.to_path(&worktree).join("SKILL.md").is_file())
+                .map(|path| path.to_path(&worktree).exists())
                 .collect::<Vec<_>>(),
-            vec![true, true]
+            vec![false, false]
         );
     }
 
@@ -555,95 +469,5 @@ mod tests {
             Err(StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref })
                 if agent_ref == "acme.agent"
         ));
-    }
-
-    #[test]
-    fn materialize_skill_copies_the_package_and_rewrites_the_manifest() {
-        let temp = TempDir::new().unwrap();
-        let skills_root = temp.path().join("skills");
-        let skill_dir = skills_root.join("sfmea_review");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: sfmea_review\ndescription: review\n---\n\nbody\n",
-        )
-        .unwrap();
-        std::fs::write(skill_dir.join("notes.txt"), "payload").unwrap();
-        let storage = FilesystemSkillStorage::new(skills_root);
-        let worktree = temp.path().join("worktree");
-        std::fs::create_dir_all(&worktree).unwrap();
-
-        materialize_skill(&storage, None, &worktree, "cdase:sfmea_review").unwrap();
-
-        let target = worktree.join(".agents").join("skills").join("sfmea-review");
-        assert!(target.join("notes.txt").exists());
-        let manifest = parse_manifest(
-            &std::fs::read(target.join("SKILL.md")).unwrap(),
-            MAX_SKILL_MANIFEST_BYTES,
-        )
-        .unwrap();
-        assert_eq!(manifest.name, "sfmea-review");
-        assert_eq!(manifest.description, "review");
-    }
-
-    #[test]
-    fn materialize_skill_reports_an_unreadable_manifest_as_missing() {
-        let temp = TempDir::new().unwrap();
-        let skills_root = temp.path().join("skills");
-        let skill_dir = skills_root.join("broken");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: [unclosed").unwrap();
-        let storage = FilesystemSkillStorage::new(skills_root);
-        let worktree = temp.path().join("worktree");
-        std::fs::create_dir_all(&worktree).unwrap();
-
-        let error = materialize_skill(&storage, None, &worktree, "broken").unwrap_err();
-        assert!(matches!(
-            error,
-            StartPrerequisitesError::WorkflowSkillNotFound { skill_id }
-                if skill_id == "broken"
-        ));
-    }
-
-    #[test]
-    fn materialize_skill_reports_a_missing_skill() {
-        let temp = TempDir::new().unwrap();
-        let storage = FilesystemSkillStorage::new(temp.path().join("skills"));
-        let worktree = temp.path().join("worktree");
-        std::fs::create_dir_all(&worktree).unwrap();
-
-        let error = materialize_skill(&storage, None, &worktree, "missing_skill").unwrap_err();
-        assert!(matches!(
-            error,
-            StartPrerequisitesError::WorkflowSkillNotFound { skill_id }
-                if skill_id == "missing_skill"
-        ));
-    }
-
-    #[test]
-    fn materialize_skill_is_idempotent_and_overwrites() {
-        let temp = TempDir::new().unwrap();
-        let skills_root = temp.path().join("skills");
-        let skill_dir = skills_root.join("explore");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: explore\ndescription: explore\n---\n\nbody\n",
-        )
-        .unwrap();
-        let storage = FilesystemSkillStorage::new(skills_root);
-        let worktree = temp.path().join("worktree");
-        std::fs::create_dir_all(&worktree).unwrap();
-
-        materialize_skill(&storage, None, &worktree, "explore").unwrap();
-        materialize_skill(&storage, None, &worktree, "explore").unwrap();
-        assert!(
-            worktree
-                .join(".agents")
-                .join("skills")
-                .join("explore")
-                .join("SKILL.md")
-                .exists()
-        );
     }
 }

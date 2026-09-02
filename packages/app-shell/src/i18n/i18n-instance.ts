@@ -790,7 +790,9 @@ export const translationResources = {
     "settings.plugins.back": "返回",
     "settings.plugins.manageSources": "管理市场",
     "settings.plugins.manageSourcesDescription":
-      "添加或删除用于同步插件市场的 Git 源。列表顺序决定同名插件的优先级。",
+      "添加或删除用于同步插件市场的 Git 源。同名插件不再互相覆盖：不同来源的同名插件会各自列出，可以分别安装。",
+    "settings.plugins.sourceIdentityNote":
+      "已安装插件的身份由首次引入它的来源决定，删除来源后再用等价的 URL 添加回来会复用原来的身份。改用另一个仓库地址则会让已安装的插件与市场条目脱钩：它仍可使用，但会显示为未安装且无法更新。",
     "settings.plugins.sourceUrl": "Git URL",
     "settings.plugins.sourceUseProxy": "使用代理",
     "settings.plugins.sourceProxyUpdateFailed": "更新市场源代理设置失败。",
@@ -2345,7 +2347,9 @@ export const translationResources = {
     "settings.plugins.back": "Back",
     "settings.plugins.manageSources": "Manage marketplace",
     "settings.plugins.manageSourcesDescription":
-      "Add or remove the Git sources used to sync the plugin marketplace. List order determines precedence for duplicate plugin ids.",
+      "Add or remove the Git sources used to sync the plugin marketplace. Sources no longer shadow each other: two sources publishing the same plugin name are listed separately and can each be installed.",
+    "settings.plugins.sourceIdentityNote":
+      "An installed plugin's identity comes from the source that first introduced it. Removing a source and adding it back under an equivalent URL reuses that identity. Pointing at a different repository instead detaches the installed plugin from its listing: it keeps working, but shows as not installed and cannot be updated.",
     "settings.plugins.sourceUrl": "Git URL",
     "settings.plugins.sourceUseProxy": "Use proxy",
     "settings.plugins.sourceProxyUpdateFailed":

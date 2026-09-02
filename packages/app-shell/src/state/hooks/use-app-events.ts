@@ -65,6 +65,10 @@ export function useAppEvents(client: ContractsClient) {
             invalidateSessions();
           } else if (event.type === "plugin_status_changed") {
             invalidatePluginState();
+          } else if (event.type === "agent_models_invalidated") {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.agentModelsForAgent(event.agent_ref),
+            });
           }
         }
         handleDisconnect();

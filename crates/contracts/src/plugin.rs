@@ -220,6 +220,13 @@ pub struct AvailablePlugin {
     /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`).
     pub kind: String,
     pub namespace: String,
+    /// Canonical URL of the marketplace source that publishes this listing.
+    ///
+    /// Two sources may publish the same `identifier`, and both listings then appear side by side.
+    /// Every other field on the card — title, description, icon — comes from a manifest either
+    /// repository can copy verbatim, and `namespace` is a digest-suffixed slug that means nothing
+    /// to a reader, so this is the only field that lets the user tell the two cards apart.
+    pub source_url: String,
     pub version: String,
     pub description: String,
     /// Security-validated SVG source for the marketplace icon, absent when none is published.
@@ -883,6 +890,7 @@ mod tests {
                     title: "Weather".to_string(),
                     kind: "agent".to_string(),
                     namespace: "official".to_string(),
+                    source_url: "https://github.com/ora-space/marketplace".to_string(),
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
                     logo: None,
@@ -898,6 +906,7 @@ mod tests {
                     "title": "Weather",
                     "kind": "agent",
                     "namespace": "official",
+                    "sourceUrl": "https://github.com/ora-space/marketplace",
                     "version": "1.2.0",
                     "description": "Weather plugin",
                     "logo": null,

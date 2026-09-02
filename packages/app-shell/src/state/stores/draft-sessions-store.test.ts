@@ -179,7 +179,7 @@ describe("useDraftSessionsStore", () => {
               text: "in flight",
               images: [],
               retainedAttachments: false,
-              pendingSessionId: "warm-dead",
+              pendingSessionId: "s-dead",
               returnTo: null,
               updatedAt: 1,
             },
@@ -196,18 +196,6 @@ describe("useDraftSessionsStore", () => {
         pendingSessionId: null,
       }),
     ]);
-  });
-
-  it("unbinds a failed bind so the draft is dismissible again", () => {
-    const id = useDraftSessionsStore
-      .getState()
-      .ensureEmptyDraft({ projectId: "p1", taskId: null });
-    useDraftSessionsStore.getState().bindToSession(id, "warm-1");
-    useDraftSessionsStore.getState().unbindFromSession(id);
-    expect(
-      useDraftSessionsStore.getState().drafts.find((d) => d.id === id)
-        ?.pendingSessionId,
-    ).toBeNull();
   });
 
   it("persists typed drafts to localStorage without images or empty rows", () => {
@@ -378,7 +366,7 @@ describe("useDraftSessionsStore", () => {
     ).toBeUndefined();
   });
 
-  it("keeps a draft while sendInFlight so discard and empty reuse cannot race warm", () => {
+  it("keeps a draft while sendInFlight so discard and empty reuse cannot race session creation", () => {
     const id = useDraftSessionsStore
       .getState()
       .ensureEmptyDraft({ projectId: "p1", taskId: null });

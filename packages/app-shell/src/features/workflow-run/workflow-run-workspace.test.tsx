@@ -232,7 +232,7 @@ describe("WorkflowRunWorkspace", () => {
     );
 
     // Regression: the display run stubs projectId as "", and re-selecting with it
-    // would poison the workspace selection, making the next warm target an empty
+    // would poison the workspace selection, making the next chat surface target an empty
     // project root. Restart must keep the real project id.
     await waitFor(() => {
       expect(useWorkspaceSelectionStore.getState().selection.projectId).toBe(

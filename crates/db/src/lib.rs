@@ -22,9 +22,10 @@ pub use repository::{
     CascadeDeleteOutcome, PluginMarketplaceSourceRecord, PluginSkillProjection, RepositoryPool,
     SourceMutationOutcome, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
     SqliteEffectRepository, SqliteGitCleanupJobRepository, SqlitePluginMarketplaceSourceRepository,
-    SqliteProjectRepository, SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository,
-    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository, SqliteWorkflowRepository,
-    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+    SqlitePluginSourceNamespaceRepository, SqliteProjectRepository, SqliteSessionRepository,
+    SqliteSkillRepository, SqliteTaskRepository, SqliteTaskWorkspaceRepository,
+    SqliteUserConfigRepository, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository,
+    SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
 pub use time::{SystemTimestampSource, TimestampSource};

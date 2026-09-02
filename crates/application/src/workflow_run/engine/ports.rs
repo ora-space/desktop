@@ -64,16 +64,13 @@ pub enum StartPrerequisitesError {
     Repository(#[from] RepositoryError),
 }
 
-/// Validates and materializes a run workspace's initial state at deploy time.
+/// Validates a run workspace's roles and Effect-owned skill placements at deploy time.
 ///
 /// Skills and roles are deploy dependencies: every agent's role must resolve in the agents catalog
-/// and every enabled skill must resolve in the catalog. The backend implementation also copies the
-/// enabled skills into the worktree-relative discovery roots declared by each Agent's delivery
-/// capability while the worktree is being created, so the run's initial state is complete before
-/// it is persisted and `start` needs no re-validation.
+/// and every enabled skill must resolve in the catalog. Physical skill materialization is owned by
+/// the Effect subsystem; this port freezes the paths that the workflow prompt will reference.
 pub trait WorkflowRunWorkspaceInitializer: Send + Sync {
-    /// Resolves every declared role and skill in the graph and materializes the enabled skills
-    /// into the selected run workspace.
+    /// Resolves every declared role and skill and freezes each enabled skill's discovery paths.
     fn initialize_workspace(
         &self,
         graph: &WorkflowGraph,

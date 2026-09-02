@@ -27,19 +27,21 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useSetSessionConfig } from "../../state/hooks/use-session-config";
 import {
-  useWarmSession,
-  warmTargetKey,
-} from "../../state/hooks/use-warm-session";
-import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
+  chatSurfaceTargetKey,
+  useTargetAgentCli,
+} from "../../state/hooks/use-target-agent-cli";
 import { useAvailableAgents } from "../../state/hooks/use-available-agents";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import {
   usePendingAgentStore,
+  pendingModelKey,
   usePendingSwitch,
 } from "../../state/stores/pending-agent-store";
-import { useAgentModelStore } from "../../state/stores/agent-model-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { PluginLogoMark } from "../settings/plugin-logo";
+import { useAgentModels } from "../../state/hooks/use-agent-models";
+import { useTasks } from "../../state/hooks/use-tasks";
+import { useWorkspaces } from "../../state/hooks/use-workspaces";
 
 /**
  * The composer's agent and model picker.
@@ -55,8 +57,8 @@ import { PluginLogoMark } from "../settings/plugin-logo";
  * transcript, so the thread survives the move: the backend hands it to the new
  * agent with the user's next message. The move is *recorded* here and performed
  * by that message — clicking cannot rebind immediately without tearing down an
- * agent that may still be mid-reply. What the click does start is warming the
- * incoming CLI, which is how the models below can be replaced by its own before
+ * agent that may still be mid-reply. Model discovery for the incoming CLI runs
+ * independently, so the models below can be replaced by its own before
  * anything is committed. Choosing a CLI therefore leaves the menu open: picking
  * one of those models is the other half of the same decision.
  */
@@ -84,14 +86,14 @@ export function ModelSelector({
     sessionId === undefined ? selection : { ...selection, sessionId };
 
   // Having a binding is what makes a session persisted, and only a persisted one
-  // can be rebound; a warm session has no row to move. The bound CLI is also what
+  // can be rebound. The bound CLI is also what
   // a candidate has to be compared against to decide whether picking it is a move
   // at all — the resolved agent below cannot answer that, since it already
   // reports whatever move is pending.
   const boundSession = sessions.find(
     (session) => session.id === modelSelection.sessionId,
   );
-  const targetKey = warmTargetKey(modelSelection);
+  const targetKey = chatSurfaceTargetKey(modelSelection);
   const setPickedForTarget = usePendingAgentStore(
     (state) => state.setPendingAgent,
   );
@@ -102,8 +104,7 @@ export function ModelSelector({
     (state) => state.clearPendingSwitch,
   );
   const pendingSwitch = usePendingSwitch(modelSelection.sessionId);
-  // Resolved centrally so this and the composer cannot disagree: they share one
-  // warm-session query key, and the CLI is part of that key.
+  // Resolved centrally so this and the composer cannot disagree about the target agent.
   const agentCli = useTargetAgentCli(modelSelection);
   // Which agents the runtime actually reports reaching here. An agent whose
   // plugin package was uninstalled, or whose own agent process is missing,
@@ -134,18 +135,26 @@ export function ModelSelector({
   );
   const agentIsAvailable = displayedAgent !== undefined;
 
-  // Shares the workspace's warm-session query key, so this is a cache read
-  // rather than a second provider session.
-  const warmSession = useWarmSession(modelSelection, agentCli);
-  // A warm session, when there is one, always describes the CLI on screen —
-  // including the one a pending move is heading for, whose models and model
-  // choice live on it rather than on the session being moved. While that
-  // handshake is still running there is nothing to read: naming the bound
-  // session here instead would advertise the outgoing agent's model as the
-  // incoming agent's.
-  const activeSessionId =
-    warmSession.sessionId ??
-    (pendingSwitch === undefined ? modelSelection.sessionId : null);
+  const { data: tasks = [] } = useTasks();
+  const { data: workspaces = [] } = useWorkspaces();
+  const workspaceId =
+    tasks.find((task) => task.id === modelSelection.taskId)?.workspaceId ??
+    workspaces.find(
+      (workspace) =>
+        workspace.projectId === modelSelection.projectId &&
+        workspace.kind === "main",
+    )?.id ??
+    null;
+  const usesPersistedOptions =
+    sessionId !== undefined ||
+    (boundSession !== undefined && pendingSwitch === undefined);
+  const discovered = useAgentModels(
+    usesPersistedOptions ? null : agentCli,
+    usesPersistedOptions ? null : workspaceId,
+  );
+  const activeSessionId = usesPersistedOptions
+    ? modelSelection.sessionId
+    : null;
   // Selected narrowly rather than as one conversation object, so a streaming
   // turn does not re-render the picker on every token.
   const liveOptions = useStore(chatStore, (state) =>
@@ -158,13 +167,6 @@ export function ModelSelector({
       ? false
       : state.conversations[activeSessionId]?.isLoading === true,
   );
-  // What this CLI reported the last time any surface handshook it. Standing in
-  // for an answer that has not arrived is the whole point: the list barely
-  // changes between sessions, and waiting for `session/new` to say so again is
-  // what made opening a chat feel slow.
-  const cachedOptions = useAgentModelStore((state) =>
-    agentCli === null ? undefined : state.known[agentCli],
-  );
   // A session can retain the last options reported before its plugin stopped.
   // They are no longer actionable once runtime availability drops, so do not
   // let that session-local snapshot outlive the agent row that owned it.
@@ -173,54 +175,70 @@ export function ModelSelector({
   // showing the model captured by that conversation even when no workspace
   // Agent preference can be resolved for it.
   const configOptions =
-    sessionId !== undefined
-      ? liveOptions
-      : agentIsAvailable
-        ? (liveOptions ?? cachedOptions)
-        : undefined;
+    sessionId !== undefined || agentIsAvailable ? liveOptions : undefined;
   const modelOption = configOptions ? findModelOption(configOptions) : null;
-
-  // An agent only reports its models as part of the handshake — warming this
-  // surface's session, or replaying a selected one — so until that lands the
-  // list is unknown rather than empty. Saying "no models" here would answer a
-  // question that has not been asked yet, and a handshake can take a second.
-  // Replay is its own case: it seeds the conversation with empty options first,
-  // which would otherwise read as a settled answer while the stream is still
-  // running. A surface that never started warming, or whose handshake failed,
-  // is not loading and still reports empty. A pending move reads as loading for
-  // the same reason: it has no session to name until the incoming CLI answers.
-  const isSettling =
-    agentIsAvailable &&
-    (activeSessionId === null
-      ? warmSession.isOpening || pendingSwitch !== undefined
-      : liveOptions === undefined || isReplayingHistory);
-  // Having a list to offer is what ends the wait, not having received this
-  // surface's own answer: a cached list is a real answer to "what can I pick",
-  // and showing it beats spinning while the handshake confirms it. Gating on the
-  // resolved option rather than on the options array is deliberate — a replaying
-  // session is seeded with an empty one, which is a placeholder rather than a
-  // list, and must keep reading as "still arriving".
-  const isLoadingModels = isSettling && modelOption === null;
-
-  // A cached list describes the CLI, not a session, so there is nothing to write
-  // a choice from it to until the handshake produces one. The values are shown
-  // but not selectable for that window rather than hidden, because what the user
-  // is waiting to learn — which models this agent has — is already answered.
-  const canSelectModel = agentIsAvailable && activeSessionId !== null;
-
-  // The disabled cached list on its own reads as settled, not provisional — the
-  // handshake could still replace it with a different set. This names that
-  // in-between case so the dropdown can say so, distinct from isLoadingModels
-  // (nothing to show yet) even though both are the same underlying wait.
-  const isUpdatingModels = isSettling && modelOption !== null;
-
-  const activeLabel = modelOption
-    ? currentValueName(modelOption)
-    : t(
-        isLoadingModels
-          ? "chat.modelSelector.loading"
-          : "chat.modelSelector.placeholder",
-      );
+  // Discovery answers for one agent ref and stays cached after that agent drops
+  // out of the runtime. Withholding it here mirrors `configOptions` above: a
+  // catalog belonging to an unreachable agent must not outlive its row.
+  const discoveredModels = agentIsAvailable ? discovered.models : [];
+  const intentKey =
+    agentCli === null ? null : pendingModelKey(modelSelection, agentCli);
+  const pendingModel = usePendingAgentStore((state) =>
+    intentKey === null ? undefined : state.models[intentKey],
+  );
+  const setPendingModel = usePendingAgentStore(
+    (state) => state.setPendingModel,
+  );
+  const modelValues = usesPersistedOptions
+    ? modelOption
+      ? selectableValues(modelOption).map((value) => ({
+          value: value.value,
+          name: value.name,
+        }))
+      : []
+    : discoveredModels.map((model) => ({
+        value: model.id,
+        name: model.displayName,
+      }));
+  // A persisted session is authoritative about the model it is running on. A
+  // chat that has not started yet has only what the user recorded here, falling
+  // back to whatever the agent nominates as its own default so the picker names
+  // the model the first send will actually ask for.
+  const discoveredDefault =
+    discoveredModels.find((model) => model.default)?.id ??
+    discoveredModels[0]?.id;
+  const selectedValue = usesPersistedOptions
+    ? modelOption?.type === "select"
+      ? modelOption.currentValue
+      : undefined
+    : (pendingModel ?? discoveredDefault);
+  // Three states rather than two, because "not answered yet" must not read as
+  // "this agent offers no models". A persisted session has said nothing until
+  // its conversation is loaded — and replay seeds empty options first, which is
+  // a placeholder and not a list — while a not-yet-started chat is waiting on
+  // discovery instead.
+  const isSettling = usesPersistedOptions
+    ? liveOptions === undefined || isReplayingHistory
+    : discovered.isLoading;
+  const isLoadingModels = isSettling && modelValues.length === 0;
+  // A list already on screen being refreshed is its own case: the menu says so
+  // rather than blanking what the user is reading.
+  const isUpdatingModels = discovered.isFetching && discoveredModels.length > 0;
+  const activeLabel =
+    usesPersistedOptions && modelOption
+      ? currentValueName(modelOption)
+      : (modelValues.find((value) => value.value === selectedValue)?.name ??
+        t(
+          isLoadingModels
+            ? "chat.modelSelector.loading"
+            : "chat.modelSelector.placeholder",
+        ));
+  // Applying a choice needs somewhere to put it: a persisted session needs the
+  // option the agent reported, and a not-yet-started chat needs a target key to
+  // record the intent against.
+  const canSelectModel = usesPersistedOptions
+    ? agentIsAvailable && activeSessionId !== null && modelOption !== null
+    : agentIsAvailable && intentKey !== null;
 
   /**
    * A persisted session records a move onto the chosen CLI, to be performed by
@@ -255,15 +273,19 @@ export function ModelSelector({
   };
 
   const selectModel = (value: string) => {
-    if (activeSessionId === null || modelOption === null) return;
-    setSessionConfig.mutate({
-      sessionId: activeSessionId,
-      configId: modelOption.id,
-      value,
-    });
+    if (!usesPersistedOptions) {
+      if (intentKey !== null) setPendingModel(intentKey, value);
+      return;
+    }
+    if (activeSessionId !== null && modelOption !== null) {
+      setSessionConfig.mutate({
+        sessionId: activeSessionId,
+        configId: modelOption.id,
+        value,
+      });
+    }
   };
 
-  const modelValues = modelOption ? selectableValues(modelOption) : [];
   const needle = modelQuery.trim().toLowerCase();
   const visibleModelValues = needle
     ? modelValues.filter((value) => value.name.toLowerCase().includes(needle))
@@ -398,7 +420,7 @@ export function ModelSelector({
                   />
                 </div>
               )}
-              {modelOption === null ? (
+              {modelValues.length === 0 ? (
                 <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                   {t(
                     isLoadingModels
@@ -419,10 +441,9 @@ export function ModelSelector({
                     onClick={() => selectModel(value.value)}
                   >
                     {value.name}
-                    {modelOption.type === "select" &&
-                      value.value === modelOption.currentValue && (
-                        <IconCheck className="ml-auto size-4" />
-                      )}
+                    {value.value === selectedValue && (
+                      <IconCheck className="ml-auto size-4" />
+                    )}
                   </DropdownMenuItem>
                 ))
               )}

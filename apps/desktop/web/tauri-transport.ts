@@ -70,9 +70,8 @@ const tauriCommands = {
   // =============================================================================
   // session
   // =============================================================================
-  warmSession: "warm_session",
+  startSession: "start_session",
   setSessionConfig: "set_session_config",
-  attachSession: "attach_session",
   getSession: "get_session",
   listSessions: "list_sessions",
   switchSessionAgent: "switch_session_agent",
@@ -87,6 +86,7 @@ const tauriCommands = {
   // agentRuntime
   // =============================================================================
   getAgentRuntimeStatus: "get_agent_runtime_status",
+  listAgentModels: "list_agent_models",
   // =============================================================================
   // skill
   // =============================================================================

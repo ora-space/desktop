@@ -16,6 +16,7 @@ describe("useUpdatePlugin", () => {
       title: "Weather",
       kind: "agent",
       namespace: "official",
+      sourceUrl: "https://github.com/ora-space/marketplace",
       version: "1.1.0",
       description: "Weather",
       logo: null,

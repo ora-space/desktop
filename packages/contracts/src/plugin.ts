@@ -43,6 +43,15 @@ export type AvailablePlugin =
      */
     kind: string;
     namespace: string;
+    /**
+     * Canonical URL of the marketplace source that publishes this listing.
+     *
+     * Two sources may publish the same `identifier`, and both listings then appear side by side.
+     * Every other field on the card — title, description, icon — comes from a manifest either
+     * repository can copy verbatim, and `namespace` is a digest-suffixed slug that means nothing
+     * to a reader, so this is the only field that lets the user tell the two cards apart.
+     */
+    sourceUrl: string;
     version: string;
     description: string;
     /**

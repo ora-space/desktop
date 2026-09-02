@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// Groups workflow-run handlers while resolving the selected workspace.
 pub(crate) struct WorkflowRunApi {
     pool: RepositoryPool,
-    /// Skill catalog root used to materialize a run workspace's initial `.agents/skills/`.
+    /// Skill catalog root used to validate and resolve workflow skill bindings.
     skills_root: PathBuf,
     get: GetWorkflowRunHandler<SqliteWorkflowRunRepository>,
     list: ListWorkflowRunsHandler<SqliteWorkflowRunRepository>,
@@ -32,8 +32,7 @@ pub(crate) struct WorkflowRunApi {
 }
 
 impl WorkflowRunApi {
-    /// Builds run handlers from shared persistence and the skill catalog root used to set up each
-    /// run workspace's initial state.
+    /// Builds run handlers from shared persistence and the skill catalog root used for validation.
     pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
         let repository = Arc::new(SqliteWorkflowRunRepository::new(pool.clone()));
 
@@ -48,7 +47,7 @@ impl WorkflowRunApi {
         }
     }
 
-    /// Validates the selected workspace, prepares its initial state, and persists the run.
+    /// Validates the selected workspace and its workflow prerequisites, then persists the run.
     pub(crate) fn create(
         &self,
         request: CreateWorkflowRunRequest,

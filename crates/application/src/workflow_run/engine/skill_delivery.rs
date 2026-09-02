@@ -10,7 +10,7 @@ use thiserror::Error;
 pub enum AgentSkillDelivery {
     /// The Agent cannot consume workflow-managed skills.
     Unsupported,
-    /// The Agent discovers one copied package below each declared worktree-relative root.
+    /// The Agent discovers one Effect-materialized package below each declared workspace root.
     Filesystem {
         discovery_roots: SkillDiscoveryRoots,
     },

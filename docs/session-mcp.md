@@ -1,8 +1,8 @@
 # Session MCP
 
 Ora delivers configured MCP plugins as **Session Runtime Input**, not as Effect Resources and not
-as Workspace files. Every ACP `session/new` and `session/load` — warm create, interactive restore,
-agent switch, workflow attach, and live refresh — shares one Session Setup snapshot.
+as Workspace files. Every ACP `session/new` and `session/load` — `startSession`, interactive restore,
+agent switch, workflow start, and live refresh — shares one Session Setup snapshot.
 
 ## ACP injection
 

@@ -1,13 +1,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { ChatTurn, SessionConversation } from "@ora/chat";
 import { createChatStore } from "@ora/chat";
 import type { GraphWorkflowNodeStatus } from "@ora/workflow-runtime";
 import { appI18n } from "../../i18n/i18n-instance";
-import { useAgentModelStore } from "../../state/stores/agent-model-store";
 import {
   createTestQueryClient,
   createHookWrapper,
@@ -21,10 +20,6 @@ import { RunNodeSessionChat } from "./run-node-session-chat";
 const sessionId = "session-1";
 const runId = "run-1";
 const nodeId = "node-a";
-
-beforeEach(() => {
-  useAgentModelStore.setState({ known: {} });
-});
 
 /** A loaded, quiet conversation so the dock does not stream anything during the test. */
 function seededConversation(
@@ -110,8 +105,7 @@ describe("RunNodeSessionChat", () => {
     ).toMatch(/描述一个任务/);
   });
 
-  it("keeps the node model visible when another session changes models", async () => {
-    const otherSessionOptions = createMockClientState().configOptions;
+  it("keeps the node session's authoritative model visible", async () => {
     const nodeSessionOptions: acp.SessionConfigOption[] = [
       {
         id: "model",
@@ -122,9 +116,6 @@ describe("RunNodeSessionChat", () => {
         options: [{ value: "workflow/node-model", name: "Workflow Model" }],
       },
     ];
-    useAgentModelStore.setState({
-      known: { "ora-space.opencode": otherSessionOptions },
-    });
     renderDock(
       "awaiting_input",
       false,
@@ -140,24 +131,6 @@ describe("RunNodeSessionChat", () => {
     expect(modelPicker).toBeDisabled();
     expect(modelPicker).toHaveTextContent("Workflow Model");
 
-    act(() =>
-      useAgentModelStore.setState({
-        known: {
-          "ora-space.opencode": [
-            {
-              id: "model",
-              name: "Model",
-              category: "model",
-              type: "select",
-              currentValue: "other/new-model",
-              options: [
-                { value: "other/new-model", name: "Other Session Model" },
-              ],
-            },
-          ],
-        },
-      }),
-    );
     expect(modelPicker).toHaveTextContent("Workflow Model");
 
     await userEvent.click(modelPicker);

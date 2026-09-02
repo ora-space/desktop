@@ -348,9 +348,9 @@ pub enum DownloadActionError {
     Unknown { found: String },
 }
 
-/// Mirrors `[webview]` before semantic validation; unknown fields fail structurally.
+/// Mirrors `[webview]` before semantic validation; unknown fields are ignored so a newer
+/// manifest still parses on an older host.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct RawWebview {
     start_url: String,
     allowed_origins: Vec<String>,
@@ -359,7 +359,6 @@ pub(crate) struct RawWebview {
 
 /// Mirrors `[webview.downloads]`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct RawDownloads {
     fallback: Option<RawAction>,
     #[serde(default)]
@@ -368,7 +367,6 @@ struct RawDownloads {
 
 /// Mirrors one `[[webview.downloads.rules]]` entry.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct RawRule {
     page: RawPage,
     action: RawAction,
@@ -376,7 +374,6 @@ struct RawRule {
 
 /// Mirrors `rules[].page`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct RawPage {
     origin: String,
     path_prefix: String,
@@ -387,7 +384,6 @@ struct RawPage {
 /// Exclusivity is a semantic rule (so the error names the rule index) rather than a serde
 /// untagged enum, whose failure would only say the whole table did not match any variant.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct RawAction {
     auto: Option<String>,
     prompt: Option<Vec<String>>,

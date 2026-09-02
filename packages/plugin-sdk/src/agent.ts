@@ -11,6 +11,7 @@ import {
   type AgentEffectCoordinationContext,
   type AgentEffectReadinessContext,
   type AgentListModelsResult,
+  type AgentListModelsParams,
   type AgentModel as WireAgentModel,
   type AgentStartContext,
   type AgentStartResult,
@@ -79,7 +80,7 @@ export interface AgentDefinition {
   /** Terminates the agent while leaving this plugin process alive. */
   stop(): void | Promise<void>;
   /** Lists selectable models outside any session. */
-  listModels(): AgentModel[] | Promise<AgentModel[]>;
+  listModels(context: { cwd: string }): AgentModel[] | Promise<AgentModel[]>;
   /** Receives one ACP frame the host is forwarding to the agent. */
   onAcp(frame: JsonValue): void | Promise<void>;
   /** Declares Resources this Agent consumes and the adapter proving safe convergence. */
@@ -111,9 +112,11 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     await definition.stop();
     return {};
   });
-  plugin.registerMethod(AGENT_METHODS.listModels, async () =>
+  plugin.registerMethod(AGENT_METHODS.listModels, async (params) =>
     ({
-      models: (await definition.listModels()).map((model) => ({
+      models: (
+        await definition.listModels(params as AgentListModelsParams)
+      ).map((model) => ({
         id: model.id,
         displayName: model.displayName,
         default: model.default ?? false,

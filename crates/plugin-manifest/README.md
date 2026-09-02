@@ -8,9 +8,16 @@ forms accept an optional human-readable `title` that falls back to the identifie
 
 ## Responsibilities and boundaries
 
-- Reject malformed TOML, missing or unknown fields, unsupported resolver versions, and invalid
-  field values with structured errors.
-- Model plugin identifiers (`identifier`), source categories, plugin kinds (`workbench`, `agent`,
+- Reject malformed TOML, missing required fields, unsupported resolver versions, and invalid field
+  values with structured errors.
+- Ignore fields the schema does not know, at every nesting depth. Manifests are written by
+  third-party authors and read by many Ora versions at once, so rejecting an unrecognized key would
+  make each purely additive schema change delete the whole listing from an older client's
+  marketplace. Additive change is absorbed here; breaking change is gated by `resolver`. The price
+  is that a misspelled optional key now reads as an absent one — the entry becomes uninstallable or
+  loses its icon instead of failing to parse — which is visible in publishing and is the better
+  half of the trade. Required fields are not relaxed with it.
+- Model plugin identifiers (`identifier`), plugin kinds (`workbench`, `agent`,
   `webview`, `skill`, `mcp`, `hook`), HTTPS URLs, SHA-256 digests, optional source repository
   metadata, and optional Ora host version requirements as validated values.
 - Pair kind-specific sections with the matching `kind`: optional `[workbench]` (page-visible
@@ -35,6 +42,11 @@ forms accept an optional human-readable `title` that falls back to the identifie
 
 ## Non-responsibilities
 
+- No namespace. A manifest never names the namespace its plugin is installed under: manifests are
+  third-party editable content, and a namespace decides which install directory, private data
+  directory, and Skill rows a package owns. The host derives it from the marketplace source that
+  published the entry (`ora-domain::PluginNamespace`), so a residual `namespace` key in an older
+  manifest is just another ignored unknown field.
 - No filesystem access, fixed manifest filename, source-path diagnostics, or input-size policy.
 - No network access, download, repository probing, or release checksum calculation.
 - No plugin installation, discovery, execution, update selection, or integration with

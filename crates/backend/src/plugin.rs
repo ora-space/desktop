@@ -22,9 +22,10 @@ use ora_contracts::{
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
-    SqlitePluginMarketplaceSourceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
+    SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
+    SqliteSkillRepository, SqliteWorkspaceRepository,
 };
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginNamespace};
 use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest, LocalTimestamp};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
@@ -195,6 +196,7 @@ impl PluginApi {
         let plugins_directory = home_directory.join("plugins");
         let marketplace_sources = MarketplaceSourceStore::open(
             SqlitePluginMarketplaceSourceRepository::new(pool.clone()),
+            SqlitePluginSourceNamespaceRepository::new(pool.clone()),
             &home_directory,
             clock.now_timestamp_millis(),
         )
@@ -369,17 +371,16 @@ impl PluginApi {
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         let git = Git::new(CliGitRunner);
         let registry_sources = self.prepared_registry_sources()?;
-        let mut registry_dirs: Vec<PathBuf> = Vec::with_capacity(registry_sources.len());
         for (source, _) in &registry_sources {
-            let checkout_directory = RegistrySync::sync(&git, source)
+            RegistrySync::sync(&git, source)
                 .map_err(|error| BackendError::internal("failed to sync plugin registry", error))?;
-            registry_dirs.push(checkout_directory.join("registry"));
         }
-        let registry_dir_refs: Vec<&Path> = registry_dirs.iter().map(PathBuf::as_path).collect();
-        let build = RegistryIndex::build_all(
-            &registry_dir_refs,
-            ora_logging::clock::now_local().unix_timestamp(),
-        );
+        let synced: Vec<&ora_plugin_registry::RegistrySource> = registry_sources
+            .iter()
+            .map(|(source, _use_proxy)| source)
+            .collect();
+        let build =
+            RegistryIndex::build_all(&synced, ora_logging::clock::now_local().unix_timestamp());
         if let Some(cache_directory) = self.registry_index_path.parent() {
             std::fs::create_dir_all(cache_directory).map_err(|error| {
                 BackendError::internal("failed to create registry cache directory", error)
@@ -422,8 +423,7 @@ impl PluginApi {
         let registry_sources = self.registry_sources()?;
         let mut known = false;
         for source in &registry_sources {
-            let registry_dir = source.checkout_dir().join("registry");
-            if let Some(readme) = RegistryIndex::resolve_readme(&registry_dir, &plugin_id)
+            if let Some(readme) = RegistryIndex::resolve_readme(source, &plugin_id)
                 .map_err(|error| BackendError::internal("failed to read plugin README", error))?
             {
                 return Ok(ReadPluginReadmeResponse {
@@ -432,7 +432,7 @@ impl PluginApi {
             }
             // A source may host the listing without a README; remember it so the response can
             // distinguish "no documentation published" from an unknown identifier.
-            if RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
+            if RegistryIndex::resolve_manifest(source, &plugin_id)
                 .map_err(|error| {
                     BackendError::internal("failed to resolve plugin README listing", error)
                 })?
@@ -460,11 +460,12 @@ impl PluginApi {
             .marketplace_sources
             .list()
             .map_err(map_marketplace_source_error)?;
+        let now_ms = self.clock.now_timestamp_millis();
         configured
             .iter()
             .map(|source| {
                 self.marketplace_sources
-                    .registry_source(source)
+                    .registry_source(source, now_ms)
                     .map_err(map_marketplace_source_error)
             })
             .collect()
@@ -675,7 +676,8 @@ impl PluginApi {
         request: InstallPluginRequest,
         progress: Option<ProgressCallback>,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
+        let (manifest, namespace, use_proxy) =
+            self.resolve_marketplace_release(&request.plugin_id)?;
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
@@ -692,6 +694,7 @@ impl PluginApi {
                 installer
                     .install_with_progress(
                         &manifest,
+                        &namespace,
                         release_source,
                         &self.home_directory,
                         progress,
@@ -700,7 +703,7 @@ impl PluginApi {
             }
             None => {
                 installer
-                    .install(&manifest, release_source, &self.home_directory)
+                    .install(&manifest, &namespace, release_source, &self.home_directory)
                     .await
             }
         }
@@ -723,7 +726,8 @@ impl PluginApi {
         &self,
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
-        let (manifest, use_proxy) = self.resolve_marketplace_release(&request.plugin_id)?;
+        let (manifest, namespace, use_proxy) =
+            self.resolve_marketplace_release(&request.plugin_id)?;
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
@@ -743,7 +747,7 @@ impl PluginApi {
             .map_err(BackendError::from)?;
         let download_proxy = self.download_proxy_for(use_proxy)?;
         Installer::new(ReqwestDownloader::new(download_proxy))
-            .update(&manifest, release_source, &self.home_directory)
+            .update(&manifest, &namespace, release_source, &self.home_directory)
             .await
             .map_err(|error| self.map_update_error("failed to update plugin", error))?;
         self.finalize_new_install(&request.plugin_id).await?;
@@ -755,12 +759,14 @@ impl PluginApi {
 
     /// Resolves the release manifest for one marketplace identifier across the configured sources.
     ///
-    /// Sources are consulted in precedence order, and the returned flag is the winning source's
-    /// proxy policy so installs and updates honor the same per-source setting as the git sync.
+    /// The id names the namespace of the source that published it, so only that source can
+    /// answer: the returned namespace and proxy policy always belong to the entry's own
+    /// repository, and an install or update can never be redirected by reordering the source list
+    /// or by another source publishing the same `identifier`.
     fn resolve_marketplace_release(
         &self,
         plugin_id: &str,
-    ) -> Result<(PluginManifest, bool), BackendError> {
+    ) -> Result<(PluginManifest, PluginNamespace, bool), BackendError> {
         let registry_sources = self.prepared_registry_sources()?;
         // A malformed identifier can never name a registry entry, so it is reported the same way
         // as an unknown one instead of leaking the id grammar as a separate error class.
@@ -772,13 +778,12 @@ impl PluginApi {
             )
         })?;
         for (source, use_proxy) in &registry_sources {
-            let registry_dir = source.checkout_dir().join("registry");
-            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
-                .map_err(|error| {
+            if let Some(manifest) =
+                RegistryIndex::resolve_manifest(source, &plugin_id).map_err(|error| {
                     BackendError::internal("failed to resolve plugin release manifest", error)
                 })?
             {
-                return Ok((manifest, *use_proxy));
+                return Ok((manifest, source.namespace().clone(), *use_proxy));
             }
         }
         Err(BackendError::new(
@@ -872,12 +877,10 @@ impl PluginApi {
             ),
             error => BackendError::internal("failed to import plugin archive", error),
         })?;
-        let outcome = self.finalize_new_install(&package.id).await?;
-        ora_info!(plugin_id = %package.id, outcome = ?outcome, "imported plugin release from local archive");
-        Ok(ImportPluginResponse {
-            plugin_id: package.id,
-            outcome,
-        })
+        let plugin_id = package.id.canonical();
+        let outcome = self.finalize_new_install(&plugin_id).await?;
+        ora_info!(plugin_id = %plugin_id, outcome = ?outcome, "imported plugin release from local archive");
+        Ok(ImportPluginResponse { plugin_id, outcome })
     }
 
     /// Refreshes the installed-plugin snapshot after a new package lands and reports the typed
@@ -1042,6 +1045,7 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
         title: entry.title().to_owned(),
         kind: entry.kind().to_owned(),
         namespace: entry.namespace().to_owned(),
+        source_url: entry.source_url().to_owned(),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
         logo: entry.logo().map(str::to_owned),
@@ -1055,7 +1059,7 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
 #[cfg(test)]
 mod tests {
     use super::BroadcastNotificationSink;
-    use ora_domain::PluginId;
+    use ora_domain::{PluginId, PluginNamespace};
     use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey, PluginNotificationSink};
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1166,12 +1170,17 @@ mod tests {
             .join("rtk-ai.rtk");
         std::fs::create_dir_all(&registry_dir).expect("create listing dir");
         let listing = format!(
-            "resolver = 1\ntitle = \"RTK\"\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\nhomepage = \"https://github.com/rtk-ai/rtk\"\nlicense = \"Apache-2.0\"\n\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"{release_url}\"\nsha256 = \"{sha256_hex}\"\n"
+            "resolver = 1\ntitle = \"RTK\"\nidentifier = \"rtk-ai.rtk\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\nhomepage = \"https://github.com/rtk-ai/rtk\"\nlicense = \"Apache-2.0\"\n\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"{release_url}\"\nsha256 = \"{sha256_hex}\"\n"
         );
         std::fs::write(registry_dir.join("orax.toml"), &listing).expect("write listing");
-        let registry_dir = marketplace_root.path().join("registry");
+        let marketplace_source = ora_plugin_registry::RegistrySource::new(
+            "https://github.com/ora-space/marketplace",
+            PluginNamespace::official(),
+            gitlancer::BranchName::new("main"),
+            marketplace_root.path(),
+        );
         let build =
-            ora_plugin_registry::RegistryIndex::build_all(&[registry_dir.as_path()], 1_776_244_428);
+            ora_plugin_registry::RegistryIndex::build_all(&[&marketplace_source], 1_776_244_428);
         assert_eq!(build.skipped().len(), 0);
         let rtk_entry = build
             .index()
@@ -1206,7 +1215,12 @@ mod tests {
             host,
         );
         let package_dir = installer
-            .install(&parsed, source, data_dir.path())
+            .install(
+                &parsed,
+                marketplace_source.namespace(),
+                source,
+                data_dir.path(),
+            )
             .await
             .expect("install the RTK Hook Plugin");
         assert!(

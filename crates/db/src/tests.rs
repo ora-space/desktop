@@ -53,6 +53,39 @@ fn in_memory_repository_pool_preserves_data_across_checkouts() {
     );
 }
 
+/// Verifies the current schema includes the source-derived plugin namespace migration.
+#[test]
+fn bootstraps_the_current_workspace_schema() {
+    let catalog = default_migration_catalog().expect("build migration catalog");
+    assert_eq!(
+        catalog.target_versions(),
+        ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
+    );
+
+    let pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource {
+            now: 1_700_000_000_000,
+        })
+        .bootstrap_repository_pool(&DatabaseLocation::in_memory(), &catalog)
+        .expect("bootstrap database")
+    });
+
+    let expected_migrations = catalog
+        .target_versions()
+        .iter()
+        .map(|version| applied_from(&catalog, version, 1_700_000_000_000))
+        .collect::<Vec<_>>();
+    assert!(
+        pool.with_connection(|connection| Ok(table_exists(connection, "plugin_source_namespace")))
+            .expect("inspect current schema"),
+    );
+    assert_eq!(
+        pool.with_connection(|connection| Ok(load_applied_migrations(connection)))
+            .expect("load applied migrations"),
+        expected_migrations,
+    );
+}
+
 /// Verifies runtime ownership columns point directly at workspaces and no longer encode task-run variants.
 #[test]
 fn runtime_tables_use_direct_workspace_ownership() {

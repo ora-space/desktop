@@ -1190,14 +1190,14 @@ test("shows the user turn before the session is persisted", async () => {
   });
 
   const sending = store.getState().sendMessage({
-    oraSessionId: "warm-session",
+    oraSessionId: "started-session",
     text: "hi",
     prepare: () => prepared,
   });
 
-  // The warm session id is final, so the turn is visible under it while the
+  // The started session id is final, so the turn is visible under it while the
   // session is still being persisted.
-  const pending = store.getState().conversations["warm-session"];
+  const pending = store.getState().conversations["started-session"];
   assert.equal(pending?.turns.length, 1);
   assert.equal(pending?.turns[0]?.userMessage.content, "hi");
   assert.equal(pending?.isResponding, true);
@@ -1209,8 +1209,8 @@ test("shows the user turn before the session is persisted", async () => {
   });
   await sending;
 
-  assert.equal(promptSessionId, "warm-session");
-  const conversation = store.getState().conversations["warm-session"];
+  assert.equal(promptSessionId, "started-session");
+  const conversation = store.getState().conversations["started-session"];
   assert.equal(conversation?.isResponding, false);
   // The live turn is authoritative, so the conversation is already "loaded" and
   // the workspace never re-loads (and re-slides) it.

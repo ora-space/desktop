@@ -115,6 +115,7 @@ export function PluginsSettings({
             plugin.name,
             plugin.kind,
             plugin.namespace,
+            plugin.sourceUrl,
             plugin.description,
             plugin.id,
           ].some((value) => value.toLowerCase().includes(needle)),

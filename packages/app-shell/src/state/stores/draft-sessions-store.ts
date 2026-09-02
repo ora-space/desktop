@@ -25,8 +25,9 @@ export interface SessionDraft {
    */
   retainedAttachments: boolean;
   /**
-   * Warm session this draft is committing into. Kept until that id appears in
-   * the persisted session list so the muted row stays selected during attach.
+   * Session this draft's first send created and is committing into. Kept until
+   * that id appears in the persisted session list so the muted row stays
+   * selected while the send finishes.
    */
   pendingSessionId: string | null;
   /**
@@ -35,8 +36,8 @@ export interface SessionDraft {
    */
   returnTo: DraftReturnTo | null;
   /**
-   * True from first-send start until the send settles. Hides × during the warm
-   * handshake so dismissing cannot delete the draft out from under repark.
+   * True from first-send start until the send settles. Hides × during session
+   * creation so dismissing cannot delete the draft out from under repark.
    */
   sendInFlight: boolean;
   updatedAt: number;
@@ -80,25 +81,15 @@ interface DraftSessionsState {
   ) => void;
   /** Records the live session × should restore when this draft is dismissed. */
   setReturnTo: (id: string, returnTo: DraftReturnTo | null) => void;
-  /** Points a draft at the warm session id its first send is attaching. */
+  /** Points a draft at the session id its first send just created. */
   bindToSession: (id: string, sessionId: string) => void;
   /**
-   * Marks a draft's first send as in flight so × cannot delete it during the
-   * warm handshake (before bind).
+   * Marks a draft's first send as in flight so × cannot delete it while the
+   * session is being created (before bind).
    */
   beginSend: (id: string) => void;
   /** Clears the in-flight mark when the first send settles or is abandoned. */
   endSend: (id: string) => void;
-  /**
-   * Clears a failed bind so the muted row is dismissible again and a retry can
-   * warm a fresh session id.
-   */
-  unbindFromSession: (id: string) => void;
-  /**
-   * After a failed first send, clears the dead bind and reseats the draft under
-   * the task that prepare may already have created.
-   */
-  restoreForRetry: (id: string, scope: DraftScope) => void;
   /** Removes drafts whose pending session has now been persisted. */
   removeCommitted: (sessionIds: Iterable<string>) => void;
   /** Drops a draft regardless of content (explicit × or a finished commit). */
@@ -107,7 +98,7 @@ interface DraftSessionsState {
   removeForProject: (projectId: string) => void;
   /** Drops every draft under a worktree task (used when that task is deleted). */
   removeForTask: (taskId: string) => void;
-  /** Drops drafts bound to any of the given warm/persisted session ids. */
+  /** Drops drafts bound to any of the given session ids. */
   removeForSessions: (sessionIds: Iterable<string>) => void;
   /**
    * Clears returnTo entries that point at deleted sessions so × cannot select
@@ -190,7 +181,8 @@ function clearDraftComposerKeys(draftIds: Iterable<string>): void {
 /**
  * Disk shape for drafts: keep typed rows only. In-flight binds and image bytes
  * are process-local — restoring a pendingSessionId across restart left
- * undismissable zombies pointing at dead warm ids, and attachment-only rows
+ * undismissable zombies pointing at sessions that no longer exist, and
+ * attachment-only rows
  * came back as empty "New session" shells.
  */
 function sanitizeDraftsForDisk(drafts: unknown): SessionDraft[] {
@@ -398,46 +390,6 @@ export const useDraftSessionsStore = create<DraftSessionsState>()(
             drafts: state.drafts.map((candidate) =>
               candidate.id === id
                 ? { ...candidate, sendInFlight: false }
-                : candidate,
-            ),
-          };
-        }),
-      unbindFromSession: (id) =>
-        set((state) => {
-          const draft = state.drafts.find((candidate) => candidate.id === id);
-          if (draft === undefined || draft.pendingSessionId === null) {
-            return state;
-          }
-          return {
-            drafts: state.drafts.map((candidate) =>
-              candidate.id === id
-                ? { ...candidate, pendingSessionId: null }
-                : candidate,
-            ),
-          };
-        }),
-      restoreForRetry: (id, scope) =>
-        set((state) => {
-          const draft = state.drafts.find((candidate) => candidate.id === id);
-          if (draft === undefined) return state;
-          if (
-            draft.pendingSessionId === null &&
-            draft.projectId === scope.projectId &&
-            draft.taskId === scope.taskId
-          ) {
-            return state;
-          }
-          return {
-            drafts: state.drafts.map((candidate) =>
-              candidate.id === id
-                ? {
-                    ...candidate,
-                    projectId: scope.projectId,
-                    taskId: scope.taskId,
-                    pendingSessionId: null,
-                    sendInFlight: false,
-                    updatedAt: Date.now(),
-                  }
                 : candidate,
             ),
           };

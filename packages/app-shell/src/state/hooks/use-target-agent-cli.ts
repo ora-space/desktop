@@ -1,6 +1,5 @@
 import { useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
-import { warmTargetKey } from "./use-warm-session";
 import { useSessions } from "./use-sessions";
 
 /** The selection legs that decide which agent a chat surface is pointing at. */
@@ -13,10 +12,8 @@ export interface AgentSelection {
 /**
  * Resolves which agent CLI a chat surface is currently pointing at.
  *
- * The composer and the model picker each warm a session against this answer, and
- * a warm session's identity includes the CLI — so two call sites that computed it
- * differently would build a second provider session and leave the picker offering
- * models the composer is not pointing at. Owning the whole precedence chain in
+ * The composer and model picker both use this answer for model intent and first send.
+ * Owning the whole precedence chain in
  * one place is what keeps them from drifting apart; callers must not re-derive
  * any part of it.
  *
@@ -41,7 +38,7 @@ export interface AgentSelection {
 export function useTargetAgentCli(selection: AgentSelection): string | null {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
   const { data: sessions = [] } = useSessions();
-  const targetKey = warmTargetKey(selection);
+  const targetKey = chatSurfaceTargetKey(selection);
   const pendingSwitch = usePendingAgentStore((state) =>
     selection.sessionId === null
       ? undefined
@@ -56,4 +53,16 @@ export function useTargetAgentCli(selection: AgentSelection): string | null {
   if (pendingSwitch !== undefined) return pendingSwitch;
   if (boundAgentCli !== undefined) return boundAgentCli;
   return pickedForTarget ?? defaultAgentCli;
+}
+
+/** Names local state belonging to one not-yet-started chat surface. */
+export function chatSurfaceTargetKey(selection: {
+  projectId: string | null;
+  taskId: string | null;
+}): string | null {
+  return selection.taskId !== null
+    ? `task:${selection.taskId}`
+    : selection.projectId !== null
+      ? `project:${selection.projectId}`
+      : null;
 }

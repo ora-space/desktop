@@ -3244,6 +3244,7 @@ dependencies = [
  "ora-backend",
  "ora-contracts",
  "ora-db",
+ "ora-logging",
  "ora-plugin-protocol",
  "pretty_assertions",
  "serde",
@@ -3256,6 +3257,7 @@ dependencies = [
 name = "ora-domain"
 version = "0.0.0"
 dependencies = [
+ "ora-utils",
  "pretty_assertions",
  "serde",
  "serde_json",

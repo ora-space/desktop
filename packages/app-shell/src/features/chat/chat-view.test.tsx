@@ -900,7 +900,9 @@ describe("Composer", () => {
 
   it("restores composer text when onSend rejects on the same surface", async () => {
     const user = userEvent.setup();
-    const onSend = vi.fn(() => Promise.reject(new Error("warm failed")));
+    const onSend = vi.fn(() =>
+      Promise.reject(new Error("session start failed")),
+    );
     useComposerInputStore.getState().reset();
     useDraftSessionsStore.getState().clear();
     const draftId = useDraftSessionsStore.getState().ensureEmptyDraft({
@@ -1347,7 +1349,7 @@ describe("Composer", () => {
 
     // Second send still owns the surface and can restore its own text.
     await act(async () => {
-      rejectors[1]!(new Error("warm failed"));
+      rejectors[1]!(new Error("session start failed"));
       await sendPromises[1]!.then(
         () => undefined,
         () => undefined,
@@ -1382,8 +1384,8 @@ describe("Composer", () => {
     await user.type(textarea, "lost elsewhere{Enter}");
     expect(onSend).toHaveBeenCalledOnce();
 
-    // First-send adopted a warm session, then the user opened a third chat.
-    noteComposerSendAdoptedSession(`draft:${draftId}`, "warm-adopted");
+    // First-send adopted the session it created, then the user opened a third chat.
+    noteComposerSendAdoptedSession(`draft:${draftId}`, "adopted-session");
     await act(() => {
       useWorkspaceSelectionStore
         .getState()
@@ -1406,7 +1408,7 @@ describe("Composer", () => {
     ).toBeUndefined();
   });
 
-  it("restores a hard failure onto the warm session the draft adopted", async () => {
+  it("restores a hard failure onto the session the draft adopted", async () => {
     const user = userEvent.setup();
     let rejectSend!: (error: Error) => void;
     let sendPromise!: Promise<void>;
@@ -1428,13 +1430,13 @@ describe("Composer", () => {
 
     renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
     const textarea = screen.getByRole("textbox");
-    await user.type(textarea, "keep on warm{Enter}");
+    await user.type(textarea, "keep on session{Enter}");
 
-    noteComposerSendAdoptedSession(`draft:${draftId}`, "warm-adopted");
+    noteComposerSendAdoptedSession(`draft:${draftId}`, "adopted-session");
     await act(() => {
       useWorkspaceSelectionStore
         .getState()
-        .selectSession("warm-adopted", "task-1", "project-1");
+        .selectSession("adopted-session", "task-1", "project-1");
     });
     await flushComposerEffects();
     await waitFor(() => expect(composerText(textarea)).toBe(""));
@@ -1447,7 +1449,7 @@ describe("Composer", () => {
       );
       await Promise.resolve();
     });
-    expect(composerText(textarea)).toBe("keep on warm");
+    expect(composerText(textarea)).toBe("keep on session");
   });
 
   it("mentions a workspace file with @ and inserts a path chip", async () => {

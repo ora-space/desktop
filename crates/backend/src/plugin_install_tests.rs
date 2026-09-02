@@ -176,7 +176,7 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                 assert_eq!(
                     second_response.outcome,
                     InstallOutcome::InstalledWithCommandConflict {
-                        conflict_plugin_id: "official/rtk-ai.rtk".to_string(),
+                        conflict_plugin_id: "local/rtk-ai.rtk".to_string(),
                     }
                 );
 
@@ -187,7 +187,7 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                     .map(|plugin| plugin.id.as_str())
                     .collect();
                 assert!(
-                    ids.contains(&"official/rtk-ai.rtk") && ids.contains(&"official/other.rtk"),
+                    ids.contains(&"local/rtk-ai.rtk") && ids.contains(&"local/other.rtk"),
                     "both Hooks must remain installed and available, got {ids:?}"
                 );
             });

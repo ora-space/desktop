@@ -12,6 +12,7 @@ use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use rusqlite::params;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, PoisonError};
 use tempfile::TempDir;
 
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +62,58 @@ impl ConsumerAdapter for ReadyConsumer {
                 payload: serde_json::json!({ "ready": true }),
             },
         })
+    }
+}
+
+/// Publishes a newer Desired generation while an older projection is being verified.
+struct PublishSkillOnVerify {
+    repository: SqliteSkillRepository,
+    projection: PluginSkillProjection,
+    published: Mutex<bool>,
+}
+
+impl ConsumerAdapter for PublishSkillOnVerify {
+    /// Delegates coordination because this probe exercises a no-mutation projection.
+    fn coordinate(
+        &self,
+        target: &EffectTarget,
+        plan: &CoordinationPlan,
+    ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
+        ReadyConsumer.coordinate(target, plan)
+    }
+
+    /// Delegates reactivation because this probe exercises a no-mutation projection.
+    fn reactivate(
+        &self,
+        target: &EffectTarget,
+        plan: &CoordinationPlan,
+    ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
+        ReadyConsumer.reactivate(target, plan)
+    }
+
+    /// Advances Desired State after the old snapshot is planned but before it is committed.
+    fn verify_ready(
+        &self,
+        target: &EffectTarget,
+        projection: &TargetProjection,
+    ) -> Result<ReadinessReceipt, ConsumerAdapterError> {
+        let mut published = self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*published {
+            self.repository
+                .replace_plugin_skills(
+                    &PluginId::new("official", "review")
+                        .unwrap_or_else(|error| panic!("plugin id: {error}")),
+                    "1.0.0",
+                    std::slice::from_ref(&self.projection),
+                    /*updated_at*/ 20,
+                )
+                .unwrap_or_else(|error| panic!("publish newer Skill generation: {error}"));
+            *published = true;
+        }
+        ReadyConsumer.verify_ready(target, projection)
     }
 }
 
@@ -275,6 +328,91 @@ fn unchanged_consumer_declaration_does_not_requeue_its_target() {
         .unwrap_or_else(|error| panic!("reload Target state: {error}"));
 
     assert_eq!(after, before);
+}
+
+#[test]
+fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
+    let (directory, pool, workspace) = fixture();
+    let repository = SqliteEffectRepository::new(pool.clone());
+    repository
+        .declare_consumer(
+            &declaration("official/codex"),
+            &[workspace],
+            LocalTimestamp::from_millis(10),
+        )
+        .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
+    let worker = WorkerIdentity::parse("worker-1")
+        .unwrap_or_else(|error| panic!("worker identity: {error}"));
+    let (target, claim) = repository
+        .claim_due_targets(
+            &worker,
+            LocalTimestamp::from_millis(11),
+            LocalTimestamp::from_millis(100),
+            /*limit*/ 1,
+        )
+        .unwrap_or_else(|error| panic!("claim Target: {error}"))
+        .remove(0);
+    let package_root = directory.path().join("plugin-skill");
+    std::fs::create_dir_all(&package_root)
+        .unwrap_or_else(|error| panic!("create package: {error}"));
+    let manifest = b"---\nname: review\ndescription: Reviews changes\n---\n";
+    std::fs::write(package_root.join("SKILL.md"), manifest)
+        .unwrap_or_else(|error| panic!("write package: {error}"));
+    let consumer = PublishSkillOnVerify {
+        repository: SqliteSkillRepository::new(pool.clone()),
+        projection: PluginSkillProjection {
+            name: "review".to_string(),
+            description: "Reviews changes".to_string(),
+            package_fingerprint: package_fingerprint(&package_root),
+            package_root,
+            skill_md_digest: Digest::sha256(manifest),
+        },
+        published: Mutex::new(false),
+    };
+
+    let outcome = EffectReconciler::new(
+        &repository,
+        &SkillPlanner,
+        &consumer,
+        &SkillDirectoryResourceAdapter,
+    )
+    .reconcile(
+        &target,
+        &claim,
+        LocalTimestamp::from_millis(11),
+        LocalTimestamp::from_millis(100),
+    )
+    .unwrap_or_else(|error| panic!("commit older projection: {error:?}"));
+    let request = pool
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT state, requested_generation, requested_at, updated_at
+                     FROM effect_reconcile_requests WHERE target_id = ?1",
+                    params![target.as_str()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+        })
+        .unwrap_or_else(|error| panic!("load preserved request: {error}"));
+
+    assert_eq!(
+        (outcome, request),
+        (
+            ReconcileOutcome::Current {
+                target,
+                generation: Generation::default(),
+            },
+            ("pending".to_string(), 1, 20, 20),
+        )
+    );
 }
 
 #[test]

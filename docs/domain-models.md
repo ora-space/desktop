@@ -39,7 +39,7 @@ Numeric and text category columns are modeled as enums rather than raw codes, so
 
 Encoding and decoding live at the boundary, not inside the models. Each enum exposes `database_value()` plus a `from_database_value()` that rejects unknown persisted values with a `DomainModelError` instead of constructing an invalid state. Domain enums are never derived from raw integers implicitly.
 
-An agent identity is not one of these closed enums: `AgentRef` is a validated newtype over a namespaced string (`ora-space.claude`, `acme.my-agent`), because every agent is supplied by an installed plugin and which ones exist is not knowable when Ora is built. `AgentRef::parse` rejects only a blank value; an identity the runtime does not recognize is an ordinary "not installed right now" state, not corrupt data — the same reasoning that keeps `from_database_value()` strict for the true closed enums does not apply here.
+An agent identity is not one of these closed enums: `AgentRef` is a validated newtype over the canonical plugin id of the package that supplies the agent (`official/ora-space.claude`, `plugins.136aca80/acme.my-agent`), because every agent is supplied by an installed plugin and which ones exist is not knowable when Ora is built. `AgentRef::parse` rejects only a blank value; an identity the runtime does not recognize is an ordinary "not installed right now" state, not corrupt data — the same reasoning that keeps `from_database_value()` strict for the true closed enums does not apply here.
 
 ## Optionality and audit metadata
 

@@ -66,6 +66,15 @@ pub struct AgentModel {
     pub default: bool,
 }
 
+/// Supplies the workspace context required for pre-session model discovery.
+#[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agent.ts")]
+pub struct AgentListModelsParams {
+    #[ts(type = "string")]
+    pub cwd: PathBuf,
+}
+
 /// Result of the agent model discovery method.
 #[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +89,46 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentProtocol::export(config)?;
     AgentStartResult::export(config)?;
     AgentModel::export(config)?;
+    AgentListModelsParams::export(config)?;
     AgentListModelsResult::export(config)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentListModelsParams;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    /// Discovery params travel as one camelCase `cwd` string, the shape `agent/start` already uses.
+    ///
+    /// Pinned here rather than left to the derive because this is the wire an installed plugin
+    /// built against a published SDK reads: a rename or a path encoding change would leave older
+    /// plugins silently discovering models against the wrong directory rather than failing.
+    #[test]
+    fn discovery_params_carry_the_workspace_directory_as_cwd() {
+        assert_eq!(
+            serde_json::to_value(AgentListModelsParams {
+                cwd: PathBuf::from("/projects/ora"),
+            })
+            .expect("serialize discovery params"),
+            json!({ "cwd": "/projects/ora" }),
+        );
+    }
+
+    /// A plugin answering an older host still parses today's params.
+    #[test]
+    fn discovery_params_round_trip() {
+        let params = AgentListModelsParams {
+            cwd: PathBuf::from("/projects/ora"),
+        };
+        assert_eq!(
+            serde_json::from_value::<AgentListModelsParams>(
+                serde_json::to_value(&params).expect("serialize")
+            )
+            .expect("deserialize"),
+            params,
+        );
+    }
 }

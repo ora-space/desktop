@@ -3,10 +3,11 @@
 /**
  * Describes an application-level invalidation or stream lifecycle event.
  */
-export type AppEvent = { "type": "ready" } | {
-  "type": "session_title_updated";
-  session_id: string;
-} | { "type": "plugin_status_changed"; plugin_id: string };
+export type AppEvent =
+  | { "type": "ready" }
+  | { "type": "session_title_updated"; session_id: string }
+  | { "type": "plugin_status_changed"; plugin_id: string }
+  | { "type": "agent_models_invalidated"; agent_ref: string };
 
 /**
  * Opens the application event stream without filtering or ownership metadata.

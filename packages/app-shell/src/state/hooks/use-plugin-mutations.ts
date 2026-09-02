@@ -1,7 +1,6 @@
 import type { InstalledPlugin, PluginDataDisposition } from "@ora/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { useAgentModelStore } from "../stores/agent-model-store";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { queryKeys } from "./query-keys";
 import { invalidatePluginQueries } from "./plugin-invalidation";
@@ -17,15 +16,14 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
   const refreshAgent = (agentRef: string, scope: "availability" | "models") => {
     // Every lifecycle change invalidates availability and its display cache.
     // Only a starting agent can answer model discovery; stopping one must not
-    // retry the permanently pinned warm query against a runtime just removed.
-    useAgentModelStore.getState().forget(agentRef);
+    // retry model discovery against a runtime just removed.
     const requests = [
       queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
     ];
     if (scope === "models") {
       requests.push(
         queryClient.invalidateQueries({
-          queryKey: queryKeys.warmSessionsForAgent(agentRef),
+          queryKey: queryKeys.agentModelsForAgent(agentRef),
         }),
       );
     }

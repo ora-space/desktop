@@ -11,7 +11,7 @@ mod urls;
 mod webview;
 mod workbench;
 
-pub use enums::{PluginKind, PluginKindError, PluginNamespace, PluginNamespaceError};
+pub use enums::{PluginKind, PluginKindError};
 pub use error::{InvalidFieldReason, ManifestError, ManifestField, RuleField};
 pub use manifest::{
     PluginArtifact, PluginDependencies, PluginHead, PluginManifest, PluginReleaseSource,

@@ -2,8 +2,8 @@ use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
     HookTargetError, InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError,
     Origin, PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
-    PluginName, PluginNamespace, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseUrl,
-    RepositoryUrl, RuleField, Sha256Digest, StartUrl,
+    PluginName, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
+    RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -13,7 +13,6 @@ const DIGEST: &str = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25
 
 const MINIMAL_MANIFEST: &str = r#"resolver = 1
 identifier = "user.ora-weather"
-namespace = "official"
 kind = "workbench"
 version = "1.2.0"
 description = "获取实时天气信息的 Ora 插件"
@@ -25,7 +24,6 @@ sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
 /// spells the name segment `identifier`, matching what a shipped `orax.toml` contains.
 const INSTALLED_MINIMAL_MANIFEST: &str = r#"resolver = 1
 identifier = "user.ora-weather"
-namespace = "official"
 kind = "workbench"
 version = "1.2.0"
 description = "????????? Ora ??"
@@ -34,7 +32,6 @@ description = "????????? Ora ??"
 const FULL_MANIFEST: &str = r#"resolver = 1
 identifier = "user.ora-weather"
 title = "Ora Weather"
-namespace = "official"
 kind = "workbench"
 version = "1.2.0"
 description = "获取实时天气信息的 Ora 插件"
@@ -67,7 +64,6 @@ fn parses_complete_manifest_into_full_domain_object() {
         resolver: 1,
         name: success(PluginName::parse("user.ora-weather"), "plugin name"),
         title: "Ora Weather".to_owned(),
-        namespace: PluginNamespace::Official,
         kind: PluginKind::Workbench,
         version: success(Version::parse("1.2.0"), "version"),
         description: "获取实时天气信息的 Ora 插件".to_owned(),
@@ -118,7 +114,6 @@ fn parses_manifest_without_optional_fields() {
     assert_eq!(manifest.resolver(), 1);
     assert_eq!(manifest.name().as_str(), "user.ora-weather");
     assert_eq!(manifest.title(), "user.ora-weather");
-    assert_eq!(manifest.namespace(), PluginNamespace::Official);
     assert_eq!(manifest.kind(), PluginKind::Workbench);
     assert_eq!(
         manifest.version(),
@@ -204,7 +199,7 @@ fn mcp_kind_rejects_workbench_and_webview_sections() {
 /// Verifies a local Skill plugin needs only the installed-manifest core fields.
 #[test]
 fn parses_installed_skill_manifest_without_resolver_or_download_fields() {
-    let installed = "identifier = \"user.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.2.0\"\ndescription = \"A Skill package\"\n";
+    let installed = "identifier = \"user.skill-pack\"\nkind = \"skill\"\nversion = \"1.2.0\"\ndescription = \"A Skill package\"\n";
     let manifest = success(
         PluginManifest::parse_installed(installed),
         "installed Skill manifest",
@@ -243,7 +238,7 @@ fn skill_kind_rejects_workbench_and_webview_sections() {
 /// Verifies an installed package manifest omits download-only fields and still parses.
 #[test]
 fn parses_installed_manifest_without_download_fields() {
-    let installed = "identifier = \"user.ora-weather\"\nnamespace = \"official\"\nkind = \"workbench\"\nversion = \"1.2.0\"\ndescription = \"A test plugin\"\n";
+    let installed = "identifier = \"user.ora-weather\"\nkind = \"workbench\"\nversion = \"1.2.0\"\ndescription = \"A test plugin\"\n";
     let manifest = success(
         PluginManifest::parse_installed(installed),
         "installed manifest",
@@ -265,7 +260,6 @@ fn parses_new_installed_schema_with_title() {
     let source = r#"resolver = 1
 title = "OpenCode"
 identifier = "ora-space.opencode"
-namespace = "official"
 kind = "agent"
 version = "0.1.2"
 description = "Ora Space OpenCode Agent"
@@ -278,7 +272,6 @@ license = "Apache-2.0"
     );
     assert_eq!(manifest.title(), "OpenCode");
     assert_eq!(manifest.name().as_str(), "ora-space.opencode");
-    assert_eq!(manifest.namespace(), PluginNamespace::Official);
     assert_eq!(manifest.kind(), PluginKind::Agent);
     assert_eq!(
         manifest.homepage().map(HomepageUrl::as_str),
@@ -296,7 +289,6 @@ fn parses_new_marketplace_schema_without_download_fields() {
     let source = r#"resolver = 1
 title = "OpenCode"
 identifier = "ora-space.opencode"
-namespace = "official"
 kind = "agent"
 version = "0.1.2"
 description = "Ora Space OpenCode Agent"
@@ -304,7 +296,6 @@ description = "Ora Space OpenCode Agent"
     let manifest = success(PluginManifest::parse(source), "new marketplace schema");
     assert_eq!(manifest.title(), "OpenCode");
     assert_eq!(manifest.name().as_str(), "ora-space.opencode");
-    assert_eq!(manifest.namespace(), PluginNamespace::Official);
     assert_eq!(manifest.kind(), PluginKind::Agent);
     assert_eq!(manifest.url(), None);
     assert_eq!(manifest.sha256(), None);
@@ -318,7 +309,6 @@ fn parses_full_new_marketplace_manifest_with_markdown_urls() {
     let source = r#"resolver = 1
 title = "OpenCode"
 identifier = "ora-space.opencode"
-namespace = "official"
 kind = "agent"
 version = "0.1.2"
 description = "Ora Space OpenCode Agent"
@@ -334,7 +324,6 @@ sha256 = "18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558"
 
     assert_eq!(manifest.title(), "OpenCode");
     assert_eq!(manifest.name().as_str(), "ora-space.opencode");
-    assert_eq!(manifest.namespace(), PluginNamespace::Official);
     assert_eq!(manifest.kind(), PluginKind::Agent);
     assert_eq!(
         manifest.homepage().map(HomepageUrl::as_str),
@@ -370,13 +359,12 @@ fn rejects_unsupported_resolver_before_fields() {
     ));
 }
 
-/// Verifies missing, mistyped, and unknown fields stay structural TOML errors with spans.
+/// Verifies missing and mistyped required fields stay structural TOML errors with spans.
 #[test]
 fn reports_structural_toml_errors_with_spans() {
     let cases = [
         MINIMAL_MANIFEST.replacen("resolver = 1\n", "", 1),
         MINIMAL_MANIFEST.replacen("resolver = 1", "resolver = \"one\"", 1),
-        format!("{MINIMAL_MANIFEST}unknown = true\n"),
     ];
 
     for source in cases {
@@ -387,13 +375,70 @@ fn reports_structural_toml_errors_with_spans() {
     }
 }
 
+/// Verifies an unknown field is ignored by both manifest forms rather than discarding the entry.
+///
+/// Manifests are written by third-party authors and read by many Ora versions at once. Rejecting
+/// an unrecognized key would make every purely additive schema change delete the whole listing
+/// from an older client's marketplace, so schema increments are absorbed here and only breaking
+/// changes are gated by `resolver`. The residual `namespace` key a pre-derivation manifest may
+/// still carry is one such unknown field: it is ignored, and it never reaches the parsed value.
+#[test]
+fn ignores_unknown_manifest_fields_in_both_forms() {
+    let release = MINIMAL_MANIFEST.replacen(
+        "kind = \"workbench\"\n",
+        "kind = \"workbench\"\nnamespace = \"community\"\nfuture_optional_field = 7\n",
+        1,
+    );
+    let installed = format!(
+        "identifier = \"user.ora-weather\"\nnamespace = \"attacker\"\nkind = \"workbench\"\n\
+         version = \"1.2.0\"\ndescription = \"A test plugin\"\nfuture_section_hint = [\"x\"]\n"
+    );
+
+    assert_eq!(
+        (
+            success(PluginManifest::parse(&release), "release manifest"),
+            success(
+                PluginManifest::parse_installed(&installed),
+                "installed manifest",
+            )
+            .name()
+            .as_str()
+            .to_owned(),
+        ),
+        (
+            success(PluginManifest::parse(MINIMAL_MANIFEST), "minimal manifest"),
+            "user.ora-weather".to_owned(),
+        ),
+    );
+}
+
+/// Verifies tolerating unknown fields did not relax the required ones: a missing required field
+/// is still a hard structural error that reports its TOML path.
+#[test]
+fn still_rejects_missing_required_fields_after_relaxing_unknown_ones() {
+    let without_identifier = MINIMAL_MANIFEST.replacen(
+        "identifier = \"user.ora-weather\"\n",
+        "unrelated_new_key = \"user.ora-weather\"\n",
+        1,
+    );
+
+    let Err(ManifestError::InvalidToml { source, path, .. }) =
+        PluginManifest::parse(&without_identifier)
+    else {
+        panic!("expected a missing required field to stay a hard structural error");
+    };
+    assert_eq!(
+        (source.message().contains("identifier"), path),
+        (true, None),
+    );
+}
+
 /// Verifies every required root field is rejected when missing or assigned the wrong TOML type.
 #[test]
 fn rejects_missing_and_mistyped_required_fields() {
     let fields = [
         ("resolver = 1\n", "resolver = \"one\"\n"),
         ("identifier = \"user.ora-weather\"\n", "identifier = true\n"),
-        ("namespace = \"official\"\n", "namespace = true\n"),
         ("kind = \"workbench\"\n", "kind = true\n"),
         ("version = \"1.2.0\"\n", "version = true\n"),
         (
@@ -422,11 +467,6 @@ fn rejects_empty_required_strings() {
             "identifier = \"user.ora-weather\"",
             "identifier = \"\"",
             ManifestField::Identifier,
-        ),
-        (
-            "namespace = \"official\"",
-            "namespace = \"\"",
-            ManifestField::Namespace,
         ),
         ("kind = \"workbench\"", "kind = \"\"", ManifestField::Kind),
         (
@@ -469,7 +509,7 @@ fn returns_first_root_field_error_deterministically() {
             "identifier = \"INVALID\"",
             1,
         )
-        .replacen("namespace = \"official\"", "namespace = \"community\"", 1);
+        .replacen("kind = \"workbench\"", "kind = \"gadget\"", 1);
 
     assert!(matches!(
         PluginManifest::parse(&source),
@@ -622,24 +662,34 @@ fn preserves_git_branch_error_in_head_field() {
     ));
 }
 
-/// Verifies missing and unknown head members remain structural TOML errors.
+/// Verifies a nested section keeps its own required members while tolerating unknown ones.
+///
+/// Unknown-field tolerance is a whole-schema property, not a root-table one: a new optional key
+/// inside `[head]` must not delete the listing from an older client either.
 #[test]
-fn rejects_incomplete_or_unknown_head_fields() {
+fn rejects_incomplete_head_but_ignores_unknown_head_fields() {
     let missing_branch =
         format!("{MINIMAL_MANIFEST}\n[head]\nrepository = \"https://example.com/repo.git\"\n");
     let unknown = format!(
         "{MINIMAL_MANIFEST}\n[head]\nrepository = \"https://example.com/repo.git\"\nbranch = \"main\"\nother = true\n"
     );
 
-    for source in [missing_branch, unknown] {
-        assert!(matches!(
-            PluginManifest::parse(&source),
-            Err(ManifestError::InvalidToml { .. })
-        ));
-    }
+    assert!(matches!(
+        PluginManifest::parse(&missing_branch),
+        Err(ManifestError::InvalidToml { .. })
+    ));
+    assert_eq!(
+        success(PluginManifest::parse(&unknown), "unknown head field")
+            .head()
+            .map(|head| head.branch().as_str().to_owned()),
+        Some("main".to_owned()),
+    );
 }
 
-/// Verifies dependency parsing accepts SemVer requirement composition and rejects unknown keys.
+/// Verifies dependency parsing accepts SemVer requirement composition and reads only `ora`.
+///
+/// A dependency key this Ora does not know is ignored like any other unknown field, so the
+/// manifest declares no host requirement rather than failing to parse.
 #[test]
 fn parses_only_the_ora_dependency() {
     let valid = format!("{MINIMAL_MANIFEST}\n[dependencies]\nora = \"^1.2, <2\"\n");
@@ -651,10 +701,10 @@ fn parses_only_the_ora_dependency() {
     );
 
     let unknown = format!("{MINIMAL_MANIFEST}\n[dependencies]\nother = \"1\"\n");
-    assert!(matches!(
-        PluginManifest::parse(&unknown),
-        Err(ManifestError::InvalidToml { .. })
-    ));
+    assert_eq!(
+        success(PluginManifest::parse(&unknown), "unknown dependency key").dependencies(),
+        None,
+    );
 }
 
 /// Verifies field paths have stable dotted representations for programmatic diagnostics.
@@ -677,7 +727,6 @@ fn formats_structured_manifest_fields() {
 
 const WORKBENCH_MANIFEST: &str = r#"resolver = 1
 identifier = "user.ora-weather"
-namespace = "official"
 kind = "workbench"
 version = "1.2.0"
 description = "Weather panel"
@@ -688,7 +737,6 @@ methods = ["weather/get_current", "weather/search_city"]
 
 const WEBVIEW_MANIFEST: &str = r#"resolver = 1
 identifier = "acme.hub"
-namespace = "official"
 kind = "webview"
 version = "1.0.0"
 description = "An example marketplace surface"
@@ -998,48 +1046,79 @@ fn rejects_invalid_webview_fields_with_index() {
     }
 }
 
-/// Verifies an unknown section field, a mistyped rule, and an unknown action key stay
-/// structural errors that name the offending TOML path.
+/// Verifies a missing nested member still fails structurally and names its TOML path, while an
+/// unknown key at any nesting depth is ignored.
+///
+/// The nested paths are what make this worth asserting separately: `serde_path_to_error` is the
+/// only reason a failure inside `[[webview.downloads.rules]]` says which entry broke.
 #[test]
 fn reports_structural_webview_errors_with_paths() {
-    let cases = [
-        (
-            WEBVIEW_MANIFEST.replacen(
-                "allowed_origins = [",
-                "user_agent = \"x\"\nallowed_origins = [",
-                1,
-            ),
-            "webview.user_agent",
+    let missing_page_member = WEBVIEW_MANIFEST.replacen(
+        "page = { origin = \"https://www.example.com\", path_prefix = \"/skills/\" }",
+        "page = { origin = \"https://www.example.com\" }",
+        1,
+    );
+    assert_ne!(missing_page_member, WEBVIEW_MANIFEST);
+    let Err(ManifestError::InvalidToml { path, .. }) =
+        PluginManifest::parse_installed(&missing_page_member)
+    else {
+        panic!("expected a missing rule member to fail structurally");
+    };
+    assert_eq!(path.as_deref(), Some("webview.downloads.rules[0].page"));
+
+    let unknown_keys = [
+        WEBVIEW_MANIFEST.replacen(
+            "allowed_origins = [",
+            "user_agent = \"x\"\nallowed_origins = [",
+            1,
         ),
-        (
-            WEBVIEW_MANIFEST.replacen(
-                "action = { auto = \"import_skill\" }",
-                "action = { run = \"x\" }",
-                1,
-            ),
-            "webview.downloads.rules[0].action.run",
-        ),
-        (
-            WEBVIEW_MANIFEST.replacen(
-                "path_prefix = \"/skills/\" }",
-                "path_prefix = \"/skills/\", query = \"a\" }",
-                1,
-            ),
-            "webview.downloads.rules[0].page.query",
+        WEBVIEW_MANIFEST.replacen(
+            "path_prefix = \"/skills/\" }",
+            "path_prefix = \"/skills/\", query = \"a\" }",
+            1,
         ),
     ];
-    for (source, expected_path) in cases {
-        let Err(ManifestError::InvalidToml { path, .. }) = PluginManifest::parse_installed(&source)
-        else {
-            panic!("expected {expected_path} to fail structurally");
-        };
-        assert_eq!(path.as_deref(), Some(expected_path));
+    for source in unknown_keys {
+        assert_ne!(source, WEBVIEW_MANIFEST);
+        assert_eq!(
+            success(
+                PluginManifest::parse_installed(&source),
+                "webview manifest with an unknown key",
+            ),
+            success(
+                PluginManifest::parse_installed(WEBVIEW_MANIFEST),
+                "webview manifest",
+            ),
+        );
     }
+}
+
+/// Verifies an action table naming only keys this Ora does not know is a semantic ambiguity
+/// rather than a parse failure.
+///
+/// Ignoring unknown fields moves this case from "unknown key" to "no action declared", which is
+/// exactly the tradeoff D1 accepts: the misspelling surfaces one step later, as the rule failing
+/// to declare what to do, and never as the whole listing disappearing.
+#[test]
+fn reports_an_action_without_a_known_key_as_ambiguous() {
+    let source = WEBVIEW_MANIFEST.replacen(
+        "action = { auto = \"import_skill\" }",
+        "action = { run = \"x\" }",
+        1,
+    );
+    assert_ne!(source, WEBVIEW_MANIFEST);
+
+    assert!(matches!(
+        PluginManifest::parse_installed(&source),
+        Err(ManifestError::InvalidField {
+            reason: InvalidFieldReason::AmbiguousDownloadAction,
+            ..
+        })
+    ));
 }
 
 const TARGETED_HOOK_MANIFEST: &str = r#"resolver = 1
 identifier = "rtk-ai.rtk"
-namespace = "official"
 kind = "hook"
 version = "0.1.0"
 description = "RTK command rewrite hook"
@@ -1093,7 +1172,6 @@ fn rejects_unsupported_target_triples() {
 fn parses_universal_hook_manifest() {
     let source = r#"resolver = 1
 identifier = "rtk-ai.rtk"
-namespace = "official"
 kind = "hook"
 version = "0.1.0"
 description = "RTK command rewrite hook"
@@ -1115,7 +1193,6 @@ fn rejects_both_universal_and_targeted_release_sources() {
     // after would attach them to the last target entry instead of the top level.
     let source = r#"resolver = 1
 identifier = "rtk-ai.rtk"
-namespace = "official"
 kind = "hook"
 version = "0.1.0"
 description = "RTK command rewrite hook"
@@ -1150,7 +1227,6 @@ fn rejects_duplicate_target_triples() {
 fn parses_targeted_release_for_the_agent_kind() {
     let source = r#"resolver = 1
 identifier = "weather"
-namespace = "official"
 kind = "agent"
 version = "1.0.0"
 description = "Weather agent"
@@ -1178,7 +1254,6 @@ sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
 fn rejects_targeted_release_for_kinds_without_native_binaries() {
     let source = r#"resolver = 1
 identifier = "weather"
-namespace = "official"
 kind = "workbench"
 version = "1.0.0"
 description = "Weather workbench"
@@ -1199,7 +1274,6 @@ sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
 fn parses_installed_hook_manifest_with_artifact() {
     let source = r#"resolver = 1
 identifier = "rtk-ai.rtk"
-namespace = "official"
 kind = "hook"
 version = "0.1.0"
 description = "RTK command rewrite hook"
@@ -1272,7 +1346,6 @@ fn rejects_targets_section_on_installed_manifest() {
 fn parses_installed_agent_manifest_with_artifact() {
     let source = r#"resolver = 1
 identifier = "weather"
-namespace = "official"
 kind = "agent"
 version = "1.0.0"
 description = "Weather agent"
@@ -1294,7 +1367,6 @@ target = "x86_64-pc-windows-msvc"
 fn parses_installed_agent_manifest_without_artifact() {
     let source = r#"resolver = 1
 identifier = "weather"
-namespace = "official"
 kind = "agent"
 version = "1.0.0"
 description = "Weather agent"
@@ -1308,7 +1380,6 @@ description = "Weather agent"
 fn rejects_artifact_section_for_kinds_without_native_binaries() {
     let source = r#"resolver = 1
 identifier = "weather"
-namespace = "official"
 kind = "workbench"
 version = "1.0.0"
 description = "Weather workbench"
@@ -1335,7 +1406,6 @@ target = "x86_64-pc-windows-msvc"
 fn rejects_installed_hook_without_artifact() {
     let source = r#"resolver = 1
 identifier = "rtk-ai.rtk"
-namespace = "official"
 kind = "hook"
 version = "0.1.0"
 description = "RTK command rewrite hook"

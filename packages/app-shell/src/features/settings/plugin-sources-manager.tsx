@@ -85,6 +85,9 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
           {t("settings.plugins.manageSourcesDescription")}
         </p>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+          {t("settings.plugins.sourceIdentityNote")}
+        </p>
       </header>
 
       <form

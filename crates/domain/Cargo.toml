@@ -8,6 +8,7 @@ name = "ora_domain"
 path = "src/lib.rs"
 
 [dependencies]
+ora-utils = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 

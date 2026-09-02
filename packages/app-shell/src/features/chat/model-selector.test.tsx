@@ -25,7 +25,6 @@ import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import type { AgentStatus } from "@ora/contracts";
 import { ModelSelector } from "./model-selector";
 import { queryKeys } from "../../state/hooks/query-keys";
-import { useAgentModelStore } from "../../state/stores/agent-model-store";
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
@@ -33,7 +32,6 @@ beforeEach(() => {
     settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
   });
   usePendingAgentStore.setState({ selections: {} });
-  useAgentModelStore.setState({ known: {} });
 });
 
 /** Replaces what the runtime reports about OpenCode, leaving every other agent detected. */
@@ -73,7 +71,7 @@ function renderModelSelector(
   }));
   seed(state);
   const client = createMockClient(state);
-  const warm = vi.spyOn(client.session, "warm");
+  const discover = vi.spyOn(client.agentRuntime, "listModels");
   const chatStore = createChatStore(client.session);
   const queryClient = createTestQueryClient();
   const Wrapper = createHookWrapper(client, queryClient, chatStore);
@@ -88,7 +86,7 @@ function renderModelSelector(
       </AppI18nProvider>
     </Wrapper>,
   );
-  return { queryClient, state, warm };
+  return { queryClient, state, discover };
 }
 
 /** The collapsed trigger, which names the agent this surface is currently on. */
@@ -210,7 +208,7 @@ describe("ModelSelector agent availability", () => {
     expect(picker().querySelectorAll("svg")).toHaveLength(1);
   });
 
-  it("removes a disabled agent's previously warmed models", async () => {
+  it("removes a disabled agent's previously discovered models", async () => {
     const user = userEvent.setup();
     const { queryClient, state } = renderModelSelector();
 
@@ -269,9 +267,9 @@ describe("ModelSelector agent availability", () => {
     expect(within(picker()).queryByText("NGA")).toBeNull();
   });
 
-  it("waits for an installed plugin to become ready before warming its models", async () => {
+  it("waits for an installed plugin to become ready before discovering its models", async () => {
     const user = userEvent.setup();
-    const { queryClient, state, warm } = renderModelSelector(
+    const { queryClient, state, discover } = renderModelSelector(
       reportOpenCode("unavailable"),
     );
 
@@ -281,7 +279,7 @@ describe("ModelSelector agent availability", () => {
         state.agentRuntimeStatuses,
       ),
     );
-    expect(warm).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
 
     reportOpenCode("starting")(state);
     await act(() =>
@@ -292,7 +290,7 @@ describe("ModelSelector agent availability", () => {
         state.agentRuntimeStatuses,
       ),
     );
-    expect(warm).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
 
     const menu = await openAgentList(user);
     await waitFor(() =>
@@ -304,7 +302,7 @@ describe("ModelSelector agent availability", () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
     );
 
-    await waitFor(() => expect(warm).toHaveBeenCalledOnce());
+    await waitFor(() => expect(discover).toHaveBeenCalledOnce());
     await waitFor(() =>
       expect(within(menu).queryByText("Big Pickle")).not.toBeNull(),
     );

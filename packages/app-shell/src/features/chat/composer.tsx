@@ -548,7 +548,7 @@ export function Composer({
 
   const submit = () => {
     // One gate for button and Enter alike: the editor forwards Enter even on an
-    // empty document, which previously reached onSend("") and spent a warm
+    // empty document, which previously reached onSend("") and spent a fresh
     // handshake on a message nothing could deliver.
     if (!canSend) {
       if (sendBlocked) pinSendHint();
@@ -585,7 +585,7 @@ export function Composer({
     // Abandoned sends (Stop / navigated away) already repark stores — restore the
     // reused composer UI only when we never left, so a later surface is not
     // contaminated. Hard failures restore only on the send surface, the
-    // recovered draft, or the warm session that first-send adopted — never an
+    // recovered draft, or the session that first-send adopted — never an
     // unrelated chat the user opened mid-attach. A newer submit supersedes
     // this catch entirely (Stop → retype → send).
     //

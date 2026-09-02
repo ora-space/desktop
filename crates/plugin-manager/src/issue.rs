@@ -13,9 +13,6 @@ pub enum PluginDiscoveryIssueKind {
     ManifestUnreadable,
     InvalidToml,
     InvalidManifest,
-    /// Two package directories declare the same `<namespace>/<name>`; only the first in path
-    /// order is kept.
-    DuplicatePluginId,
     UnusableLogo,
 }
 
@@ -32,7 +29,6 @@ impl PluginDiscoveryIssueKind {
             Self::ManifestUnreadable => "manifest_unreadable",
             Self::InvalidToml => "invalid_toml",
             Self::InvalidManifest => "invalid_manifest",
-            Self::DuplicatePluginId => "duplicate_plugin_id",
             Self::UnusableLogo => "unusable_logo",
         }
     }

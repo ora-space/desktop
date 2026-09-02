@@ -17,6 +17,7 @@ describe("useAvailablePlugins", () => {
       title: "Weather",
       kind: "workbench",
       namespace: "official",
+      sourceUrl: "https://github.com/ora-space/marketplace",
       version: "1.2.0",
       description: "Weather plugin",
       logo: null,

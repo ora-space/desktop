@@ -18,7 +18,11 @@ that any other crate can consume without introducing dependency cycles.
   fingerprints cover portable paths, file bytes, entry kinds, and executable permissions while
   allowing callers to exclude their own metadata files.
 - `hash` (Cargo feature `validation`): streaming SHA-256 digests over a reader or file without
-  buffering the whole input.
+  buffering the whole input, plus `sha256_hex` for a short in-memory value.
+- `url` (Cargo feature `validation`): canonicalizing a repository URL so two spellings of one
+  remote compare equal (lowercase, no userinfo, no default port, no trailing slash, no `.git`
+  suffix), and taking its last path segment. Callers that key durable state on a remote need one
+  value per repository across every spelling, version, and platform.
 - `http` (Cargo feature `http`): the transport-agnostic `HttpDownload` contract plus an offline
   `LocalFileDownloader` that copies a local file or `file://` URL to a destination, enforcing an
   optional byte limit and SHA-256 checksum with an atomic replace.

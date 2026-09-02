@@ -19,3 +19,9 @@ matching transport exported by the SDK.
 Plugin SDK `0.8` uses snake_case for multi-word RPC path segments, including
 `agent/list_models`, `effect/verify_ready`, and `ora/childprocess/close_stdin`. This is a wire
 compatibility break: hosts and plugins must move to the new protocol together.
+
+`agent/list_models` takes `AgentListModelsParams` — a single `cwd` naming the Workspace directory
+the discovery is for. Adding the parameter is additive: a plugin that ignores params still answers,
+it just cannot vary its catalog by project. The host calls the method on demand rather than during
+the agent handshake, and gives it a longer budget than an ordinary control call because answering
+may require starting a process.

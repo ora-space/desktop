@@ -24,6 +24,8 @@ pub mod process;
 mod slug;
 #[cfg(feature = "validation")]
 pub mod svg;
+#[cfg(feature = "validation")]
+pub mod url;
 
 pub use git_branch::{GitBranchName, GitBranchNameError};
 pub use slug::{Slug, SlugError};

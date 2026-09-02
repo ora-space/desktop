@@ -118,8 +118,8 @@ fn missing_installed_root_is_empty() {
     assert_eq!(manager.discovery_issues(), &[]);
 }
 
-/// Verifies filesystem enumeration order and directory names cannot affect the public snapshot
-/// order, and that optional metadata may be omitted.
+/// Verifies filesystem enumeration order cannot affect the public snapshot order, and that
+/// optional metadata may be omitted.
 #[test]
 fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
     let temp_dir = TempDir::new().unwrap();
@@ -129,12 +129,19 @@ fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
     zeta.as_table_mut().unwrap().remove("homepage");
     zeta.as_table_mut().unwrap().remove("license");
     zeta.as_table_mut().unwrap().remove("dependencies");
-    // The directory is deliberately named against sort order: identity comes from the manifest.
-    write_manifest(temp_dir.path(), "a-directory", zeta);
+    // Zeta is installed under a namespace that sorts before the fixture's, so path order and
+    // identifier order disagree and only sorting by the whole id produces the expected snapshot.
+    write_raw_manifest_version(
+        temp_dir.path(),
+        "acme.a1b2c3d4",
+        "ora.zeta",
+        "1.2.3-alpha.1+build.7",
+        toml::to_string(&zeta).unwrap().as_bytes(),
+    );
     let mut alpha = agent_manifest();
     alpha["identifier"] = Value::from("ora.alpha");
     alpha["version"] = Value::from("2.0.0");
-    write_manifest(temp_dir.path(), "z-directory", alpha);
+    write_manifest(temp_dir.path(), "ora.alpha", alpha);
 
     let manager = PluginManager::discover(temp_dir.path());
 
@@ -154,28 +161,33 @@ fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
             .collect::<Vec<_>>(),
         vec![
             (
+                "acme.a1b2c3d4/ora.zeta".to_string(),
+                "1.2.3-alpha.1+build.7".to_string(),
+                None,
+                None,
+            ),
+            (
                 "official/ora.alpha".to_string(),
                 "2.0.0".to_string(),
                 Some("https://example.com/claude-code".to_string()),
                 Some("Apache-2.0".to_string()),
             ),
-            (
-                "official/ora.zeta".to_string(),
-                "1.2.3-alpha.1+build.7".to_string(),
-                None,
-                None,
-            ),
         ]
     );
 }
 
-/// Verifies two directories claiming one plugin id keep the first in path order and report the
-/// second, so a stray copy cannot shadow the installed package.
+/// Verifies a package whose manifest identifier disagrees with the directory holding it is
+/// reported instead of being attributed to either spelling.
+///
+/// The name comes from the manifest and the directory was written by the host, so disagreement
+/// means the tree was tampered with or an install was interrupted. Picking one of the two would
+/// decide which data directory, `store.json`, and Skill rows the package owns, so the package is
+/// left undiscovered and the problem is surfaced.
 #[test]
-fn reports_duplicate_plugin_ids() {
+fn reports_identifier_that_differs_from_directory() {
     let temp_dir = TempDir::new().unwrap();
-    let first = write_manifest(temp_dir.path(), "a-copy", agent_manifest());
-    write_manifest(temp_dir.path(), "b-copy", agent_manifest());
+    let valid = write_manifest(temp_dir.path(), "ora.valid", named("ora.valid"));
+    write_manifest(temp_dir.path(), "a-stray-copy", named("ora.valid"));
 
     let manager = PluginManager::discover(temp_dir.path());
 
@@ -185,7 +197,7 @@ fn reports_duplicate_plugin_ids() {
             .iter()
             .map(|plugin| plugin.package_root.clone())
             .collect::<Vec<_>>(),
-        vec![first]
+        vec![valid]
     );
     assert_eq!(
         manager
@@ -194,10 +206,81 @@ fn reports_duplicate_plugin_ids() {
             .map(|issue| (issue.kind(), issue.field_path()))
             .collect::<Vec<_>>(),
         vec![(
-            PluginDiscoveryIssueKind::DuplicatePluginId,
+            PluginDiscoveryIssueKind::InvalidManifest,
             Some("identifier")
         )]
     );
+}
+
+/// Verifies discovery reads a package's namespace from the directory it was installed into and
+/// never from the manifest, so a restart restores the identity the installing source assigned.
+///
+/// The manifest here carries a residual `namespace` key naming the first-party marketplace, which
+/// is exactly the value a third-party package would forge to land in `official/`'s directories.
+/// It is an unknown field: ignored on parse, absent from the identity, and unable to move the
+/// package out of the directory it actually occupies.
+#[test]
+fn takes_namespace_from_the_install_directory_not_the_manifest() {
+    let temp_dir = TempDir::new().unwrap();
+    let derived = "plugins.2aa64f48";
+    let mut manifest = named("acme.widget");
+    manifest
+        .as_table_mut()
+        .unwrap()
+        .insert("namespace".to_string(), Value::from("official"));
+    let package_root = write_raw_manifest_version(
+        temp_dir.path(),
+        derived,
+        "acme.widget",
+        "0.1.0",
+        toml::to_string(&manifest).unwrap().as_bytes(),
+    );
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(
+        manager
+            .installed_plugins()
+            .iter()
+            .map(|plugin| (plugin.id.canonical(), plugin.package_root.clone()))
+            .collect::<Vec<_>>(),
+        vec![(format!("{derived}/acme.widget"), package_root)],
+    );
+}
+
+/// Verifies a namespace directory the installer could not have written is reported and skipped
+/// rather than being taken as an identity.
+///
+/// The namespace is a directory level of three durable paths, so a name outside the id grammar —
+/// uppercase, a traversal, or one longer than the bound — cannot be accepted just because it
+/// happens to exist on disk.
+#[test]
+fn rejects_namespace_directories_outside_the_id_grammar() {
+    let cases = ["Official", &"a".repeat(34), "acme plugins", "acme_plugins"];
+    for namespace in cases {
+        let temp_dir = TempDir::new().unwrap();
+        write_raw_manifest_version(
+            temp_dir.path(),
+            namespace,
+            "ora.valid",
+            "0.1.0",
+            toml::to_string(&named("ora.valid")).unwrap().as_bytes(),
+        );
+
+        let manager = PluginManager::discover(temp_dir.path());
+
+        assert_eq!(manager.installed_plugins(), &[], "{namespace}");
+        assert_eq!(
+            manager
+                .discovery_issues()
+                .iter()
+                .map(|issue| issue.kind())
+                .collect::<Vec<_>>(),
+            vec![PluginDiscoveryIssueKind::InvalidInstallPath],
+            "{namespace}"
+        );
+    }
 }
 
 /// Verifies malformed packages are isolated while valid siblings remain visible.
@@ -238,8 +321,8 @@ fn isolates_malformed_and_unsupported_packages() {
     );
 }
 
-/// Verifies nested type errors and unknown fields expose the precise TOML path as structural
-/// (`invalid_toml`) issues, while unknown enum spellings are semantic field errors.
+/// Verifies nested type errors expose the precise TOML path as structural (`invalid_toml`)
+/// issues, while unknown enum spellings are semantic field errors.
 #[test]
 fn reports_structural_errors_with_field_paths() {
     let cases: Vec<(&str, Vec<&str>, Value, PluginDiscoveryIssueKind, &str)> = vec![
@@ -249,27 +332,6 @@ fn reports_structural_errors_with_field_paths() {
             Value::from(1),
             PluginDiscoveryIssueKind::InvalidToml,
             "dependencies.ora",
-        ),
-        (
-            "unknown top-level field",
-            vec!["engines"],
-            Value::from("bun"),
-            PluginDiscoveryIssueKind::InvalidToml,
-            "engines",
-        ),
-        (
-            "unknown nested field",
-            vec!["dependencies", "bun"],
-            Value::from("1"),
-            PluginDiscoveryIssueKind::InvalidToml,
-            "dependencies.bun",
-        ),
-        (
-            "retired entrypoint field",
-            vec!["main"],
-            Value::from("dist/index.js"),
-            PluginDiscoveryIssueKind::InvalidToml,
-            "main",
         ),
         (
             "unknown kind",
@@ -364,9 +426,9 @@ fn rejects_invalid_package_versions() {
     }
 }
 
-/// Verifies the plugin name and namespace grammar shared by every plugin kind.
+/// Verifies the plugin name grammar shared by every plugin kind.
 #[test]
-fn rejects_invalid_names_and_namespaces() {
+fn rejects_invalid_names() {
     let long_segment = "a".repeat(70);
     let long_name = format!("{long_segment}.{long_segment}");
     let cases = [
@@ -379,9 +441,6 @@ fn rejects_invalid_names_and_namespaces() {
         ("identifier", ".example"),
         ("identifier", "ora..example"),
         ("identifier", long_name.as_str()),
-        ("namespace", ""),
-        ("namespace", "Official"),
-        ("namespace", "community"),
     ];
     for (field, value) in cases {
         let temp_dir = TempDir::new().unwrap();
@@ -673,7 +732,6 @@ pub(crate) fn agent_manifest() -> Value {
         r#"
 resolver = 1
 identifier = "ora.claude-code"
-namespace = "official"
 kind = "agent"
 version = "0.1.0"
 description = "Claude Code agent"
@@ -705,20 +763,19 @@ pub(crate) fn write_manifest(data_dir: &Path, directory: &str, manifest: Value) 
 }
 
 /// Writes arbitrary bytes as one package manifest next to a valid entrypoint, under the versioned
-/// `installed/<namespace>/<directory>/<version>/` layout.
+/// `installed/<NAMESPACE>/<directory>/<version>/` layout the installer produces.
 ///
-/// The namespace and version directories are read leniently from the bytes so a deliberately
-/// malformed manifest still lands in a layout discovery will visit; anything unparsable falls
-/// back to a valid default so the test exercises the manifest failure it is about, not the path.
+/// The namespace is the fixture's, never the manifest's: a package does not name its own
+/// namespace, so a test that wants a different one has to write a different directory. The
+/// version directory is read leniently from the bytes so a deliberately malformed manifest still
+/// lands in a layout discovery will visit, falling back to a valid default so the test exercises
+/// the manifest failure it is about, not the path.
 pub(crate) fn write_raw_manifest(data_dir: &Path, directory: &str, bytes: &[u8]) -> PathBuf {
     let toml = String::from_utf8_lossy(bytes);
-    let namespace = manifest_string(&toml, "namespace")
-        .filter(|namespace| !namespace.trim().is_empty())
-        .unwrap_or(NAMESPACE);
     let version = manifest_string(&toml, "version")
         .filter(|version| Version::parse(version).is_ok())
         .unwrap_or("1.0.0");
-    write_raw_manifest_version(data_dir, namespace, directory, version, bytes)
+    write_raw_manifest_version(data_dir, NAMESPACE, directory, version, bytes)
 }
 
 /// Writes arbitrary bytes as one package manifest into an explicit version directory.

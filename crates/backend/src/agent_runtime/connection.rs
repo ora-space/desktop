@@ -1,6 +1,4 @@
-use super::plugin_agent::{
-    self, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError, PluginAgentModel,
-};
+use super::plugin_agent::{self, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError};
 use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
 use super::{
@@ -45,38 +43,27 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// generic. Every agent is supplied by a plugin, so there is exactly one transport to name.
 pub(super) type AgentAcpClient = AcpClient<PluginAcpTransport>;
 
-/// Identifies the installed plugin package that supplies one supervised agent.
+/// Returns the agent identity one installed package supplies.
 ///
-/// A package carries two distinct identities and both are needed here. `plugin_id` is the
-/// package address — `namespace/name` — that the plugin lifecycle owns the process under.
-/// `package_name` is the agent identity the package supplies, which is what sessions persist as
-/// their `agent_ref`. Supervising a plugin under its package address instead would leave every
-/// stored binding pointing at an agent no lookup can reach.
-#[derive(Debug, Clone)]
-pub(super) struct AgentSource {
-    pub plugin_id: PluginId,
-    pub package_name: String,
-}
-
-impl AgentSource {
-    /// Returns the persisted, namespaced identity of the agent this source provides.
-    fn agent_ref(&self) -> Result<AgentRef, BackendError> {
-        // A package name reaches here already validated by discovery, but parsing keeps one
-        // construction path for the value object rather than a second, unchecked one.
-        AgentRef::parse(&self.package_name)
-            .map_err(|error| runtime_internal("agent_start_failed", error.to_string()))
-    }
-
-    /// Returns the short name used for supervisor thread names and operator-facing messages.
-    fn label(&self) -> &str {
-        self.plugin_id.name()
-    }
+/// The identity is the package's whole canonical plugin id, namespace included. Using only the
+/// name segment would collapse two packages that different marketplace sources published under
+/// the same `identifier` into a single agent: the supervisor map is keyed by this value, so one
+/// of the two would be dropped, only one would reach the picker, and which one won would depend
+/// on the order installed packages happen to be walked. Sessions persist the same full id in
+/// `agent_cli`, so a stored binding always resolves back to the package that answered it.
+fn agent_identity(plugin_id: &PluginId) -> AgentRef {
+    // A canonical plugin id is non-empty by construction, so this cannot fail; parsing keeps one
+    // construction path for the value object rather than a second, unchecked one.
+    AgentRef::parse(plugin_id.canonical())
+        .unwrap_or_else(|error| unreachable!("a canonical plugin id is an agent ref: {error}"))
 }
 
 /// Exposes one initialized ACP connection without transferring child-process ownership.
 #[derive(Clone)]
 pub(super) struct RuntimeConnection {
     pub client: AgentAcpClient,
+    /// The plugin control channel used for on-demand capabilities outside ACP.
+    pub runtime: PluginRuntime,
     pub generation: u64,
     pub load_session_supported: bool,
     /// Whether initialize advertised ACP HTTP MCP servers.
@@ -86,15 +73,10 @@ pub(super) struct RuntimeConnection {
     pub close_session_supported: bool,
     /// Whether the agent advertises `session/delete`.
     ///
-    /// Warm sessions Ora created but never handed to the user are removed with
+    /// Failed starts Ora created but never handed to the user are removed with
     /// it so unused provider history does not accumulate; agents without it fall
     /// back to `session/close`, which only detaches.
     pub delete_session_supported: bool,
-    /// Models this agent advertises outside any session, empty when it cannot advertise any.
-    ///
-    /// The list is read once per connection generation rather than on demand: it changes only
-    /// when the provider restarts, and a reconnect already refreshes it.
-    pub models: Arc<[PluginAgentModel]>,
 }
 
 #[derive(Clone)]
@@ -117,7 +99,7 @@ pub(super) enum ConnectionStatus {
 /// Keeps one supervisor generation's fixed dependencies together as the retry loop evolves.
 struct SupervisorContext {
     agent_ref: AgentRef,
-    source: AgentSource,
+    plugin_id: PluginId,
     /// Starts and stops the processes behind plugin-provided agents.
     plugin_host: Arc<PluginApi>,
     pool: RepositoryPool,
@@ -145,8 +127,8 @@ pub(super) struct ConnectionSupervisor {
 /// every agent is supplied by an installed plugin and which ones exist is not known at build time.
 ///
 /// The set is mutable because installing a plugin adds an agent while Ora is running. It is held
-/// behind a lock rather than rebuilt, so every existing clone — the warm pool, live session
-/// actors — observes an install or uninstall without being handed a new value.
+/// behind a lock rather than rebuilt, so every clone held by a live session actor observes an
+/// install or uninstall without being handed a new value.
 #[derive(Clone)]
 pub(super) struct ConnectionSupervisors {
     supervisors: Arc<RwLock<BTreeMap<AgentRef, ConnectionSupervisor>>>,
@@ -202,15 +184,12 @@ impl ConnectionSupervisors {
                     InstalledPluginContribution::Agent { .. }
                 )
             })
-            .filter_map(|plugin| {
-                PluginId::parse(&plugin.id)
-                    .ok()
-                    .map(|plugin_id| AgentSource {
-                        plugin_id,
-                        package_name: plugin.name,
-                    })
-            });
-        let desired = resolve_supervised_agents(agent_plugins);
+            .filter_map(|plugin| PluginId::parse(&plugin.id).ok());
+        // Every installed package has a distinct id, so no two agents can claim one identity and
+        // there is nothing to arbitrate: the desired set is exactly the installed set.
+        let desired = agent_plugins
+            .map(|plugin_id| (agent_identity(&plugin_id), plugin_id))
+            .collect::<Vec<_>>();
 
         let mut supervisors = self
             .supervisors
@@ -218,18 +197,18 @@ impl ConnectionSupervisors {
             .unwrap_or_else(PoisonError::into_inner);
         let desired_refs = desired
             .iter()
-            .map(|(agent_ref, _source)| agent_ref.clone())
+            .map(|(agent_ref, _plugin_id)| agent_ref.clone())
             .collect::<BTreeSet<_>>();
         // Dropping the map's handle only signals shutdown once every session actor holding a clone
         // has released it, so an uninstall never severs a conversation that is still open.
         supervisors.retain(|agent_ref, _supervisor| desired_refs.contains(agent_ref));
-        for (agent_ref, source) in desired {
+        for (agent_ref, plugin_id) in desired {
             if supervisors.contains_key(&agent_ref) {
                 continue;
             }
             let supervisor = ConnectionSupervisor::start(
                 agent_ref.clone(),
-                source,
+                plugin_id,
                 self.plugin_host.clone(),
                 self.pool.clone(),
                 self.home_directory.clone(),
@@ -241,18 +220,17 @@ impl ConnectionSupervisors {
 
     /// Resolves a plugin package address onto the agent identity its sessions are bound to.
     ///
-    /// A package carries two identities (see [`AgentSource::Plugin`]): the address the plugin
-    /// lifecycle owns the process under, and the agent name a Session persists as its `agent_ref`.
-    /// A caller holding the first cannot compare it against the second — they are different
-    /// strings, and comparing them directly matches nothing at all while looking perfectly
-    /// reasonable. The translation lives here, beside the declaration that owns both halves.
+    /// The two are the same value now that an agent is identified by its whole plugin id, but the
+    /// lookup remains because the answer also has to say whether that package is installed: a
+    /// caller holding a package address wants the agent it currently supplies, not an identity
+    /// minted for a package that is gone.
     pub fn agent_for_plugin(&self, plugin_id: &PluginId) -> Option<AgentRef> {
         self.plugin_host
             .list(ListInstalledPluginsRequest {})
             .plugins
-            .into_iter()
-            .find(|plugin| plugin.id == plugin_id.canonical())
-            .and_then(|plugin| AgentRef::parse(plugin.name).ok())
+            .iter()
+            .any(|plugin| plugin.id == plugin_id.canonical())
+            .then(|| agent_identity(plugin_id))
     }
 
     /// Selects the sole application-scoped connection for one persisted agent identity.
@@ -296,7 +274,7 @@ impl ConnectionSupervisor {
     /// Starts one application-scoped agent supervisor independently of the caller's runtime.
     pub(super) fn start(
         agent_ref: AgentRef,
-        source: AgentSource,
+        plugin_id: PluginId,
         plugin_host: Arc<PluginApi>,
         pool: RepositoryPool,
         home_directory: PathBuf,
@@ -306,13 +284,13 @@ impl ConnectionSupervisor {
         let (shutdown, shutdown_receiver) = mpsc::unbounded_channel();
         let active_generation = Arc::new(AtomicU64::new(0));
         let routes = Arc::new(RouteRegistry::default());
-        let label: Arc<str> = Arc::from(source.label());
+        let label: Arc<str> = Arc::from(plugin_id.name());
         let identifier = agent_ref.to_string();
         if let Err(error) = spawn_runtime_thread(
             &label,
             run_supervisor(SupervisorContext {
                 agent_ref,
-                source,
+                plugin_id,
                 plugin_host,
                 pool,
                 home_directory,
@@ -401,37 +379,6 @@ impl ConnectionSupervisor {
             _registration: registration,
         })
     }
-}
-
-/// Decides which agent identity each source supervises, in the order the sources were offered.
-///
-/// A package that claims an identity another package already took is dropped rather than allowed
-/// to replace it: silently handing a user's existing agent to a different package is worse than
-/// ignoring the second one. A source whose identity is unusable is dropped for the same reason —
-/// there would be no way to address it.
-fn resolve_supervised_agents(
-    sources: impl Iterator<Item = AgentSource>,
-) -> Vec<(AgentRef, AgentSource)> {
-    let mut claimed = BTreeSet::new();
-    let mut resolved = Vec::new();
-    for source in sources {
-        let Ok(agent_ref) = source.agent_ref() else {
-            ora_warn!(
-                agent = source.label(),
-                "ignoring an agent whose identity is not a usable reference"
-            );
-            continue;
-        };
-        if !claimed.insert(agent_ref.clone()) {
-            ora_warn!(
-                agent = %agent_ref,
-                "ignoring an agent whose identity is already supervised"
-            );
-            continue;
-        }
-        resolved.push((agent_ref, source));
-    }
-    resolved
 }
 
 /// Runs the supervisor on a dedicated runtime because Desktop bootstrap is synchronous.
@@ -538,13 +485,11 @@ struct StartedAgent {
     process: AgentProcess,
     transport: PluginAcpTransport,
     messages: AcpMessages,
-    models: Vec<PluginAgentModel>,
 }
 
 struct SharedProcess {
     process: AgentProcess,
     client: AgentAcpClient,
-    models: Arc<[PluginAgentModel]>,
     inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
     load_session_supported: bool,
     http_mcp_supported: bool,
@@ -557,7 +502,7 @@ struct SharedProcess {
 async fn run_supervisor(context: SupervisorContext) {
     let SupervisorContext {
         agent_ref,
-        source,
+        plugin_id,
         plugin_host,
         pool,
         home_directory,
@@ -573,14 +518,14 @@ async fn run_supervisor(context: SupervisorContext) {
     let mut restart_circuit = RestartCircuit::default();
     loop {
         let _ = state.send(ConnectionState::Starting);
-        match spawn_initialized_process(&source, &plugin_host, &home_directory).await {
+        match spawn_initialized_process(&plugin_id, &plugin_host, &home_directory).await {
             Ok(mut process) => {
                 generation += 1;
                 retry_delay = INITIAL_RETRY_DELAY;
                 active_generation.store(generation, Ordering::Release);
                 let connection = RuntimeConnection {
                     client: process.client.clone(),
-                    models: process.models.clone(),
+                    runtime: process.process.runtime.clone(),
                     generation,
                     load_session_supported: process.load_session_supported,
                     http_mcp_supported: process.http_mcp_supported,
@@ -719,7 +664,7 @@ async fn run_process_generation(
 /// The connection is only reported ready once ACP `initialize` has returned its capabilities, so
 /// no caller can send a session request to a transport that is not yet carrying a live agent.
 async fn spawn_initialized_process(
-    source: &AgentSource,
+    plugin_id: &PluginId,
     plugin_host: &Arc<PluginApi>,
     home_directory: &Path,
 ) -> Result<SharedProcess, StartFailure> {
@@ -727,8 +672,7 @@ async fn spawn_initialized_process(
         process,
         transport,
         messages,
-        models,
-    } = spawn_plugin_connection(&source.plugin_id, plugin_host, home_directory).await?;
+    } = spawn_plugin_connection(plugin_id, plugin_host, home_directory).await?;
     let peer = AcpPeer::spawn(messages, transport);
     // Config options are only sent by agents that see the client advertise them,
     // so the model selector depends on this declaration. Boolean options stay
@@ -766,7 +710,6 @@ async fn spawn_initialized_process(
     Ok(SharedProcess {
         process,
         client,
-        models: models.into(),
         inbound,
         load_session_supported: response.agent_capabilities.load_session,
         http_mcp_supported: response.agent_capabilities.mcp_capabilities.http,
@@ -821,14 +764,6 @@ async fn spawn_plugin_connection(
         .map_err(|error| {
             StartFailure::Terminal(runtime_internal("agent_start_failed", error.to_string()))
         })?;
-    let models = match plugin_agent::list_models(&runtime).await {
-        Ok(models) => models,
-        Err(error) => {
-            plugin_agent::stop_agent(&runtime, &plugin_id.canonical()).await;
-            stop_plugin_runtime(plugin_host, plugin_id).await;
-            return Err(plugin_start_error(error));
-        }
-    };
     let transport = PluginAcpTransport::new(runtime.clone());
     Ok(StartedAgent {
         process: AgentProcess {
@@ -838,7 +773,6 @@ async fn spawn_plugin_connection(
         },
         transport,
         messages,
-        models,
     })
 }
 
@@ -909,8 +843,8 @@ fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, agen
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentSource, ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure,
-        plugin_attach_error, plugin_start_error, resolve_supervised_agents, spawn_runtime_thread,
+        ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure, agent_identity,
+        plugin_attach_error, plugin_start_error, spawn_runtime_thread,
     };
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
@@ -926,100 +860,42 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
 
-    /// Builds one agent plugin source for a package published under the official namespace.
-    fn plugin_source(package_name: &str) -> AgentSource {
-        // Identity resolution reads only the agent identity; a blank one still needs a
-        // well-formed package address, so the fixture falls back to a fixed address.
-        let plugin_id = PluginId::new("official", package_name)
-            .unwrap_or_else(|_| PluginId::new("official", "fixture").expect("plugin id"));
-        AgentSource {
-            plugin_id,
-            package_name: package_name.to_string(),
-        }
-    }
-
-    /// Verifies a plugin is supervised under the agent identity it supplies, not its package
-    /// address.
+    /// Verifies an agent is identified by its whole canonical plugin id, namespace included.
     ///
-    /// A package is addressed as `namespace/name` on disk and in the marketplace, while the agent
-    /// it contributes is persisted by every session as the package name alone. Keying supervisors
-    /// by the package address instead would make each stored `agent_ref` unresolvable and report
-    /// an installed plugin's agent as not installed.
+    /// Sessions persist this value in `agent_cli` and the supervisor map is keyed by it, so
+    /// dropping the namespace here would make two packages published by different marketplace
+    /// sources under one `identifier` collapse into a single agent.
     #[test]
-    fn supervises_a_plugin_under_its_agent_identity_rather_than_its_package_address() {
-        let resolved = resolve_supervised_agents(
-            [AgentSource {
-                plugin_id: PluginId::new("official", "ora-space.opencode").expect("plugin id"),
-                package_name: "ora-space.opencode".to_string(),
-            }]
-            .into_iter(),
-        );
+    fn identifies_an_agent_by_its_whole_plugin_id() {
+        let plugin_id = PluginId::new("official", "ora-space.opencode").expect("plugin id");
 
         assert_eq!(
-            resolved
-                .into_iter()
-                .map(|(agent_ref, _source)| agent_ref)
-                .collect::<Vec<_>>(),
-            vec![AgentRef::parse("ora-space.opencode").expect("parse plugin identity")]
+            agent_identity(&plugin_id),
+            AgentRef::parse("official/ora-space.opencode").expect("parse plugin identity"),
         );
     }
 
-    /// Verifies several installed packages are each supervised under their own identity.
+    /// Verifies two packages sharing an `identifier` across marketplace sources stay two agents.
     ///
-    /// This is what makes the agent set open: every identity comes from an installed package
-    /// rather than from a set fixed when Ora was built.
+    /// Both can be installed, both are supervised, and each keeps the sessions written against
+    /// it. Under a name-only identity the two would claim one supervisor slot and the winner
+    /// would be decided by the order installed packages are walked, quietly handing one source's
+    /// existing conversations to the other source's implementation.
     #[test]
-    fn supervises_every_installed_agent_package() {
-        let resolved = resolve_supervised_agents(
-            [
-                plugin_source("ora-space.claude"),
-                plugin_source("acme.my-agent"),
-            ]
-            .into_iter(),
-        );
+    fn keeps_same_identifier_agents_from_different_sources_distinct() {
+        let identities = [
+            PluginId::new("official", "acme.agent").expect("plugin id"),
+            PluginId::new("plugins.2aa64f48", "acme.agent").expect("plugin id"),
+        ]
+        .map(|plugin_id| agent_identity(&plugin_id));
 
         assert_eq!(
-            resolved
-                .into_iter()
-                .map(|(agent_ref, _source)| agent_ref)
-                .collect::<Vec<_>>(),
+            identities.to_vec(),
             vec![
-                AgentRef::parse("ora-space.claude").expect("parse plugin identity"),
-                AgentRef::parse("acme.my-agent").expect("parse plugin identity"),
-            ]
+                AgentRef::parse("official/acme.agent").expect("parse plugin identity"),
+                AgentRef::parse("plugins.2aa64f48/acme.agent").expect("parse plugin identity"),
+            ],
         );
-    }
-
-    /// Verifies a package cannot take over an identity another package already supervises.
-    #[test]
-    fn refuses_a_plugin_that_shadows_an_installed_identity() {
-        let resolved = resolve_supervised_agents(
-            [
-                plugin_source("ora-space.claude"),
-                plugin_source("ora-space.claude"),
-                plugin_source("acme.my-agent"),
-            ]
-            .into_iter(),
-        );
-
-        assert_eq!(
-            resolved
-                .into_iter()
-                .map(|(agent_ref, _source)| agent_ref)
-                .collect::<Vec<_>>(),
-            vec![
-                AgentRef::parse("ora-space.claude").expect("parse plugin identity"),
-                AgentRef::parse("acme.my-agent").expect("parse plugin identity"),
-            ]
-        );
-    }
-
-    /// Verifies a package whose identity is unusable is dropped rather than supervised blindly.
-    #[test]
-    fn drops_a_source_whose_identity_is_unusable() {
-        let resolved = resolve_supervised_agents([plugin_source("   ")].into_iter());
-
-        assert!(resolved.is_empty());
     }
 
     /// Verifies synchronous bootstrap can launch async supervision without an ambient runtime.
@@ -1153,7 +1029,7 @@ mod tests {
 
         assert_eq!(
             supervised(&supervisors),
-            vec![AgentRef::parse("example").expect("parse plugin identity")]
+            vec![AgentRef::parse("official/example").expect("parse plugin identity")]
         );
     }
 

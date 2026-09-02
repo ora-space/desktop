@@ -4,8 +4,8 @@ import { useTargetAgentCli, type AgentSelection } from "./use-target-agent-cli";
 /**
  * The send-gate verdict for one chat surface, kept distinct from
  * `useAvailableAgents`' rule: that list offers `starting` agents in the picker
- * because they are on their way to being usable, but `use-warm-session` still
- * rejects their sends, and a gate that offers a send the backend would refuse
+ * because they are on their way to being usable, but first send still rejects
+ * them, and a gate that offers a send the backend would refuse
  * is the bug this exists to prevent.
  *
  * - `"ready"` — the runtime reports this CLI ready, so a send can go out.
@@ -21,7 +21,7 @@ export type AgentReadiness = "ready" | "blocked" | "unknown";
 /**
  * Whether a chat surface's resolved agent can actually carry a send.
  *
- * `use-warm-session` refuses to open a provider session unless the runtime
+ * First send refuses to open a provider session unless the runtime
  * reports `ready`, so a composer pointing anywhere else fails its send with a
  * raw error instead of preventing it. This derives that same answer for UI, and
  * deliberately reuses `useTargetAgentCli` rather than re-deriving any leg of the

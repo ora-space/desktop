@@ -2,29 +2,48 @@ use std::path::{Path, PathBuf};
 
 use gitlancer::git::sync::{CheckoutRequest, CloneRequest, FetchRequest, PullRequest};
 use gitlancer::{BranchName, Git, GitEnv, GitRunner, RepoRoot, Repository};
+use ora_domain::PluginNamespace;
 use ora_plugin_manifest::RepositoryUrl;
 use ora_utils::GitBranchName;
+use ora_utils::url::canonical_repository_url;
 
 use crate::error::RegistryError;
 
-/// Describes one marketplace source repository and where its local checkout lives.
+/// Directory inside a source checkout that holds the published plugin entries.
+const REGISTRY_DIRECTORY: &str = "registry";
+
+/// Describes one marketplace source repository, the namespace it publishes under, and where its
+/// local checkout lives.
+///
+/// The namespace is supplied by the caller rather than derived here: it is bound once when the
+/// source is first configured and then persisted, so a source that is removed and re-added, or
+/// whose URL is respelled, keeps publishing under the identity its already-installed plugins were
+/// installed with. Deriving it on every construction would let that identity drift.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistrySource {
     url: String,
+    canonical_url: String,
+    namespace: PluginNamespace,
     branch: BranchName,
     checkout_dir: PathBuf,
     git_env: GitEnv,
 }
 
 impl RegistrySource {
-    /// Creates a source bound to a git URL, a tracked branch, and a local checkout directory.
+    /// Creates a source bound to a git URL, a namespace, a tracked branch, and a local checkout
+    /// directory.
     pub fn new(
         url: impl Into<String>,
+        namespace: PluginNamespace,
         branch: BranchName,
         checkout_dir: impl Into<PathBuf>,
     ) -> Self {
+        let url = url.into();
+        let canonical_url = canonical_repository_url(&url);
         Self {
-            url: url.into(),
+            url,
+            canonical_url,
+            namespace,
             branch,
             checkout_dir: checkout_dir.into(),
             git_env: GitEnv::default(),
@@ -32,34 +51,34 @@ impl RegistrySource {
     }
 
     /// Creates a source from a git URL and tracked branch, deriving its local checkout directory
-    /// from the URL beneath `sources_root`.
+    /// from the canonical URL beneath `sources_root`.
     ///
     /// Deriving the directory from the URL keeps additional marketplace sources distinct without
     /// a manual URL-to-directory mapping, and reproduces the layout that predates multiple
     /// sources: the scheme is stripped and the remainder is joined as path segments, so
     /// `https://github.com/ora-space/marketplace` checks out at
-    /// `<sources_root>/github.com/ora-space/marketplace`.
+    /// `<sources_root>/github.com/ora-space/marketplace`. Canonicalizing first means two
+    /// equivalent spellings of one repository share a single checkout instead of cloning twice.
     pub fn from_git(
         url: impl Into<String>,
+        namespace: PluginNamespace,
         branch: BranchName,
         sources_root: impl AsRef<Path>,
     ) -> Self {
-        let url = url.into();
+        let source = Self::new(url, namespace, branch, sources_root.as_ref());
         // Strip the scheme so the checkout mirrors the remote repository path; each remainder
         // segment is appended on its own so two sources never share a directory.
-        let rest = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .unwrap_or(&url);
+        let rest = source
+            .canonical_url
+            .split_once("://")
+            .map_or(source.canonical_url.as_str(), |(_scheme, rest)| rest);
         let mut checkout_dir = sources_root.as_ref().to_path_buf();
         for segment in rest.split('/').filter(|segment| !segment.is_empty()) {
             checkout_dir = checkout_dir.join(segment);
         }
         Self {
-            url,
-            branch,
             checkout_dir,
-            git_env: GitEnv::default(),
+            ..source
         }
     }
 
@@ -69,6 +88,7 @@ impl RegistrySource {
     /// the infallible [`Self::from_git`] path for the compile-time constant.
     pub fn try_from_git(
         url: impl Into<String>,
+        namespace: PluginNamespace,
         branch: impl AsRef<str>,
         sources_root: impl AsRef<Path>,
     ) -> Result<Self, RegistryError> {
@@ -76,14 +96,28 @@ impl RegistrySource {
         let branch = GitBranchName::parse(branch.as_ref())?;
         Ok(Self::from_git(
             url.as_str(),
+            namespace,
             BranchName::new(branch.as_str()),
             sources_root,
         ))
     }
 
-    /// Returns the git URL that hosts this registry source.
+    /// Returns the git URL that hosts this registry source, as the user configured it.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Returns the canonical spelling of this source's URL.
+    ///
+    /// This is the value a namespace binding is keyed on, so two configurations differing only in
+    /// case, credentials, a default port, a trailing slash, or a `.git` suffix are one source.
+    pub fn canonical_url(&self) -> &str {
+        &self.canonical_url
+    }
+
+    /// Returns the namespace every plugin this source publishes is identified under.
+    pub fn namespace(&self) -> &PluginNamespace {
+        &self.namespace
     }
 
     /// Returns the branch this source tracks.
@@ -96,12 +130,17 @@ impl RegistrySource {
         &self.checkout_dir
     }
 
-    /// Returns the command environment to apply to this source\u2019s Git network work.
+    /// Returns the `registry/` directory inside the checkout that holds this source's entries.
+    pub fn registry_dir(&self) -> PathBuf {
+        self.checkout_dir.join(REGISTRY_DIRECTORY)
+    }
+
+    /// Returns the command environment to apply to this source's Git network work.
     pub fn git_env(&self) -> &GitEnv {
         &self.git_env
     }
 
-    /// Replaces the command environment used for this source\u2019s Git network work.
+    /// Replaces the command environment used for this source's Git network work.
     pub fn with_git_env(mut self, git_env: GitEnv) -> Self {
         self.git_env = git_env;
         self
@@ -189,6 +228,7 @@ mod tests {
         let checkout = temp.path().join("sources").join("marketplace");
         let source = RegistrySource::new(
             "https://example.com/marketplace.git",
+            PluginNamespace::official(),
             BranchName::new("main"),
             &checkout,
         );
@@ -225,6 +265,7 @@ mod tests {
         fs::create_dir_all(checkout.join(".git"))?;
         let source = RegistrySource::new(
             "https://example.com/marketplace.git",
+            PluginNamespace::official(),
             BranchName::new("main"),
             &checkout,
         );
@@ -257,19 +298,73 @@ mod tests {
         let sources_root = temp.path().join("sources");
         let source = RegistrySource::from_git(
             "https://github.com/ora-space/marketplace",
+            PluginNamespace::official(),
             BranchName::new("main"),
             &sources_root,
         );
 
+        let expected_checkout = sources_root
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace");
         assert_eq!(
-            source.checkout_dir(),
-            sources_root
-                .join("github.com")
-                .join("ora-space")
-                .join("marketplace")
+            (
+                source.checkout_dir(),
+                source.registry_dir(),
+                source.url(),
+                source.branch().as_str(),
+            ),
+            (
+                expected_checkout.as_path(),
+                expected_checkout.join("registry"),
+                "https://github.com/ora-space/marketplace",
+                "main",
+            ),
         );
-        assert_eq!(source.url(), "https://github.com/ora-space/marketplace");
-        assert_eq!(source.branch().as_str(), "main");
+        Ok(())
+    }
+
+    /// Verifies equivalent spellings of one repository share a canonical URL and one checkout,
+    /// while the configured spelling is preserved for display and for the Git remote itself.
+    ///
+    /// The checkout is the cheap half of this: sharing it avoids cloning the same repository
+    /// twice. The canonical URL is the half that matters, because it is what a namespace binding
+    /// is keyed on, and a binding that split across spellings would detach installed plugins from
+    /// their source.
+    #[test]
+    fn canonicalizes_equivalent_urls_onto_one_checkout() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let sources_root = temp.path().join("sources");
+        let spellings = [
+            "https://github.com/ora-space/marketplace",
+            "https://GitHub.com/Ora-Space/Marketplace.git",
+            "https://github.com:443/ora-space/marketplace/",
+        ];
+
+        let sources = spellings.map(|url| {
+            RegistrySource::from_git(
+                url,
+                PluginNamespace::official(),
+                BranchName::new("main"),
+                &sources_root,
+            )
+        });
+
+        let expected_canonical = "https://github.com/ora-space/marketplace";
+        let expected_checkout = sources_root
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace");
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| (source.canonical_url(), source.checkout_dir(), source.url()))
+                .collect::<Vec<_>>(),
+            spellings
+                .iter()
+                .map(|url| (expected_canonical, expected_checkout.as_path(), *url))
+                .collect::<Vec<_>>(),
+        );
         Ok(())
     }
 
@@ -277,15 +372,28 @@ mod tests {
     #[test]
     fn validates_checked_git_source() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
+        let namespace = PluginNamespace::parse("acme-plugins.a1b2c3d4").expect("namespace");
         let source = RegistrySource::try_from_git(
             "https://github.com/ora-space/marketplace",
+            namespace.clone(),
             "main",
             temp.path(),
         )?;
 
-        assert_eq!(source.url(), "https://github.com/ora-space/marketplace");
-        assert_eq!(source.branch().as_str(), "main");
-        assert!(source.checkout_dir().starts_with(temp.path()));
+        assert_eq!(
+            (
+                source.url(),
+                source.branch().as_str(),
+                source.namespace(),
+                source.checkout_dir().starts_with(temp.path()),
+            ),
+            (
+                "https://github.com/ora-space/marketplace",
+                "main",
+                &namespace,
+                true,
+            ),
+        );
         Ok(())
     }
 
@@ -295,6 +403,7 @@ mod tests {
         assert!(
             RegistrySource::try_from_git(
                 "http://github.com/example/marketplace",
+                PluginNamespace::official(),
                 "main",
                 tempfile::tempdir()?.path(),
             )
@@ -303,6 +412,7 @@ mod tests {
         assert!(
             RegistrySource::try_from_git(
                 "https://github.com/example/marketplace",
+                PluginNamespace::official(),
                 "feature api",
                 tempfile::tempdir()?.path(),
             )

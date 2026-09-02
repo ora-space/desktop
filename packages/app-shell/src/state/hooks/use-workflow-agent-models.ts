@@ -1,7 +1,5 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { WarmSessionTarget } from "@ora/contracts";
-import { findModelOption, selectableValues } from "@ora/chat";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
 import type { AgentEntry } from "../../features/chat/agent-catalog";
@@ -33,10 +31,10 @@ export interface WorkflowAgentModelsCatalog {
 }
 
 /**
- * Discovers real models the same way chat does — by warming each agent —
+ * Discovers real models through each agent plugin
  * and flattens them into the workflow inspector's single picker list.
  *
- * Warm requires a cwd-bearing target. Preference order matches chat surfaces,
+ * Discovery requires a cwd-bearing workspace. Preference order matches chat surfaces,
  * then falls back to the first listed project so Settings can still discover
  * models when no workspace selection is active.
  */
@@ -47,7 +45,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   const projectsQuery = useProjects();
   const tasksQuery = useTasks();
   const workspacesQuery = useWorkspaces();
-  const target = discoveryTarget(
+  const workspaceId = discoveryWorkspaceId(
     selection,
     projectsQuery.data?.[0]?.id ?? null,
     tasksQuery.data ?? [],
@@ -58,17 +56,15 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     selection.projectId === null &&
     selection.taskId === null;
 
-  const warmQueries = useQueries({
+  const modelQueries = useQueries({
     queries: agents.map((agent) => ({
-      queryKey: queryKeys.warmSession(target, agent.agentRef),
-      enabled: target !== null,
+      queryKey: queryKeys.agentModels(agent.agentRef, workspaceId),
+      enabled: workspaceId !== null,
       queryFn: () =>
-        client.session.warm({
-          target: target!,
+        client.agentRuntime.listModels({
+          workspaceId: workspaceId!,
           agentRef: agent.agentRef,
         }),
-      staleTime: Infinity,
-      gcTime: Infinity,
       retry: false,
     })),
   });
@@ -78,24 +74,17 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     // installed while Ora runs is discovered here too without a second list to sync.
     const models: WorkflowAgentModel[] = [];
     for (const [index, agent] of agents.entries()) {
-      const options = warmQueries[index]?.data?.configOptions;
-      if (options === undefined) {
-        continue;
-      }
-      const modelOption = findModelOption(options);
-      if (modelOption === null) {
-        continue;
-      }
-      for (const value of selectableValues(modelOption)) {
+      const discovered = modelQueries[index]?.data?.models ?? [];
+      for (const model of discovered) {
         models.push({
           agentCli: agent.agentRef,
-          modelId: value.value,
-          label: `${agent.label} · ${value.name}`,
+          modelId: model.id,
+          label: `${agent.label} · ${model.displayName}`,
         });
       }
     }
     return models;
-  }, [agents, warmQueries]);
+  }, [agents, modelQueries]);
 
   const modelsByCli = useMemo(() => {
     const byCli = new Map<string, WorkflowAgentModel[]>();
@@ -114,7 +103,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     () =>
       Object.fromEntries(
         agents.map((agent, index) => {
-          const query = warmQueries[index];
+          const query = modelQueries[index];
           return [
             agent.agentRef,
             {
@@ -124,7 +113,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
           ];
         }),
       ),
-    [agents, warmQueries],
+    [agents, modelQueries],
   );
 
   const isLoading =
@@ -133,12 +122,12 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     (selection.taskId === null &&
       selection.projectId !== null &&
       workspacesQuery.isPending) ||
-    (target !== null &&
-      warmQueries.some((query) => query.isPending || query.isFetching));
+    (workspaceId !== null &&
+      modelQueries.some((query) => query.isPending || query.isFetching));
   const isError =
-    target !== null &&
+    workspaceId !== null &&
     !isLoading &&
-    warmQueries.every((query) => query.isError) &&
+    modelQueries.every((query) => query.isError) &&
     agentModels.length === 0;
 
   return {
@@ -152,7 +141,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
       void projectsQuery.refetch();
       void tasksQuery.refetch();
       void workspacesQuery.refetch();
-      for (const query of warmQueries) {
+      for (const query of modelQueries) {
         void query.refetch();
       }
     },
@@ -160,7 +149,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 }
 
 /** Picks the cwd target used to discover models for the workflow editor. */
-function discoveryTarget(
+function discoveryWorkspaceId(
   selection: { projectId: string | null; taskId: string | null },
   fallbackProjectId: string | null,
   tasks: readonly { id: string; workspaceId: string }[],
@@ -169,12 +158,10 @@ function discoveryTarget(
     projectId: string;
     kind: "main" | "isolated";
   }[],
-): WarmSessionTarget | null {
+): string | null {
   if (selection.taskId !== null) {
     const task = tasks.find((candidate) => candidate.id === selection.taskId);
-    return task === undefined
-      ? null
-      : { type: "workspace", workspaceId: task.workspaceId };
+    return task === undefined ? null : task.workspaceId;
   }
   if (selection.projectId !== null) {
     const workspace = workspaces.find(
@@ -182,18 +169,14 @@ function discoveryTarget(
         candidate.projectId === selection.projectId &&
         candidate.kind === "main",
     );
-    return workspace === undefined
-      ? null
-      : { type: "workspace", workspaceId: workspace.id };
+    return workspace === undefined ? null : workspace.id;
   }
   if (fallbackProjectId !== null) {
     const workspace = workspaces.find(
       (candidate) =>
         candidate.projectId === fallbackProjectId && candidate.kind === "main",
     );
-    return workspace === undefined
-      ? null
-      : { type: "workspace", workspaceId: workspace.id };
+    return workspace === undefined ? null : workspace.id;
   }
   return null;
 }

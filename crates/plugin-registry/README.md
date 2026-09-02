@@ -10,19 +10,31 @@
   the environment held by the source (`RegistrySource::git_env`) is applied to those Git commands.
 - `RegistrySource` carries a `gitlancer::GitEnv` set with `with_git_env` and read with `git_env`,
   allowing callers such as the backend to opt individual marketplace checkouts into a network proxy.
-- `RegistrySource::from_git` derives a source's checkout directory from its git URL beneath the
-  sources root, so several marketplace sources can be synced side by side without a manual
-  URL-to-directory mapping.
+- `RegistrySource` carries the namespace its entries are published under. The namespace is
+  supplied by the caller, which binds it once per source and persists it, rather than derived on
+  every construction: a plugin's install path freezes the namespace when the package lands, so an
+  identity re-derived per read could drift away from what is already on disk.
+- `RegistrySource::from_git` canonicalizes the git URL (case, credentials, default port, trailing
+  slash, `.git` suffix) and derives the checkout directory from that canonical form beneath the
+  sources root, so several marketplace sources sync side by side without a manual URL-to-directory
+  mapping and two spellings of one repository share a single checkout.
 - `RegistrySource::try_from_git` validates the same source shape as `from_git` but rejects
   non-HTTPS URLs and malformed short branch names before any checkout directory or Git work begins;
   configuration-backed callers use this checked entry point.
-- `RegistryIndex::build` recursively scans a directory for `orax.toml` files, parses each valid
-  manifest into a `RegistryEntry`, and returns a deterministically ordered index built at an
-  injected Unix timestamp.
-- `RegistryIndex::build_all` scans several registry directories and merges their entries into one
-  index: a shared `namespace/identifier` id is listed once and the first source in source order wins.
+- `RegistryIndex::build_all` scans every configured source's `registry/` directory, parses each
+  valid manifest into a `RegistryEntry` under that source's namespace, and returns a
+  deterministically ordered index built at an injected Unix timestamp. Sources cannot shadow each
+  other: an entry's id is `<source namespace>/<identifier>`, so two repositories publishing the same
+  `identifier` produce two ids and both stay listed. Deduplication only collapses a repeated id
+  within one source.
+- `RegistryIndex::resolve_manifest_all` resolves an id against the source that owns its namespace
+  rather than the first source in order, so an install or update always follows the entry's own
+  repository and proxy policy.
 - `RegistryIndex::load` reads a previously written index file; `RegistryIndex::write` replaces the
   target file atomically through `ora-utils` so readers never observe a partial index.
+- Each entry records the canonical URL of the source that published it, because every other
+  display field comes from a manifest either repository can copy verbatim and the namespace is an
+  opaque digest to a reader; attribution is what lets the UI tell two same-named listings apart.
 - Each entry carries the manifest's display `title` (falling back to the identifier when the
   manifest or an older cached index omits it), so consumers render a human name without
   re-reading `orax.toml`.
@@ -48,7 +60,7 @@
 
 ## Public interface
 
-`RegistryIndex::build(dir, updated_at)` returns a `RegistryBuild` carrying the ordered index and any
+`RegistryIndex::build_all(sources, updated_at)` returns a `RegistryBuild` carrying the ordered index and any
 skipped manifests; `RegistryIndex::build_all(dirs, updated_at)` does the same across several
 source directories. `RegistryIndex::load(path)` / `RegistryIndex::write(path)` read and atomically
 persist an index, and `RegistryIndex::resolve_manifest_all(dirs, id)` finds a release manifest

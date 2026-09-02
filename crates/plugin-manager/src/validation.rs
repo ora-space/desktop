@@ -3,7 +3,7 @@ use crate::mcp::{InstalledMcpDescriptor, validate_mcp};
 use crate::skill::{InstalledSkillDescriptor, validate_skill};
 use crate::webview::{InstalledWebviewDescriptor, validate_webview};
 use crate::workbench::{InstalledWorkbenchDescriptor, validate_workbench};
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginNamespace};
 use ora_plugin_config::{CompiledConfigurationFile, ConfigurationError, ConfigurationService};
 use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
@@ -118,17 +118,24 @@ impl ManifestValidationError {
 /// depends on the host or the package on disk: the entrypoint and page files a kind must ship,
 /// the files a kind must not ship, and the cross-value policies of the kind-specific sections.
 ///
+/// `namespace` is supplied by the host — the installing source, or the directory an already
+/// installed package sits under — and is never read from the manifest: a package is third-party
+/// content, and a namespace it could name for itself would let it claim another source's
+/// directories, configuration, and Skill rows.
+///
 /// `logo` arrives already read and security-validated by the discovery layer, so this function
 /// keeps its filesystem work limited to the files it must resolve.
 pub(crate) fn validate(
     package_root: &Path,
     manifest: &PluginManifest,
+    namespace: &PluginNamespace,
     logo: Option<String>,
 ) -> Result<InstalledPlugin, ManifestValidationError> {
     let name = manifest.name().as_str();
-    // Both segments passed the manifest grammar, which is a strict subset of what the domain
-    // id accepts, so this conversion cannot fail for a reason the user could act on.
-    let id = PluginId::new(manifest.namespace().as_str(), name).map_err(|error| {
+    // The name passed the manifest grammar, which is a strict subset of what the domain id
+    // accepts, and the namespace is already a validated segment, so this conversion cannot fail
+    // for a reason the user could act on.
+    let id = PluginId::new(namespace.clone(), name).map_err(|error| {
         invalid(
             "identifier",
             format!("plugin id is not representable: {error}"),

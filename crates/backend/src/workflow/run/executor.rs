@@ -1,5 +1,5 @@
 use super::prompt::{RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt};
-use crate::agent_runtime::{AgentRuntimeManager, WarmOwner};
+use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
 use agent_client_protocol_schema::v1::ContentBlock;
@@ -17,8 +17,8 @@ use ora_application::{
     WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_contracts::{
-    AgentRef as ContractAgentRef, AttachSessionRequest, PromptSessionEvent, PromptSessionRequest,
-    SetSessionConfigRequest, StopSessionRequest, WarmSessionRequest, WarmSessionTarget,
+    AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
+    StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
@@ -34,7 +34,7 @@ use thiserror::Error;
 
 /// Executes one agent node through a real Ora session, reporting completion to the run engine.
 ///
-/// `dispatch` spawns a background task that warms, attaches, configures, prompts, and stops one
+/// `dispatch` spawns a background task that starts, prompts, and stops one
 /// dedicated session per node, then reports the result through the `WorkflowRunCallback`.
 #[derive(Clone)]
 pub struct WorkflowRunNodeExecutor {
@@ -318,7 +318,7 @@ fn persist_worktree_baseline(
     Ok(())
 }
 
-/// Runs the warm → attach → model → prompt → stop session chain for one agent node.
+/// Runs the start → prompt → stop session chain for one agent node.
 #[allow(clippy::too_many_arguments)]
 async fn drive_agent_node(
     agent_runtime: &AgentRuntimeManager,
@@ -339,49 +339,40 @@ async fn drive_agent_node(
     let agent_ref = resolve_agent_ref(&config.executor.agent_cli)?;
     let run_payload = parse_workflow_run_payload(context.run.payload.as_deref())?;
 
-    // Warm a reusable provider session for this run's workspace.
-    let warm = agent_runtime
-        .warm_session_for_owner(
-            WarmSessionRequest {
-                target: WarmSessionTarget::Workspace {
-                    workspace_id: context.run.workspace_id.to_string(),
-                },
-                agent_ref,
-            },
-            WarmOwner::WorkflowNode {
-                run_id: context.run.id.to_string(),
-                node_id: node.id.clone(),
-            },
-        )
-        .await?;
-
-    // Attach the warm session without publishing it to the node yet. The owning prompt must win
+    // Start the session without publishing it to the node yet. The owning prompt must win
     // admission before workflow UI loads can discover the session; failures in the preparation
-    // block below stop this attached session so cancellation cannot leave an unbound actor behind.
-    let attach = agent_runtime
-        .attach_workflow_node_session(AttachSessionRequest {
-            session_id: warm.session_id.clone(),
+    // block below stop this session so cancellation cannot leave an unbound actor behind.
+    let started = agent_runtime
+        .start_workflow_node_session(StartSessionRequest {
             workspace_id: context.run.workspace_id.to_string(),
+            agent_ref,
+            model: Some(config.executor.model_id.clone()),
         })
         .await?;
-    let session_id = SessionId::new(attach.session.id);
+    let session_id = SessionId::new(started.session.id);
 
     let outcome: Result<AgentNodeOutcome, NodeExecutionError> = async {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
 
-        // Select the graph-declared model from the warm-advertised options; no silent fallback.
+        // Confirm the graph-declared model is both offered and active; no silent fallback.
         let (config_id, model_value) = match_model_value(
-            &warm.config_options,
+            &started.config_options,
             &config.executor.agent_cli,
             &config.executor.model_id,
         )?;
-        agent_runtime
-            .set_session_config(SetSessionConfigRequest {
-                session_id: warm.session_id.clone(),
-                config_id,
-                value: model_value,
-            })
-            .await?;
+        let selected = started.config_options.iter().any(|option| {
+            option.id.0.as_ref() == config_id
+                && matches!(
+                    &option.kind,
+                    SessionConfigKind::Select(select) if select.current_value.0.as_ref() == model_value
+                )
+        });
+        if !selected {
+            return Err(NodeExecutionError::WorkflowModelNotFound {
+                agent_ref: config.executor.agent_cli.clone(),
+                model_id: config.executor.model_id.clone(),
+            });
+        }
 
         // Resolve the role's system instructions from the agents catalog; an empty role means no
         // system-instructions block is sent. Name is preferred; the id is a legacy fallback.
@@ -425,7 +416,7 @@ async fn drive_agent_node(
 
         let mut stream = agent_runtime
             .prompt_session(PromptSessionRequest {
-                session_id: warm.session_id.clone(),
+                session_id: session_id.to_string(),
                 prompt,
                 record_prompt: None,
             })

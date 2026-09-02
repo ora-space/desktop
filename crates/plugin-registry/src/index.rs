@@ -8,6 +8,7 @@ use ora_plugin_manifest::PluginManifest;
 use crate::entry::{RegistryEntry, entry_id};
 use crate::error::RegistryError;
 use crate::logo;
+use crate::source::RegistrySource;
 
 /// The index schema version reported in every built index file.
 const INDEX_VERSION: &str = "1.0";
@@ -25,30 +26,32 @@ pub struct RegistryIndex {
 }
 
 impl RegistryIndex {
-    /// Scans `dir` recursively for `orax.toml` files, parses each valid manifest, and returns a
-    /// deterministically ordered index built at the injected Unix `updated_at` instant.
+    /// Scans every configured source's registry directory for `orax.toml`, parses each valid
+    /// manifest under that source's namespace, and merges the results into one deterministically
+    /// ordered index built at the injected Unix `updated_at` instant.
     ///
     /// Malformed or unreadable manifests are skipped, logged as warnings, and reported through
     /// the returned [`RegistryBuild`] so a single bad file never blocks the whole build.
-    pub fn build(dir: &Path, updated_at: i64) -> RegistryBuild {
-        Self::build_all(&[dir], updated_at)
-    }
-
-    /// Scans every injected registry directory for `orax.toml`, parses each valid manifest, and
-    /// merges the results into one deterministically ordered index built at `updated_at`.
     ///
-    /// Sources covering the same `namespace/identifier` id are merged: the id is listed once, and the
-    /// first occurrence in source-then-scan order wins, so the combined listing has no duplicate
-    /// ids regardless of how heavily the sources overlap.
-    pub fn build_all(registry_dirs: &[&Path], updated_at: i64) -> RegistryBuild {
+    /// Entries from different sources never collide: an entry's id is `<source namespace>/<identifier>`,
+    /// so two repositories publishing the same `identifier` produce two ids and both stay listed.
+    /// Deduplication therefore only collapses a repeated id *within* one source, where the first
+    /// manifest in path order wins. Telling the two apart is the display layer's job, which is
+    /// what [`RegistryEntry::source_url`] exists for.
+    pub fn build_all(sources: &[&RegistrySource], updated_at: i64) -> RegistryBuild {
         let mut entries = Vec::new();
         let mut skipped = Vec::new();
-        for dir in registry_dirs {
-            for path in orax_manifest_paths(dir) {
+        for source in sources {
+            for path in orax_manifest_paths(&source.registry_dir()) {
                 match parse_manifest(&path) {
                     Ok(manifest) => {
                         let logo = logo::read_beside_manifest(&path);
-                        entries.push(RegistryEntry::from_manifest(&manifest, logo));
+                        entries.push(RegistryEntry::from_manifest(
+                            &manifest,
+                            source.namespace(),
+                            source.canonical_url(),
+                            logo,
+                        ));
                     }
                     Err(error) => {
                         ora_warn!(path = %path.display(), %error, "skipping invalid registry plugin manifest");
@@ -71,47 +74,48 @@ impl RegistryIndex {
         RegistryBuild { index, skipped }
     }
 
-    /// Resolves the full release manifest for a marketplace identifier by re-reading the source
-    /// `registry` directory, matching `namespace/identifier` against each parsed manifest.
+    /// Resolves the full release manifest one source publishes for `id`.
     ///
-    /// This is the install-time companion of [`Self::build`]: the cached index carries only the
-    /// lightweight display fields, so consumers re-read the source `orax.toml` to obtain the
-    /// release `url` and `sha256` needed to download and verify. Unparseable manifests are skipped
-    /// here exactly as they are during the index build, so one bad file never blocks a lookup.
+    /// This is the install-time companion of [`Self::build_all`]: the cached index carries only
+    /// the lightweight display fields, so consumers re-read the source `orax.toml` to obtain the
+    /// release `url` and `sha256` needed to download and verify. A source whose namespace differs
+    /// from the id's resolves nothing, because that id names a plugin this source does not
+    /// publish. Unparseable manifests are skipped exactly as during the index build, so one bad
+    /// file never blocks a lookup.
     pub fn resolve_manifest(
-        registry_dir: &Path,
+        source: &RegistrySource,
         id: &PluginId,
     ) -> Result<Option<PluginManifest>, RegistryError> {
-        let Some(path) = Self::find_manifest_path(registry_dir, id)? else {
+        let Some(path) = Self::find_manifest_path(source, id)? else {
             return Ok(None);
         };
         Ok(Some(parse_manifest(&path)?))
     }
 
-    /// Resolves the README text beside the manifest that matches `id`.
+    /// Resolves the README text beside the manifest that matches `id` in `source`.
     ///
     /// This is the detail-page companion of [`Self::resolve_manifest`]: the cached index carries
     /// only display fields, so the UI reads the source README on demand. A listing without a
     /// README reads as `None`; an unreadable, non-UTF-8, or oversized document is reported.
     pub fn resolve_readme(
-        registry_dir: &Path,
+        source: &RegistrySource,
         id: &PluginId,
     ) -> Result<Option<String>, crate::readme::ReadmeReadError> {
-        let Some(path) = Self::find_manifest_path(registry_dir, id)? else {
+        let Some(path) = Self::find_manifest_path(source, id)? else {
             return Ok(None);
         };
         crate::readme::read_beside_manifest(&path)
     }
 
-    /// Locates the source manifest whose parsed identifier equals `id`.
-    ///
-    /// Unparseable manifests are skipped exactly as they are during the index build, so one bad
-    /// file never blocks a lookup.
+    /// Locates the manifest in `source` whose identity under that source's namespace equals `id`.
     fn find_manifest_path(
-        registry_dir: &Path,
+        source: &RegistrySource,
         id: &PluginId,
     ) -> Result<Option<PathBuf>, RegistryError> {
-        for path in orax_manifest_paths(registry_dir) {
+        if source.namespace().as_str() != id.namespace() {
+            return Ok(None);
+        }
+        for path in orax_manifest_paths(&source.registry_dir()) {
             let manifest = match parse_manifest(&path) {
                 Ok(manifest) => manifest,
                 Err(error) => {
@@ -119,24 +123,25 @@ impl RegistryIndex {
                     continue;
                 }
             };
-            if entry_id(&manifest) == *id {
+            if entry_id(&manifest, source.namespace()) == *id {
                 return Ok(Some(path));
             }
         }
         Ok(None)
     }
 
-    /// Resolves the full release manifest for a marketplace identifier across every source
-    /// `registry` directory, returning the first source that declares it.
+    /// Resolves the full release manifest for `id` across every configured source.
     ///
-    /// This is the install-time companion of [`Self::build_all`] for multiple sources: search
-    /// follows source order so duplicate ids resolve to the same entry the merged index lists.
+    /// An id carries the namespace of the source that published it, so this is not a
+    /// first-source-wins search: only the source that owns that namespace can answer, and an
+    /// install or update therefore always follows the entry's own source and proxy policy no
+    /// matter how the source list is ordered or reordered afterwards.
     pub fn resolve_manifest_all(
-        registry_dirs: &[&Path],
+        sources: &[&RegistrySource],
         id: &PluginId,
     ) -> Result<Option<PluginManifest>, RegistryError> {
-        for dir in registry_dirs {
-            if let Some(manifest) = Self::resolve_manifest(dir, id)? {
+        for source in sources {
+            if let Some(manifest) = Self::resolve_manifest(source, id)? {
                 return Ok(Some(manifest));
             }
         }
@@ -246,18 +251,41 @@ fn parse_manifest(path: &Path) -> Result<PluginManifest, RegistryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gitlancer::BranchName;
+    use ora_domain::PluginNamespace;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;
 
     const UPDATED_AT: i64 = 1_776_244_428;
+    const OFFICIAL_URL: &str = "https://github.com/ora-space/marketplace";
+    const THIRD_PARTY_URL: &str = "https://github.com/acme/plugins";
+
+    /// Binds one temp checkout to a source identity so index building has a namespace to use.
+    fn source_at(checkout: &Path, url: &str, namespace: PluginNamespace) -> RegistrySource {
+        RegistrySource::new(url, namespace, BranchName::new("main"), checkout)
+    }
+
+    /// Binds a temp checkout to the default marketplace identity.
+    fn official_source(checkout: &Path) -> RegistrySource {
+        source_at(checkout, OFFICIAL_URL, PluginNamespace::official())
+    }
+
+    /// Binds a temp checkout to a third-party source whose namespace is derived from its URL.
+    fn third_party_source(checkout: &Path) -> RegistrySource {
+        let canonical = ora_utils::url::canonical_repository_url(THIRD_PARTY_URL);
+        source_at(
+            checkout,
+            THIRD_PARTY_URL,
+            PluginNamespace::derive_from_canonical_url(&canonical),
+        )
+    }
 
     /// Builds a syntactically valid `orax.toml` string for a plugin identifier.
     fn valid_manifest(identifier: &str, description: &str) -> String {
         format!(
             "resolver = 1\n\
              identifier = \"{identifier}\"\n\
-             namespace = \"official\"\n\
              kind = \"workbench\"\n\
              version = \"1.2.0\"\n\
              description = \"{description}\"\n\
@@ -295,14 +323,25 @@ mod tests {
         let root = TempDir::new()?;
         write_manifest(root.path(), "z", &valid_manifest("z", "Z plugin"))?;
         write_manifest(root.path(), "a", &valid_manifest("a", "A plugin"))?;
+        let source = official_source(root.path());
 
-        let build = RegistryIndex::build(root.path(), UPDATED_AT);
+        let build = RegistryIndex::build_all(&[&source], UPDATED_AT);
 
         let a_manifest = PluginManifest::parse(&valid_manifest("a", "A plugin"))?;
         let z_manifest = PluginManifest::parse(&valid_manifest("z", "Z plugin"))?;
         let expected_plugins = vec![
-            RegistryEntry::from_manifest(&a_manifest, /*logo*/ None),
-            RegistryEntry::from_manifest(&z_manifest, /*logo*/ None),
+            RegistryEntry::from_manifest(
+                &a_manifest,
+                source.namespace(),
+                source.canonical_url(),
+                /*logo*/ None,
+            ),
+            RegistryEntry::from_manifest(
+                &z_manifest,
+                source.namespace(),
+                source.canonical_url(),
+                /*logo*/ None,
+            ),
         ];
 
         assert_eq!(build.index().plugins().to_vec(), expected_plugins);
@@ -312,15 +351,49 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies an entry's namespace and attribution come from the publishing source, and that a
+    /// residual `namespace` key in the manifest cannot influence either.
+    #[test]
+    fn takes_identity_from_the_source_not_the_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let manifest = valid_manifest("weather", "Weather plugin")
+            .replace("kind = ", "namespace = \"official\"\nkind = ");
+        write_manifest(root.path(), "weather", &manifest)?;
+        let source = third_party_source(root.path());
+
+        let build = RegistryIndex::build_all(&[&source], UPDATED_AT);
+
+        assert_eq!(build.skipped().len(), 0);
+        assert_eq!(
+            build
+                .index()
+                .plugins()
+                .iter()
+                .map(|entry| (
+                    entry.id().canonical(),
+                    entry.namespace().to_owned(),
+                    entry.source_url().to_owned(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                format!("{}/weather", source.namespace()),
+                source.namespace().to_string(),
+                "https://github.com/acme/plugins".to_string(),
+            )],
+        );
+        Ok(())
+    }
+
     /// Verifies `kind = "mcp"` is indexed rather than skipped as an unsupported kind.
     #[test]
     fn indexes_an_mcp_kind_marketplace_manifest() -> Result<(), Box<dyn std::error::Error>> {
         let root = TempDir::new()?;
-        let source = valid_manifest("ora-space.tavily", "Tavily MCP")
+        let manifest = valid_manifest("ora-space.tavily", "Tavily MCP")
             .replace("kind = \"workbench\"", "kind = \"mcp\"");
-        write_manifest(root.path(), "ora-space.tavily", &source)?;
+        write_manifest(root.path(), "ora-space.tavily", &manifest)?;
+        let source = official_source(root.path());
 
-        let build = RegistryIndex::build(root.path(), UPDATED_AT);
+        let build = RegistryIndex::build_all(&[&source], UPDATED_AT);
 
         assert_eq!(build.skipped().len(), 0);
         assert_eq!(build.index().plugins().len(), 1);
@@ -341,24 +414,24 @@ mod tests {
             "weather",
             &valid_manifest("weather", "Weather plugin"),
         )?;
+        let source = official_source(root.path());
 
-        let registry_dir = root.path().join("registry");
         let manifest = RegistryIndex::resolve_manifest(
-            &registry_dir,
+            &source,
             &PluginId::new("official", "weather").expect("plugin id"),
         )?
         .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
 
         assert_eq!(manifest.name().as_str(), "weather");
-        assert_eq!(manifest.namespace().as_str(), "official");
 
         let missing = RegistryIndex::resolve_manifest(
-            &registry_dir,
+            &source,
             &PluginId::new("official", "absent").expect("plugin id"),
         )?;
         assert!(missing.is_none());
         Ok(())
     }
+
     /// Verifies detail-page resolution reads the README beside the matching manifest.
     #[test]
     fn resolves_readme_beside_a_manifest() -> Result<(), Box<dyn std::error::Error>> {
@@ -372,22 +445,23 @@ mod tests {
             .parent()
             .ok_or_else(|| std::io::Error::other("no parent"))?;
         fs::write(entry_dir.join("README.md"), "# Weather\n\nLive forecasts.")?;
+        let source = official_source(root.path());
 
-        let registry_dir = root.path().join("registry");
         let id = PluginId::new("official", "weather").expect("plugin id");
         assert_eq!(
-            RegistryIndex::resolve_readme(&registry_dir, &id)?,
+            RegistryIndex::resolve_readme(&source, &id)?,
             Some("# Weather\n\nLive forecasts.".to_string())
         );
 
         // An identifier absent from the registry, or a listing without a README, reads as none.
         let absent = PluginId::new("official", "absent").expect("plugin id");
-        assert_eq!(RegistryIndex::resolve_readme(&registry_dir, &absent)?, None);
+        assert_eq!(RegistryIndex::resolve_readme(&source, &absent)?, None);
         write_manifest(root.path(), "silent", &valid_manifest("silent", "No docs"))?;
         let silent = PluginId::new("official", "silent").expect("plugin id");
-        assert_eq!(RegistryIndex::resolve_readme(&registry_dir, &silent)?, None);
+        assert_eq!(RegistryIndex::resolve_readme(&source, &silent)?, None);
         Ok(())
     }
+
     /// Verifies the `logo.svg` beside a manifest is inlined into that entry's index record.
     #[test]
     fn inlines_the_logo_beside_each_manifest() -> Result<(), Box<dyn std::error::Error>> {
@@ -399,8 +473,9 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("no parent"))?;
         fs::write(entry_dir.join("logo.svg"), logo)?;
         write_manifest(root.path(), "b", &valid_manifest("b", "B plugin"))?;
+        let source = official_source(root.path());
 
-        let build = RegistryIndex::build(root.path(), UPDATED_AT);
+        let build = RegistryIndex::build_all(&[&source], UPDATED_AT);
 
         assert_eq!(build.index().plugins()[0].logo(), Some(logo));
         assert_eq!(build.index().plugins()[1].logo(), None);
@@ -419,9 +494,10 @@ mod tests {
             entry_dir.join("logo.svg"),
             "<svg><script>evil()</script></svg>",
         )?;
+        let source = official_source(root.path());
 
         let build =
-            ora_logging::with_trace_logging(|| RegistryIndex::build(root.path(), UPDATED_AT));
+            ora_logging::with_trace_logging(|| RegistryIndex::build_all(&[&source], UPDATED_AT));
 
         assert_eq!(build.index().plugins().len(), 1);
         assert_eq!(build.index().plugins()[0].logo(), None);
@@ -434,8 +510,9 @@ mod tests {
     fn builds_an_empty_index_for_a_missing_registry_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = TempDir::new()?;
+        let source = official_source(&root.path().join("absent"));
 
-        let build = RegistryIndex::build(&root.path().join("registry"), UPDATED_AT);
+        let build = RegistryIndex::build_all(&[&source], UPDATED_AT);
 
         assert_eq!(build.index().plugins().len(), 0);
         assert_eq!(build.skipped().len(), 0);
@@ -448,9 +525,10 @@ mod tests {
         let root = TempDir::new()?;
         write_manifest(root.path(), "good", &valid_manifest("good", "Good plugin"))?;
         let bad_path = write_manifest(root.path(), "bad", "this is not valid toml")?;
+        let source = official_source(root.path());
 
         let build =
-            ora_logging::with_trace_logging(|| RegistryIndex::build(root.path(), UPDATED_AT));
+            ora_logging::with_trace_logging(|| RegistryIndex::build_all(&[&source], UPDATED_AT));
 
         assert_eq!(build.index().plugins().len(), 1);
         assert_eq!(build.index().plugins()[0].id().canonical(), "official/good");
@@ -465,8 +543,9 @@ mod tests {
     fn load_round_trips_written_index() -> Result<(), Box<dyn std::error::Error>> {
         let root = TempDir::new()?;
         write_manifest(root.path(), "a", &valid_manifest("a", "A plugin"))?;
+        let source = official_source(root.path());
 
-        let index = RegistryIndex::build(root.path(), UPDATED_AT)
+        let index = RegistryIndex::build_all(&[&source], UPDATED_AT)
             .index()
             .clone();
         let target = root.path().join("cache").join("registry_index.json");
@@ -490,8 +569,9 @@ mod tests {
             "weather",
             &valid_manifest("weather", "Weather plugin"),
         )?;
+        let source = official_source(root.path());
 
-        let index = RegistryIndex::build(root.path(), UPDATED_AT)
+        let index = RegistryIndex::build_all(&[&source], UPDATED_AT)
             .index()
             .clone();
         let serialized = serde_json::to_value(&index)?;
@@ -515,14 +595,15 @@ mod tests {
     fn write_overwrites_atomically_without_leftovers() -> Result<(), Box<dyn std::error::Error>> {
         let root = TempDir::new()?;
         write_manifest(root.path(), "a", &valid_manifest("a", "A plugin"))?;
+        let source = official_source(root.path());
 
         let target = root.path().join("registry_index.json");
-        RegistryIndex::build(root.path(), UPDATED_AT)
+        RegistryIndex::build_all(&[&source], UPDATED_AT)
             .index()
             .write(&target)?;
         let first = fs::read_to_string(&target)?;
 
-        let second_index = RegistryIndex::build(root.path(), UPDATED_AT + 1)
+        let second_index = RegistryIndex::build_all(&[&source], UPDATED_AT + 1)
             .index()
             .clone();
         second_index.write(&target)?;
@@ -550,83 +631,118 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies multiple sources merge into one index and a shared id is listed exactly once,
-    /// keeping the first source's entry.
+    /// Verifies two sources publishing the same `identifier` both stay listed, each under its own
+    /// namespace and carrying its own attribution.
+    ///
+    /// This is the shadowing case the source-derived namespace exists to remove: when every entry
+    /// shared one namespace, whichever source came first silently replaced the other's listing,
+    /// and a third-party source ordered ahead of the default one could stand in for a first-party
+    /// plugin without the user seeing which repository the card came from.
     #[test]
-    fn merges_multiple_sources_and_dedups_by_id() -> Result<(), Box<dyn std::error::Error>> {
+    fn lists_same_identifier_from_two_sources_without_shadowing()
+    -> Result<(), Box<dyn std::error::Error>> {
         let first = TempDir::new()?;
         let second = TempDir::new()?;
-        write_manifest(first.path(), "a", &valid_manifest("a", "A from first"))?;
         write_manifest(
             first.path(),
             "shared",
-            &valid_manifest("shared", "Shared from first"),
+            &valid_manifest("shared", "Shared from the third party"),
+        )?;
+        write_manifest(
+            first.path(),
+            "a",
+            &valid_manifest("a", "A from third party"),
         )?;
         write_manifest(
             second.path(),
             "shared",
-            &valid_manifest("shared", "Shared from second"),
+            &valid_manifest("shared", "Shared from official"),
         )?;
-        write_manifest(second.path(), "b", &valid_manifest("b", "B from second"))?;
+        // The third-party source is deliberately ordered ahead of the default one.
+        let third_party = third_party_source(first.path());
+        let official = official_source(second.path());
 
-        let dirs = vec![
-            first.path().join("registry"),
-            second.path().join("registry"),
-        ];
-        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-        let build = RegistryIndex::build_all(&dir_refs, UPDATED_AT);
+        let build = RegistryIndex::build_all(&[&third_party, &official], UPDATED_AT);
 
-        let ids = build
-            .index()
-            .plugins()
-            .iter()
-            .map(|entry| entry.id().canonical())
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["official/a", "official/b", "official/shared"]);
-        let shared = build
-            .index()
-            .plugins()
-            .iter()
-            .find(|entry| entry.id().canonical() == "official/shared")
-            .ok_or_else(|| std::io::Error::other("expected the shared plugin"))?;
-        assert_eq!(shared.description(), "Shared from first");
+        assert_eq!(
+            build
+                .index()
+                .plugins()
+                .iter()
+                .map(|entry| (
+                    entry.id().canonical(),
+                    entry.description().to_owned(),
+                    entry.source_url().to_owned(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "official/shared".to_string(),
+                    "Shared from official".to_string(),
+                    official.canonical_url().to_string(),
+                ),
+                (
+                    format!("{}/a", third_party.namespace()),
+                    "A from third party".to_string(),
+                    third_party.canonical_url().to_string(),
+                ),
+                (
+                    format!("{}/shared", third_party.namespace()),
+                    "Shared from the third party".to_string(),
+                    third_party.canonical_url().to_string(),
+                ),
+            ],
+        );
         assert_eq!(build.skipped().len(), 0);
         Ok(())
     }
 
-    /// Verifies install-time resolution searches sources in order and honors the first match.
+    /// Verifies install-time resolution follows the id's own source rather than the source order.
+    ///
+    /// An update must re-read the manifest published by the repository the plugin was installed
+    /// from. Because the id names that source's namespace, reordering the source list — or adding
+    /// a source ahead of it that publishes the same `identifier` — cannot redirect the lookup.
     #[test]
-    fn resolves_manifest_across_sources_in_source_order() -> Result<(), Box<dyn std::error::Error>>
+    fn resolves_manifest_from_the_source_that_owns_the_id() -> Result<(), Box<dyn std::error::Error>>
     {
         let first = TempDir::new()?;
         let second = TempDir::new()?;
         write_manifest(
             first.path(),
             "weather",
-            &valid_manifest("weather", "Weather first"),
+            &valid_manifest("weather", "Weather from the third party"),
         )?;
         write_manifest(
             second.path(),
             "weather",
-            &valid_manifest("weather", "Weather second"),
+            &valid_manifest("weather", "Weather from official"),
         )?;
+        let third_party = third_party_source(first.path());
+        let official = official_source(second.path());
+        let ordered = [&third_party, &official];
 
-        let dirs = vec![
-            first.path().join("registry"),
-            second.path().join("registry"),
-        ];
-        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-        let weather = PluginId::new("official", "weather").expect("plugin id");
+        let official_id = PluginId::new("official", "weather").expect("plugin id");
+        let third_party_id =
+            PluginId::new(third_party.namespace().clone(), "weather").expect("plugin id");
 
-        let found = RegistryIndex::resolve_manifest_all(&dir_refs, &weather)?
-            .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
-        assert_eq!(found.description(), "Weather first");
-
-        let missing = RegistryIndex::resolve_manifest_all(
-            &dir_refs,
-            &PluginId::new("official", "absent").expect("plugin id"),
-        )?;
-        assert!(missing.is_none());
+        assert_eq!(
+            (
+                RegistryIndex::resolve_manifest_all(&ordered, &official_id)?
+                    .map(|manifest| manifest.description().to_owned()),
+                RegistryIndex::resolve_manifest_all(&ordered, &third_party_id)?
+                    .map(|manifest| manifest.description().to_owned()),
+                RegistryIndex::resolve_manifest_all(
+                    &ordered,
+                    &PluginId::new("official", "absent").expect("plugin id"),
+                )?
+                .is_none(),
+            ),
+            (
+                Some("Weather from official".to_string()),
+                Some("Weather from the third party".to_string()),
+                true,
+            ),
+        );
         Ok(())
     }
 }

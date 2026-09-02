@@ -3,7 +3,6 @@ import type { JSONContent } from "@tiptap/core";
 import { useDraftSessionsStore } from "./stores/draft-sessions-store";
 import type { DraftScope } from "./stores/draft-sessions-store";
 import { useComposerInputStore } from "./stores/composer-input-store";
-import { useComposerPluginSelectionStore } from "./stores/composer-plugin-selection-store";
 import { useUiStore } from "./stores/ui-store";
 import { useWorkspaceSelectionStore } from "./stores/workspace-selection-store";
 import type { WorkspaceCreateFocus } from "./stores/workspace-selection-store";
@@ -22,14 +21,14 @@ export class DraftSendAbandonedError extends Error {
 }
 
 /**
- * Warm session id an in-flight first send adopted, keyed by the conversation
+ * Session id an in-flight first send adopted, keyed by the conversation
  * key at submit time (`draft:…`, `task:…`, or `__none__`). Composer hard-fail
  * restore uses this so a later navigate to an unrelated chat cannot receive
  * the failed message, while the adopted session (or a recovered draft) still can.
  */
 const adoptedSessionBySendKey = new Map<string, string>();
 
-/** Records which warm session a first send selected into. */
+/** Records which session a first send selected into. */
 export function noteComposerSendAdoptedSession(
   sendKey: string,
   sessionId: string,
@@ -42,7 +41,7 @@ export function clearComposerSendAdoption(sendKey: string): void {
   adoptedSessionBySendKey.delete(sendKey);
 }
 
-/** Warm id this send's open first send moved onto, if any. */
+/** Session id this send's open first send moved onto, if any. */
 export function composerSendAdoptedSession(
   sendKey: string,
 ): string | undefined {
@@ -228,7 +227,7 @@ function resolveDraftReturnTo(previous: {
 
 /**
  * Opens the live session a draft is committing into, once bind has pointed it
- * at a warm id. Used when the muted row is clicked during attach.
+ * at the started session id. Used when the muted row is clicked mid-send.
  */
 export function selectBoundDraftSession(draft: {
   projectId: string;
@@ -248,46 +247,6 @@ export function selectBoundDraftSession(draft: {
 }
 
 /**
- * Rolls a failed first-send back onto its draft: clear the dead warm bind,
- * re-park the message for the composer, and select the muted row again so ×
- * works and a retry can warm a fresh session.
- *
- * `boundSessionId` must be the warm id this send bound to — not whatever the
- * selection happens to point at after the user navigated away mid-attach.
- */
-export function recoverFailedDraftSend(args: {
-  draftId: string;
-  projectId: string;
-  taskId: string | null;
-  text: string;
-  images?: acp.ImageContent[];
-  doc?: JSONContent;
-  boundSessionId: string;
-}): void {
-  const {
-    draftId,
-    projectId,
-    taskId,
-    text,
-    images = [],
-    doc,
-    boundSessionId,
-  } = args;
-  useDraftSessionsStore.getState().restoreForRetry(draftId, {
-    projectId,
-    taskId,
-  });
-  reparkDraftComposerContent({ draftId, text, images, doc });
-  // Plugin picks were rekeyed onto the warm id; move them back so a retry on
-  // the draft surface keeps the same constellation.
-  const draftKey = `draft:${draftId}`;
-  useComposerPluginSelectionStore.getState().rekey(boundSessionId, draftKey);
-  useComposerInputStore.getState().clear(boundSessionId);
-  useWorkspaceSelectionStore.getState().selectDraft(draftId, taskId, projectId);
-  expandDraftScope({ projectId, taskId });
-}
-
-/**
  * Dismisses a draft from the tree.
  *
  * A draft that is only still visible because it is binding onto the selected
@@ -299,7 +258,7 @@ export function dismissSessionDraft(id: string): void {
   const draftStore = useDraftSessionsStore.getState();
   const draft = draftStore.drafts.find((candidate) => candidate.id === id);
   // In-flight first send still needs this row for repark; × is hidden for the
-  // same reason, but refuse here so callers cannot race the warm handshake.
+  // same reason, but refuse here so callers cannot race session creation.
   if (draft === undefined || draft.sendInFlight) return;
   const selection = useWorkspaceSelectionStore.getState().selection;
   const boundToCurrentSession =

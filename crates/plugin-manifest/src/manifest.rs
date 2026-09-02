@@ -2,8 +2,7 @@ use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
 use crate::{
     HomepageUrl, HookTarget, InvalidFieldReason, ManifestError, ManifestField, PluginKind,
-    PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
-    Sha256Digest,
+    PluginName, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use semver::{Version, VersionReq};
@@ -26,7 +25,6 @@ pub struct PluginManifest {
     pub(crate) resolver: u64,
     pub(crate) name: PluginName,
     pub(crate) title: String,
-    pub(crate) namespace: PluginNamespace,
     pub(crate) kind: PluginKind,
     pub(crate) version: Version,
     pub(crate) description: String,
@@ -92,8 +90,6 @@ impl PluginManifest {
             }
             None => name.as_str().to_owned(),
         };
-        let namespace = PluginNamespace::from_str(&metadata.namespace)
-            .map_err(|reason| invalid_field(ManifestField::Namespace, reason.into()))?;
         let kind = PluginKind::from_str(&metadata.kind)
             .map_err(|reason| invalid_field(ManifestField::Kind, reason.into()))?;
         let version = Version::parse(&metadata.version).map_err(|reason| {
@@ -181,7 +177,6 @@ impl PluginManifest {
             resolver,
             name,
             title,
-            namespace,
             kind,
             version,
             description: metadata.description,
@@ -211,11 +206,6 @@ impl PluginManifest {
     /// Returns the human-readable display title, falling back to the identifier when unset.
     pub fn title(&self) -> &str {
         &self.title
-    }
-
-    /// Returns the plugin source namespace.
-    pub fn namespace(&self) -> PluginNamespace {
-        self.namespace
     }
 
     /// Returns the plugin kind.
@@ -301,9 +291,9 @@ impl PluginManifest {
 
 /// Deserializes one manifest form, keeping the TOML path of a structural failure.
 ///
-/// `serde_path_to_error` is used instead of `toml::from_str` because nested sections such as
-/// `[[webview.downloads.rules]]` would otherwise report "unknown field" without saying which
-/// entry.
+/// `serde_path_to_error` is used instead of `toml::from_str` because a failure inside a nested
+/// section such as `[[webview.downloads.rules]]` would otherwise name the rule that broke only by
+/// its message, not by which entry it was.
 fn deserialize<'de, T: Deserialize<'de>>(source: &'de str) -> Result<T, ManifestError> {
     let deserializer = toml::de::Deserializer::parse(source).map_err(|source| {
         let span = source.span();
@@ -614,12 +604,10 @@ impl PluginDependencies {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawPluginManifest {
     resolver: u64,
     identifier: String,
     title: Option<String>,
-    namespace: String,
     kind: String,
     version: String,
     description: String,
@@ -638,15 +626,13 @@ struct RawPluginManifest {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawInstalledManifest {
     resolver: Option<u64>,
     /// Identifier segment of the installed package, spelled `identifier` (not `name`) because an
-    /// installed manifest is only ever addressed by the full id the host resolves from its name
-    /// and namespace.
+    /// installed manifest is only ever addressed by the full id the host resolves by pairing this
+    /// name with the namespace of the directory the package is installed under.
     identifier: String,
     title: Option<String>,
-    namespace: String,
     kind: String,
     version: String,
     description: String,
@@ -664,25 +650,19 @@ struct RawInstalledManifest {
     artifact: Option<RawArtifact>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Clone, Debug, Eq, PartialEq)]
 struct RawHead {
     repository: String,
     branch: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Clone, Debug, Eq, PartialEq)]
 struct RawDependencies {
     ora: Option<String>,
 }
 
 /// Raw form of one `[[targets]]` release entry.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Clone, Debug, Eq, PartialEq)]
 struct RawReleaseTarget {
     target: String,
     url: String,
@@ -690,9 +670,7 @@ struct RawReleaseTarget {
 }
 
 /// Raw form of the installed `[artifact]` self-declaration.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Clone, Debug, Eq, PartialEq)]
 struct RawArtifact {
     target: String,
 }
@@ -702,7 +680,6 @@ struct RawArtifact {
 struct RawMetadata {
     name: String,
     title: Option<String>,
-    namespace: String,
     kind: String,
     version: String,
     description: String,
@@ -725,7 +702,6 @@ impl RawPluginManifest {
             // longer publishes `.orax` release URLs.
             name: self.identifier,
             title: self.title,
-            namespace: self.namespace,
             kind: self.kind,
             version: self.version,
             description: self.description,
@@ -750,7 +726,6 @@ impl RawInstalledManifest {
             // shared metadata name so both forms converge on one validated domain model.
             name: self.identifier,
             title: self.title,
-            namespace: self.namespace,
             kind: self.kind,
             version: self.version,
             description: self.description,

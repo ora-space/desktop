@@ -103,9 +103,9 @@ pub enum MethodNameError {
     InvalidCharacter { character: char },
 }
 
-/// Mirrors `[workbench]` before semantic validation; unknown fields fail structurally.
+/// Mirrors `[workbench]` before semantic validation; unknown fields are ignored so a newer
+/// manifest still parses on an older host.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct RawWorkbench {
     methods: Vec<String>,
 }

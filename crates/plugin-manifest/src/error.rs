@@ -1,7 +1,6 @@
 use crate::{
     DownloadActionError, HookTargetError, MethodNameError, PathPrefixError, PluginKind,
-    PluginKindError, PluginNameError, PluginNamespaceError, Sha256DigestError, UrlError,
-    WebviewUrlError,
+    PluginKindError, PluginNameError, Sha256DigestError, UrlError, WebviewUrlError,
 };
 use ora_utils::{GitBranchNameError, SlugError};
 use std::{fmt, ops::Range};
@@ -38,7 +37,6 @@ pub enum ManifestField {
     /// The installed package's name segment, spelled `identifier` in the `orax.toml` shipped
     /// inside a package (distinct from the marketplace release form's `name` field).
     Identifier,
-    Namespace,
     Kind,
     Version,
     Description,
@@ -98,7 +96,6 @@ impl fmt::Display for ManifestField {
         match self {
             Self::Title => formatter.write_str("title"),
             Self::Identifier => formatter.write_str("identifier"),
-            Self::Namespace => formatter.write_str("namespace"),
             Self::Kind => formatter.write_str("kind"),
             Self::Version => formatter.write_str("version"),
             Self::Description => formatter.write_str("description"),
@@ -160,8 +157,6 @@ impl fmt::Display for RuleField {
 pub enum InvalidFieldReason {
     #[error(transparent)]
     InvalidPluginName(#[from] PluginNameError),
-    #[error(transparent)]
-    InvalidNamespace(#[from] PluginNamespaceError),
     #[error(transparent)]
     InvalidKind(#[from] PluginKindError),
     #[error("invalid semantic version: {0}")]

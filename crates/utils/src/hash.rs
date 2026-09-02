@@ -32,6 +32,16 @@ pub fn sha256_file(path: impl AsRef<Path>) -> io::Result<String> {
     sha256_reader(std::fs::File::open(path)?)
 }
 
+/// Returns the lowercase hex SHA-256 digest of an in-memory byte slice.
+///
+/// Kept separate from the streaming helpers because callers that digest a short, already-resident
+/// value (an identifier, a canonical URL) should not have to wrap it in a reader.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    digest_hex(&hasher.finalize())
+}
+
 /// Renders a digest as lowercase hex without aggregating hex formatting per call.
 fn digest_hex(bytes: &[u8]) -> String {
     const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -45,7 +55,7 @@ fn digest_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sha256_file, sha256_reader};
+    use super::{sha256_file, sha256_hex, sha256_reader};
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::io::Cursor;
@@ -83,6 +93,15 @@ mod tests {
         let from_disk = sha256_file(&path).unwrap();
         let from_memory = sha256_reader(Cursor::new(payload)).unwrap();
         assert_eq!(from_disk, from_memory);
+    }
+
+    /// Verifies in-memory digests agree with the streaming path on the same bytes.
+    #[test]
+    fn in_memory_and_streaming_digests_agree() {
+        assert_eq!(
+            (sha256_hex(b""), sha256_hex(b"abc")),
+            (EMPTY_SHA256.to_string(), ABC_SHA256.to_string()),
+        );
     }
 
     /// Verifies the digest is always lowercase hex.

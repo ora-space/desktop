@@ -9,7 +9,12 @@ orchestrates checksum-verified installs of new plugin releases.
   as SemVer, and select only the highest version for each namespace/name pair without falling back
   when that selected package is invalid.
 - Read the selected package's `orax.toml` through `ora-plugin-manifest`, which owns the manifest
-  schema, and require the manifest version to match the version directory.
+  schema, and require the manifest identifier and version to match the directories holding them.
+- Take the package's namespace from the first directory level rather than the manifest. A package
+  author cannot know which marketplace source a user installed through, so the namespace is written
+  only by the host — by the installer, from the source it resolved the release from — and read back
+  from the same place. A namespace directory outside the id grammar is reported and skipped rather
+  than accepted as an identity.
 - Resolve the fixed `main.js` entrypoint for agent and workbench packages as an existing regular
   file whose canonical target remains inside its package, then retain its portable relative path.
   Webview, skill, MCP, and hook packages have no process entrypoint.
@@ -40,14 +45,16 @@ orchestrates checksum-verified installs of new plugin releases.
 - Isolate malformed or unsupported packages as structured discovery issues.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
-  `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`.
+  `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`, where the
+  namespace is supplied by the caller as the identity of the installing marketplace source.
 - Update an installed plugin release by refusing no-op and downgrade attempts (the marketplace
   manifest must declare a higher version than the highest installed SemVer directory), then
   downloading, verifying, and extracting the new release into its version directory and retiring
   every other version directory underneath `<data-dir>/plugins/installed/<namespace>/<name>`.
 - Import one local `.orax` release archive by extracting into a disposable staging directory,
   parsing its in-archive `orax.toml`, verifying a declared `sha256`, and then moving only the
-  validated tree into `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
+  validated tree into `<data-dir>/plugins/installed/local/<name>/<version>`. A local archive has no
+  source URL to derive an identity from, so it lands under the reserved `local` namespace.
 - Own the extraction budget plugin packages are held to (`limits::package_extract_limits`) rather
   than inheriting the generic `ExtractLimits` default, which is sized for text payloads. An Agent
   Plugin may bundle the CLI it drives, and those are single native binaries in the hundreds of
@@ -120,9 +127,12 @@ with the TOML path of the offending value; semantic failures, from either crate,
 Namespace, package, and version directories must be real directories (symlinks are skipped at
 every level, because the installer only ever writes real directories) and the manifest inside a
 version directory must be a regular file. A version directory that is not valid SemVer is reported
-as `invalid_install_path`. The directory names are not part of a package's identity: the manifest
-alone names the plugin, and two packages claiming the same `<namespace>/<name>` keep the first in
-path order and report the second as `duplicate_plugin_id`. Discovery never recurses below one
+as `invalid_install_path`. Identity is split between the two: the manifest names the package's
+identifier, version, and kind, while the installed tree names its namespace. Each half is checked
+against the other, and a manifest whose identifier or version disagrees with the directory holding
+it is reported as `invalid_manifest` rather than attributed to either spelling. Two packages cannot
+claim one id, because both id segments are directory levels and the scan visits each
+`<namespace>/<name>` pair once. Discovery never recurses below one
 version directory and never reads more than 1 MiB from one manifest. The pre-versioned
 `<data-dir>/plugins/<package>` layout is not discovered or migrated. Entrypoint containment
 rejects the current target of a package-escaping symlink, but path-based validation cannot prevent

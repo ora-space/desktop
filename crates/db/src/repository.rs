@@ -7,6 +7,7 @@ mod marketplace_source;
 mod project;
 mod session;
 mod skill;
+mod source_namespace;
 mod task;
 mod task_workspace;
 mod user_config;
@@ -28,6 +29,7 @@ pub use marketplace_source::{
 pub use project::SqliteProjectRepository;
 pub use session::SqliteSessionRepository;
 pub use skill::{PluginSkillProjection, SqliteSkillRepository};
+pub use source_namespace::SqlitePluginSourceNamespaceRepository;
 pub use task::SqliteTaskRepository;
 pub use task_workspace::SqliteTaskWorkspaceRepository;
 pub use user_config::SqliteUserConfigRepository;
