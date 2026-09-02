@@ -6,6 +6,9 @@ use pretty_assertions::assert_eq;
 use std::path::{Path, PathBuf};
 
 /// Imports locally built Agent archives through the same backend boundary used by Desktop.
+///
+/// A local `.orax` has no marketplace source, so install assigns the reserved `local` namespace
+/// rather than `official`.
 #[tokio::test]
 async fn locally_built_opencode_and_claude_packages_import_together() {
     let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -14,7 +17,7 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
         .expect("backend crate belongs to the repository");
     let packages = [
         (
-            "official/ora-space.opencode",
+            "local/ora-space.opencode",
             "0.6.0",
             repository_root
                 .join("opencode-agent")
@@ -23,7 +26,7 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
                 .join("ora-space.opencode-v0.6.0-x86_64-pc-windows-msvc.orax"),
         ),
         (
-            "official/ora-space.claude",
+            "local/ora-space.claude",
             "0.2.0",
             repository_root
                 .join("claude-code-agent")
@@ -75,11 +78,8 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
     assert_eq!(
         actual,
         vec![
-            (
-                "official/ora-space.opencode".to_string(),
-                "0.6.0".to_string()
-            ),
-            ("official/ora-space.claude".to_string(), "0.2.0".to_string()),
+            ("local/ora-space.opencode".to_string(), "0.6.0".to_string()),
+            ("local/ora-space.claude".to_string(), "0.2.0".to_string()),
         ]
     );
 }

@@ -146,7 +146,7 @@ pub enum PublicError {
     SessionBusy(EmptyErrorParams),
     SessionStopped(EmptyErrorParams),
     SessionLoadUnsupported(EmptyErrorParams),
-    SessionMcpSetupFailed(SessionMcpSetupFailedParams),
+    SessionMcpSetupFailed(Box<SessionMcpSetupFailedParams>),
     SessionHistoryDegraded(EmptyErrorParams),
     SessionAgentUnchanged(EmptyErrorParams),
     PermissionRequestNotPending(EmptyErrorParams),
@@ -358,8 +358,8 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 mod tests {
     use super::{
         ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget,
-        PluginConfigurationValidationParams, PublicError, RequestId, SkillFolderConflictParams,
-        TaskBaseBranchNotFoundParams,
+        PluginConfigurationValidationParams, PublicError, RequestId, SessionMcpSetupFailedParams,
+        SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -431,12 +431,12 @@ mod tests {
             PublicError::SessionBusy(empty),
             PublicError::SessionStopped(empty),
             PublicError::SessionLoadUnsupported(empty),
-            PublicError::SessionMcpSetupFailed(SessionMcpSetupFailedParams {
+            PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
                 error_code: "mcp_http_capability_missing".to_string(),
                 plugin_id: Some("ora-space/tavily-search".to_string()),
                 setting_id: None,
                 transport: Some("http".to_string()),
-            }),
+            })),
             PublicError::SessionHistoryDegraded(empty),
             PublicError::SessionAgentUnchanged(empty),
             PublicError::PermissionRequestNotPending(empty),

@@ -150,12 +150,12 @@ impl SessionMcpError {
         if matches!(self, Self::LoadCapabilityMissing) {
             return PublicError::SessionLoadUnsupported(EmptyErrorParams {});
         }
-        PublicError::SessionMcpSetupFailed(SessionMcpSetupFailedParams {
+        PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
             error_code: self.code().as_str().to_string(),
             plugin_id: self.plugin_id().map(PluginId::canonical),
             setting_id: self.setting_id().map(str::to_string),
             transport: self.transport().map(|kind| kind.as_str().to_string()),
-        })
+        }))
     }
 
     /// Converts this diagnostic into the backend error the Session actor returns to callers.

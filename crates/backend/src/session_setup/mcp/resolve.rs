@@ -63,7 +63,7 @@ fn select_effective_set(
     let mut candidates = catalog
         .installed_mcps()
         .map_err(|_| SessionMcpError::CatalogUnavailable)?;
-    candidates.sort_by(|left, right| left.plugin_id.canonical().cmp(&right.plugin_id.canonical()));
+    candidates.sort_by_key(|candidate| candidate.plugin_id.canonical());
     let mut selected = Vec::new();
     for candidate in candidates {
         match configurations.eligibility(&candidate)? {

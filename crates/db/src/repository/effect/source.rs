@@ -150,10 +150,8 @@ pub(crate) fn seed_scope_sources(
     let selector = effect_json(&TargetSelector::default())?;
     let skill_parameters =
         effect_json(&ValidatedEffectParameters::Skill(SkillParameters::default()))?;
-    let mut inserted = 0;
-    for (kind, parameters_kind, parameters) in [(EffectKind::skill(), "skill", skill_parameters)] {
-        inserted += connection.execute(
-            "INSERT INTO effect_desired_effects (
+    let inserted = connection.execute(
+        "INSERT INTO effect_desired_effects (
              id, scope_id, revision_id, parameters_kind, parameters_version, parameters_json,
              selector_version, selector_json, created_at, updated_at
          )
@@ -167,16 +165,15 @@ pub(crate) fn seed_scope_sources(
                JOIN effect_revisions revision ON revision.id = desired.revision_id
                WHERE desired.scope_id = ?1 AND revision.source_id = sources.id
            )",
-            params![
-                &scope_id,
-                parameters,
-                selector,
-                updated_at,
-                kind.as_str(),
-                parameters_kind,
-            ],
-        )?;
-    }
+        params![
+            &scope_id,
+            skill_parameters,
+            selector,
+            updated_at,
+            EffectKind::skill().as_str(),
+            "skill",
+        ],
+    )?;
     if inserted > 0 {
         changed_scopes.insert(scope_id);
     }

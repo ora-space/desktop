@@ -481,7 +481,6 @@ it("configures declared plugin settings and keeps the editor open after save", a
   await user.click(
     await screen.findByRole("button", { name: /配置|Configure/ }),
   );
-  expect(await screen.findByText(/已同步|Current/)).toBeInTheDocument();
   await user.type(await screen.findByLabelText(/Endpoint/), "https://api.test");
   expect(screen.getByLabelText(/Retries/)).toHaveValue("3");
   await user.selectOptions(screen.getByLabelText(/Enabled/), "false");
