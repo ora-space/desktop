@@ -15,7 +15,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     const AGENT_REF: &str = "ora-space.opencode";
-    const EFFECT_TIMEOUT: Duration = Duration::from_secs(5);
+    // Keep the deadline below the worker's 30-second periodic scan so this test still proves the
+    // direct wake path, while allowing slower CI process scheduling and plugin IPC.
+    const EFFECT_TIMEOUT: Duration = Duration::from_secs(15);
     const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
     /// Verifies imported Skills promptly converge into an OpenCode Workspace and disappear after
