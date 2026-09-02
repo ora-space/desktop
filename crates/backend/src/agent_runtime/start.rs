@@ -93,7 +93,7 @@ impl AgentRuntimeManager {
 }
 
 /// Performs one authoritative provider handshake and applies a pre-session model intent.
-async fn create_provider_session(
+pub(super) async fn create_provider_session(
     connections: &ConnectionSupervisors,
     ora_session_id: &SessionId,
     agent_ref: &AgentRef,

@@ -96,15 +96,6 @@ pub(super) fn session_not_found(session_id: &str) -> BackendError {
     )
 }
 
-/// Builds the conflict returned when a prompt targets an unloaded logical session.
-pub(super) fn session_stopped() -> BackendError {
-    BackendError::new(
-        ErrorClassification::Conflict,
-        PublicError::SessionStopped(EmptyErrorParams {}),
-        "session must be loaded before prompting",
-    )
-}
-
 /// Builds the degraded-mode error while the selected CLI is starting or recovering.
 pub(super) fn runtime_unavailable() -> BackendError {
     runtime_internal("agent_runtime_unavailable", "agent runtime is unavailable")

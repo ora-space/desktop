@@ -124,35 +124,3 @@ pub(super) async fn drain_queued_prompt_events(
         }
     }
 }
-
-/// Drains an abandoned session request until its own response arrives or the route closes.
-pub(super) async fn settle_abandoned_session_response<Response>(
-    actor: &mut RuntimeActor,
-    channel: &mut SessionChannel,
-    client: &AgentAcpClient,
-    pending: ora_acp::PendingSessionRequest<Response>,
-) -> Option<Result<Response, ora_acp::AcpError>>
-where
-    Response: serde::de::DeserializeOwned,
-{
-    loop {
-        match channel.events.recv().await {
-            Some(SessionEvent::Update(update)) => actor.observe_session_update(&update.update),
-            Some(SessionEvent::Permission(permission)) => {
-                let _ = client
-                    .respond(
-                        &permission.request_id,
-                        &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                    )
-                    .await;
-            }
-            Some(SessionEvent::Response(response)) => {
-                if !pending.matches_response(&response) {
-                    continue;
-                }
-                return Some(pending.finish(response));
-            }
-            None => return None,
-        }
-    }
-}

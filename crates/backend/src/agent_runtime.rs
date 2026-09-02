@@ -1,8 +1,10 @@
 mod actor;
+mod attach;
 mod connection;
 mod events;
 mod handoff;
 mod history;
+mod load;
 pub(crate) mod plugin_agent;
 mod replay;
 mod restart_circuit;
@@ -17,9 +19,13 @@ mod title_acquisition;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod load_tests;
+#[cfg(test)]
 mod replaced_sessions_tests;
 
 use crate::app_event::AppEventPublisher;
+use attach::RebuiltBinding;
+use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
@@ -71,7 +77,7 @@ const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// Effect coordination restarts an Agent plugin's process so it re-reads a materialized surface,
 /// which silently invalidates every provider-side session that process was holding. Implementations
-/// detach those sessions so the next interaction re-establishes them through the ordinary load path
+/// detach those sessions so the next prompt re-establishes them through the ordinary attach path
 /// rather than prompting against an id the fresh process cannot resolve.
 ///
 /// The Effect worker depends on this capability rather than on the whole agent runtime, so a
@@ -207,12 +213,15 @@ struct RuntimeActor {
     commands: mpsc::UnboundedReceiver<RuntimeCommand>,
     recorder: SessionRecorder,
     sessions_root: PathBuf,
-    /// Whether the current provider binding still has to be told the history.
+    /// Opens provider sessions when a prompt needs one this actor does not hold.
+    connections: ConnectionSupervisors,
+    /// Whether the current provider binding still has to be told the conversation.
     ///
-    /// Switching agents rebinds eagerly but injects lazily, so this is answered
-    /// from the record when the actor opens and cleared once a prompt carries the
-    /// transcript across.
-    handoff_pending: bool,
+    /// A binding is established eagerly but told lazily, so this is answered from the record when
+    /// the actor opens and settled once a prompt carries the transcript across.
+    handoff: HandoffDebt,
+    /// A provider session built to replace one that could not be restored, not yet in the row.
+    rebuilt_binding: Option<RebuiltBinding>,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
     title_acquisition: TitleAcquisition,
@@ -362,7 +371,7 @@ impl AgentRuntimeManager {
                     connection: supervisor,
                     channel: Some(channel),
                     recorder: opened.recorder,
-                    handoff_pending: false,
+                    handoff: HandoffDebt::Settled,
                     title_acquisition,
                 },
             )?;
@@ -599,7 +608,7 @@ impl AgentRuntimeManager {
                     channel: Some(channel),
                     recorder,
                     // The new agent knows nothing; the next prompt carries the transcript.
-                    handoff_pending: true,
+                    handoff: HandoffDebt::Recorded,
                     title_acquisition: TitleAcquisition::locked(),
                 },
             )?;
@@ -793,14 +802,24 @@ impl AgentRuntimeManager {
         )
     }
 
-    /// Loads one session conversation, restoring or following its provider turn as needed.
+    /// Serves one session conversation from Ora's own record, following a live turn when there is one.
+    ///
+    /// Opening a conversation never touches ACP. The transcript belongs to Ora rather than to the
+    /// agent that produced it, so a session whose plugin was uninstalled — or whose CLI cannot
+    /// start — still reads, and no provider session is created for a reader who may never send
+    /// anything. The agent is reached by the first prompt instead.
+    ///
+    /// A live actor answers its own loads: only it knows the durable cutoff and the records of a
+    /// turn still streaming, which is what lets a load hand off from disk to live without a gap.
     pub(crate) async fn load_session(
         &self,
         request: LoadSessionRequest,
     ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
         let _lifecycle = self.inner.lifecycle.lock().await;
         let session = self.find_session(&request.session_id)?;
-        let handle = self.actor_for(session)?;
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            return load::detached_replay(&self.inner.sessions_root, session.id.as_ref());
+        };
         let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
         let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (accepted_sender, accepted) = oneshot::channel();
@@ -850,9 +869,10 @@ impl AgentRuntimeManager {
         }
         let _lifecycle = self.inner.lifecycle.lock().await;
         let session = self.find_session(&request.session_id)?;
-        if session.status != SessionStatus::Running {
-            return Err(session_stopped());
-        }
+        // Lifecycle status is not a precondition: a session that has only been read holds no
+        // provider, and acquiring one is part of sending rather than something the caller has to
+        // arrange first. The actor attaches, and reports its own failure if it cannot.
+        //
         // A session whose history stopped recording refuses new turns rather than
         // producing conversation that would never be part of the record.
         if let HistoryState::Degraded { .. } = session.history_state {
@@ -990,7 +1010,11 @@ impl AgentRuntimeManager {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),
             None => session,
         };
-        let handoff_pending = opened.handoff_pending;
+        let handoff = if opened.handoff_pending {
+            HandoffDebt::Recorded
+        } else {
+            HandoffDebt::Settled
+        };
         self.insert_actor(
             session,
             ActorSetup {
@@ -998,7 +1022,7 @@ impl AgentRuntimeManager {
                 connection,
                 channel: None,
                 recorder: opened.recorder,
-                handoff_pending,
+                handoff,
                 title_acquisition: TitleAcquisition::disabled(),
             },
         )
@@ -1042,7 +1066,9 @@ impl AgentRuntimeManager {
                 commands: receiver,
                 recorder: setup.recorder,
                 sessions_root: self.inner.sessions_root.clone(),
-                handoff_pending: setup.handoff_pending,
+                connections: self.inner.connections.clone(),
+                handoff: setup.handoff,
+                rebuilt_binding: None,
                 scheduler: self.inner.scheduler.clone(),
                 app_events: self.inner.app_events.clone(),
                 title_acquisition: setup.title_acquisition,
@@ -1083,7 +1109,7 @@ struct ActorSetup {
     connection: ConnectionSupervisor,
     channel: Option<SessionChannel>,
     recorder: SessionRecorder,
-    handoff_pending: bool,
+    handoff: HandoffDebt,
     title_acquisition: TitleAcquisition,
 }
 
