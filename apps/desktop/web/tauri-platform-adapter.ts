@@ -7,6 +7,7 @@ import {
   type LocationActionsCapability,
   type DesktopUpdateCapability,
   type DesktopUpdateStatus,
+  type DiagnosticLogsCapability,
   type LocationTarget,
   type PlatformAdapter,
   type PluginInstallProgress,
@@ -174,6 +175,10 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   readonly pluginMarketplace: PluginMarketplaceCapability =
     createTauriPluginMarketplace();
 
+  readonly diagnosticLogs: DiagnosticLogsCapability = {
+    downloadToday: () => this.downloadTodayLog(),
+  };
+
   readonly worktreeStorage = {
     getRoot: async (): Promise<string> => {
       const config = await invoke<{ worktreeRoot: string }>(
@@ -241,6 +246,30 @@ export class TauriPlatformAdapter implements PlatformAdapter {
       await invoke("write_workflow_export", {
         request: { path, content: options.content },
       });
+      return true;
+    } finally {
+      this.selectionInProgress = false;
+    }
+  }
+
+  /** Saves the active daily diagnostic log while sharing the adapter's native-dialog lock. */
+  private async downloadTodayLog(): Promise<boolean> {
+    if (this.selectionInProgress) {
+      throw new PathSelectionInProgressError();
+    }
+
+    this.selectionInProgress = true;
+    try {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      const destination = await save({
+        defaultPath: `ora-logs-${year}-${month}-${day}.log`,
+        filters: [{ name: "Log", extensions: ["log"] }],
+      });
+      if (destination === null) return false;
+      await invoke("download_today_log", { request: { destination } });
       return true;
     } finally {
       this.selectionInProgress = false;

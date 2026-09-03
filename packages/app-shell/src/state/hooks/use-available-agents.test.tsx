@@ -9,26 +9,33 @@ import {
 import { renderHookWithClient } from "../../test/hook-harness";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 import { useAvailableAgents } from "./use-available-agents";
+import { AGENT_REF } from "../../test/agent-identity";
 
-/** Every agent the seeded installation supplies, in the order its packages are listed. */
+/**
+ * Every agent the seeded installation supplies, in the order its packages are listed.
+ *
+ * These are whole `namespace/name` ids, because that is what the runtime keys a supervised agent
+ * by and what a session persists as its binding. A catalog spelling the bare name instead would
+ * offer agents no session could ever be bound to.
+ */
 const INSTALLED = [
-  "ora-space.opencode",
-  "ora-space.nga",
-  "ora-space.codeagentcli",
-  "ora-space.claude",
-  "ora-space.codex",
+  AGENT_REF.opencode,
+  AGENT_REF.nga,
+  AGENT_REF.codeagentcli,
+  AGENT_REF.claude,
+  AGENT_REF.codex,
 ];
 
 /** The installed set without OpenCode, which every "one agent is missing" case here drops. */
 const WITHOUT_OPENCODE = INSTALLED.filter(
-  (agentRef) => agentRef !== "ora-space.opencode",
+  (agentRef) => agentRef !== AGENT_REF.opencode,
 );
 
 /** Replaces what the runtime reports about one agent, leaving the rest detected. */
 function reportOpenCode(status: AgentStatus) {
   return (state: MockClientState) => {
     const entry = state.agentRuntimeStatuses.find(
-      (candidate) => candidate.agentRef === "ora-space.opencode",
+      (candidate) => candidate.agentRef === AGENT_REF.opencode,
     );
     entry!.status = status;
   };
@@ -76,10 +83,36 @@ describe("useAvailableAgents", () => {
     );
 
     expect(result.current.offered[0]).toEqual({
-      agentRef: "ora-space.opencode",
+      agentRef: AGENT_REF.opencode,
       label: "OpenCode",
       logo: null,
     });
+  });
+
+  it("identifies each offered agent the way the runtime keys it, not by the package name", async () => {
+    const state = createMockClientState();
+    const { result } = renderHookWithClient(
+      () => ({
+        offered: useAvailableAgents(),
+        statuses: useAgentRuntimeStatus(),
+      }),
+      createMockClient(state),
+    );
+    await waitFor(() => expect(result.current.statuses.isSuccess).toBe(true));
+    await waitFor(() =>
+      expect(result.current.offered.length).toBeGreaterThan(0),
+    );
+
+    // The catalog and the runtime are two independently written halves of one identity, and a
+    // session binds to whichever the picker hands it. Asserting the offered set against the
+    // installed ids and the supervised refs at once is what makes a drift between the halves
+    // fail here rather than at `session/load`, where it surfaces as "agent is not installed".
+    expect(result.current.offered.map((agent) => agent.agentRef)).toEqual(
+      state.installedPlugins.map((plugin) => plugin.id),
+    );
+    expect(result.current.offered.map((agent) => agent.agentRef)).toEqual(
+      state.agentRuntimeStatuses.map((status) => status.agentRef),
+    );
   });
 
   it("offers an agent still completing its handshake", async () => {
@@ -102,7 +135,7 @@ describe("useAvailableAgents", () => {
     expect(
       await offeredAgents((state) => {
         state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
-          (status) => status.agentRef !== "ora-space.opencode",
+          (status) => status.agentRef !== AGENT_REF.opencode,
         );
       }),
     ).toEqual(WITHOUT_OPENCODE);
@@ -115,7 +148,7 @@ describe("useAvailableAgents", () => {
           (plugin) => plugin.name !== "ora-space.claude",
         );
       }),
-    ).toEqual(INSTALLED.filter((agentRef) => agentRef !== "ora-space.claude"));
+    ).toEqual(INSTALLED.filter((agentRef) => agentRef !== AGENT_REF.claude));
   });
 
   it("offers the whole installed catalog while the detection status is still loading", async () => {

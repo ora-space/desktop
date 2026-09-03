@@ -18,6 +18,8 @@ mod title_acquisition;
 mod history_tests;
 #[cfg(test)]
 mod replaced_sessions_tests;
+#[cfg(test)]
+mod unavailable_session_tests;
 
 use crate::app_event::AppEventPublisher;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
@@ -793,14 +795,28 @@ impl AgentRuntimeManager {
         )
     }
 
-    /// Loads one session conversation, restoring or following its provider turn as needed.
+    /// Loads one session conversation, using Ora's record when its provider cannot be restored.
     pub(crate) async fn load_session(
         &self,
         request: LoadSessionRequest,
     ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
         let _lifecycle = self.inner.lifecycle.lock().await;
         let session = self.find_session(&request.session_id)?;
-        let handle = self.actor_for(session)?;
+        let handle = match self.actor_for(session.clone()) {
+            Ok(handle) => handle,
+            Err(error)
+                if matches!(
+                    error.public_error(),
+                    PublicError::AgentRuntimeUnavailable(_)
+                ) =>
+            {
+                // Ora owns the transcript independently of the provider. A removed agent cannot
+                // be restored, but it must not hide the history the user needs before choosing a
+                // replacement; the ordinary switch path creates the replacement actor later.
+                return self.load_recorded_history(session);
+            }
+            Err(error) => return Err(error),
+        };
         let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
         let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (accepted_sender, accepted) = oneshot::channel();
@@ -818,6 +834,36 @@ impl AgentRuntimeManager {
             handle.commands,
             operation_id,
         ))
+    }
+
+    /// Streams Ora's durable transcript without restoring its unavailable provider binding.
+    fn load_recorded_history(
+        &self,
+        session: Session,
+    ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
+        let history = read_session_history(&self.inner.sessions_root, session.id.as_ref())
+            .map_err(|error| {
+                let reason = error.to_string();
+                ora_warn!(
+                    session_id = %session.id,
+                    error = %error,
+                    "session history is unreadable during provider-independent load"
+                );
+                self.settle_record(session, RecordOutcome::JustFailed { reason });
+                runtime_internal(
+                    "session_history_unreadable",
+                    "session history could not be read",
+                )
+            })?;
+        let (sender, receiver) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
+        tokio::spawn(async move {
+            for event in replay::recorded_replay(history).chain([LoadSessionEvent::Completed]) {
+                if sender.send(Ok(event)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(SessionEventStream::with_cleanup(receiver, || {}))
     }
 
     /// Starts one structured ACP prompt stream after validating the public payload limit.

@@ -7,6 +7,7 @@ import {
   type SettingsPreferences,
   type ThemeApplier,
 } from "./settings-store";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const STORAGE_KEY = "ora.settings.v1";
 
@@ -45,13 +46,13 @@ describe("useSettingsStore", () => {
   });
 
   it("persists settings to localStorage under the v1 key", () => {
-    useSettingsStore.getState().updateSettings({ agentCli: "ora-space.nga" });
+    useSettingsStore.getState().updateSettings({ agentCli: AGENT_REF.nga });
     const raw = window.localStorage.getItem(STORAGE_KEY);
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw!) as {
       state: { settings: SettingsPreferences };
     };
-    expect(parsed.state.settings.agentCli).toBe("ora-space.nga");
+    expect(parsed.state.settings.agentCli).toBe(AGENT_REF.nga);
   });
 
   it("merges persisted partial settings over defaults via the merge strategy", () => {
@@ -72,6 +73,8 @@ describe("useSettingsStore", () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
+        // Version 1 persisted the bare package name, which is the spelling the
+        // migration has to recognize as the former implicit default.
         state: { settings: { theme: "light", agentCli: "ora-space.opencode" } },
         version: 1,
       }),

@@ -36,3 +36,11 @@ export function localizeContractError(error: unknown, t: TFunction): string {
   }
   return t("errors.transport.malformed_response", { lng });
 }
+
+/** Identifies failures whose request ID is useful only together with backend diagnostics. */
+export function hasDiagnosticRequestId(error: unknown): boolean {
+  return (
+    (error instanceof RemoteContractError && error.code === "internal_error") ||
+    error instanceof UnknownRemoteError
+  );
+}

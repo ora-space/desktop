@@ -24,6 +24,7 @@ import {
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { WorkspaceView } from "./workspace-view";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const USER = { name: "Eric", email: "eric@example.com" };
 const PROJECT: Project = { id: "p1", name: "Ora Desktop" };
@@ -44,7 +45,7 @@ beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useDraftSessionsStore.getState().clear();
   useSettingsStore.setState({
-    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+    settings: { ...DEFAULT_SETTINGS, agentCli: AGENT_REF.opencode },
   });
   usePendingAgentStore.setState({ selections: {} });
 });

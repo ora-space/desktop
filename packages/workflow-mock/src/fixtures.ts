@@ -1,3 +1,4 @@
+import { DEMO_AGENT_REF } from "./agent-identity";
 import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
 import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
 import type { WorkflowAnnotationNode } from "./annotation-data";
@@ -31,7 +32,7 @@ function createAgentConfig(
   return {
     schemaVersion: 3,
     executor: options.executor ?? {
-      agentCli: "ora-space.codeagentcli",
+      agentCli: DEMO_AGENT_REF.codeagentcli,
       modelId: "gpt-5",
     },
     roleId,

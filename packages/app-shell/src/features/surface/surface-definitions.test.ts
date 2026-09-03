@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@ora/contracts";
 import { listSurfaceDefinitions } from "./surface-definitions";
+import { officialAgentRef } from "../../test/agent-identity";
 
 /** Builds one installed webview plugin (external site). */
 function webviewPlugin(
@@ -101,7 +102,7 @@ describe("listSurfaceDefinitions", () => {
         logo: null,
       },
       {
-        pluginId: "official/ora-space.tools",
+        pluginId: officialAgentRef("ora-space.tools"),
         kind: "webview",
         title: "X",
         pluginDisplayName: "Tools",

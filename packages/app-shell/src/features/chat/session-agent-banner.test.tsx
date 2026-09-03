@@ -1,8 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ContractsClient, InstalledPlugin, Session } from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -13,8 +12,8 @@ import {
 } from "../../test/mock-client";
 import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
-import { useUiStore } from "../../state/stores/ui-store";
 import { SessionAgentBanner } from "./session-agent-banner";
+import { AGENT_REF, officialAgentRef } from "../../test/agent-identity";
 
 /**
  * The runtime half of an installed package.
@@ -33,7 +32,7 @@ function agentPlugin(
   runtime: PluginRuntime = { runtime: "running" },
 ): InstalledPlugin {
   return {
-    id: "official/ora-space.reviewer",
+    id: officialAgentRef("ora-space.reviewer"),
     namespace: "official",
     name: "ora-space.reviewer",
     description: "ora-space.reviewer plugin",
@@ -105,15 +104,8 @@ function renderBanner(plugins: InstalledPlugin[], bound: Session) {
 }
 
 describe("SessionAgentBanner", () => {
-  beforeEach(() => {
-    useUiStore.setState({
-      settingsOpen: false,
-      settingsCategory: "appearance",
-    });
-  });
-
   it("reports an agent whose package is gone as uninstalled", async () => {
-    renderBanner([], session("ora-space.reviewer"));
+    renderBanner([], session(officialAgentRef("ora-space.reviewer")));
 
     expect(await screen.findByRole("alert")).toHaveAttribute(
       "data-agent-availability",
@@ -121,28 +113,28 @@ describe("SessionAgentBanner", () => {
     );
   });
 
-  it("offers a marketplace button when the agent's package is gone", async () => {
-    renderBanner([], session("ora-space.reviewer"));
-    const user = userEvent.setup();
+  it("directs the user to switch agents when the bound package is gone", async () => {
+    renderBanner([], session(officialAgentRef("ora-space.reviewer")));
 
-    const button = await screen.findByRole("button", {
-      name: /Go to the plugin marketplace|前往插件市场/,
-    });
-    await user.click(button);
-
-    expect(useUiStore.getState().settingsOpen).toBe(true);
-    expect(useUiStore.getState().settingsCategory).toBe("plugins");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      /当前 Agent 不可用，请切换 Agent 继续对话。|This session's agent is unavailable\. Switch agents to continue the conversation\./,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("stays silent for a built-in CLI, which has no plugin package", async () => {
-    renderBanner([], session("ora-space.nga"));
+    renderBanner([], session(AGENT_REF.nga));
 
     await screen.findByTestId("availability-settled");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("stays silent while an installed plugin is serving the session", async () => {
-    renderBanner([agentPlugin()], session("ora-space.reviewer"));
+    renderBanner(
+      [agentPlugin()],
+      session(officialAgentRef("ora-space.reviewer")),
+    );
 
     await screen.findByTestId("availability-settled");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -156,7 +148,7 @@ describe("SessionAgentBanner", () => {
           failureReason: "deno exited with 1",
         }),
       ],
-      session("ora-space.reviewer"),
+      session(officialAgentRef("ora-space.reviewer")),
     );
 
     const alert = await screen.findByRole("alert");

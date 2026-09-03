@@ -34,7 +34,7 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
     scope: "availability" | "models",
   ) =>
     plugin.kind === "agent"
-      ? refreshAgent(plugin.name, scope)
+      ? refreshAgent(plugin.id, scope)
       : Promise.resolve([]);
 
   const activate = useMutation({

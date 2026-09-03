@@ -19,6 +19,7 @@ import {
   createMockClientState,
 } from "../../test/mock-client";
 import { RunTheaterActCard } from "./run-theater-act-card";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const NODE_DATA: WorkflowNodeData = {
   kind: "agent",
@@ -176,7 +177,7 @@ describe("RunTheaterActCard conversation", () => {
           agentConfig: {
             schemaVersion: 3,
             executor: {
-              agentCli: "ora-space.opencode",
+              agentCli: AGENT_REF.opencode,
               modelId: "deepseek/deepseek-v4-flash",
             },
             roleId: "researcher",

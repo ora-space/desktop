@@ -21,6 +21,7 @@ import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { WorkspaceView } from "./workspace-view";
+import { AGENT_REF } from "../../test/agent-identity";
 
 /** Builds one assistant text frame in the same shape as the generated ACP client. */
 function assistantText(
@@ -70,7 +71,7 @@ describe("chat interaction MVP", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },

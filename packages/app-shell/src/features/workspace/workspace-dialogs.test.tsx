@@ -23,6 +23,7 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { WorkspaceDialogs } from "./workspace-dialogs";
+import { AGENT_REF } from "../../test/agent-identity";
 
 beforeEach(() => {
   useUiStore.getState().setDialog(null);
@@ -361,7 +362,7 @@ describe("WorkspaceDialogs project deletion", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -369,7 +370,7 @@ describe("WorkspaceDialogs project deletion", () => {
       {
         id: "s2",
         workspaceId: "workspace-t2",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -446,7 +447,7 @@ describe("WorkspaceDialogs task deletion", () => {
     state.sessions = sessionIds.map((id): Session => ({
       id,
       workspaceId: "workspace-t1",
-      agentRef: "ora-space.opencode",
+      agentRef: AGENT_REF.opencode,
       status: "running",
       title: null,
       historyState: { type: "writable" },

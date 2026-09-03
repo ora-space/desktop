@@ -44,6 +44,31 @@ fn discovers_complete_manifest() {
     );
 }
 
+/// Verifies an agent keeps the human-readable manifest title in the installed-plugin snapshot.
+#[test]
+fn discovers_agent_title_separately_from_identifier() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = agent_manifest();
+    manifest
+        .as_table_mut()
+        .unwrap()
+        .insert("title".to_string(), Value::from("Claude Code"));
+    let package_root = write_manifest(temp_dir.path(), NAME, manifest);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(manager.installed_plugins()[0].display_name, "Claude Code");
+    assert_eq!(
+        manager.installed_plugins()[0].contributes,
+        PluginContribution::Agent(InstalledPluginAgent {
+            display_name: "Claude Code".to_string(),
+            entrypoint: PortableRelativePath::parse("main.js").unwrap(),
+        })
+    );
+    assert_eq!(manager.installed_plugins()[0].package_root, package_root);
+}
+
 /// Verifies a Skill plugin is static but must contain at least one complete Skill package.
 #[test]
 fn discovers_skill_plugin_with_required_skill_assets() {

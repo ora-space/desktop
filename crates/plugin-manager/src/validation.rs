@@ -78,7 +78,7 @@ pub struct InstalledPlugin {
     pub package_root: PathBuf,
     pub id: PluginId,
     pub version: Version,
-    /// The manifest carries no display name, so the plugin name stands in for every kind.
+    /// Human-readable title from the manifest, falling back to the identifier when omitted.
     pub display_name: String,
     pub description: String,
     pub homepage: Option<String>,
@@ -187,7 +187,7 @@ pub(crate) fn validate(
     }
     let contributes = match manifest.kind() {
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
-            display_name: name.to_owned(),
+            display_name: manifest.title().to_owned(),
             entrypoint: validate_entrypoint(package_root)?,
         }),
         PluginKind::Workbench => {
@@ -247,7 +247,7 @@ pub(crate) fn validate(
         package_root: package_root.to_path_buf(),
         id,
         version: manifest.version().clone(),
-        display_name: name.to_owned(),
+        display_name: manifest.title().to_owned(),
         description: manifest.description().to_owned(),
         homepage: manifest.homepage().map(|url| url.as_str().to_owned()),
         license: manifest.license().map(str::to_owned),

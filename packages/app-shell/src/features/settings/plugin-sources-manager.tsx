@@ -25,7 +25,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import type { MarketplaceSource } from "@ora/contracts";
-import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   useAddMarketplaceSource,
   useDeleteMarketplaceSource,
@@ -43,6 +43,7 @@ import {
  */
 export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const sourcesQuery = useMarketplaceSources();
   const addSource = useAddMarketplaceSource();
   const deleteSource = useDeleteMarketplaceSource();
@@ -66,9 +67,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           toast.success(t("settings.plugins.sourceAdded"));
         },
         onError: (cause) =>
-          toast.error(t("settings.plugins.sourceAddFailed"), {
-            description: localizeContractError(cause, t),
-          }),
+          showContractError(cause, t("settings.plugins.sourceAddFailed")),
       },
     );
   };
@@ -93,9 +92,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           onSuccess?.();
         },
         onError: (cause) =>
-          toast.error(t("settings.plugins.sourceUpdateFailed"), {
-            description: localizeContractError(cause, t),
-          }),
+          showContractError(cause, t("settings.plugins.sourceUpdateFailed")),
       },
     );
   };
@@ -249,9 +246,10 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                       onSuccess: () =>
                         toast.success(t("settings.plugins.sourceRemoved")),
                       onError: (cause) =>
-                        toast.error(t("settings.plugins.sourceRemoveFailed"), {
-                          description: localizeContractError(cause, t),
-                        }),
+                        showContractError(
+                          cause,
+                          t("settings.plugins.sourceRemoveFailed"),
+                        ),
                     },
                   )
                 }

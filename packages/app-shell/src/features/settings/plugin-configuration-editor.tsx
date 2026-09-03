@@ -23,10 +23,10 @@ import {
   BreadcrumbSeparator,
   Button,
   Input,
-  toast,
 } from "@ora/ui";
 import { IconLoader2 } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { usePluginConfiguration } from "../../state/hooks/use-plugin-configuration";
 
 type Draft = { override: boolean; value: string | boolean | null };
@@ -155,6 +155,7 @@ function LoadedConfigurationEditor({
   onReload: () => Promise<PluginConfigurationDetails>;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const baseline = useMemo(() => draftsFrom(details), [details]);
   const [drafts, setDrafts] = useState<Drafts>(baseline);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -216,9 +217,7 @@ function LoadedConfigurationEditor({
           error.payload.code === "plugin_configuration_declaration_changed")
       )
         setReloadRequired(true);
-      toast.error(t("settings.plugins.configuration.saveFailed"), {
-        description: localizeContractError(error, t),
-      });
+      showContractError(error, t("settings.plugins.configuration.saveFailed"));
       return false;
     }
   };
@@ -265,9 +264,7 @@ function LoadedConfigurationEditor({
               onClick={() =>
                 void onReload()
                   .then(() => setReloadRequired(false))
-                  .catch((error: unknown) =>
-                    toast.error(localizeContractError(error, t)),
-                  )
+                  .catch((error: unknown) => showContractError(error))
               }
             >
               {t("settings.plugins.configuration.reload")}
@@ -446,9 +443,7 @@ function LoadedConfigurationEditor({
                     setDrafts(draftsFrom(configuration));
                     setResetOpen(false);
                   })
-                  .catch((error: unknown) =>
-                    toast.error(localizeContractError(error, t)),
-                  )
+                  .catch((error: unknown) => showContractError(error))
               }
             >
               {t("settings.plugins.configuration.resetAll")}
@@ -473,6 +468,7 @@ function ConfigurationUnavailable({
   onRecover: () => Promise<unknown>;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-5">
@@ -501,9 +497,7 @@ function ConfigurationUnavailable({
               onClick={() =>
                 void onRecover()
                   .then(() => setOpen(false))
-                  .catch((error: unknown) =>
-                    toast.error(localizeContractError(error, t)),
-                  )
+                  .catch((error: unknown) => showContractError(error))
               }
             >
               {t("settings.plugins.configuration.recover")}

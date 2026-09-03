@@ -4,6 +4,7 @@ export {
   PathSelectionInProgressError,
   type LocationActionsCapability,
   type DesktopUpdateCapability,
+  type DiagnosticLogsCapability,
   type DesktopUpdateStatus,
   type PluginInstallProgress,
   type PluginMarketplaceCapability,

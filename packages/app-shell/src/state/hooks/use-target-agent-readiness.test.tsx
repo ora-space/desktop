@@ -13,6 +13,7 @@ import { renderHookWithClient } from "../../test/hook-harness";
 import { DEFAULT_SETTINGS, useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { useTargetAgentReadiness } from "./use-target-agent-readiness";
+import { AGENT_REF } from "../../test/agent-identity";
 
 /** The project-only surface every case here resolves: no session, no task. */
 const PROJECT_SELECTION = { projectId: "p1", taskId: null, sessionId: null };
@@ -23,7 +24,7 @@ const PROJECT_SELECTION = { projectId: "p1", taskId: null, sessionId: null };
  */
 beforeEach(() => {
   useSettingsStore.setState({
-    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+    settings: { ...DEFAULT_SETTINGS, agentCli: AGENT_REF.opencode },
   });
   usePendingAgentStore.setState({ selections: {}, switches: {} });
 });
@@ -32,7 +33,7 @@ beforeEach(() => {
 function reportOpenCode(status: AgentStatus) {
   return (state: MockClientState) => {
     const entry = state.agentRuntimeStatuses.find(
-      (candidate) => candidate.agentRef === "ora-space.opencode",
+      (candidate) => candidate.agentRef === AGENT_REF.opencode,
     );
     entry!.status = status;
   };
@@ -79,7 +80,7 @@ describe("useTargetAgentReadiness", () => {
     expect(
       await readiness((state) => {
         state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
-          (status) => status.agentRef !== "ora-space.opencode",
+          (status) => status.agentRef !== AGENT_REF.opencode,
         );
       }),
     ).toBe("blocked");

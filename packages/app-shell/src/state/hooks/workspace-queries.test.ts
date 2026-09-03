@@ -8,6 +8,7 @@ import {
   createMockClientState,
 } from "../../test/mock-client";
 import { renderHookWithClient } from "../../test/hook-harness";
+import { AGENT_REF } from "../../test/agent-identity";
 
 describe("useProjects", () => {
   it("returns the project list from the client", async () => {
@@ -72,7 +73,7 @@ describe("useSessions", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -85,7 +86,7 @@ describe("useSessions", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
