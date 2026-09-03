@@ -186,6 +186,8 @@ const tauriCommands = {
   // =============================================================================
   getProxySettings: "get_proxy_settings",
   setProxySettings: "set_proxy_settings",
+  clearProxySettings: "clear_proxy_settings",
+  checkProxySettings: "check_proxy_settings",
   completeWorkflowNode: "complete_workflow_node",
 } as const satisfies Record<SupportedTauriOperation, string>;
 

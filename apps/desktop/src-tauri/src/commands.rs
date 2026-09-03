@@ -1093,7 +1093,7 @@ backend_command!(
     UpdateMarketplaceSourceRequest,
     UpdateMarketplaceSourceResponse,
     update_marketplace_source,
-    "Updates one marketplace source's proxy policy."
+    "Updates one marketplace source's URL, branch, proxy policy, or enabled state."
 );
 async_backend_command!(
     scan_plugins,

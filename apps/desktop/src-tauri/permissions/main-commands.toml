@@ -108,6 +108,8 @@ commands.allow = [
     "set_runtime_log_level",
     "get_proxy_settings",
     "set_proxy_settings",
+    "clear_proxy_settings",
+    "check_proxy_settings",
     "set_worktree_root",
     "resolve_task_cwd",
     "resolve_workspace_cwd",

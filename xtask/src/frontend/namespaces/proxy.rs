@@ -19,4 +19,18 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "SetProxySettingsRequest",
         response_type: "SetProxySettingsResponse",
     },
+    FrontendEndpoint {
+        operation_name: "clearProxySettings",
+        namespace: NAMESPACE,
+        member_name: "clear",
+        request_type: "ClearProxySettingsRequest",
+        response_type: "ClearProxySettingsResponse",
+    },
+    FrontendEndpoint {
+        operation_name: "checkProxySettings",
+        namespace: NAMESPACE,
+        member_name: "check",
+        request_type: "CheckProxySettingsRequest",
+        response_type: "CheckProxySettingsResponse",
+    },
 ];

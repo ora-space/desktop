@@ -41,7 +41,8 @@ use ora_plugin_manager::{
 use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{ProgressCallback, ProxyConfig, ReqwestDownloader};
-use std::collections::BTreeMap;
+use ora_utils::url::canonical_repository_url;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -255,24 +256,38 @@ impl PluginApi {
         }
         Ok(())
     }
-    /// Returns the cached marketplace registry index, or an empty catalog when absent.
+    /// Returns the cached marketplace registry index, excluding listings from disabled sources.
     pub(crate) fn list_available_plugins(
         &self,
         _request: ListAvailablePluginsRequest,
-    ) -> Result<ListAvailablePluginsResponse, RegistryError> {
-        match RegistryIndex::load(&self.registry_index_path) {
-            Ok(index) => Ok(ListAvailablePluginsResponse {
+    ) -> Result<ListAvailablePluginsResponse, BackendError> {
+        let mut response = match RegistryIndex::load(&self.registry_index_path) {
+            Ok(index) => ListAvailablePluginsResponse {
                 updated_at: index.updated_at(),
                 plugins: index.plugins().iter().map(available_plugin).collect(),
-            }),
+            },
             Err(RegistryError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(ListAvailablePluginsResponse {
+                ListAvailablePluginsResponse {
                     updated_at: 0,
                     plugins: Vec::new(),
-                })
+                }
             }
-            Err(error) => Err(error),
-        }
+            Err(error) => {
+                return Err(BackendError::internal(
+                    "failed to load plugin registry index",
+                    error,
+                ));
+            }
+        };
+        let enabled_urls: HashSet<String> = self
+            .enabled_marketplace_sources()?
+            .into_iter()
+            .map(|source| canonical_repository_url(&source.url))
+            .collect();
+        response
+            .plugins
+            .retain(|plugin| enabled_urls.contains(&canonical_repository_url(&plugin.source_url)));
+        Ok(response)
     }
 
     /// Returns the user-configured marketplace source repositories in precedence order.
@@ -300,6 +315,7 @@ impl PluginApi {
                     url: request.url,
                     branch: request.branch,
                     use_proxy: request.use_proxy,
+                    enabled: true,
                 },
                 self.clock.now_timestamp_millis(),
             )
@@ -319,16 +335,21 @@ impl PluginApi {
         Ok(DeleteMarketplaceSourceResponse { sources })
     }
 
-    /// Changes only one marketplace source\u2019s proxy policy and returns the authoritative list.
+    /// Replaces the editable fields of one marketplace source and returns the authoritative list.
     pub(crate) fn update_marketplace_source(
         &self,
         request: UpdateMarketplaceSourceRequest,
     ) -> Result<UpdateMarketplaceSourceResponse, BackendError> {
         let sources = self
             .marketplace_sources
-            .set_use_proxy(
+            .update(
                 &request.url,
-                request.use_proxy,
+                ora_contracts::MarketplaceSource {
+                    url: request.new_url,
+                    branch: request.branch,
+                    use_proxy: request.use_proxy,
+                    enabled: request.enabled,
+                },
                 self.clock.now_timestamp_millis(),
             )
             .map_err(map_marketplace_source_error)?;
@@ -423,15 +444,25 @@ impl PluginApi {
         ))
     }
 
-    /// Binds every configured marketplace source to its checkout without network or proxy work.
+    /// Returns configured marketplace sources that currently participate in listing and sync.
+    fn enabled_marketplace_sources(
+        &self,
+    ) -> Result<Vec<ora_contracts::MarketplaceSource>, BackendError> {
+        Ok(self
+            .marketplace_sources
+            .list()
+            .map_err(map_marketplace_source_error)?
+            .into_iter()
+            .filter(|source| source.enabled)
+            .collect())
+    }
+
+    /// Binds every enabled marketplace source to its checkout without network or proxy work.
     ///
     /// Reads resolve listings from the local checkouts, so they can skip the proxy validation
     /// that only matters when a source is fetched or its release is downloaded.
     fn registry_sources(&self) -> Result<Vec<ora_plugin_registry::RegistrySource>, BackendError> {
-        let configured = self
-            .marketplace_sources
-            .list()
-            .map_err(map_marketplace_source_error)?;
+        let configured = self.enabled_marketplace_sources()?;
         let now_ms = self.clock.now_timestamp_millis();
         configured
             .iter()
@@ -443,14 +474,11 @@ impl PluginApi {
             .collect()
     }
 
-    /// Binds every configured marketplace source to a registry checkout, applying proxy policy.
+    /// Binds every enabled marketplace source to a registry checkout, applying proxy policy.
     fn prepared_registry_sources(
         &self,
     ) -> Result<Vec<(ora_plugin_registry::RegistrySource, bool)>, BackendError> {
-        let configured = self
-            .marketplace_sources
-            .list()
-            .map_err(map_marketplace_source_error)?;
+        let configured = self.enabled_marketplace_sources()?;
         let proxy_settings = self.user_config.network_proxy_settings()?;
         let mut registry_sources = Vec::with_capacity(configured.len());
 

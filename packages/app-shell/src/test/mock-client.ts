@@ -529,6 +529,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           url: req.url,
           branch: req.branch,
           useProxy: req.useProxy,
+          enabled: true,
         };
         state.marketplaceSources.push(source);
         return { sources: [...state.marketplaceSources] };
@@ -542,12 +543,22 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { sources: [...state.marketplaceSources] };
       },
       updateSource: async (req) => {
-        const source = state.marketplaceSources.find(
+        const idx = state.marketplaceSources.findIndex(
           (candidate) => candidate.url === req.url,
         );
-        if (source === undefined)
-          throw new Error(`marketplace source ${req.url} not found`);
-        source.useProxy = req.useProxy;
+        if (idx < 0) throw new Error(`marketplace source ${req.url} not found`);
+        if (
+          req.newUrl !== req.url &&
+          state.marketplaceSources.some((source) => source.url === req.newUrl)
+        ) {
+          throw new Error(`marketplace source ${req.newUrl} already exists`);
+        }
+        state.marketplaceSources[idx] = {
+          url: req.newUrl,
+          branch: req.branch,
+          useProxy: req.useProxy,
+          enabled: req.enabled,
+        };
         return { sources: [...state.marketplaceSources] };
       },
       syncAvailable: async () => ({
@@ -739,6 +750,11 @@ export function createMockClient(state: MockClientState): ContractsClient {
         state.proxySettings = structuredClone(req.settings);
         return { settings: state.proxySettings };
       },
+      clear: async () => {
+        state.proxySettings = null;
+        return { settings: null };
+      },
+      check: async () => ({ outcome: "reachable" as const, status: 200 }),
     },
     fileSystem: {
       listWorkspaceDirectory: async () => ({ path: "", entries: [] }),

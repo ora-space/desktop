@@ -105,6 +105,8 @@ desktop_command_registry! {
     settings_commands::set_runtime_log_level,
     settings_commands::get_proxy_settings,
     settings_commands::set_proxy_settings,
+    settings_commands::clear_proxy_settings,
+    settings_commands::check_proxy_settings,
     commands::set_worktree_root,
     commands::resolve_task_cwd,
     commands::resolve_workspace_cwd,

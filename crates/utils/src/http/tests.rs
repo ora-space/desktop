@@ -424,6 +424,30 @@ mod reqwest_integration {
         assert_eq!(std::fs::read(&destination).unwrap(), payload);
     }
 
+    /// A connectivity probe reports the HTTP status without writing a destination file.
+    #[tokio::test]
+    async fn probe_reports_http_status_from_local_server() {
+        let url = serve_once(b"ok").await;
+        let status = ReqwestDownloader::new(Default::default())
+            .probe(url, std::time::Duration::from_secs(2))
+            .await
+            .unwrap();
+
+        assert_eq!(status, 200);
+    }
+
+    /// A refused loopback port is reported as a network error rather than a successful status.
+    #[tokio::test]
+    async fn probe_reports_a_refused_connection() {
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let error = ReqwestDownloader::new(Default::default())
+            .probe(url, std::time::Duration::from_secs(2))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, DownloadError::Network { .. }));
+    }
+
     /// A response larger than the byte limit is rejected and leaves no destination file.
     #[tokio::test]
     async fn rejects_response_over_byte_limit() {

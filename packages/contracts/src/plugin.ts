@@ -275,6 +275,10 @@ export type MarketplaceSource = {
    * Whether Git fetches and plugin downloads for this source use the configured proxy.
    */
   useProxy: boolean;
+  /**
+   * Whether this source participates in marketplace sync, listing, and install.
+   */
+  enabled: boolean;
 };
 
 /**
@@ -477,12 +481,21 @@ export type UninstallPluginRequest = {
 export type UninstallPluginResponse = { pluginId: string };
 
 /**
- * Requests changing only one marketplace source's proxy policy.
+ * Requests replacing the editable fields of one marketplace source.
+ *
+ * `url` identifies the persisted row. `new_url` is the replacement Git address and may equal
+ * `url` when only branch, proxy policy, or enabled state changes.
  */
-export type UpdateMarketplaceSourceRequest = { url: string; useProxy: boolean };
+export type UpdateMarketplaceSourceRequest = {
+  url: string;
+  newUrl: string;
+  branch: string;
+  useProxy: boolean;
+  enabled: boolean;
+};
 
 /**
- * Returns the source list immediately after one source's proxy policy is persisted.
+ * Returns the source list immediately after one source is updated.
  */
 export type UpdateMarketplaceSourceResponse = {
   sources: Array<MarketplaceSource>;

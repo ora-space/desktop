@@ -308,9 +308,7 @@ impl Backend {
         &self,
         request: ListAvailablePluginsRequest,
     ) -> Result<ListAvailablePluginsResponse, BackendError> {
-        self.plugin
-            .list_available_plugins(request)
-            .map_err(|error| BackendError::internal("failed to load plugin registry index", error))
+        self.plugin.list_available_plugins(request)
     }
 
     /// Returns every configured marketplace source in precedence order.
@@ -337,7 +335,7 @@ impl Backend {
         self.plugin.delete_marketplace_source(request)
     }
 
-    /// Changes one marketplace source\u2019s proxy policy after persisting it.
+    /// Replaces the editable fields of one marketplace source after persisting them.
     pub fn update_marketplace_source(
         &self,
         request: UpdateMarketplaceSourceRequest,
@@ -735,6 +733,20 @@ impl Backend {
         settings: ora_application::NetworkProxySettings,
     ) -> Result<ora_application::NetworkProxySettings, BackendError> {
         self.user_config.set_network_proxy_settings(settings)
+    }
+
+    /// Removes the configured network proxy settings.
+    pub fn clear_network_proxy_settings(&self) -> Result<(), BackendError> {
+        self.user_config.clear_network_proxy_settings()
+    }
+
+    /// Probes `url` through `settings` without persisting those settings.
+    pub async fn check_network_proxy_settings(
+        &self,
+        settings: ora_application::NetworkProxySettings,
+        url: String,
+    ) -> Result<ora_contracts::CheckProxySettingsResponse, BackendError> {
+        crate::proxy::check_proxy(&settings, &url).await
     }
 
     /// Returns the restricted preferred-level persistence capability for runtime logging.

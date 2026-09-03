@@ -20,27 +20,56 @@ export function useProxySettings() {
       queryClient.setQueryData(queryKeys.proxySettings, response);
     },
   });
+  const clearMutation = useMutation({
+    mutationFn: () => client.proxy.clear({}),
+    onSuccess: (response) => {
+      queryClient.setQueryData(queryKeys.proxySettings, response);
+    },
+  });
+  const checkMutation = useMutation({
+    mutationFn: ({ url, settings }: { url: string; settings: ProxySettings }) =>
+      client.proxy.check({ url, settings }),
+  });
 
   const submit = useCallback(
-    (settings: ProxySettings) => {
+    async (settings: ProxySettings) => {
       if (submissionPending.current) return;
       submissionPending.current = true;
-      mutation.mutate(settings, {
-        onSettled: () => {
-          submissionPending.current = false;
-        },
-      });
+      try {
+        await mutation.mutateAsync(settings);
+      } finally {
+        submissionPending.current = false;
+      }
     },
     [mutation],
+  );
+
+  const clear = useCallback(async () => {
+    if (submissionPending.current) return;
+    submissionPending.current = true;
+    try {
+      await clearMutation.mutateAsync();
+    } finally {
+      submissionPending.current = false;
+    }
+  }, [clearMutation]);
+
+  const check = useCallback(
+    (url: string, settings: ProxySettings) =>
+      checkMutation.mutateAsync({ url, settings }),
+    [checkMutation],
   );
 
   return {
     settings: query.data?.settings ?? null,
     isLoading: query.isPending,
     loadError: query.error,
-    isSaving: mutation.isPending,
-    updateError: mutation.error,
+    isSaving: mutation.isPending || clearMutation.isPending,
+    isChecking: checkMutation.isPending,
+    updateError: mutation.error ?? clearMutation.error,
     submit,
+    clear,
+    check,
     retry: query.refetch,
   };
 }

@@ -310,6 +310,8 @@ pub struct MarketplaceSource {
     pub branch: String,
     /// Whether Git fetches and plugin downloads for this source use the configured proxy.
     pub use_proxy: bool,
+    /// Whether this source participates in marketplace sync, listing, and install.
+    pub enabled: bool,
 }
 
 /// Requests the configured marketplace source repositories.
@@ -344,16 +346,22 @@ pub struct AddMarketplaceSourceResponse {
     pub sources: Vec<MarketplaceSource>,
 }
 
-/// Requests changing only one marketplace source's proxy policy.
+/// Requests replacing the editable fields of one marketplace source.
+///
+/// `url` identifies the persisted row. `new_url` is the replacement Git address and may equal
+/// `url` when only branch, proxy policy, or enabled state changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct UpdateMarketplaceSourceRequest {
     pub url: String,
+    pub new_url: String,
+    pub branch: String,
     pub use_proxy: bool,
+    pub enabled: bool,
 }
 
-/// Returns the source list immediately after one source's proxy policy is persisted.
+/// Returns the source list immediately after one source is updated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
@@ -962,6 +970,7 @@ mod tests {
             url: "https://github.com/example/marketplace".to_string(),
             branch: "main".to_string(),
             use_proxy: false,
+            enabled: true,
         };
         assert_eq!(
             serde_json::to_value(ListMarketplaceSourcesRequest {}).unwrap(),
@@ -976,7 +985,8 @@ mod tests {
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
                     "branch": "main",
-                    "useProxy": false
+                    "useProxy": false,
+                    "enabled": true
                 }]
             })
         );
@@ -1002,19 +1012,26 @@ mod tests {
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
                     "branch": "main",
-                    "useProxy": false
+                    "useProxy": false,
+                    "enabled": true
                 }]
             })
         );
         assert_eq!(
             serde_json::to_value(UpdateMarketplaceSourceRequest {
                 url: "https://github.com/example/marketplace".to_string(),
+                new_url: "https://github.com/example/marketplace.git".to_string(),
+                branch: "release".to_string(),
                 use_proxy: true,
+                enabled: false,
             })
             .unwrap(),
             json!({
                 "url": "https://github.com/example/marketplace",
-                "useProxy": true
+                "newUrl": "https://github.com/example/marketplace.git",
+                "branch": "release",
+                "useProxy": true,
+                "enabled": false
             })
         );
         assert_eq!(

@@ -229,6 +229,10 @@ export function createContractsClient(
         executeOperation("getProxySettings", request, transport, options),
       set: (request, options) =>
         executeOperation("setProxySettings", request, transport, options),
+      clear: (request, options) =>
+        executeOperation("clearProxySettings", request, transport, options),
+      check: (request, options) =>
+        executeOperation("checkProxySettings", request, transport, options),
     },
     fileSystem: {
       listWorkspaceDirectory: (request, options) =>

@@ -7,7 +7,7 @@ import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWo
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
-import type { GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
+import type { CheckProxySettingsRequest, CheckProxySettingsResponse, ClearProxySettingsRequest, ClearProxySettingsResponse, GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
 import type { CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StartSessionRequest, StartSessionResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
@@ -95,6 +95,8 @@ export type RequestByOperation = {
   importPlugin: ImportPluginRequest;
   getProxySettings: GetProxySettingsRequest;
   setProxySettings: SetProxySettingsRequest;
+  clearProxySettings: ClearProxySettingsRequest;
+  checkProxySettings: CheckProxySettingsRequest;
   listWorkspaceDirectory: ListWorkspaceDirectoryRequest;
   readWorkspaceFile: ReadWorkspaceFileRequest;
   searchWorkspace: SearchWorkspaceRequest;
@@ -205,6 +207,8 @@ export type ResponseByOperation = {
   importPlugin: ImportPluginResponse;
   getProxySettings: GetProxySettingsResponse;
   setProxySettings: SetProxySettingsResponse;
+  clearProxySettings: ClearProxySettingsResponse;
+  checkProxySettings: CheckProxySettingsResponse;
   listWorkspaceDirectory: ListWorkspaceDirectoryResponse;
   readWorkspaceFile: ReadWorkspaceFileResponse;
   searchWorkspace: SearchWorkspaceResponse;
@@ -791,6 +795,22 @@ export const endpoints = {
     memberName: "set",
     requestType: "SetProxySettingsRequest",
     responseType: "SetProxySettingsResponse",
+    responseMode: "unary",
+  },
+  clearProxySettings: {
+    operationName: "clearProxySettings",
+    namespace: "proxy",
+    memberName: "clear",
+    requestType: "ClearProxySettingsRequest",
+    responseType: "ClearProxySettingsResponse",
+    responseMode: "unary",
+  },
+  checkProxySettings: {
+    operationName: "checkProxySettings",
+    namespace: "proxy",
+    memberName: "check",
+    requestType: "CheckProxySettingsRequest",
+    responseType: "CheckProxySettingsResponse",
     responseMode: "unary",
   },
   listWorkspaceDirectory: {

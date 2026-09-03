@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
@@ -37,6 +43,7 @@ it("renders configured marketplace sources", async () => {
     url: "https://github.com/ora-space/marketplace",
     branch: "main",
     useProxy: false,
+    enabled: true,
   });
   const client = createMockClient(state);
 
@@ -66,6 +73,7 @@ it("adds a marketplace source through the backend", async () => {
         url: "https://github.com/example/marketplace",
         branch: "main",
         useProxy: false,
+        enabled: true,
       },
     ]),
   );
@@ -77,6 +85,7 @@ it("removes a marketplace source through the backend", async () => {
     url: "https://github.com/ora-space/marketplace",
     branch: "main",
     useProxy: false,
+    enabled: true,
   });
   const client = createMockClient(state);
   const deleteSource = vi.spyOn(client.plugin, "deleteSource");
@@ -95,4 +104,66 @@ it("removes a marketplace source through the backend", async () => {
     }),
   );
   await waitFor(() => expect(state.marketplaceSources).toEqual([]));
+});
+
+it("edits a marketplace source URL and branch", async () => {
+  const state = createMockClientState();
+  state.marketplaceSources.push({
+    url: "https://github.com/ora-space/marketplace",
+    branch: "main",
+    useProxy: false,
+    enabled: true,
+  });
+  const client = createMockClient(state);
+  const user = userEvent.setup();
+
+  renderManager(client);
+
+  await user.click(await screen.findByRole("button", { name: /编辑|Edit/ }));
+  const dialog = await screen.findByRole("dialog");
+  const urlInput = within(dialog).getByLabelText(/Git URL/);
+  const branchInput = within(dialog).getByLabelText(/分支|Branch/);
+  await user.clear(urlInput);
+  await user.type(urlInput, "https://github.com/example/marketplace");
+  await user.clear(branchInput);
+  await user.type(branchInput, "release");
+  await user.click(within(dialog).getByRole("button", { name: /保存|Save/ }));
+
+  await waitFor(() =>
+    expect(state.marketplaceSources).toEqual([
+      {
+        url: "https://github.com/example/marketplace",
+        branch: "release",
+        useProxy: false,
+        enabled: true,
+      },
+    ]),
+  );
+});
+
+it("disables a marketplace source without removing it", async () => {
+  const state = createMockClientState();
+  state.marketplaceSources.push({
+    url: "https://github.com/ora-space/marketplace",
+    branch: "main",
+    useProxy: false,
+    enabled: true,
+  });
+  const client = createMockClient(state);
+  const user = userEvent.setup();
+
+  renderManager(client);
+
+  await user.click(await screen.findByRole("button", { name: /禁用|Disable/ }));
+
+  await waitFor(() =>
+    expect(state.marketplaceSources).toEqual([
+      {
+        url: "https://github.com/ora-space/marketplace",
+        branch: "main",
+        useProxy: false,
+        enabled: false,
+      },
+    ]),
+  );
 });

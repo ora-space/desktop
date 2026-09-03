@@ -4,10 +4,11 @@ use std::future::Future;
 
 use ora_backend::{BackendError, RequestLifecycle, UuidRequestIdGenerator};
 use ora_contracts::{
-    DeveloperModeResponse, GetDeveloperModeRequest, GetProxySettingsRequest,
-    GetProxySettingsResponse, GetRuntimeLogLevelRequest, ProxySettings, RuntimeLogLevel,
-    RuntimeLogLevelStateResponse, SetDeveloperModeRequest, SetProxySettingsRequest,
-    SetProxySettingsResponse, SetRuntimeLogLevelRequest,
+    CheckProxySettingsRequest, CheckProxySettingsResponse, ClearProxySettingsRequest,
+    ClearProxySettingsResponse, DeveloperModeResponse, GetDeveloperModeRequest,
+    GetProxySettingsRequest, GetProxySettingsResponse, GetRuntimeLogLevelRequest, ProxySettings,
+    RuntimeLogLevel, RuntimeLogLevelStateResponse, SetDeveloperModeRequest,
+    SetProxySettingsRequest, SetProxySettingsResponse, SetRuntimeLogLevelRequest,
 };
 use ora_runtime_settings::RuntimeLogLevelState;
 use tauri::State;
@@ -161,6 +162,39 @@ pub async fn set_proxy_settings(
         backend
             .set_network_proxy_settings(settings)
             .map(set_proxy_settings_response)
+    })
+    .await
+}
+
+/// Removes the configured network proxy.
+#[tauri::command]
+pub async fn clear_proxy_settings(
+    state: State<'_, DesktopState>,
+    request: ClearProxySettingsRequest,
+) -> Result<ClearProxySettingsResponse, CommandError> {
+    let _ = request;
+    let backend = state.backend.clone();
+    run_async_command("clear_proxy_settings", async move {
+        backend.clear_network_proxy_settings()?;
+        Ok(ClearProxySettingsResponse { settings: None })
+    })
+    .await
+}
+
+/// Probes one URL through the supplied proxy configuration without persisting it.
+#[tauri::command]
+pub async fn check_proxy_settings(
+    state: State<'_, DesktopState>,
+    request: CheckProxySettingsRequest,
+) -> Result<CheckProxySettingsResponse, CommandError> {
+    let backend = state.backend.clone();
+    run_async_command("check_proxy_settings", async move {
+        backend
+            .check_network_proxy_settings(
+                internal_network_proxy_settings(request.settings),
+                request.url,
+            )
+            .await
     })
     .await
 }

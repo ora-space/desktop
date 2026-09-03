@@ -151,6 +151,14 @@ where
             })?;
         Ok(settings)
     }
+
+    /// Removes the configured network proxy so marketplace traffic connects directly.
+    pub fn clear_network_proxy_settings(&self) -> Result<(), ApplicationError> {
+        self.store
+            .delete(ConfigKey::NetworkProxySettings)
+            .map_err(ApplicationError::from_user_config_repository_error)?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Error)]
