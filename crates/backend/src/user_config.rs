@@ -116,6 +116,13 @@ impl UserConfigApi {
             .set_network_proxy_settings(settings)
             .map_err(BackendError::from)
     }
+
+    /// Removes the configured network proxy.
+    pub(crate) fn clear_network_proxy_settings(&self) -> Result<(), BackendError> {
+        self.service
+            .clear_network_proxy_settings()
+            .map_err(BackendError::from)
+    }
 }
 
 fn user_config_repository_error(error: ora_application::RepositoryError) -> BackendError {

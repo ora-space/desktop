@@ -1,9 +1,14 @@
 use gitlancer::GitEnv;
 use ora_application::NetworkProxySettings;
-use ora_utils::http::{Proxy, ProxyAuth, ProxyBypass, ProxyConfig};
+use ora_contracts::CheckProxySettingsResponse;
+use ora_utils::http::{Proxy, ProxyAuth, ProxyBypass, ProxyConfig, ReqwestDownloader};
+use std::time::Duration;
 use url::Url;
 
 use crate::BackendError;
+
+/// Time budget for one proxy connectivity probe, including connect and the first response headers.
+const PROXY_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Builds the per-download proxy configuration selected by a marketplace source.
 pub(crate) fn download_proxy(
@@ -98,5 +103,46 @@ fn normalized_proxy_url(settings: &NetworkProxySettings) -> Result<String, Backe
         Ok(format!("{host}:{}", settings.port))
     } else {
         Ok(format!("http://{host}:{}", settings.port))
+    }
+}
+
+/// Probes `url` through `settings` and reports whether the proxy path reached a host.
+///
+/// Invalid URLs and transport failures are returned as `Unreachable` so the Settings UI can show a
+/// check result instead of treating the probe as a command failure. Any HTTP status, including
+/// 4xx and 5xx, means the proxy could talk to a remote host.
+pub(crate) async fn check_proxy(
+    settings: &NetworkProxySettings,
+    url: &str,
+) -> Result<CheckProxySettingsResponse, BackendError> {
+    let parsed = match Url::parse(url) {
+        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => parsed,
+        Ok(_) => {
+            return Ok(CheckProxySettingsResponse::Unreachable {
+                message: "URL must use http or https".to_owned(),
+            });
+        }
+        Err(error) => {
+            return Ok(CheckProxySettingsResponse::Unreachable {
+                message: error.to_string(),
+            });
+        }
+    };
+    let proxy_config = match download_proxy(Some(settings))? {
+        Some(config) => config,
+        None => {
+            return Ok(CheckProxySettingsResponse::Unreachable {
+                message: "proxy settings are incomplete".to_owned(),
+            });
+        }
+    };
+    match ReqwestDownloader::new(proxy_config)
+        .probe(parsed, PROXY_CHECK_TIMEOUT)
+        .await
+    {
+        Ok(status) => Ok(CheckProxySettingsResponse::Reachable { status }),
+        Err(error) => Ok(CheckProxySettingsResponse::Unreachable {
+            message: error.to_string(),
+        }),
     }
 }

@@ -149,5 +149,8 @@ mod tests {
             settings
         );
         assert_eq!(service.network_proxy_settings().unwrap(), Some(settings));
+
+        service.clear_network_proxy_settings().unwrap();
+        assert_eq!(service.network_proxy_settings().unwrap(), None);
     }
 }

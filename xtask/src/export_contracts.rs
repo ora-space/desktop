@@ -394,7 +394,11 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "GetProxySettingsResponse"
         | "ProxySettings"
         | "SetProxySettingsRequest"
-        | "SetProxySettingsResponse" => "proxy",
+        | "SetProxySettingsResponse"
+        | "ClearProxySettingsRequest"
+        | "ClearProxySettingsResponse"
+        | "CheckProxySettingsRequest"
+        | "CheckProxySettingsResponse" => "proxy",
 
         // workflow
         "CreateWorkflowRequest"

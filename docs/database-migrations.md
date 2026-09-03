@@ -20,6 +20,8 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0004`  | Durable Git cleanup jobs and worktree provisioning leases.                                                                                                                                                     |
 | `0005`  | Durable plugin marketplace source configuration.                                                                                                                                                               |
 | `0006`  | Generic Effect Scopes, Sources/Revisions, Desired State, Consumers/Targets, shared Resources, projections, ownership, statuses, Conditions, claims, Attempts, operation journals, receipts, and audit history. |
+| `0007`  | Immutable marketplace-source namespace bindings keyed by canonical Git URL.                                                                                                                                    |
+| `0008`  | Per-source `enabled` flag so a marketplace URL can be disabled without deleting its identity.                                                                                                                  |
 
 `default_migration_catalog()` returns all migrations with every version as the active target.
 

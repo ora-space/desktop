@@ -49,14 +49,33 @@ export function useDeleteMarketplaceSource() {
 }
 
 /**
- * Changes only one marketplace source's proxy policy and refreshes the list.
+ * Changes one marketplace source's URL, branch, proxy policy, or enabled state
+ * and refreshes the list.
  */
 export function useUpdateMarketplaceSource() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ url, useProxy }: { url: string; useProxy: boolean }) =>
-      client.plugin.updateSource({ url, useProxy }),
+    mutationFn: ({
+      url,
+      newUrl,
+      branch,
+      useProxy,
+      enabled,
+    }: {
+      url: string;
+      newUrl: string;
+      branch: string;
+      useProxy: boolean;
+      enabled: boolean;
+    }) =>
+      client.plugin.updateSource({
+        url,
+        newUrl,
+        branch,
+        useProxy,
+        enabled,
+      }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
   });

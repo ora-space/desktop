@@ -10,6 +10,8 @@
   the environment held by the source (`RegistrySource::git_env`) is applied to those Git commands.
 - `RegistrySource` carries a `gitlancer::GitEnv` set with `with_git_env` and read with `git_env`,
   allowing callers such as the backend to opt individual marketplace checkouts into a network proxy.
+  Whether a source participates at all (enabled vs disabled) remains a Backend/SQLite concern; this
+  crate syncs only the sources the caller prepares.
 - `RegistrySource` carries the namespace its entries are published under. The namespace is
   supplied by the caller, which binds it once per source and persists it, rather than derived on
   every construction: a plugin's install path freezes the namespace when the package lands, so an

@@ -213,6 +213,35 @@ impl ReqwestDownloader {
         })
     }
 
+    /// Issues one GET against `url` and returns the HTTP status when a response arrives.
+    ///
+    /// The body is discarded: a connectivity probe only needs to know that the proxy path reached
+    /// a host. Any HTTP status, including 4xx and 5xx, is therefore a successful probe.
+    pub async fn probe(&self, url: Url, timeout: Duration) -> Result<u16, DownloadError> {
+        let options = DownloadOptions {
+            connect_timeout: Some(timeout),
+            per_attempt_timeout: Some(timeout),
+            total_timeout: Some(timeout),
+            max_retries: 0,
+            ..DownloadOptions::default()
+        };
+        let operation = async {
+            let client = self.build_client(&options, &url)?;
+            let response = client
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|error| network_error(&url, error))?;
+            Ok(response.status().as_u16())
+        };
+        match tokio::time::timeout(timeout, operation).await {
+            Ok(result) => result,
+            Err(_) => Err(DownloadError::Timeout {
+                phase: TimeoutPhase::Total,
+            }),
+        }
+    }
+
     /// Builds a per-request client with the resolved proxy and the requested timeouts.
     fn build_client(
         &self,

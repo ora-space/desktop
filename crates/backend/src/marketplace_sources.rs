@@ -58,6 +58,7 @@ impl MarketplaceSourceStore {
                 url: DEFAULT_MARKETPLACE_URL.to_owned(),
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                 use_proxy: false,
+                enabled: true,
             };
             store.insert(default_source, /*position*/ 0, now_ms)?;
         }
@@ -112,15 +113,45 @@ impl MarketplaceSourceStore {
         self.list()
     }
 
-    /// Changes only the proxy policy of one source and returns the authoritative list.
-    pub(crate) fn set_use_proxy(
+    /// Replaces the editable fields of one source and returns the authoritative list.
+    ///
+    /// Changing the Git URL to a different canonical repository binds a new namespace for that
+    /// address the same way add does. Equivalent spellings of the current repository reuse the
+    /// existing binding so installed plugins stay attached.
+    pub(crate) fn update(
         &self,
-        url: &str,
-        use_proxy: bool,
+        current_url: &str,
+        source: MarketplaceSource,
         now_ms: i64,
     ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
-        if !self.repository.set_use_proxy(url, use_proxy, now_ms)? {
-            return Err(MarketplaceSourceStoreError::NotFound(url.to_owned()));
+        let current = self.repository.list_sources()?;
+        let Some(existing) = current.iter().find(|row| row.url == current_url).cloned() else {
+            return Err(MarketplaceSourceStoreError::NotFound(
+                current_url.to_owned(),
+            ));
+        };
+        let new_canonical = canonical_repository_url(&source.url);
+        if current.iter().any(|row| {
+            row.url != current_url && canonical_repository_url(&row.url) == new_canonical
+        }) {
+            return Err(MarketplaceSourceStoreError::Duplicate(source.url));
+        }
+        let namespace = self.namespace_for(&source.url, now_ms)?;
+        checked_source(&source, namespace, &self.sources_root)?;
+        if !self.repository.update_source(
+            current_url,
+            &PluginMarketplaceSourceRecord {
+                url: source.url,
+                branch: source.branch,
+                use_proxy: source.use_proxy,
+                enabled: source.enabled,
+                position: existing.position,
+            },
+            now_ms,
+        )? {
+            return Err(MarketplaceSourceStoreError::NotFound(
+                current_url.to_owned(),
+            ));
         }
         self.list()
     }
@@ -174,6 +205,7 @@ impl MarketplaceSourceStore {
                 url: source.url,
                 branch: source.branch,
                 use_proxy: source.use_proxy,
+                enabled: source.enabled,
                 position,
             },
             now_ms,
@@ -202,6 +234,7 @@ fn source_spec(source: &PluginMarketplaceSourceRecord) -> MarketplaceSource {
         url: source.url.clone(),
         branch: source.branch.clone(),
         use_proxy: source.use_proxy,
+        enabled: source.enabled,
     }
 }
 
@@ -244,6 +277,7 @@ mod tests {
             url: url.to_owned(),
             branch: "main".to_owned(),
             use_proxy: false,
+            enabled: true,
         }
     }
 
@@ -260,6 +294,7 @@ mod tests {
                 url: DEFAULT_MARKETPLACE_URL.to_owned(),
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                 use_proxy: false,
+                enabled: true,
             }]
         );
     }
@@ -272,6 +307,7 @@ mod tests {
             url: "https://github.com/example/marketplace".to_owned(),
             branch: "main".to_owned(),
             use_proxy: true,
+            enabled: true,
         };
 
         let sources = store.add(added.clone(), 2).expect("add source");
@@ -279,12 +315,74 @@ mod tests {
         assert!(sources.contains(&added));
 
         let updated = store
-            .set_use_proxy(&added.url, false, 3)
+            .update(
+                &added.url,
+                MarketplaceSource {
+                    url: added.url.clone(),
+                    branch: "release".to_owned(),
+                    use_proxy: false,
+                    enabled: false,
+                },
+                3,
+            )
             .expect("update source");
-        assert_eq!(updated[1].use_proxy, false);
+        assert_eq!(
+            updated[1],
+            MarketplaceSource {
+                url: added.url.clone(),
+                branch: "release".to_owned(),
+                use_proxy: false,
+                enabled: false,
+            }
+        );
 
         let remaining = store.delete(&added.url).expect("delete source");
         assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
+    fn update_replaces_the_git_url_in_place() {
+        let temp = TempDir::new().expect("create temp directory");
+        let (_, store) = store_with_repository(&temp);
+        let original = third_party("https://github.com/example/original");
+        store.add(original.clone(), 2).expect("add source");
+
+        let renamed = MarketplaceSource {
+            url: "https://github.com/example/renamed".to_owned(),
+            branch: "main".to_owned(),
+            use_proxy: false,
+            enabled: true,
+        };
+        let sources = store
+            .update(&original.url, renamed.clone(), 3)
+            .expect("rename source");
+
+        assert!(sources.contains(&renamed));
+        assert!(!sources.iter().any(|source| source.url == original.url));
+    }
+
+    #[test]
+    fn update_rejects_a_second_spelling_of_another_source() {
+        let temp = TempDir::new().expect("create temp directory");
+        let (_, store) = store_with_repository(&temp);
+        let first = third_party("https://github.com/example/first");
+        let second = third_party("https://github.com/example/second");
+        store.add(first.clone(), 2).expect("add first");
+        store.add(second.clone(), 3).expect("add second");
+
+        assert!(matches!(
+            store.update(
+                &second.url,
+                MarketplaceSource {
+                    url: "https://github.com/example/first.git".to_owned(),
+                    branch: "main".to_owned(),
+                    use_proxy: false,
+                    enabled: true,
+                },
+                4,
+            ),
+            Err(MarketplaceSourceStoreError::Duplicate(_))
+        ));
     }
 
     #[test]
@@ -317,6 +415,7 @@ mod tests {
                     url: DEFAULT_MARKETPLACE_URL.to_owned(),
                     branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                     use_proxy: false,
+                    enabled: true,
                 },
                 2,
             ),
@@ -343,6 +442,7 @@ mod tests {
                     url: DEFAULT_MARKETPLACE_URL.to_owned(),
                     branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                     use_proxy: false,
+                    enabled: true,
                 },
                 3,
             )

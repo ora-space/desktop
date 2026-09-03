@@ -8,11 +8,23 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
   Switch,
   toast,
 } from "@ora/ui";
-import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconLoader2,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from "@tabler/icons-react";
+import type { MarketplaceSource } from "@ora/contracts";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   useAddMarketplaceSource,
@@ -38,6 +50,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const updateSource = useUpdateMarketplaceSource();
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("main");
+  const [editing, setEditing] = useState<MarketplaceSource | null>(null);
 
   const sources = sourcesQuery.data?.sources ?? [];
 
@@ -55,6 +68,31 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
         },
         onError: (cause) =>
           showContractError(cause, t("settings.plugins.sourceAddFailed")),
+      },
+    );
+  };
+
+  const patchSource = (
+    source: MarketplaceSource,
+    patch: Partial<
+      Pick<MarketplaceSource, "url" | "branch" | "useProxy" | "enabled">
+    >,
+    onSuccess?: () => void,
+  ) => {
+    updateSource.mutate(
+      {
+        url: source.url,
+        newUrl: patch.url ?? source.url,
+        branch: patch.branch ?? source.branch,
+        useProxy: patch.useProxy ?? source.useProxy,
+        enabled: patch.enabled ?? source.enabled,
+      },
+      {
+        onSuccess: () => {
+          onSuccess?.();
+        },
+        onError: (cause) =>
+          showContractError(cause, t("settings.plugins.sourceUpdateFailed")),
       },
     );
   };
@@ -137,7 +175,9 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
               key={source.url}
               className="flex items-center gap-3 px-3 py-3 sm:px-4"
             >
-              <span className="min-w-0 flex-1">
+              <span
+                className={`min-w-0 flex-1 ${source.enabled ? "" : "opacity-50"}`}
+              >
                 <span className="block truncate text-sm font-medium">
                   {source.url}
                 </span>
@@ -152,16 +192,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                   title={t("settings.plugins.sourceUseProxy")}
                   disabled={updateSource.isPending}
                   onCheckedChange={(checked) =>
-                    updateSource.mutate(
-                      { url: source.url, useProxy: checked },
-                      {
-                        onError: (cause) =>
-                          showContractError(
-                            cause,
-                            t("settings.plugins.sourceProxyUpdateFailed"),
-                          ),
-                      },
-                    )
+                    patchSource(source, { useProxy: checked })
                   }
                   aria-label={`${t("settings.plugins.sourceUseProxy")}: ${source.url}`}
                 />
@@ -169,6 +200,40 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                   {t("settings.plugins.sourceUseProxy")}
                 </span>
               </label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={updateSource.isPending}
+                onClick={() =>
+                  patchSource(source, { enabled: !source.enabled }, () =>
+                    toast.success(
+                      source.enabled
+                        ? t("settings.plugins.sourceDisabled")
+                        : t("settings.plugins.sourceEnabled"),
+                    ),
+                  )
+                }
+                aria-label={`${
+                  source.enabled
+                    ? t("settings.plugins.disableSource")
+                    : t("settings.plugins.enableSource")
+                }: ${source.url}`}
+              >
+                {source.enabled
+                  ? t("settings.plugins.disableSource")
+                  : t("settings.plugins.enableSource")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 text-muted-foreground"
+                disabled={updateSource.isPending}
+                onClick={() => setEditing(source)}
+                aria-label={`${t("settings.plugins.editSource")}: ${source.url}`}
+              >
+                <IconPencil />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -196,6 +261,90 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           ))}
         </div>
       )}
+
+      {editing !== null && (
+        <SourceEditDialog
+          source={editing}
+          pending={updateSource.isPending}
+          onOpenChange={(open) => {
+            if (!open) setEditing(null);
+          }}
+          onSave={(nextUrl, nextBranch) =>
+            patchSource(editing, { url: nextUrl, branch: nextBranch }, () => {
+              setEditing(null);
+              toast.success(t("settings.plugins.sourceUpdated"));
+            })
+          }
+        />
+      )}
     </div>
+  );
+}
+
+interface SourceEditDialogProps {
+  source: MarketplaceSource;
+  pending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (url: string, branch: string) => void;
+}
+
+/** Edits one marketplace source's Git URL and tracked branch. */
+function SourceEditDialog({
+  source,
+  pending,
+  onOpenChange,
+  onSave,
+}: SourceEditDialogProps) {
+  const { t } = useTranslation();
+  const [url, setUrl] = useState(source.url);
+  const [branch, setBranch] = useState(source.branch);
+  const canSave = url.trim() !== "" && branch.trim() !== "";
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("settings.plugins.editSource")}</DialogTitle>
+          <DialogDescription>
+            {t("settings.plugins.editSourceDescription")}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="space-y-1.5">
+            <span className="text-sm font-medium">
+              {t("settings.plugins.sourceUrl")}
+            </span>
+            <Input
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              aria-label={t("settings.plugins.sourceUrl")}
+              autoComplete="off"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-sm font-medium">
+              {t("settings.plugins.sourceBranch")}
+            </span>
+            <Input
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+              aria-label={t("settings.plugins.sourceBranch")}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            disabled={pending || !canSave}
+            onClick={() => onSave(url.trim(), branch.trim())}
+          >
+            {pending ? t("settings.plugins.savingSource") : t("common.save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
