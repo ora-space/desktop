@@ -71,6 +71,13 @@ tasks:
       - task: export-contracts
       - pnpm --filter @ora/desktop tauri build
 
+  package:desktop:
+    desc: >-
+      Build a local desktop installer the same way desktop-build.yml does
+      (sidecars enabled, working-copy edits restored afterward)
+    cmds:
+      - node scripts/package-desktop.mjs {{.CLI_ARGS}}
+
   clean:
     desc: Clean build artifacts
     cmds:

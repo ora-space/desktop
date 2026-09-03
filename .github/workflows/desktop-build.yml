@@ -89,46 +89,23 @@ jobs:
             patchelf \
             build-essential
       - run: pnpm install --frozen-lockfile
-      # Keep the checked-in config free of local sidecar requirements so
-      # `tauri dev` resolves rg and deno from PATH. Packaging enables the
-      # downloaded sidecars by editing this working copy in place.
-      - name: Configure Tauri sidecars
-        shell: node {0}
-        run: |
-          const fs = require("node:fs");
-          const configPath = "apps/desktop/src-tauri/tauri.conf.json";
-          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-          config.bundle.externalBin = [
-            "binaries/rg",
-            "binaries/deno",
-            "binaries/ora-reaper",
-          ];
-          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-      - name: Configure Tauri updater artifacts
-        shell: node {0}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          const fs = require("node:fs");
-          const configPath = "apps/desktop/src-tauri/tauri.conf.json";
-          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-          const hasSigningKey = Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY?.trim());
-          config.bundle.createUpdaterArtifacts = hasSigningKey;
-          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-          if (!hasSigningKey) {
-            console.log("TAURI_SIGNING_PRIVATE_KEY is not configured; skipping updater artifacts.");
-          }
-      - name: Set desktop version from release tag
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
-        run: node scripts/set-desktop-version.mjs
-        env:
-          VERSION_TAG: ${{ inputs.tag || github.ref_name }}
-      - run: task build:desktop
+      # scripts/package-desktop.mjs is the single source of truth for turning
+      # the checked-in config (no sidecars, so `tauri dev` resolves rg/deno
+      # from PATH) into a packaged build: it enables the downloaded sidecars,
+      # turns on updater artifacts when a signing key is present, and applies
+      # VERSION_TAG when this run is building a release. It also restores
+      # tauri.conf.json/Cargo.toml/package.json/Cargo.lock afterward, which is
+      # a no-op for this disposable runner but keeps the same script safe to
+      # run on a developer's checkout (see `task package:desktop`).
+      - name: Build desktop bundle(s)
+        shell: bash
         env:
           DENO_VERSION: v2.9.5
           RG_VERSION: 15.2.0
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION_TAG: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) && (inputs.tag || github.ref_name) || '' }}
+        run: node scripts/package-desktop.mjs ${VERSION_TAG:+--tag "$VERSION_TAG"}
       # Each platform produces only the bundle types valid for its OS
       # (macOS=dmg, Windows=nsis, Linux=appimage+deb). Listing all four
       # globs is safe: upload-artifact combines them into one search and
