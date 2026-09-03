@@ -7,6 +7,7 @@ mod effect_registration;
 mod effect_worker;
 mod error;
 mod git_cleanup;
+mod huawei_s3;
 mod identity;
 mod marketplace_sources;
 mod plugin;

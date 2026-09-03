@@ -7,7 +7,7 @@ Generic, domain-free download capability used by crates that fetch release artif
 
 - `HttpDownload`: the uniform, injectable trait that a download operation must implement; callers
   run the returned future on their own runtime.
-- Data types: `DownloadRequest`, `DownloadSource` (`Url` / `Local`), `Checksum` (+ `HashAlgorithm`),
+- Data types: `DownloadRequest`, `DownloadSource` (`Url` / `Local` / `S3`), `Checksum` (+ `HashAlgorithm`),
   `DownloadOutcome`, `DownloadOptions` (byte limits, timeouts, retries) and `Progress`/`CancelToken`
   for streaming feedback.
 - `LocalFileDownloader`: an offline implementation that copies a local file or `file://` URL to a
@@ -16,6 +16,8 @@ Generic, domain-free download capability used by crates that fetch release artif
 - `ReqwestDownloader` (`http-reqwest` feature): streams remote HTTP(S) responses to a verified
   destination with per-phase timeouts, retry/backoff+jitter, progress callbacks, cancellation, byte
   limits, and checksum verification.
+- `S3AwareDownloader` (`http-reqwest` feature): signs path-style S3 GET requests with SigV4 when
+  the source is an object key, and forwards HTTPS URLs to `ReqwestDownloader` unsigned.
 - Proxy resolution (`ProxyConfig` + `resolve_proxy`): an explicit proxy, then per-scheme
   environment variables (`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`), honoring `NO_PROXY` and a bypass
   list; otherwise a direct connection. Platform system-proxy reading is not yet implemented.

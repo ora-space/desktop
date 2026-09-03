@@ -2053,7 +2053,7 @@ mod tests {
             .expect("resolve marketplace manifest")
             .expect("Tavily listing is present in staged registry");
         assert_eq!(
-            manifest.url().map(|url| url.as_url().to_string()),
+            manifest.url().map(|locator| locator.as_str().to_string()),
             Some(
                 "https://github.com/ora-space/tavily-search-mcp/releases/download/v0.1.0/ora-space.tavily-search-v0.1.0.orax"
                     .to_string()

@@ -46,7 +46,9 @@ orchestrates checksum-verified installs of new plugin releases.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`, where the
-  namespace is supplied by the caller as the identity of the installing marketplace source.
+  namespace is supplied by the caller as the identity of the installing marketplace source. The
+  marketplace `url` is either an HTTPS locator or an object-store key; `select_release` maps those
+  onto `DownloadSource::Url` and `DownloadSource::S3` respectively.
 - Update an installed plugin release by refusing no-op and downgrade attempts (the marketplace
   manifest must declare a higher version than the highest installed SemVer directory), then
   downloading, verifying, and extracting the new release into its version directory and retiring

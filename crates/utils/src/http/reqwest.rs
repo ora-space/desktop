@@ -70,6 +70,24 @@ impl ReqwestDownloader {
         &self,
         request: DownloadRequest,
     ) -> Result<DownloadOutcome, DownloadError> {
+        self.download_signed(request, &[]).await
+    }
+
+    /// Runs one download with extra request headers, used by SigV4-signed S3 GETs.
+    pub(crate) async fn download_with_headers(
+        &self,
+        request: DownloadRequest,
+        extra_headers: &[(String, String)],
+    ) -> Result<DownloadOutcome, DownloadError> {
+        self.download_signed(request, extra_headers).await
+    }
+
+    /// Resolves the URL and drives retries, attaching `extra_headers` to every attempt.
+    async fn download_signed(
+        &self,
+        request: DownloadRequest,
+        extra_headers: &[(String, String)],
+    ) -> Result<DownloadOutcome, DownloadError> {
         let url = match &request.source {
             DownloadSource::Url(url) => url.clone(),
             DownloadSource::Local(_) => {
@@ -77,9 +95,18 @@ impl ReqwestDownloader {
                     "local sources require the local downloader".to_owned(),
                 ));
             }
+            DownloadSource::S3 { .. } => {
+                return Err(DownloadError::InvalidSource(
+                    "S3 object-key sources require the S3-aware downloader".to_owned(),
+                ));
+            }
         };
 
-        let operation = async { self.attempt_with_retries(&request, &url).await };
+        let extra_headers = extra_headers.to_vec();
+        let operation = async {
+            self.attempt_with_retries(&request, &url, &extra_headers)
+                .await
+        };
         match request.options.total_timeout {
             Some(total) => tokio::time::timeout(total, operation).await.map_err(|_| {
                 DownloadError::Timeout {
@@ -95,6 +122,7 @@ impl ReqwestDownloader {
         &self,
         request: &DownloadRequest,
         url: &Url,
+        extra_headers: &[(String, String)],
     ) -> Result<DownloadOutcome, DownloadError> {
         let mut attempts: u32 = 0;
         loop {
@@ -106,7 +134,7 @@ impl ReqwestDownloader {
                 ))
                 .await;
             }
-            match self.single_attempt(request, url).await {
+            match self.single_attempt(request, url, extra_headers).await {
                 Ok(outcome) => return Ok(outcome),
                 Err(error) if is_retryable(&error) && attempts < request.options.max_retries => {
                     attempts += 1;
@@ -121,6 +149,7 @@ impl ReqwestDownloader {
         &self,
         request: &DownloadRequest,
         url: &Url,
+        extra_headers: &[(String, String)],
     ) -> Result<DownloadOutcome, DownloadError> {
         let client = self.build_client(&request.options, url)?;
         let temporary = temporary_sibling(&request.destination);
@@ -129,7 +158,11 @@ impl ReqwestDownloader {
                 .map_err(|error| io_error(&request.destination, error))?;
         }
 
-        let mut response = client.get(url.clone()).send().await.map_err(|error| {
+        let mut builder = client.get(url.clone());
+        for (name, value) in extra_headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let mut response = builder.send().await.map_err(|error| {
             remove_temporary(&temporary);
             network_error(url, error)
         })?;

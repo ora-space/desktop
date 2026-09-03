@@ -146,7 +146,7 @@ pub enum UrlError {
 ///
 /// Marketplace authors write link-valued fields as Markdown links, so the validators strip the
 /// wrapper before applying HTTPS invariants to the embedded URL.
-fn strip_markdown_link(value: &str) -> &str {
+pub(crate) fn strip_markdown_link(value: &str) -> &str {
     let Some(rest) = value.strip_prefix('[') else {
         return value;
     };

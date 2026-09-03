@@ -40,7 +40,7 @@ use ora_plugin_manager::{
 };
 use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
-use ora_utils::http::{ProgressCallback, ProxyConfig, ReqwestDownloader};
+use ora_utils::http::{ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader};
 use ora_utils::url::canonical_repository_url;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -714,9 +714,11 @@ impl PluginApi {
             ora_utils::http::DownloadSource::Local(path) => {
                 ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "installing marketplace plugin from local source");
             }
+            ora_utils::http::DownloadSource::S3 { key } => {
+                ora_info!(plugin_id = %request.plugin_id, key = %key, "installing marketplace plugin from object store");
+            }
         }
-        let download_proxy = self.download_proxy_for(use_proxy)?;
-        let installer = Installer::new(ReqwestDownloader::new(download_proxy));
+        let installer = self.marketplace_installer(use_proxy)?;
         match progress {
             Some(progress) => {
                 installer
@@ -764,6 +766,9 @@ impl PluginApi {
             ora_utils::http::DownloadSource::Local(path) => {
                 ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "updating marketplace plugin from local source");
             }
+            ora_utils::http::DownloadSource::S3 { key } => {
+                ora_info!(plugin_id = %request.plugin_id, key = %key, "updating marketplace plugin from object store");
+            }
         }
         // The package directory is replaced while the plugin may be running, so the process is
         // stopped first; stopping a webview/skill/MCP/hook package is a no-op.
@@ -773,8 +778,8 @@ impl PluginApi {
             })
             .await
             .map_err(BackendError::from)?;
-        let download_proxy = self.download_proxy_for(use_proxy)?;
-        Installer::new(ReqwestDownloader::new(download_proxy))
+        let installer = self.marketplace_installer(use_proxy)?;
+        installer
             .update(&manifest, &namespace, release_source, &self.home_directory)
             .await
             .map_err(|error| self.map_update_error("failed to update plugin", error))?;
@@ -869,6 +874,18 @@ impl PluginApi {
                 "a marketplace source uses the proxy but no proxy is configured",
             )
         })
+    }
+
+    /// Builds an installer that downloads HTTPS listings unsigned and object keys via HICS S3.
+    fn marketplace_installer(
+        &self,
+        use_proxy: bool,
+    ) -> Result<Installer<S3AwareDownloader>, BackendError> {
+        let download_proxy = self.download_proxy_for(use_proxy)?;
+        Ok(Installer::new(S3AwareDownloader::new(
+            ReqwestDownloader::new(download_proxy),
+            Some(crate::huawei_s3::marketplace_object_store()),
+        )))
     }
 
     /// Imports a local `.orax` release archive: verifies and extracts it, refreshes the installed
