@@ -622,6 +622,68 @@ mod reqwest_integration {
         );
     }
 
+    /// A path-style HTTPS URL that targets the configured bucket is signed like an object key.
+    #[tokio::test]
+    async fn downloads_path_style_bucket_https_url_with_signed_headers() {
+        use crate::http::{S3AwareDownloader, S3Config, path_style_object_url};
+        use std::sync::{Arc, Mutex};
+
+        let payload: &'static [u8] = b"path style s3 payload";
+        let captured: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let (listener_url, ca_root) =
+            serve_https_once_capturing(payload, Arc::clone(&captured)).await;
+        let port = listener_url.port().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let destination = temp_dir.path().join("pkg.orax");
+        let endpoint = format!("localhost:{port}");
+        let config = S3Config::new(
+            endpoint.clone(),
+            "ora-marketplace-1.0",
+            "dgg",
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        );
+        let source_url = path_style_object_url(
+            &endpoint,
+            "ora-marketplace-1.0",
+            "agent/ora-space.codeagent-v0.5.1.orax",
+        )
+        .unwrap();
+        let downloader = S3AwareDownloader::new(
+            ReqwestDownloader::new(Default::default()).with_extra_tls_root(ca_root),
+            Some(config),
+        );
+
+        let outcome = downloader
+            .download(DownloadRequest {
+                source: DownloadSource::Url(source_url),
+                destination: destination.clone(),
+                checksum: Some(Checksum::sha256(sha256_bytes(payload))),
+                options: DownloadOptions {
+                    max_retries: 0,
+                    ..DownloadOptions::default()
+                },
+                progress: None,
+                cancel: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.bytes, payload.len() as u64);
+        assert_eq!(std::fs::read(&destination).unwrap(), payload);
+        let request = captured.lock().unwrap().clone();
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: aws4-hmac-sha256"),
+            "expected a SigV4 authorization header, got: {request}"
+        );
+        assert!(
+            request.contains("ora-marketplace-1.0/agent/ora-space.codeagent-v0.5.1.orax"),
+            "expected the nested object path in the request line, got: {request}"
+        );
+    }
+
     /// Object-key sources fail closed when no S3 endpoint is configured.
     #[tokio::test]
     async fn rejects_s3_object_key_without_config() {

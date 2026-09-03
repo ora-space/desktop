@@ -17,7 +17,9 @@ Generic, domain-free download capability used by crates that fetch release artif
   destination with per-phase timeouts, retry/backoff+jitter, progress callbacks, cancellation, byte
   limits, and checksum verification.
 - `S3AwareDownloader` (`http-reqwest` feature): signs path-style S3 GET requests with SigV4 when
-  the source is an object key, and forwards HTTPS URLs to `ReqwestDownloader` unsigned.
+  the source is an object key, or when an HTTPS URL is a path-style object URL for the configured
+  endpoint and bucket (`https://{endpoint}/{bucket}/{key}`). Other HTTPS URLs are forwarded to
+  `ReqwestDownloader` unsigned.
 - Proxy resolution (`ProxyConfig` + `resolve_proxy`): an explicit proxy, then per-scheme
   environment variables (`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`), honoring `NO_PROXY` and a bypass
   list; otherwise a direct connection. Platform system-proxy reading is not yet implemented.
