@@ -2,7 +2,7 @@ use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
 use crate::{
     HomepageUrl, HookTarget, InvalidFieldReason, ManifestError, ManifestField, PluginKind,
-    PluginName, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl, Sha256Digest,
+    PluginName, PluginWebview, PluginWorkbench, ReleaseLocator, RepositoryUrl, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use semver::{Version, VersionReq};
@@ -30,7 +30,7 @@ pub struct PluginManifest {
     pub(crate) description: String,
     pub(crate) homepage: Option<HomepageUrl>,
     pub(crate) license: Option<String>,
-    pub(crate) url: Option<ReleaseUrl>,
+    pub(crate) url: Option<ReleaseLocator>,
     pub(crate) sha256: Option<Sha256Digest>,
     pub(crate) head: Option<PluginHead>,
     pub(crate) dependencies: Option<PluginDependencies>,
@@ -111,7 +111,7 @@ impl PluginManifest {
                 .map_err(|reason| invalid_field(ManifestField::License, reason))?;
         }
         let url = url
-            .map(|value| ReleaseUrl::parse(&value))
+            .map(|value| ReleaseLocator::parse(&value))
             .transpose()
             .map_err(|reason| invalid_field(ManifestField::Url, reason.into()))?;
         let sha256 = sha256
@@ -233,8 +233,8 @@ impl PluginManifest {
         self.license.as_deref()
     }
 
-    /// Returns the release package URL when this manifest declares one.
-    pub fn url(&self) -> Option<&ReleaseUrl> {
+    /// Returns the release package locator when this manifest declares one.
+    pub fn url(&self) -> Option<&ReleaseLocator> {
         self.url.as_ref()
     }
 
@@ -244,7 +244,7 @@ impl PluginManifest {
     }
 
     /// Returns the download metadata for a marketplace release manifest.
-    pub fn release(&self) -> Option<(&ReleaseUrl, &Sha256Digest)> {
+    pub fn release(&self) -> Option<(&ReleaseLocator, &Sha256Digest)> {
         match (self.url.as_ref(), self.sha256.as_ref()) {
             (Some(url), Some(sha256)) => Some((url, sha256)),
             _ => None,
@@ -386,14 +386,14 @@ fn validate_kind_sections(
 
 /// Models the mutually exclusive resolver-one release source.
 ///
-/// A release is either one universal URL/digest pair installable on every host target, or one or
-/// more unique exact-target artifacts. Modeling the two as one enum keeps URL-selection
-/// precedence unambiguous: a manifest can never carry both forms.
+/// A release is either one universal locator/digest pair installable on every host target, or one
+/// or more unique exact-target artifacts. Modeling the two as one enum keeps download-source
+/// selection unambiguous: a manifest can never carry both forms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PluginReleaseSource {
-    /// One URL/digest pair installable on every host target the plugin's Ora version supports.
+    /// One locator/digest pair installable on every host target the plugin's Ora version supports.
     Universal {
-        url: ReleaseUrl,
+        url: ReleaseLocator,
         sha256: Sha256Digest,
     },
     /// One or more exact-target artifacts, each carrying its own URL and digest.
@@ -404,7 +404,7 @@ pub enum PluginReleaseSource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PluginReleaseTarget {
     pub(crate) target: HookTarget,
-    pub(crate) url: ReleaseUrl,
+    pub(crate) url: ReleaseLocator,
     pub(crate) sha256: Sha256Digest,
 }
 
@@ -414,8 +414,8 @@ impl PluginReleaseTarget {
         &self.target
     }
 
-    /// Returns the download URL of this target artifact.
-    pub fn url(&self) -> &ReleaseUrl {
+    /// Returns the download locator of this target artifact.
+    pub fn url(&self) -> &ReleaseLocator {
         &self.url
     }
 
@@ -462,7 +462,7 @@ impl TryFrom<RawArtifact> for PluginArtifact {
 /// target-specific native binaries (see [`PluginKind::may_ship_targeted_artifact`]), whose
 /// host-compatibility the host must check before download.
 fn validate_release_source(
-    url: Option<&ReleaseUrl>,
+    url: Option<&ReleaseLocator>,
     sha256: Option<&Sha256Digest>,
     targets: Option<&[RawReleaseTarget]>,
     kind: PluginKind,
@@ -541,7 +541,7 @@ fn validate_release_source(
                 InvalidFieldReason::Duplicate,
             ));
         }
-        let url = ReleaseUrl::parse(&raw.url).map_err(|reason| {
+        let url = ReleaseLocator::parse(&raw.url).map_err(|reason| {
             invalid_field(ManifestField::ReleaseTargetUrl { index }, reason.into())
         })?;
         let sha256 = Sha256Digest::parse(&raw.sha256).map_err(|reason| {
