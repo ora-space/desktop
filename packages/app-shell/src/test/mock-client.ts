@@ -1,5 +1,10 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import {
+  AGENT_PACKAGES,
+  SEEDED_NAMESPACE,
+  officialAgentRef,
+} from "./agent-identity";
+import {
   RemoteContractError,
   type Agent,
   type AgentRuntimeStatus,
@@ -112,28 +117,12 @@ export interface MockClientState {
   agentModelsByCli?: Partial<Record<string, acp.SessionConfigOption[] | null>>;
 }
 
-/**
- * Every agent this mock installation offers, supplied by an installed package and detected.
- *
- * Agents exist only because a package supplies them, so a test needs both halves to see one in a
- * picker: the installed package that names it, and a runtime status that reaches it. A test that
- * needs one unreachable overrides `agentRuntimeStatuses`; one that needs it gone entirely
- * overrides `installedPlugins` as well.
- */
-const AGENT_PACKAGES: { agentRef: string; displayName: string }[] = [
-  { agentRef: "ora-space.opencode", displayName: "OpenCode" },
-  { agentRef: "ora-space.nga", displayName: "NGA" },
-  { agentRef: "ora-space.codeagentcli", displayName: "CodeAgentCLI" },
-  { agentRef: "ora-space.claude", displayName: "Claude Code" },
-  { agentRef: "ora-space.codex", displayName: "Codex" },
-];
-
 /** Builds the installed-package record one seeded agent is supplied by. */
-function agentPackage(agentRef: string, displayName: string): InstalledPlugin {
+function agentPackage(name: string, displayName: string): InstalledPlugin {
   return {
-    id: `official/${agentRef}`,
-    namespace: "official",
-    name: agentRef,
+    id: officialAgentRef(name),
+    namespace: SEEDED_NAMESPACE,
+    name,
     displayName,
     version: "1.0.0",
     description: `${displayName} agent`,
@@ -150,6 +139,9 @@ function agentPackage(agentRef: string, displayName: string): InstalledPlugin {
 
 /** Creates a fresh in-memory mock state with no records. */
 export function createMockClientState(): MockClientState {
+  const installedPlugins = AGENT_PACKAGES.map((agent) =>
+    agentPackage(agent.name, agent.displayName),
+  );
   return {
     projects: [],
     workspaces: [],
@@ -157,12 +149,15 @@ export function createMockClientState(): MockClientState {
     sessions: [],
     agents: [],
     skills: [],
-    installedPlugins: AGENT_PACKAGES.map((agent) =>
-      agentPackage(agent.agentRef, agent.displayName),
-    ),
+    installedPlugins,
     pluginConfigurations: new Map(),
-    agentRuntimeStatuses: AGENT_PACKAGES.map((agent) => ({
-      agentRef: agent.agentRef,
+    // The runtime keys a supervised agent by the whole plugin id, so the seeded status has to be
+    // derived from the package rather than spelled again: a fixture that spells the two halves
+    // separately can agree with itself while disagreeing with the backend, which is exactly how a
+    // catalog keyed by the bare name once passed every test while offering an agent no session
+    // could bind to.
+    agentRuntimeStatuses: installedPlugins.map((plugin) => ({
+      agentRef: plugin.id,
       status: "ready",
     })),
     availablePlugins: [],

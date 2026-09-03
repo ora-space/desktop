@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useUiStore, UI_STORAGE_KEY } from "./ui-store";
 import { flushDebouncedPersistStorage } from "./debounced-json-storage";
 import type { Session } from "@ora/contracts";
+import { AGENT_REF } from "../../test/agent-identity";
 
 beforeEach(() => {
   flushDebouncedPersistStorage();
@@ -236,7 +237,7 @@ describe("useUiStore", () => {
     const session: Session = {
       id: "s1",
       workspaceId: "workspace-t1",
-      agentRef: "ora-space.opencode",
+      agentRef: AGENT_REF.opencode,
       status: "running",
       title: null,
       historyState: { type: "writable" },

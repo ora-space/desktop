@@ -1,4 +1,5 @@
 mod commands;
+mod diagnostic_logs;
 mod error;
 mod open_external;
 mod open_location;

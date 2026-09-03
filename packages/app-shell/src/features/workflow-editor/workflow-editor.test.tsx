@@ -40,6 +40,7 @@ import { useCreateWorkflow, useDeleteWorkflow } from "./workflow-definitions";
 import { WorkflowEditor } from "./workflow-editor";
 import { WorkflowEditorList } from "./workflow-editor-list";
 import { useWorkflowEditorStore } from "./workflow-editor-store";
+import { AGENT_REF } from "../../test/agent-identity";
 
 /** Seeds the mock client with the demo workflows and their published versions. */
 function seedDemoWorkflows(state: MockClientState): void {
@@ -928,7 +929,7 @@ describe("WorkflowEditor", () => {
     const configuredParameters = within(reviewNode).getByLabelText("配置参数");
     expect(configuredParameters).toHaveTextContent("角色Reviewer");
     expect(configuredParameters).toHaveTextContent(
-      "ora-space.codeagentcli · opencode/big-pickle",
+      `${AGENT_REF.codeagentcli} · opencode/big-pickle`,
     );
     expect(configuredParameters).toHaveTextContent("Skillscode-defect-scan");
     expect(configuredParameters).not.toHaveTextContent(
@@ -1041,7 +1042,7 @@ describe("WorkflowEditor", () => {
     // NGA exists as a CLI but reports no model catalog, so
     // picking it must keep the node on NGA instead of snapping back to the
     // first CLI with discovered models.
-    state.agentModelsByCli = { "ora-space.nga": null };
+    state.agentModelsByCli = { [AGENT_REF.nga]: null };
     renderEditor(<WorkflowEditor />, state);
 
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
@@ -1075,7 +1076,7 @@ describe("WorkflowEditor", () => {
       await screen.findByLabelText("Agent节点: Agent 1"),
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText("ora-space.opencode · opencode/big-pickle").length,
+      screen.getAllByText(`${AGENT_REF.opencode} · opencode/big-pickle`).length,
     ).toBeGreaterThan(0);
   });
 

@@ -134,6 +134,10 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
     ),
   ];
 
+  // One create path shared by the hover plus and the double-click shortcut.
+  const startNewTask = () =>
+    startSessionDraft({ projectId: project.id, taskId: null });
+
   return (
     <div>
       <TreeRow
@@ -156,14 +160,13 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
             .setCreateFocus({ projectId: project.id, taskId: null });
           useUiStore.getState().toggleProjectExpand(project.id);
         }}
+        onDoubleClick={startNewTask}
         action={
           <SidebarCreateMenu
             projectId={project.id}
             workspaceId={mainWorkspaceId}
             scope="project"
-            onNewTask={() => {
-              startSessionDraft({ projectId: project.id, taskId: null });
-            }}
+            onNewTask={startNewTask}
           />
         }
         onRename={(name) => updateProject.mutateAsync({ project, name })}
@@ -285,6 +288,10 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
     );
   });
 
+  // One create path shared by the hover plus and the double-click shortcut.
+  const startNewTask = () =>
+    startSessionDraft({ projectId: task.projectId, taskId: task.id });
+
   return (
     <div>
       <TreeRow
@@ -306,18 +313,14 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
             .setCreateFocus({ projectId, taskId: task.id });
           useUiStore.getState().toggleTaskExpand(task.id);
         }}
+        onDoubleClick={startNewTask}
         action={
           <SidebarCreateMenu
             projectId={projectId}
             workspaceId={task.workspaceId}
             taskId={task.id}
             scope="task"
-            onNewTask={() =>
-              startSessionDraft({
-                projectId: task.projectId,
-                taskId: task.id,
-              })
-            }
+            onNewTask={startNewTask}
           />
         }
         onRename={(name) => updateTask.mutateAsync({ task, title: name })}

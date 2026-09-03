@@ -13,6 +13,7 @@ import {
 import { appI18n } from "../../i18n/i18n-instance";
 import { RunActInspector } from "./run-act-inspector";
 import type { WorkflowNodeData } from "@ora/workflow-runtime";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const AGENT_DATA: WorkflowNodeData = {
   kind: "agent",
@@ -21,7 +22,7 @@ const AGENT_DATA: WorkflowNodeData = {
   agentConfig: {
     schemaVersion: 3,
     executor: {
-      agentCli: "ora-space.opencode",
+      agentCli: AGENT_REF.opencode,
       modelId: "deepseek/deepseek-v4-pro",
     },
     roleId: "研究员",

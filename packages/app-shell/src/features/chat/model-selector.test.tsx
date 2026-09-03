@@ -25,11 +25,12 @@ import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import type { AgentStatus } from "@ora/contracts";
 import { ModelSelector } from "./model-selector";
 import { queryKeys } from "../../state/hooks/query-keys";
+import { AGENT_REF } from "../../test/agent-identity";
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useSettingsStore.setState({
-    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+    settings: { ...DEFAULT_SETTINGS, agentCli: AGENT_REF.opencode },
   });
   usePendingAgentStore.setState({ selections: {} });
 });
@@ -38,7 +39,7 @@ beforeEach(() => {
 function reportOpenCode(status: AgentStatus) {
   return (state: MockClientState) => {
     state.agentRuntimeStatuses = state.agentRuntimeStatuses.map((candidate) =>
-      candidate.agentRef === "ora-space.opencode"
+      candidate.agentRef === AGENT_REF.opencode
         ? { ...candidate, status }
         : candidate,
     );
@@ -147,6 +148,26 @@ async function openAgentList(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("ModelSelector agent availability", () => {
+  it("shows the agent plugin title instead of its contribution identifier", async () => {
+    const user = userEvent.setup();
+    renderModelSelector((state) => {
+      const plugin = state.installedPlugins.find(
+        (candidate) => candidate.id === AGENT_REF.opencode,
+      );
+      if (plugin?.kind === "agent") {
+        plugin.displayName = "OpenCode Plugin";
+        plugin.agentDisplayName = AGENT_REF.opencode;
+      }
+    });
+
+    const menu = await openAgentList(user);
+
+    await waitFor(() =>
+      expect(within(menu).getByText("OpenCode Plugin")).not.toBeNull(),
+    );
+    expect(within(menu).queryByText(AGENT_REF.opencode)).toBeNull();
+  });
+
   it("offers every agent the runtime reports reaching", async () => {
     const user = userEvent.setup();
     renderModelSelector();
@@ -177,7 +198,7 @@ describe("ModelSelector agent availability", () => {
     const user = userEvent.setup();
     renderModelSelector((state) => {
       state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
-        (status) => status.agentRef !== "ora-space.opencode",
+        (status) => status.agentRef !== AGENT_REF.opencode,
       );
     });
 
@@ -190,7 +211,7 @@ describe("ModelSelector agent availability", () => {
     expect(within(picker()).queryByText("OpenCode")).toBeNull();
     expect(picker().querySelectorAll("svg")).toHaveLength(1);
     expect(useSettingsStore.getState().settings.agentCli).toBe(
-      "ora-space.opencode",
+      AGENT_REF.opencode,
     );
   });
 
@@ -203,7 +224,7 @@ describe("ModelSelector agent availability", () => {
       expect(within(picker()).queryByText("OpenCode")).toBeNull(),
     );
     expect(useSettingsStore.getState().settings.agentCli).toBe(
-      "ora-space.opencode",
+      AGENT_REF.opencode,
     );
     expect(picker().querySelectorAll("svg")).toHaveLength(1);
   });

@@ -1,6 +1,13 @@
-import { localTransportErrorKinds, publicErrorSchema } from "@ora/contracts";
+import {
+  LocalTransportError,
+  RemoteContractError,
+  UnknownRemoteError,
+  localTransportErrorKinds,
+  publicErrorSchema,
+} from "@ora/contracts";
 import { describe, expect, it } from "vitest";
 import { translationResources } from "./i18n-instance";
+import { hasDiagnosticRequestId } from "./contract-error";
 
 const interpolationFields = (text: string): string[] =>
   [...text.matchAll(/{{(\w+)}}/g)].map((match) => match[1]).sort();
@@ -57,5 +64,40 @@ describe("contract error translations", () => {
         ],
       ).toBeTypeOf("string");
     }
+  });
+});
+
+describe("diagnostic request IDs", () => {
+  it("offers logs only for remote failures whose message asks for a request ID", () => {
+    const internal = new RemoteContractError(
+      {
+        code: "internal_error",
+        requestId: "00000000-0000-4000-8000-000000000001",
+        params: {},
+      },
+      {},
+    );
+    const invalid = new RemoteContractError(
+      {
+        code: "invalid_request",
+        requestId: "00000000-0000-4000-8000-000000000002",
+        params: {},
+      },
+      {},
+    );
+    const unknown = new UnknownRemoteError(
+      "future_error",
+      "00000000-0000-4000-8000-000000000003",
+      {},
+    );
+
+    expect([
+      hasDiagnosticRequestId(internal),
+      hasDiagnosticRequestId(invalid),
+      hasDiagnosticRequestId(unknown),
+      hasDiagnosticRequestId(
+        new LocalTransportError("tauri_invoke_failure", "failed"),
+      ),
+    ]).toEqual([true, false, true, false]);
   });
 });

@@ -1,10 +1,8 @@
 import { useTranslation } from "react-i18next";
 import type { InstalledPlugin, Session } from "@ora/contracts";
-import { IconAlertTriangle, IconPlug } from "@tabler/icons-react";
-import { Button } from "@ora/ui";
+import { IconAlertTriangle } from "@tabler/icons-react";
 import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
-import { useUiStore } from "../../state/stores/ui-store";
 
 /** Why the agent a session is bound to cannot serve it right now. */
 type AgentAvailability =
@@ -59,36 +57,26 @@ function AgentUnavailableBanner({
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-amber-700 dark:text-amber-300">
-          {t("chat.agentUnavailable.title")}
-        </p>
-        <p className="mt-0.5 break-words text-muted-foreground">
-          {availability.kind === "uninstalled" &&
-            t("chat.agentUnavailable.uninstalled")}
-          {/* The backend's reason is the only description of what actually broke,
-              so it is shown verbatim rather than flattened into one sentence. */}
-          {availability.kind === "failed" &&
-            t("chat.agentUnavailable.failed", {
-              plugin: availability.plugin.displayName,
-              reason: availability.reason,
-            })}
-        </p>
+        {availability.kind === "uninstalled" ? (
+          <p className="font-medium text-amber-700 dark:text-amber-300">
+            {t("chat.agentUnavailable.uninstalled")}
+          </p>
+        ) : (
+          <>
+            <p className="font-medium text-amber-700 dark:text-amber-300">
+              {t("chat.agentUnavailable.title")}
+            </p>
+            {/* The backend's reason is the only description of what actually broke,
+                so it is shown verbatim rather than flattened into one sentence. */}
+            <p className="mt-0.5 break-words text-muted-foreground">
+              {t("chat.agentUnavailable.failed", {
+                plugin: availability.plugin.displayName,
+                reason: availability.reason,
+              })}
+            </p>
+          </>
+        )}
       </div>
-      {/* An uninstalled agent is reacquired from the plugin marketplace, so the
-          banner offers an inline way there. A failed agent is still installed,
-          so this would point at re-discovery rather than a fix. */}
-      {availability.kind === "uninstalled" && (
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => useUiStore.getState().openSettingsAt("plugins")}
-          className="shrink-0"
-        >
-          <IconPlug aria-hidden="true" />
-          {t("chat.agentUnavailable.goToMarketplace")}
-        </Button>
-      )}
     </div>
   );
 }
@@ -96,8 +84,8 @@ function AgentUnavailableBanner({
 /**
  * Decides whether a session's agent is currently servable, and why it is not.
  *
- * An agent package supplies exactly one agent under its plugin name (the
- * `name` segment of its id), which is the same value a session persists as its
+ * An agent package supplies exactly one agent under its whole plugin id
+ * (`namespace/name`), which is the same value a session persists as its
  * binding, so the two are matched directly; ui packages contribute no agent.
  * An identity no plugin claims is only reported as uninstalled when the runtime
  * does not supervise it either — a built-in CLI has no plugin row and must not
@@ -116,7 +104,7 @@ function resolveAvailability(
   }
   const plugin = plugins.find(
     (installed) =>
-      installed.kind === "agent" && installed.name === session.agentRef,
+      installed.kind === "agent" && installed.id === session.agentRef,
   );
   if (plugin === undefined) {
     if (

@@ -112,6 +112,8 @@ interface TreeRowProps {
   meta?: string;
   expanded?: boolean;
   onClick: () => void;
+  /** Double-click shortcut; branch rows create a new task in place. */
+  onDoubleClick?: () => void;
   /** Hover-only plus (create under a project or a new session under a worktree). */
   action?: ReactNode;
   /** Persists the inline rename; same editor as session rows. */
@@ -137,6 +139,7 @@ export function TreeRow({
   meta,
   expanded,
   onClick,
+  onDoubleClick,
   action,
   onRename,
   commands,
@@ -203,6 +206,7 @@ export function TreeRow({
               role="button"
               tabIndex={0}
               onClick={onClick}
+              onDoubleClick={onDoubleClick}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();

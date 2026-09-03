@@ -6,10 +6,11 @@ import {
 } from "./agent-config-display";
 import type { WorkflowNodeData } from "@ora/workflow-runtime";
 import type { AgentEntry } from "../chat/agent-catalog";
+import { AGENT_REF } from "../../test/agent-identity";
 
 /** The installed agent packages these summaries are rendered against. */
 const AGENTS: AgentEntry[] = [
-  { agentRef: "ora-space.opencode", label: "OpenCode", logo: null },
+  { agentRef: AGENT_REF.opencode, label: "OpenCode", logo: null },
 ];
 
 describe("agent-config-display", () => {
@@ -17,7 +18,7 @@ describe("agent-config-display", () => {
     expect(
       formatAgentExecutorLabel(
         {
-          agentCli: "ora-space.opencode",
+          agentCli: AGENT_REF.opencode,
           modelId: "deepseek/deepseek-v4-pro",
         },
         AGENTS,
@@ -33,7 +34,7 @@ describe("agent-config-display", () => {
       agentConfig: {
         schemaVersion: 3,
         executor: {
-          agentCli: "ora-space.opencode",
+          agentCli: AGENT_REF.opencode,
           modelId: "deepseek/deepseek-v4-flash",
         },
         roleId: "researcher",
@@ -67,7 +68,7 @@ describe("agent-config-display", () => {
       condition: "contains source changes",
       agentConfig: {
         schemaVersion: 3,
-        executor: { agentCli: "ora-space.opencode", modelId: "ignored" },
+        executor: { agentCli: AGENT_REF.opencode, modelId: "ignored" },
         roleId: "reviewer",
         skills: [],
         mcps: [],

@@ -1,3 +1,4 @@
+import { DEMO_AGENT_REF } from "../src/agent-identity";
 import { describe, expect, it } from "vitest";
 import { createMockWorkflowCapabilities, createMockWorkflowNode } from "../src";
 
@@ -27,7 +28,10 @@ describe("createMockWorkflowNode", () => {
           description: "交给模型自主执行",
           agentConfig: {
             schemaVersion: 3,
-            executor: { agentCli: "ora-space.codeagentcli", modelId: "gpt-5" },
+            executor: {
+              agentCli: DEMO_AGENT_REF.codeagentcli,
+              modelId: "gpt-5",
+            },
             roleId: "Architect",
             skills: [],
             mcps: [],
@@ -117,27 +121,27 @@ describe("createMockWorkflowNode", () => {
       ],
       agentModels: [
         {
-          agentCli: "ora-space.codeagentcli",
+          agentCli: DEMO_AGENT_REF.codeagentcli,
           modelId: "gpt-5",
           label: "CodeAgentCLI · GPT-5",
         },
         {
-          agentCli: "ora-space.opencode",
+          agentCli: DEMO_AGENT_REF.opencode,
           modelId: "opencode/sonnet",
           label: "OpenCode · Sonnet",
         },
         {
-          agentCli: "ora-space.opencode",
+          agentCli: DEMO_AGENT_REF.opencode,
           modelId: "deepseek/deepseek-v4-flash",
           label: "OpenCode · deepseek/deepseek-v4-flash",
         },
         {
-          agentCli: "ora-space.opencode",
+          agentCli: DEMO_AGENT_REF.opencode,
           modelId: "deepseek/deepseek-v4-pro",
           label: "OpenCode · deepseek/deepseek-v4-pro",
         },
         {
-          agentCli: "ora-space.nga",
+          agentCli: DEMO_AGENT_REF.nga,
           modelId: "nga/default",
           label: "NGA · Default",
         },
@@ -198,7 +202,7 @@ describe("createMockWorkflowNode", () => {
       defaultModel: "GPT-5",
       defaultAgentConfig: {
         schemaVersion: 3,
-        executor: { agentCli: "ora-space.codeagentcli", modelId: "gpt-5" },
+        executor: { agentCli: DEMO_AGENT_REF.codeagentcli, modelId: "gpt-5" },
         roleId: "Architect",
         skills: [],
         mcps: [],

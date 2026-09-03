@@ -14,11 +14,12 @@ import {
 } from "../../test/mock-client";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceDiffLiveSync } from "./use-workspace-diff-live-sync";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const SESSION: Session = {
   id: "session-1",
   workspaceId: "workspace-1",
-  agentRef: "ora-space.codeagentcli",
+  agentRef: AGENT_REF.codeagentcli,
   status: "running",
   title: null,
   historyState: { type: "writable" },

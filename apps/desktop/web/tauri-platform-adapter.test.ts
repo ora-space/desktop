@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PathSelectionInProgressError } from "@ora/app-shell/platform";
 import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
@@ -15,6 +15,8 @@ const invokeMock = vi.mocked(invoke);
 const listenMock = vi.mocked(listen);
 
 describe("TauriPlatformAdapter", () => {
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     openMock.mockReset();
     saveMock.mockReset();
@@ -194,6 +196,32 @@ describe("TauriPlatformAdapter", () => {
         content: '{"id":"workflow"}\n',
       },
     });
+  });
+
+  it("downloads today's diagnostic log to the native save destination", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 3, 12));
+    saveMock.mockResolvedValue("/home/ora/ora-logs-2026-09-03.log");
+    const adapter = createTauriPlatformAdapter();
+
+    await expect(adapter.diagnosticLogs.downloadToday()).resolves.toBe(true);
+
+    expect(saveMock).toHaveBeenCalledWith({
+      defaultPath: "ora-logs-2026-09-03.log",
+      filters: [{ name: "Log", extensions: ["log"] }],
+    });
+    expect(invokeMock).toHaveBeenCalledWith("download_today_log", {
+      request: { destination: "/home/ora/ora-logs-2026-09-03.log" },
+    });
+  });
+
+  it("does not invoke the host when diagnostic log saving is cancelled", async () => {
+    saveMock.mockResolvedValue(null);
+    const adapter = createTauriPlatformAdapter();
+
+    await expect(adapter.diagnosticLogs.downloadToday()).resolves.toBe(false);
+
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("opens http URLs through the native host command", async () => {

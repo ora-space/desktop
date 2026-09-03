@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@ora/ui";
-import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 
 /** Matches `ora_domain::MAX_SESSION_TITLE_CHARS`; sidebar rename uses the same cap. */
 export const MAX_INLINE_RENAME_CHARS = 255;
@@ -20,6 +20,7 @@ export function useInlineTreeRename({
   onCommit: (next: string) => Promise<unknown>;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -86,7 +87,7 @@ export function useInlineTreeRename({
       skipBlurCommit.current = true;
       setRenaming(false);
     } catch (cause) {
-      toast.error(localizeContractError(cause, t));
+      showContractError(cause);
       inputRef.current?.focus();
     } finally {
       committingRef.current = false;

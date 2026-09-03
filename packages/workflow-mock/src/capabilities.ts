@@ -1,3 +1,4 @@
+import { DEMO_AGENT_REF } from "./agent-identity";
 import type { WorkflowAgentConfig, WorkflowNodeKind } from "./node-data";
 
 export interface WorkflowChoice {
@@ -60,7 +61,7 @@ export interface WorkflowNodeType {
 }
 
 const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
-  agentCli: "ora-space.codeagentcli",
+  agentCli: DEMO_AGENT_REF.codeagentcli,
   modelId: "gpt-5",
   label: "CodeAgentCLI · GPT-5",
 };
@@ -68,21 +69,25 @@ const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
 const MOCK_AGENT_MODELS: WorkflowAgentModel[] = [
   DEFAULT_AGENT_MODEL,
   {
-    agentCli: "ora-space.opencode",
+    agentCli: DEMO_AGENT_REF.opencode,
     modelId: "opencode/sonnet",
     label: "OpenCode · Sonnet",
   },
   {
-    agentCli: "ora-space.opencode",
+    agentCli: DEMO_AGENT_REF.opencode,
     modelId: "deepseek/deepseek-v4-flash",
     label: "OpenCode · deepseek/deepseek-v4-flash",
   },
   {
-    agentCli: "ora-space.opencode",
+    agentCli: DEMO_AGENT_REF.opencode,
     modelId: "deepseek/deepseek-v4-pro",
     label: "OpenCode · deepseek/deepseek-v4-pro",
   },
-  { agentCli: "ora-space.nga", modelId: "nga/default", label: "NGA · Default" },
+  {
+    agentCli: DEMO_AGENT_REF.nga,
+    modelId: "nga/default",
+    label: "NGA · Default",
+  },
 ];
 
 const MOCK_AGENT_ROLES: WorkflowChoice[] = [

@@ -1,3 +1,4 @@
+import { DEMO_AGENT_REF } from "../src/agent-identity";
 import { describe, expect, it } from "vitest";
 import type { Node } from "@xyflow/react";
 import {
@@ -10,14 +11,14 @@ describe("normalizeWorkflowAgentConfig", () => {
   it("fills omitted mcps and skills with empty arrays", () => {
     const legacy = {
       schemaVersion: 3 as const,
-      executor: { agentCli: "ora-space.opencode", modelId: "m1" },
+      executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
       roleId: "Researcher",
       prompt: "hello",
     } as unknown as WorkflowAgentConfig;
 
     expect(normalizeWorkflowAgentConfig(legacy)).toEqual({
       schemaVersion: 3,
-      executor: { agentCli: "ora-space.opencode", modelId: "m1" },
+      executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
       roleId: "Researcher",
       skills: [],
       mcps: [],
@@ -39,7 +40,7 @@ describe("normalizeWorkflowAgentConfig", () => {
           description: "desc",
           agentConfig: {
             schemaVersion: 3 as const,
-            executor: { agentCli: "ora-space.opencode", modelId: "m1" },
+            executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
             roleId: "Researcher",
             skills: [{ skillId: "s1", enabled: true }],
             prompt: "p",

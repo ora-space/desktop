@@ -25,7 +25,7 @@ import {
   IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
-import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { usePlatform } from "../../platform";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
 import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
@@ -73,6 +73,7 @@ export function PluginsSettings({
   ) => void;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
   const [managingSources, setManagingSources] = useState(false);
@@ -166,9 +167,7 @@ export function PluginsSettings({
               ),
             ),
           onError: (cause) =>
-            toast.error(t("settings.plugins.importFailed"), {
-              description: localizeContractError(cause, t),
-            }),
+            showContractError(cause, t("settings.plugins.importFailed")),
         },
       );
     } catch (error) {
@@ -269,9 +268,7 @@ export function PluginsSettings({
             onClick={() =>
               sync.mutate(undefined, {
                 onError: (cause) => {
-                  toast.error(t("settings.plugins.syncFailed"), {
-                    description: localizeContractError(cause, t),
-                  });
+                  showContractError(cause, t("settings.plugins.syncFailed"));
                 },
               })
             }
@@ -333,6 +330,7 @@ function AvailablePluginCard({
   onSelect: (plugin: AvailablePlugin) => void;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const install = useInstallPlugin(plugin.id);
   const update = useUpdatePlugin(plugin.id);
   const downloadPercentage =
@@ -350,9 +348,7 @@ function AvailablePluginCard({
   const incompatible = plugin.compatibility === "incompatible";
 
   const failInstall = (cause: unknown) => {
-    toast.error(t("settings.plugins.installFailed"), {
-      description: localizeContractError(cause, t),
-    });
+    showContractError(cause, t("settings.plugins.installFailed"));
   };
   const succeedInstall = (response: { outcome: InstallOutcome }) => {
     toast.success(
@@ -364,9 +360,7 @@ function AvailablePluginCard({
     );
   };
   const failUpdate = (cause: unknown) => {
-    toast.error(t("settings.plugins.updateFailed"), {
-      description: localizeContractError(cause, t),
-    });
+    showContractError(cause, t("settings.plugins.updateFailed"));
   };
 
   return (

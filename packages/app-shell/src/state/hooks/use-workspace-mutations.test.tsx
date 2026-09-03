@@ -19,6 +19,7 @@ import {
   useDeleteTask,
   useRenameSession,
 } from "./use-workspace-mutations";
+import { AGENT_REF } from "../../test/agent-identity";
 
 beforeEach(() => {
   useDraftSessionsStore.getState().clear();
@@ -33,7 +34,7 @@ describe("useRenameSession", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: "Old",
         historyState: { type: "writable" },
@@ -68,7 +69,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -76,7 +77,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s2",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -105,7 +106,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -143,7 +144,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -191,7 +192,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -243,7 +244,7 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "s1",
         workspaceId: "workspace-t1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: null,
         historyState: { type: "writable" },

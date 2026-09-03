@@ -22,7 +22,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
-  toast,
 } from "@ora/ui";
 import {
   IconArrowBigUpLines,
@@ -36,7 +35,7 @@ import {
   IconUpload,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
-import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
@@ -179,10 +178,11 @@ function InstalledPluginRow({
   available: AvailablePlugin | undefined;
 }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const update = useUpdatePlugin(plugin.id);
   const mutations = usePluginMutations(
     plugin.id,
-    plugin.kind === "agent" ? plugin.name : undefined,
+    plugin.kind === "agent" ? plugin.id : undefined,
   );
   const uninstalling = mutations.uninstall.isPending;
   const busy = uninstalling || update.isPending;
@@ -191,14 +191,10 @@ function InstalledPluginRow({
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
   const failUpdate = (cause: unknown) => {
-    toast.error(t("settings.plugins.updateFailed"), {
-      description: localizeContractError(cause, t),
-    });
+    showContractError(cause, t("settings.plugins.updateFailed"));
   };
   const failUninstall = (cause: unknown) => {
-    toast.error(t("settings.plugins.uninstallFailed"), {
-      description: localizeContractError(cause, t),
-    });
+    showContractError(cause, t("settings.plugins.uninstallFailed"));
   };
 
   return (

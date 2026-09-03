@@ -42,6 +42,7 @@ import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store
 import { dismissSessionDraft } from "../../state/session-drafts";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
+import { AGENT_REF } from "../../test/agent-identity";
 
 const USER = { name: "Eric", email: "eric@example.com" };
 // Deliberately not "Ora": the sidebar header renders that as the product mark,
@@ -56,7 +57,7 @@ const TASK: Task = {
 const SESSION: Session = {
   id: "s1",
   workspaceId: "workspace-t1",
-  agentRef: "ora-space.opencode",
+  agentRef: AGENT_REF.opencode,
   status: "running",
   title: null,
   historyState: { type: "writable" },
@@ -64,7 +65,7 @@ const SESSION: Session = {
 const DIRECT_SESSION: Session = {
   id: "s-direct",
   workspaceId: "workspace-p1",
-  agentRef: "ora-space.opencode",
+  agentRef: AGENT_REF.opencode,
   status: "running",
   title: null,
   historyState: { type: "writable" },
@@ -273,7 +274,7 @@ describe("WorkspaceSidebar", () => {
     );
     await user.click(
       await screen.findByRole("button", {
-        name: /新建工作树任务|New worktree task/,
+        name: /新建工作树|New worktree/,
       }),
     );
 
@@ -662,7 +663,7 @@ describe("WorkspaceSidebar", () => {
     );
     await user.click(
       await screen.findByRole("button", {
-        name: /新建工作树任务|New worktree task/,
+        name: /新建工作树|New worktree/,
       }),
     );
 
@@ -678,7 +679,7 @@ describe("WorkspaceSidebar", () => {
     state.sessions.push({
       id: "s2",
       workspaceId: "workspace-p1",
-      agentRef: "ora-space.opencode",
+      agentRef: AGENT_REF.opencode,
       status: "running",
       title: null,
       historyState: { type: "writable" },
@@ -737,6 +738,44 @@ describe("WorkspaceSidebar", () => {
     expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
       expect.any(String),
     );
+  });
+
+  it("starts a new task under a worktree on double-click", async () => {
+    const user = userEvent.setup();
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
+    await user.dblClick(screen.getByText(TASK.title));
+
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({
+      projectId: PROJECT.id,
+      taskId: TASK.id,
+      sessionId: null,
+      workflowRunId: null,
+    });
+    expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
+      expect.any(String),
+    );
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
+  });
+
+  it("starts a new task under a project on double-click", async () => {
+    const user = userEvent.setup();
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(PROJECT.name)).not.toBeNull());
+    await user.dblClick(screen.getByText(PROJECT.name));
+
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({
+      projectId: PROJECT.id,
+      taskId: null,
+      sessionId: null,
+      workflowRunId: null,
+    });
+    expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
+      expect.any(String),
+    );
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
   });
 
   it("shows an archive control on session rows instead of the overflow menu", async () => {
@@ -1410,7 +1449,7 @@ describe("WorkspaceSidebar", () => {
       {
         id: "s2",
         workspaceId: "workspace-p1",
-        agentRef: "ora-space.opencode",
+        agentRef: AGENT_REF.opencode,
         status: "running",
         title: "Direct chat",
         historyState: { type: "writable" },

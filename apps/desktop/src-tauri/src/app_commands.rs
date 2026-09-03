@@ -112,6 +112,7 @@ desktop_command_registry! {
     open_location::open_location,
     open_external::open_external_url,
     commands::write_workflow_export,
+    diagnostic_logs::download_today_log,
     surface::commands::surface_capabilities,
     surface::commands::surface_list,
     surface::commands::surface_open,

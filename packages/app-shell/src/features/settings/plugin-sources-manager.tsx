@@ -13,7 +13,7 @@ import {
   toast,
 } from "@ora/ui";
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react";
-import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   useAddMarketplaceSource,
   useDeleteMarketplaceSource,
@@ -31,6 +31,7 @@ import {
  */
 export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const sourcesQuery = useMarketplaceSources();
   const addSource = useAddMarketplaceSource();
   const deleteSource = useDeleteMarketplaceSource();
@@ -53,9 +54,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           toast.success(t("settings.plugins.sourceAdded"));
         },
         onError: (cause) =>
-          toast.error(t("settings.plugins.sourceAddFailed"), {
-            description: localizeContractError(cause, t),
-          }),
+          showContractError(cause, t("settings.plugins.sourceAddFailed")),
       },
     );
   };
@@ -157,11 +156,9 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                       { url: source.url, useProxy: checked },
                       {
                         onError: (cause) =>
-                          toast.error(
+                          showContractError(
+                            cause,
                             t("settings.plugins.sourceProxyUpdateFailed"),
-                            {
-                              description: localizeContractError(cause, t),
-                            },
                           ),
                       },
                     )
@@ -184,9 +181,10 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                       onSuccess: () =>
                         toast.success(t("settings.plugins.sourceRemoved")),
                       onError: (cause) =>
-                        toast.error(t("settings.plugins.sourceRemoveFailed"), {
-                          description: localizeContractError(cause, t),
-                        }),
+                        showContractError(
+                          cause,
+                          t("settings.plugins.sourceRemoveFailed"),
+                        ),
                     },
                   )
                 }

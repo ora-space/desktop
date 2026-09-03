@@ -14,7 +14,7 @@ Initialization is process-wide and the timezone can be set only once, so it must
 
 Desktop reads an optional `ORA_LOG_LEVEL` value and otherwise restores `user_config.log_level`, defaulting to `info`. Accepted values are `trace`, `debug`, `info`, `warn`, and `error`, ignoring surrounding whitespace and ASCII case; an unsupported value is a startup error. The environment override controls the effective level for that process without changing the stored preference.
 
-The `ora-runtime-settings` manager serializes live updates. It reloads the process filter before persisting the preference, rolls the filter back if persistence fails, and completes a started commit or compensation even if the requesting Tauri future is cancelled. The file sink remains `app_data_dir/logs/ora.log` with daily rotation and three retained days; debug builds also write to stdout, and the timezone comes from the operating system. See [Desktop Runtime](desktop-runtime.md).
+The `ora-runtime-settings` manager serializes live updates. It reloads the process filter before persisting the preference, rolls the filter back if persistence fails, and completes a started commit or compensation even if the requesting Tauri future is cancelled. The file sink remains `app_data_dir/logs/ora.log` with daily rotation and three retained days; debug builds also write to stdout, and the timezone comes from the operating system. Error toasts that expose a diagnostic request ID offer a **Download logs** action; Desktop copies the current daily log to the destination selected in the native save dialog without exposing the private application-data path to the frontend. See [Desktop Runtime](desktop-runtime.md).
 
 ## JSON event contract
 
