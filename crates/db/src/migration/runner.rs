@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS migrations (
 );
 "#;
 
-/// Applies only migration versions missing from the database without inspecting SQL snapshot drift.
-pub fn apply_pending_migrations<T>(
+/// Aligns the applied version sequence for application startup without inspecting SQL drift.
+pub fn reconcile_database_versions<T>(
     connection: &mut Connection,
     catalog: &MigrationCatalog,
     timestamp_source: &T,
@@ -26,31 +26,30 @@ where
     ensure_migrations_table(connection)?;
 
     let applied_migrations = load_applied_migrations(connection)?;
-    validate_applied_history(&applied_migrations, catalog)?;
-    let pending_up_count = catalog
-        .target_versions()
+    let target_versions = catalog.target_versions();
+    validate_shared_history(&applied_migrations, target_versions, catalog)?;
+    let shared_version_count = applied_migrations.len().min(target_versions.len());
+    let pending_up_count = target_versions.len().saturating_sub(shared_version_count);
+    let pending_down_count = applied_migrations
         .len()
-        .saturating_sub(applied_migrations.len());
+        .saturating_sub(shared_version_count);
 
     ora_info!(
-        message = "evaluated pending migrations",
-        operation = "migration_apply_pending",
+        message = "evaluated application migration versions",
+        operation = "migration_version_reconciliation",
         applied_migration_count = applied_migrations.len(),
-        target_migration_count = catalog.target_versions().len(),
-        pending_up_count
+        target_migration_count = target_versions.len(),
+        pending_up_count,
+        pending_down_count
     );
 
-    apply_migration_suffix(
-        connection,
-        catalog,
-        timestamp_source,
-        applied_migrations.len(),
-    )?;
+    rollback_migration_suffix(connection, &applied_migrations, shared_version_count)?;
+    apply_migration_suffix(connection, catalog, timestamp_source, shared_version_count)?;
 
-    if pending_up_count == 0 {
+    if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
-            message = "database already contains every target migration version",
-            operation = "migration_apply_pending"
+            message = "database already contains the target migration versions",
+            operation = "migration_version_reconciliation"
         );
     }
 
@@ -70,7 +69,7 @@ where
 
     let applied_migrations = load_applied_migrations(connection)?;
     let target_versions = catalog.target_versions();
-    validate_applied_history(&applied_migrations, catalog)?;
+    validate_shared_history(&applied_migrations, target_versions, catalog)?;
     let reconciliation_start =
         first_reconciliation_position(&applied_migrations, target_versions, catalog);
     let pending_up_count = target_versions.len().saturating_sub(reconciliation_start);
@@ -87,30 +86,7 @@ where
         pending_down_count
     );
 
-    if pending_down_count > 0 {
-        ora_info!(
-            message = "rolling back migration suffix",
-            operation = "migration_reconciliation",
-            rollback_count = pending_down_count
-        );
-
-        for applied_migration in applied_migrations.iter().skip(reconciliation_start).rev() {
-            execute_migration_step(
-                connection,
-                &applied_migration.version,
-                &applied_migration.down_sql,
-                MigrationDirection::Down,
-                |transaction| {
-                    transaction.execute(
-                        "DELETE FROM migrations WHERE version = ?1",
-                        params![applied_migration.version],
-                    )?;
-
-                    Ok(())
-                },
-            )?;
-        }
-    }
+    rollback_migration_suffix(connection, &applied_migrations, reconciliation_start)?;
 
     apply_migration_suffix(connection, catalog, timestamp_source, reconciliation_start)?;
 
@@ -119,6 +95,43 @@ where
             message = "database schema already matches the target migration prefix",
             operation = "migration_reconciliation"
         );
+    }
+
+    Ok(())
+}
+
+/// Rolls back an applied suffix in reverse order using the SQL snapshots stored in the database.
+fn rollback_migration_suffix(
+    connection: &mut Connection,
+    applied_migrations: &[AppliedMigration],
+    start: usize,
+) -> Result<(), DatabaseError> {
+    let rollback_count = applied_migrations.len().saturating_sub(start);
+    if rollback_count == 0 {
+        return Ok(());
+    }
+
+    ora_info!(
+        message = "rolling back migration suffix",
+        operation = "migration_rollback",
+        rollback_count
+    );
+
+    for applied_migration in applied_migrations.iter().skip(start).rev() {
+        execute_migration_step(
+            connection,
+            &applied_migration.version,
+            &applied_migration.down_sql,
+            MigrationDirection::Down,
+            |transaction| {
+                transaction.execute(
+                    "DELETE FROM migrations WHERE version = ?1",
+                    params![applied_migration.version],
+                )?;
+
+                Ok(())
+            },
+        )?;
     }
 
     Ok(())
@@ -216,12 +229,15 @@ fn load_applied_migrations(
         .map_err(DatabaseError::from)
 }
 
-/// Rejects unknown, missing, or reordered applied versions before schema mutation begins.
-fn validate_applied_history(
+/// Rejects unknown, missing, or reordered versions within the current target's shared prefix.
+fn validate_shared_history(
     applied_migrations: &[AppliedMigration],
+    target_versions: &[&str],
     catalog: &MigrationCatalog,
 ) -> Result<(), DatabaseError> {
-    for (position, applied) in applied_migrations.iter().enumerate() {
+    for (position, (applied, expected)) in
+        applied_migrations.iter().zip(target_versions).enumerate()
+    {
         if catalog.migration(&applied.version).is_none() {
             ora_error!(
                 message = "encountered unknown applied migration version",
@@ -238,8 +254,7 @@ fn validate_applied_history(
             });
         }
 
-        let expected = catalog.version_at(position).unwrap_or_default();
-        if applied.version != expected {
+        if applied.version != *expected {
             ora_error!(
                 message = "migration history diverged",
                 operation = "migration_reconciliation",
@@ -252,7 +267,7 @@ fn validate_applied_history(
             );
             return Err(DatabaseError::DivergedMigrationHistory {
                 position,
-                expected: expected.to_string(),
+                expected: (*expected).to_string(),
                 found: applied.version.clone(),
             });
         }

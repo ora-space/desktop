@@ -27,16 +27,18 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 
 ## Application startup
 
-`DatabaseBootstrapper` validates that applied versions form a known, ordered history, then applies
-only the missing target tail. It does not compare persisted SQL snapshots and never executes a
-rollback. Packaged application startup therefore cannot rebuild user data merely because an old
-migration definition changed.
+`DatabaseBootstrapper` validates that the database and target have an identical shared version
+prefix. It applies a missing target tail in ascending order. If the database contains versions
+introduced by a newer application, it rolls that trailing suffix back in reverse order using the
+`down_sql` stored by the newer version. It does not compare persisted SQL snapshots for shared
+versions, so packaged application startup cannot rebuild user data merely because an old migration
+definition changed.
 
 ## Development reconciliation
 
 A catalog carries the full migration list plus an **active target prefix**, which must be a prefix of that list. Requiring a prefix keeps history linear and makes controlled rollback deterministic instead of branch-shaped. The explicit `reconcile_migration_history` tooling interface reconciles a database against that target:
 
-- Applied versions are validated against the complete catalog before any mutation. Unknown versions and versions in the wrong position remain hard errors; the runner never guesses, skips, or reorders history.
+- Applied versions in the shared target prefix are validated before any mutation. Unknown versions and versions in the wrong position within that prefix remain hard errors; versions in a trailing applied suffix are rollback input and need not exist in the current catalog.
 - Persisted and current `up_sql` and `down_sql` are compared from the beginning of the shared target prefix. `executed_at` is metadata and does not affect equality.
 - At the first SQL mismatch, the runner rolls back that migration and the complete applied suffix in reverse order. Rollback always executes the old `down_sql` stored in the database, never the possibly rewritten current definition.
 - The runner then applies the current target suffix in ascending order and records fresh SQL snapshots and timestamps.
@@ -59,7 +61,7 @@ plugin marketplace schema remains intact.
 `ora-db` emits structured events during database bootstrap and explicit reconciliation.
 
 - Database open and bootstrap lifecycle events carry an `operation` field (`database_open`, `database_bootstrap`).
-- Application bootstrap reports the pending `up` count. Explicit reconciliation reports applied and target migration counts plus pending `up` and `down` counts; rollback and apply phases log their own counts.
+- Application bootstrap and explicit reconciliation report applied and target migration counts plus pending `up` and `down` counts; rollback and apply phases log their own counts.
 - Migration step events include `migration_version` and `direction`.
 - Failures log at `ERROR` with `error.kind` and `error.message` before the original `DatabaseError` is returned to the caller.
 

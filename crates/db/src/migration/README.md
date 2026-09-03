@@ -1,6 +1,6 @@
 # Database Migration Module
 
-This module owns Ora's linear, reversible SQLite schema history. Application bootstrap applies only missing migration versions. Explicit development tooling may reconcile a database to an exact target prefix, including SQL snapshot comparison and suffix rebuilding. Concrete schema definitions live in the private [`schema`](schema/) module, which is the single migration registry consumed by the catalog.
+This module owns Ora's linear, reversible SQLite schema history. Application bootstrap aligns migration versions without comparing SQL snapshots. Explicit development tooling may additionally reconcile a database to an exact target prefix based on SQL snapshot comparison and suffix rebuilding. Concrete schema definitions live in the private [`schema`](schema/) module, which is the single migration registry consumed by the catalog.
 
 ## Catalog invariants
 
@@ -42,20 +42,22 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 
 ## Application bootstrap
 
-Application bootstrap validates the applied version sequence and applies only the missing target
-tail. It intentionally does not compare persisted SQL snapshots and never executes `down` SQL.
-This keeps a packaged application from destructively rebuilding user data when a previously
-published migration definition differs.
+Application bootstrap validates the version sequence shared by the database and current target.
+It applies a missing target tail in ascending order. If the database contains a trailing suffix
+introduced by a newer application, bootstrap executes that suffix's persisted `down_sql` in
+reverse order and removes its bookkeeping rows. It does not compare persisted SQL snapshots for
+shared versions, so changing a previously published migration definition cannot trigger a schema
+rebuild during packaged application startup.
 
 ## Explicit development reconciliation
 
-`reconcile_database` first verifies that every applied version belongs to the catalog and occupies the expected position. Unknown, skipped, or reordered versions are hard errors.
+`reconcile_database` first verifies that the applied and target histories have an identical shared version prefix. Unknown, skipped, or reordered versions inside that prefix are hard errors; an applied suffix beyond the target is rollback input and does not need to exist in the current catalog.
 
 It then compares the persisted SQL snapshots with current migration definitions over the shared target prefix. At the first changed `up_sql` or `down_sql`, it rolls back the complete applied suffix in reverse order using each row's persisted `down_sql`, then applies the current target suffix in forward order and stores fresh snapshots. Timestamps do not participate in this comparison.
 
 Ordinary target shortening uses the same persisted rollback snapshots. Ordinary target growth applies only the missing tail. Each migration step and its bookkeeping update run in one SQLite transaction, so a failing statement cannot leave that step's schema and row out of sync. Earlier successful rollback steps remain committed if a later rewritten `up` fails.
 
-An applied version absent from the catalog is an error. Reconciliation is otherwise idempotent when the database already matches the target.
+An applied version absent from the catalog inside the shared target prefix is an error. Reconciliation is otherwise idempotent when the database already matches the target.
 
 The public `reconcile_migration_history` interface opens and reconciles a database for explicit
 tooling. `cargo xtask reconcile-migrations DATA_DIRECTORY` calls it before `task run:desktop`

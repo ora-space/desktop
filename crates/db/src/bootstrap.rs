@@ -16,7 +16,7 @@ pub fn reconcile_migration_history(
     })
 }
 
-/// Coordinates opening SQLite connections and applying missing migration versions.
+/// Coordinates opening SQLite connections and aligning migration versions for application startup.
 #[derive(Debug)]
 pub struct DatabaseBootstrapper<T> {
     timestamp_source: T,
@@ -38,7 +38,7 @@ where
         Self { timestamp_source }
     }
 
-    /// Opens a repository pool and applies target migration versions that are not yet recorded.
+    /// Opens a repository pool and aligns the database with the target migration version sequence.
     pub fn bootstrap_repository_pool(
         &self,
         location: &DatabaseLocation,
@@ -62,7 +62,7 @@ where
         ora_info!(message = "opened database", operation = "database_open");
 
         if let Err(error) = pool.with_connection_mut(|connection| {
-            migration::apply_pending_migrations(connection, catalog, &self.timestamp_source)
+            migration::reconcile_database_versions(connection, catalog, &self.timestamp_source)
         }) {
             ora_error!(
                 message = "database bootstrap failed",

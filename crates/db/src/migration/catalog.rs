@@ -90,11 +90,6 @@ impl MigrationCatalog {
             .get(version)
             .map(|index| &self.migrations[*index])
     }
-
-    /// Returns the catalog version at a history position for applied-order validation.
-    pub(crate) fn version_at(&self, position: usize) -> Option<&'static str> {
-        self.migrations.get(position).map(Migration::version)
-    }
 }
 
 /// Builds the default migration catalog shipped by the crate.

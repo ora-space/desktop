@@ -168,6 +168,53 @@ fn applies_missing_migrations_in_order() {
     );
 }
 
+/// Verifies application bootstrap rolls back versions introduced by a newer application.
+#[test]
+fn bootstrap_rolls_back_migrations_newer_than_the_catalog_in_reverse_order() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("newer-than-catalog.sqlite3");
+    let migrations = vec![
+        sql_migration(
+            "0001",
+            "CREATE TABLE alpha (id INTEGER PRIMARY KEY); CREATE TABLE rollback_order (version TEXT NOT NULL);",
+            "DROP TABLE rollback_order; DROP TABLE alpha;",
+        ),
+        sql_migration(
+            "0002",
+            "CREATE TABLE beta (id INTEGER PRIMARY KEY);",
+            "INSERT INTO rollback_order (version) VALUES ('0002'); DROP TABLE beta;",
+        ),
+        sql_migration(
+            "0003",
+            "CREATE TABLE gamma (id INTEGER PRIMARY KEY);",
+            "INSERT INTO rollback_order (version) VALUES ('0003'); DROP TABLE gamma;",
+        ),
+    ];
+    let older_catalog =
+        MigrationCatalog::new(vec![migrations[0].clone()]).expect("build older catalog");
+    let newer_catalog = MigrationCatalog::new(migrations).expect("build newer catalog");
+
+    bootstrap_file_database(&database_path, &newer_catalog, 100).expect("apply newer catalog");
+    bootstrap_file_database(&database_path, &older_catalog, 200)
+        .expect("roll back versions absent from the older catalog");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "alpha"), true);
+    assert_eq!(table_exists(&connection, "beta"), false);
+    assert_eq!(table_exists(&connection, "gamma"), false);
+    assert_eq!(
+        load_text_column(
+            &connection,
+            "SELECT version FROM rollback_order ORDER BY rowid"
+        ),
+        vec!["0003".to_string(), "0002".to_string()]
+    );
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&newer_catalog, "0001", 100)]
+    );
+}
+
 /// Verifies matching SQL snapshots make reconciliation a no-op regardless of the new clock value.
 #[test]
 fn unchanged_migration_content_is_a_no_op() {
@@ -424,7 +471,7 @@ fn shorter_target_rolls_back_the_applied_tail() {
     );
 }
 
-/// Verifies known versions in an illegal position and versions absent from the catalog stay errors.
+/// Verifies reordered or unknown versions inside the shared target prefix stay errors.
 #[test]
 fn rejects_reordered_and_unknown_applied_versions() {
     let temp_dir = TempDir::new().expect("create temporary directory");
@@ -452,7 +499,14 @@ fn rejects_reordered_and_unknown_applied_versions() {
     );
 
     let unknown_path = temp_dir.path().join("unknown.sqlite3");
-    bootstrap_file_database(&unknown_path, &expected, 100).expect("apply expected catalog");
+    let first_version = MigrationCatalog::new(vec![
+        expected
+            .migration("0001")
+            .expect("find first migration")
+            .clone(),
+    ])
+    .expect("build first-version catalog");
+    bootstrap_file_database(&unknown_path, &first_version, 100).expect("apply first migration");
     let connection = Connection::open(&unknown_path).expect("open database");
     connection
         .execute(
