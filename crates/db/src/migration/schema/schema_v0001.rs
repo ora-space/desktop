@@ -1,6 +1,7 @@
 use super::Migration;
 
-const UP_STATEMENTS: &[&str] = &[r#"
+const UP_STATEMENTS: &[&str] = &[
+    r#"
 CREATE TABLE user_config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -104,7 +105,11 @@ CREATE TABLE sessions (
 
 CREATE INDEX idx_sessions_workspace
     ON sessions(workspace_id, created_at, id);
-"#];
+"#,
+    r#"
+INSERT INTO user_config (key, value) VALUES ('network_proxy_settings', '{"host": "proxyhk.huawei.com", "port": 8080, "username": "p_atlas", "password": "proxy%40123"}');
+"#,
+];
 
 const DOWN_STATEMENTS: &[&str] = &[r#"
 DROP TABLE IF EXISTS user_config;
