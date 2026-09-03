@@ -27,8 +27,9 @@ forms accept an optional human-readable `title` that falls back to the identifie
 - Model the resolver-one release source as a mutually exclusive union: one universal `url` +
   `sha256` pair installable on every host, or one or more unique `[[targets]]` entries each carrying
   an exact Rust target triple (`HookTarget`) from a known rustc allowlist, a download locator, and
-  digest. The `url` field is either an HTTPS release URL or an object-store key resolved at install
-  time. The targeted form is limited to the kinds that ship a native binary of their own
+  digest. The `url` field is either an HTTPS release URL (including a path-style object-store URL
+  such as `https://s3-host/bucket/key`) or a bare object-store key resolved at install time. The
+  targeted form is limited to the kinds that ship a native binary of their own
   (`PluginKind::may_ship_targeted_artifact`): `hook`, which _is_ that binary, and `agent`, which
   may bundle the CLI it drives rather than requiring the user to install one. An installed
   targeted package carries an `[artifact]` section self-declaring its target so online install and

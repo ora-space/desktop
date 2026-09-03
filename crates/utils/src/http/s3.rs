@@ -1,5 +1,5 @@
 //! S3-compatible download support: path-style object URLs, SigV4 signing, and a downloader that
-//! signs object-key sources while leaving HTTPS URLs unsigned.
+//! signs object-key sources and path-style HTTPS URLs that target the configured bucket.
 
 mod sign;
 
@@ -122,6 +122,49 @@ pub fn path_style_object_url(
     Ok(url)
 }
 
+/// Returns the object key when `url` is a path-style HTTPS URL for `endpoint`/`bucket`.
+///
+/// Matches `https://{endpoint}/{bucket}/{key…}` (optional port on the endpoint). Other hosts,
+/// buckets, schemes, or a URL that stops at the bucket root yield `None` so callers can fall
+/// back to an unsigned download.
+pub fn path_style_object_key(url: &Url, endpoint: &str, bucket: &str) -> Option<String> {
+    if url.scheme() != "https" || bucket.is_empty() {
+        return None;
+    }
+    let (expected_host, expected_port) = split_host_port(endpoint);
+    if url.host_str() != Some(expected_host) {
+        return None;
+    }
+    if !ports_match(url.port(), expected_port) {
+        return None;
+    }
+    let mut segments = url.path_segments()?;
+    let first = segments.next()?;
+    if first != bucket {
+        return None;
+    }
+    let key_segments: Vec<&str> = segments.filter(|segment| !segment.is_empty()).collect();
+    if key_segments.is_empty() {
+        return None;
+    }
+    // `Url` already collapses `.` / `..` path segments before we read them, so a listing cannot
+    // smuggle a parent-directory hop past the bucket prefix without changing the first segment.
+    Some(key_segments.join("/"))
+}
+
+/// Compares an optional URL port with an endpoint's optional port, treating the HTTPS default
+/// as equivalent to an omitted port.
+fn ports_match(url_port: Option<u16>, endpoint_port: Option<u16>) -> bool {
+    match (url_port, endpoint_port) {
+        (None, None) => true,
+        (Some(actual), Some(expected)) => actual == expected,
+        // `Url::port()` omits the scheme default (443 for HTTPS); an endpoint written without a
+        // port means the same default.
+        (None, Some(443)) | (Some(443), None) => true,
+        _ => false,
+    }
+}
+
 /// Applies `endpoint` as a hostname, optionally with a numeric port (`host:port`).
 fn set_endpoint_host(url: &mut Url, endpoint: &str) -> Result<(), DownloadError> {
     let (host, port) = split_host_port(endpoint);
@@ -154,8 +197,9 @@ fn split_host_port(endpoint: &str) -> (&str, Option<u16>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{S3Config, path_style_object_url};
+    use super::{S3Config, path_style_object_key, path_style_object_url};
     use pretty_assertions::assert_eq;
+    use url::Url;
 
     /// Path-style URLs join bucket and key as URL segments, preserving nested keys.
     #[test]
@@ -172,6 +216,48 @@ mod tests {
     fn builds_path_style_urls_with_a_port() {
         let url = path_style_object_url("localhost:8443", "bucket", "pkg.orax").unwrap();
         assert_eq!(url.as_str(), "https://localhost:8443/bucket/pkg.orax");
+    }
+
+    /// A marketplace-style path URL yields the key after the bucket segment.
+    #[test]
+    fn extracts_object_key_from_path_style_url() {
+        let url = Url::parse(
+            "https://s3-hc-dgg.hics.huawei.com/ora-marketplace-1.0/agent/ora-space.codeagent-v0.5.1.orax",
+        )
+        .unwrap();
+        assert_eq!(
+            path_style_object_key(
+                &url,
+                "s3-hc-dgg.hics.huawei.com",
+                "ora-marketplace-1.0"
+            )
+            .as_deref(),
+            Some("agent/ora-space.codeagent-v0.5.1.orax")
+        );
+    }
+
+    /// Foreign hosts, wrong buckets, bare bucket URLs, and parent segments do not extract.
+    #[test]
+    fn rejects_non_matching_path_style_urls() {
+        let foreign = Url::parse("https://github.com/org/repo/releases/download/v1/pkg.orax")
+            .unwrap();
+        assert_eq!(
+            path_style_object_key(&foreign, "s3.example.com", "bucket"),
+            None
+        );
+
+        let wrong_bucket =
+            Url::parse("https://s3.example.com/other-bucket/pkg.orax").unwrap();
+        assert_eq!(
+            path_style_object_key(&wrong_bucket, "s3.example.com", "bucket"),
+            None
+        );
+
+        let bucket_only = Url::parse("https://s3.example.com/bucket").unwrap();
+        assert_eq!(
+            path_style_object_key(&bucket_only, "s3.example.com", "bucket"),
+            None
+        );
     }
 
     /// Debug output redacts both credential fields.
