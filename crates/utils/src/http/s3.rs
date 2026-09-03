@@ -226,12 +226,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            path_style_object_key(
-                &url,
-                "s3-hc-dgg.hics.huawei.com",
-                "ora-marketplace-1.0"
-            )
-            .as_deref(),
+            path_style_object_key(&url, "s3-hc-dgg.hics.huawei.com", "ora-marketplace-1.0")
+                .as_deref(),
             Some("agent/ora-space.codeagent-v0.5.1.orax")
         );
     }
@@ -239,15 +235,14 @@ mod tests {
     /// Foreign hosts, wrong buckets, bare bucket URLs, and parent segments do not extract.
     #[test]
     fn rejects_non_matching_path_style_urls() {
-        let foreign = Url::parse("https://github.com/org/repo/releases/download/v1/pkg.orax")
-            .unwrap();
+        let foreign =
+            Url::parse("https://github.com/org/repo/releases/download/v1/pkg.orax").unwrap();
         assert_eq!(
             path_style_object_key(&foreign, "s3.example.com", "bucket"),
             None
         );
 
-        let wrong_bucket =
-            Url::parse("https://s3.example.com/other-bucket/pkg.orax").unwrap();
+        let wrong_bucket = Url::parse("https://s3.example.com/other-bucket/pkg.orax").unwrap();
         assert_eq!(
             path_style_object_key(&wrong_bucket, "s3.example.com", "bucket"),
             None
