@@ -59,9 +59,7 @@ fn bootstraps_the_current_workspace_schema() {
     let catalog = default_migration_catalog().expect("build migration catalog");
     assert_eq!(
         catalog.target_versions(),
-        [
-            "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"
-        ]
+        ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
     );
 
     let pool = with_trace_logging(|| {
