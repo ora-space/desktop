@@ -63,6 +63,11 @@ starts the application; packaged application startup never calls this interface.
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 
+The default catalog may also carry first-install data initialization. That SQL runs only after a
+new database has successfully applied the complete migration target, and is not part of any
+versioned migration snapshot. Existing databases therefore retain their data without triggering
+SQL-drift reconciliation.
+
 Rolling back `0005` removes only Workspace Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).

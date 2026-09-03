@@ -47,6 +47,10 @@ where
         applied_migrations.len(),
     )?;
 
+    if applied_migrations.is_empty() && pending_up_count > 0 {
+        apply_first_install_data(connection, catalog)?;
+    }
+
     if pending_up_count == 0 {
         ora_info!(
             message = "database already contains every target migration version",
@@ -114,6 +118,10 @@ where
 
     apply_migration_suffix(connection, catalog, timestamp_source, reconciliation_start)?;
 
+    if applied_migrations.is_empty() && pending_up_count > 0 && pending_down_count == 0 {
+        apply_first_install_data(connection, catalog)?;
+    }
+
     if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
             message = "database schema already matches the target migration prefix",
@@ -122,6 +130,26 @@ where
     }
 
     Ok(())
+}
+
+/// Initializes optional data only after a new database reaches its complete migration target.
+fn apply_first_install_data(
+    connection: &mut Connection,
+    catalog: &MigrationCatalog,
+) -> Result<(), DatabaseError> {
+    let Some(sql) = catalog.first_install_sql() else {
+        return Ok(());
+    };
+
+    // Keeping initialization outside migration snapshots lets internal distributions customize
+    // first-run data without creating SQL drift for later public builds.
+    execute_migration_step(
+        connection,
+        "first-install-data",
+        sql,
+        MigrationDirection::Up,
+        |_| Ok(()),
+    )
 }
 
 /// Applies the target suffix in order and records the exact SQL snapshots that were executed.

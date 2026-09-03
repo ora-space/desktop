@@ -48,6 +48,7 @@ pub struct MigrationCatalog {
     migrations: Vec<Migration>,
     target_versions: Vec<&'static str>,
     migrations_by_version: BTreeMap<&'static str, usize>,
+    first_install_sql: Option<&'static str>,
 }
 
 impl MigrationCatalog {
@@ -76,7 +77,27 @@ impl MigrationCatalog {
             migrations,
             target_versions,
             migrations_by_version,
+            first_install_sql: None,
         })
+    }
+
+    /// Attaches idempotent data initialization that runs only after a brand-new database reaches
+    /// the catalog target; ordinary migration history remains unchanged.
+    pub fn with_first_install_sql(mut self, sql: &'static str) -> Self {
+        self.first_install_sql = Some(sql);
+        self
+    }
+
+    /// Returns optional data initialization reserved for the first successful installation.
+    pub(crate) fn first_install_sql(&self) -> Option<&'static str> {
+        self.first_install_sql
+    }
+
+    /// Removes optional first-install data for fixtures that need a schema-only catalog.
+    #[cfg(test)]
+    pub(crate) fn without_first_install_sql(mut self) -> Self {
+        self.first_install_sql = None;
+        self
     }
 
     /// Returns the active target versions the database should match after reconciliation.
@@ -99,7 +120,8 @@ impl MigrationCatalog {
 
 /// Builds the default migration catalog shipped by the crate.
 pub fn default_migration_catalog() -> Result<MigrationCatalog, DatabaseError> {
-    MigrationCatalog::new(schema::migrations())
+    Ok(MigrationCatalog::new(schema::migrations())?
+        .with_first_install_sql(schema::FIRST_INSTALL_SQL))
 }
 
 /// Produces stable, executable SQL from an ordered statement list.

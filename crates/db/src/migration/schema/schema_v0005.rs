@@ -1,7 +1,6 @@
 use super::Migration;
 
-const UP_STATEMENTS: &[&str] = &[
-    r#"
+const UP_STATEMENTS: &[&str] = &[r#"
 CREATE TABLE plugin_marketplace_source (
     url        TEXT PRIMARY KEY NOT NULL,
     branch     TEXT NOT NULL,
@@ -13,12 +12,7 @@ CREATE TABLE plugin_marketplace_source (
 
 CREATE UNIQUE INDEX plugin_marketplace_source_position_unique
     ON plugin_marketplace_source(position);
-"#,
-    r#"
-INSERT INTO plugin_marketplace_source (url, branch, use_proxy, position, created_at, updated_at) VALUES ('https://github.com/ora-space/marketplace', 'main', 1, 0, 1788433539000, 1788433539000);
-INSERT INTO plugin_marketplace_source (url, branch, use_proxy, position, created_at, updated_at) VALUES ('https://szv-y.codehub.huawei.com/AI_Coding_Lab/ora-space-marketplace', 'master', 0, 1, 1788433539000, 1788433539000);
-"#,
-];
+"#];
 
 const DOWN_STATEMENTS: &[&str] = &[r#"
 DROP INDEX IF EXISTS plugin_marketplace_source_position_unique;

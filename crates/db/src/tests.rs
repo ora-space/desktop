@@ -144,6 +144,71 @@ fn runtime_tables_use_direct_workspace_ownership() {
     );
 }
 
+/// Verifies first-install data is added only after the complete default schema is applied.
+#[test]
+fn first_install_data_is_seeded_after_migrations() {
+    let pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource { now: 1 })
+            .bootstrap_repository_pool(
+                &DatabaseLocation::in_memory(),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("bootstrap database")
+    });
+
+    pool.with_connection(|connection| {
+        let proxy: String = connection.query_row(
+            "SELECT value FROM user_config WHERE key = 'network_proxy_settings'",
+            [],
+            |row| row.get(0),
+        )?;
+        let source_count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM plugin_marketplace_source",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(proxy, r#"{"host": "proxyhk.huawei.com", "port": 8080, "username": "p_atlas", "password": "proxy%40123"}"#);
+        assert_eq!(source_count, 2);
+        Ok(())
+    })
+    .expect("read first-install data");
+}
+
+/// Verifies enabling first-install data later does not mutate an existing database.
+#[test]
+fn existing_database_is_not_seeded_during_bootstrap() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("existing.sqlite3");
+    let schema_only_catalog = default_migration_catalog()
+        .expect("build schema-only catalog")
+        .without_first_install_sql();
+
+    bootstrap_file_database(&database_path, &schema_only_catalog, 1)
+        .expect("bootstrap existing database");
+    bootstrap_file_database(
+        &database_path,
+        &default_migration_catalog().expect("build seeded catalog"),
+        2,
+    )
+    .expect("reopen existing database");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    let row_counts = (
+        connection
+            .query_row("SELECT COUNT(*) FROM user_config", [], |row| row.get(0))
+            .expect("count user configuration"),
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM plugin_marketplace_source",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count marketplace sources"),
+    );
+    assert_eq!(row_counts, (0_i64, 0_i64));
+}
+
 /// Verifies a database with a shorter valid prefix receives and snapshots only the missing tail.
 #[test]
 fn applies_missing_migrations_in_order() {

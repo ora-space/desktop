@@ -78,7 +78,9 @@ mod tests {
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(database_path),
-                &default_migration_catalog().unwrap(),
+                &default_migration_catalog()
+                    .unwrap()
+                    .without_first_install_sql(),
             )
             .expect("bootstrap user-config repository");
         (temporary, SqliteUserConfigRepository::new(pool))
