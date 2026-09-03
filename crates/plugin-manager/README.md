@@ -48,7 +48,9 @@ orchestrates checksum-verified installs of new plugin releases.
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`, where the
   namespace is supplied by the caller as the identity of the installing marketplace source. The
   marketplace `url` is either an HTTPS locator or an object-store key; `select_release` maps those
-  onto `DownloadSource::Url` and `DownloadSource::S3` respectively.
+  onto `DownloadSource::Url` and `DownloadSource::S3` respectively. A path-style HTTPS URL that
+  targets the configured marketplace bucket is still selected as `Url`, and the S3-aware downloader
+  extracts the object key and signs the GET.
 - Update an installed plugin release by refusing no-op and downgrade attempts (the marketplace
   manifest must declare a higher version than the highest installed SemVer directory), then
   downloading, verifying, and extracting the new release into its version directory and retiring
