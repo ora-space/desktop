@@ -257,9 +257,26 @@ mod tests {
             .expect("open repository pool")
     }
 
+    /// Clears any rows the v0005 migration preseeded into `plugin_marketplace_source` so
+    /// `MarketplaceSourceStore::open` exercises its own code-level default seed. The migration's
+    /// preseeded product defaults are a deployment concern; these unit tests assert the store's
+    /// seeding, ordering, and namespace-binding behavior in isolation from those shipped rows.
+    fn clear_preseeded_marketplace_sources(repository: &SqlitePluginMarketplaceSourceRepository) {
+        for source in repository
+            .list_sources()
+            .expect("list preseeded marketplace sources")
+        {
+            repository
+                .delete_source(&source.url)
+                .expect("delete preseeded marketplace source");
+        }
+    }
+
     fn store_with_pool(temp: &TempDir, pool: RepositoryPool) -> MarketplaceSourceStore {
+        let repository = SqlitePluginMarketplaceSourceRepository::new(pool.clone());
+        clear_preseeded_marketplace_sources(&repository);
         MarketplaceSourceStore::open(
-            SqlitePluginMarketplaceSourceRepository::new(pool.clone()),
+            repository,
             SqlitePluginSourceNamespaceRepository::new(pool),
             temp.path(),
             1,
