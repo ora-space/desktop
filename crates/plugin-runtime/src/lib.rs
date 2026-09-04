@@ -11,7 +11,10 @@ mod tests;
 pub use host_requests::{
     HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
 };
-pub use ora_plugin_protocol::{PluginEffectCoordination, PluginEffectResource, PluginRegistration};
+pub use ora_plugin_protocol::{
+    PluginEffectCoordination, PluginEffectResource, PluginRegistration, PluginTraceLocator,
+    PluginTraceProvider, PluginTraceRoot,
+};
 pub use protocol::PluginNotification;
 
 use std::path::PathBuf;

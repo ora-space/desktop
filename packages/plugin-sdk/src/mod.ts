@@ -15,7 +15,10 @@ export {
   type AgentProgram,
   spawnAgentProcess,
 } from "./agent_process.ts";
-export type { EffectResourceDeclaration } from "./plugin.ts";
+export type {
+  EffectResourceDeclaration,
+  TraceProviderDeclaration,
+} from "./plugin.ts";
 export {
   createHostProcesses,
   type HostChildProcess,

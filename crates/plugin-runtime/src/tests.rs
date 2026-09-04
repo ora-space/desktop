@@ -91,6 +91,7 @@ async fn accepts_initial_registration() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::from(["example.tick".to_string()]),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         }
     );
     assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
@@ -118,6 +119,7 @@ async fn defaults_missing_emits_to_an_empty_whitelist() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         }
     );
 }
@@ -154,6 +156,73 @@ async fn parses_effect_resource_registration() {
             coordination: PluginEffectCoordination::QuiesceBeforeMutation,
         }]
     );
+}
+
+/// Trace providers retain only a safe root-relative locator template.
+#[tokio::test]
+async fn parses_trace_provider_registration_and_rejects_traversal() {
+    use crate::{PluginTraceLocator, PluginTraceProvider, PluginTraceRoot};
+
+    let (inner, _inbound) = test_inner();
+    handle_message(
+        &inner,
+        json!({
+            "jsonrpc": "2.0",
+            "method": "ora/register",
+            "params": {
+                "methods": ["agent/start"],
+                "traceProviders": [{
+                    "providerId": "claude-code",
+                    "format": "ora/trace.claude-code-jsonl.v1",
+                    "locator": {
+                        "root": "home",
+                        "directory": ".claude/projects",
+                        "fileNameTemplate": "{provider_session_id}.jsonl",
+                        "recursive": true
+                    }
+                }]
+            }
+        }),
+    )
+    .await
+    .expect("register Trace Provider");
+    assert_eq!(
+        inner.registration.read().await.trace_providers,
+        vec![PluginTraceProvider {
+            provider_id: "claude-code".to_string(),
+            format: "ora/trace.claude-code-jsonl.v1".to_string(),
+            locator: PluginTraceLocator {
+                root: PluginTraceRoot::Home,
+                directory: ".claude/projects".to_string(),
+                file_name_template: "{provider_session_id}.jsonl".to_string(),
+                recursive: true,
+            },
+        }]
+    );
+
+    let (unsafe_inner, _inbound) = test_inner();
+    let error = handle_message(
+        &unsafe_inner,
+        json!({
+            "jsonrpc": "2.0",
+            "method": "ora/register",
+            "params": {
+                "methods": [],
+                "traceProviders": [{
+                    "providerId": "bad",
+                    "format": "trace.v1",
+                    "locator": {
+                        "root": "home",
+                        "directory": "../private",
+                        "fileNameTemplate": "{provider_session_id}.jsonl"
+                    }
+                }]
+            }
+        }),
+    )
+    .await
+    .expect_err("reject traversal");
+    assert_eq!(error, "trace provider directory contains an unsafe segment");
 }
 
 /// Duplicate method names invalidate registration rather than selecting one handler.
@@ -402,6 +471,7 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         }),
         status_tx,
         exited_tx,
