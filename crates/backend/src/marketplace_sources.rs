@@ -1,4 +1,9 @@
-use ora_contracts::MarketplaceSource;
+mod artifact_retrieval;
+
+use artifact_retrieval::{ArtifactRetrievalError, StoredArtifactRetrieval};
+use ora_contracts::{
+    MarketplaceArtifactRetrieval, MarketplaceSource, UpdateMarketplaceSourceRequest,
+};
 use ora_db::{
     PluginMarketplaceSourceRecord, SqlitePluginMarketplaceSourceRepository,
     SqlitePluginSourceNamespaceRepository,
@@ -24,6 +29,8 @@ pub(crate) enum MarketplaceSourceStoreError {
     NotFound(String),
     #[error("marketplace source repository operation failed: {0}")]
     Repository(#[from] ora_db::DatabaseError),
+    #[error("invalid marketplace artifact retrieval configuration: {0}")]
+    ArtifactRetrieval(#[from] ArtifactRetrievalError),
     /// A persisted binding holds a namespace this version cannot represent, so the source cannot
     /// be used without either inventing a new identity for it or silently changing an existing
     /// one — both of which would detach its already-installed plugins.
@@ -37,6 +44,25 @@ pub(crate) struct MarketplaceSourceStore {
     repository: SqlitePluginMarketplaceSourceRepository,
     namespaces: SqlitePluginSourceNamespaceRepository,
     sources_root: PathBuf,
+}
+
+/// Keeps the secret-bearing retrieval state beside its redacted public source projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConfiguredMarketplaceSource {
+    source: MarketplaceSource,
+    artifact_retrieval: StoredArtifactRetrieval,
+}
+
+impl ConfiguredMarketplaceSource {
+    /// Returns the redacted source fields safe for contracts and ordinary diagnostics.
+    pub(crate) fn source(&self) -> &MarketplaceSource {
+        &self.source
+    }
+
+    /// Builds S3 signing configuration only for the S3 SigV4 retrieval variant.
+    pub(crate) fn s3_config(&self) -> Option<ora_utils::http::S3Config> {
+        self.artifact_retrieval.s3_config()
+    }
 }
 
 impl MarketplaceSourceStore {
@@ -59,16 +85,36 @@ impl MarketplaceSourceStore {
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                 use_proxy: false,
                 enabled: true,
+                artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
             };
-            store.insert(default_source, /*position*/ 0, now_ms)?;
+            store.insert(
+                default_source,
+                StoredArtifactRetrieval::DirectHttps,
+                /*position*/ 0,
+                now_ms,
+            )?;
         }
         Ok(store)
     }
 
     /// Returns the current source list in source-precedence order.
     pub(crate) fn list(&self) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
-        let sources = self.repository.list_sources()?;
-        Ok(sources.iter().map(source_spec).collect())
+        Ok(self
+            .configured_sources()?
+            .into_iter()
+            .map(|configured| configured.source)
+            .collect())
+    }
+
+    /// Returns validated source configuration including secret-bearing retrieval state.
+    pub(crate) fn configured_sources(
+        &self,
+    ) -> Result<Vec<ConfiguredMarketplaceSource>, MarketplaceSourceStoreError> {
+        self.repository
+            .list_sources()?
+            .into_iter()
+            .map(configured_source)
+            .collect()
     }
 
     /// Validates, persists, and returns one additional source appended to the current ordering.
@@ -94,7 +140,12 @@ impl MarketplaceSourceStore {
             .map(|existing| existing.position)
             .max()
             .map_or(0, |highest| highest + 1);
-        self.insert(source, position, now_ms)?;
+        self.insert(
+            source,
+            StoredArtifactRetrieval::DirectHttps,
+            position,
+            now_ms,
+        )?;
         self.list()
     }
 
@@ -120,38 +171,44 @@ impl MarketplaceSourceStore {
     /// existing binding so installed plugins stay attached.
     pub(crate) fn update(
         &self,
-        current_url: &str,
-        source: MarketplaceSource,
+        request: UpdateMarketplaceSourceRequest,
         now_ms: i64,
     ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
         let current = self.repository.list_sources()?;
-        let Some(existing) = current.iter().find(|row| row.url == current_url).cloned() else {
-            return Err(MarketplaceSourceStoreError::NotFound(
-                current_url.to_owned(),
-            ));
+        let Some(existing) = current.iter().find(|row| row.url == request.url).cloned() else {
+            return Err(MarketplaceSourceStoreError::NotFound(request.url));
         };
-        let new_canonical = canonical_repository_url(&source.url);
+        let new_canonical = canonical_repository_url(&request.new_url);
         if current.iter().any(|row| {
-            row.url != current_url && canonical_repository_url(&row.url) == new_canonical
+            row.url != request.url && canonical_repository_url(&row.url) == new_canonical
         }) {
-            return Err(MarketplaceSourceStoreError::Duplicate(source.url));
+            return Err(MarketplaceSourceStoreError::Duplicate(request.new_url));
         }
+        let existing_retrieval = StoredArtifactRetrieval::parse(&existing.artifact_retrieval)?;
+        let artifact_retrieval =
+            StoredArtifactRetrieval::updated(&existing_retrieval, request.artifact_retrieval)?;
+        let source = MarketplaceSource {
+            url: request.new_url,
+            branch: request.branch,
+            use_proxy: request.use_proxy,
+            enabled: request.enabled,
+            artifact_retrieval: artifact_retrieval.public(),
+        };
         let namespace = self.namespace_for(&source.url, now_ms)?;
         checked_source(&source, namespace, &self.sources_root)?;
         if !self.repository.update_source(
-            current_url,
+            &request.url,
             &PluginMarketplaceSourceRecord {
                 url: source.url,
                 branch: source.branch,
                 use_proxy: source.use_proxy,
                 enabled: source.enabled,
+                artifact_retrieval: artifact_retrieval.to_json()?,
                 position: existing.position,
             },
             now_ms,
         )? {
-            return Err(MarketplaceSourceStoreError::NotFound(
-                current_url.to_owned(),
-            ));
+            return Err(MarketplaceSourceStoreError::NotFound(request.url));
         }
         self.list()
     }
@@ -194,6 +251,7 @@ impl MarketplaceSourceStore {
     fn insert(
         &self,
         source: MarketplaceSource,
+        artifact_retrieval: StoredArtifactRetrieval,
         position: i64,
         now_ms: i64,
     ) -> Result<(), MarketplaceSourceStoreError> {
@@ -206,6 +264,7 @@ impl MarketplaceSourceStore {
                 branch: source.branch,
                 use_proxy: source.use_proxy,
                 enabled: source.enabled,
+                artifact_retrieval: artifact_retrieval.to_json()?,
                 position,
             },
             now_ms,
@@ -229,13 +288,20 @@ fn checked_source(
 }
 
 /// Projects one durable row back to the frontend-facing wire shape.
-fn source_spec(source: &PluginMarketplaceSourceRecord) -> MarketplaceSource {
-    MarketplaceSource {
-        url: source.url.clone(),
-        branch: source.branch.clone(),
-        use_proxy: source.use_proxy,
-        enabled: source.enabled,
-    }
+fn configured_source(
+    source: PluginMarketplaceSourceRecord,
+) -> Result<ConfiguredMarketplaceSource, MarketplaceSourceStoreError> {
+    let artifact_retrieval = StoredArtifactRetrieval::parse(&source.artifact_retrieval)?;
+    Ok(ConfiguredMarketplaceSource {
+        source: MarketplaceSource {
+            url: source.url,
+            branch: source.branch,
+            use_proxy: source.use_proxy,
+            enabled: source.enabled,
+            artifact_retrieval: artifact_retrieval.public(),
+        },
+        artifact_retrieval,
+    })
 }
 
 #[cfg(test)]
@@ -278,6 +344,7 @@ mod tests {
             branch: "main".to_owned(),
             use_proxy: false,
             enabled: true,
+            artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
         }
     }
 
@@ -295,6 +362,7 @@ mod tests {
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                 use_proxy: false,
                 enabled: true,
+                artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
             }]
         );
     }
@@ -308,6 +376,7 @@ mod tests {
             branch: "main".to_owned(),
             use_proxy: true,
             enabled: true,
+            artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
         };
 
         let sources = store.add(added.clone(), 2).expect("add source");
@@ -316,12 +385,14 @@ mod tests {
 
         let updated = store
             .update(
-                &added.url,
-                MarketplaceSource {
+                UpdateMarketplaceSourceRequest {
                     url: added.url.clone(),
+                    new_url: added.url.clone(),
                     branch: "release".to_owned(),
                     use_proxy: false,
                     enabled: false,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::DirectHttps,
                 },
                 3,
             )
@@ -333,11 +404,109 @@ mod tests {
                 branch: "release".to_owned(),
                 use_proxy: false,
                 enabled: false,
+                artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
             }
         );
 
         let remaining = store.delete(&added.url).expect("delete source");
         assert_eq!(remaining.len(), 1);
+    }
+
+    /// S3 credentials are replaced as one pair and can be preserved without crossing the query contract.
+    #[test]
+    fn updates_and_preserves_s3_retrieval_credentials() {
+        let temp = TempDir::new().expect("create temp directory");
+        let pool = open_pool(&temp);
+        let store = store_with_pool(&temp, pool.clone());
+        let source = third_party("https://github.com/example/private-marketplace");
+        store.add(source.clone(), 2).expect("add source");
+
+        store
+            .update(
+                UpdateMarketplaceSourceRequest {
+                    url: source.url.clone(),
+                    new_url: source.url.clone(),
+                    branch: source.branch.clone(),
+                    use_proxy: false,
+                    enabled: true,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::S3SigV4 {
+                            endpoint: "https://s3.example.com:443".to_owned(),
+                            bucket: "plugins".to_owned(),
+                            region: "region-1".to_owned(),
+                            credentials: ora_contracts::MarketplaceS3CredentialsUpdate::Replace {
+                                access_key_id: "access".to_owned(),
+                                secret_access_key: "secret".to_owned(),
+                            },
+                        },
+                },
+                3,
+            )
+            .expect("enable S3 retrieval");
+        let public = store.list().expect("list redacted sources");
+        assert_eq!(
+            public[1].artifact_retrieval,
+            MarketplaceArtifactRetrieval::S3SigV4 {
+                endpoint: "https://s3.example.com".to_owned(),
+                bucket: "plugins".to_owned(),
+                region: "region-1".to_owned(),
+            }
+        );
+
+        store
+            .update(
+                UpdateMarketplaceSourceRequest {
+                    url: source.url.clone(),
+                    new_url: source.url.clone(),
+                    branch: source.branch,
+                    use_proxy: false,
+                    enabled: true,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::S3SigV4 {
+                            endpoint: "https://objects.example.com".to_owned(),
+                            bucket: "plugins-v2".to_owned(),
+                            region: "region-2".to_owned(),
+                            credentials: ora_contracts::MarketplaceS3CredentialsUpdate::Preserve,
+                        },
+                },
+                4,
+            )
+            .expect("preserve S3 credentials");
+
+        let records = SqlitePluginMarketplaceSourceRepository::new(pool.clone())
+            .list_sources()
+            .expect("load persisted source");
+        let persisted = StoredArtifactRetrieval::parse(&records[1].artifact_retrieval)
+            .expect("parse retrieval");
+        assert_eq!(
+            persisted,
+            StoredArtifactRetrieval::S3SigV4 {
+                endpoint: "https://objects.example.com".to_owned(),
+                bucket: "plugins-v2".to_owned(),
+                region: "region-2".to_owned(),
+                access_key_id: "access".to_owned(),
+                secret_access_key: "secret".to_owned(),
+            }
+        );
+
+        store
+            .update(
+                UpdateMarketplaceSourceRequest {
+                    url: source.url.clone(),
+                    new_url: source.url,
+                    branch: "main".to_owned(),
+                    use_proxy: false,
+                    enabled: true,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::DirectHttps,
+                },
+                5,
+            )
+            .expect("switch back to Direct HTTPS");
+        let records = SqlitePluginMarketplaceSourceRepository::new(pool)
+            .list_sources()
+            .expect("reload Direct HTTPS source");
+        assert_eq!(records[1].artifact_retrieval, r#"{"type":"direct_https"}"#);
     }
 
     #[test]
@@ -352,9 +521,21 @@ mod tests {
             branch: "main".to_owned(),
             use_proxy: false,
             enabled: true,
+            artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
         };
         let sources = store
-            .update(&original.url, renamed.clone(), 3)
+            .update(
+                UpdateMarketplaceSourceRequest {
+                    url: original.url.clone(),
+                    new_url: renamed.url.clone(),
+                    branch: renamed.branch.clone(),
+                    use_proxy: renamed.use_proxy,
+                    enabled: renamed.enabled,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::DirectHttps,
+                },
+                3,
+            )
             .expect("rename source");
 
         assert!(sources.contains(&renamed));
@@ -372,12 +553,14 @@ mod tests {
 
         assert!(matches!(
             store.update(
-                &second.url,
-                MarketplaceSource {
-                    url: "https://github.com/example/first.git".to_owned(),
+                UpdateMarketplaceSourceRequest {
+                    url: second.url.clone(),
+                    new_url: "https://github.com/example/first.git".to_owned(),
                     branch: "main".to_owned(),
                     use_proxy: false,
                     enabled: true,
+                    artifact_retrieval:
+                        ora_contracts::MarketplaceArtifactRetrievalUpdate::DirectHttps,
                 },
                 4,
             ),
@@ -416,6 +599,7 @@ mod tests {
                     branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                     use_proxy: false,
                     enabled: true,
+                    artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
                 },
                 2,
             ),
@@ -443,6 +627,7 @@ mod tests {
                     branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
                     use_proxy: false,
                     enabled: true,
+                    artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
                 },
                 3,
             )

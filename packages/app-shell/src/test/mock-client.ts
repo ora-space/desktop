@@ -542,6 +542,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           branch: req.branch,
           useProxy: req.useProxy,
           enabled: true,
+          artifactRetrieval: { type: "direct_https" } as const,
         };
         state.marketplaceSources.push(source);
         return { sources: [...state.marketplaceSources] };
@@ -570,6 +571,15 @@ export function createMockClient(state: MockClientState): ContractsClient {
           branch: req.branch,
           useProxy: req.useProxy,
           enabled: req.enabled,
+          artifactRetrieval:
+            req.artifactRetrieval.type === "direct_https"
+              ? req.artifactRetrieval
+              : {
+                  type: "s3_sigv4" as const,
+                  endpoint: req.artifactRetrieval.endpoint,
+                  bucket: req.artifactRetrieval.bucket,
+                  region: req.artifactRetrieval.region,
+                },
         };
         return { sources: [...state.marketplaceSources] };
       },

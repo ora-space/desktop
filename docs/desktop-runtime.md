@@ -46,6 +46,25 @@ and leaves the `Ready` status in place, because the verified bytes are still on 
 therefore only reported when nothing was installable to begin with, and a failed installation
 restores `Ready` so the user can retry.
 
+## Plugin marketplace artifact retrieval
+
+Each configured plugin marketplace source independently selects how its `.orax` release artifacts
+are retrieved. `Direct HTTPS` fetches an absolute HTTPS locator without request signing. `S3 SigV4`
+accepts an object key, or a path-style HTTPS locator belonging to the configured endpoint and
+bucket, and signs the request with that source's region and static credential pair. An S3 source
+rejects foreign HTTPS locators instead of falling back to unsigned retrieval.
+
+The source editor exposes the modes as “HTTPS 直接获取” and “S3 签名获取”. S3 endpoint, bucket,
+region, Access Key ID, and Secret Access Key are one complete configuration; existing credentials
+are write-only and can be preserved or atomically replaced, but are never returned by the source
+query contract or rendered in debug output. The current implementation stores this pair in the
+local SQLite database as plaintext configuration. It does not yet provide OS-keychain encryption,
+temporary credentials, or a provider credential chain.
+
+Both modes keep the source's proxy selection and the common download pipeline. SigV4 authenticates
+the request but does not establish package integrity: every artifact must still pass the release
+manifest's SHA-256 before installation.
+
 The static manifest advertises an AppImage for Linux, which the updater can only install into an
 AppImage installation. A `deb` or `rpm` installation, or a build running as a bare executable, is
 reported as `ManualUpdate` with the reason instead, before any download is spent; the shell then

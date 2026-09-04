@@ -23,6 +23,9 @@ forms accept an optional human-readable `title` that falls back to the identifie
 - Pair kind-specific sections with the matching `kind`: optional `[workbench]` (page-visible
   method names) for workbench plugins, required `[webview]` (`start_url`, `allowed_origins`,
   download policy) for webview plugins. Agent, skill, MCP, and hook plugins reject both sections.
+- Model each release `url` as a `ReleaseLocator`: either an absolute HTTPS URL or a validated S3
+  object key. The parser does not choose a retrieval mode; the marketplace source that owns the
+  manifest decides whether that locator is usable.
 - Model the resolver-one release source as a mutually exclusive union: one universal `url` +
   `sha256` pair installable on every host, or one or more unique `[[targets]]` entries each carrying
   an exact Rust target triple (`HookTarget`) from a known rustc allowlist, URL, and digest. The
@@ -48,7 +51,8 @@ forms accept an optional human-readable `title` that falls back to the identifie
   published the entry (`ora-domain::PluginNamespace`), so a residual `namespace` key in an older
   manifest is just another ignored unknown field.
 - No filesystem access, fixed manifest filename, source-path diagnostics, or input-size policy.
-- No network access, download, repository probing, or release checksum calculation.
+- No network access, download, repository probing, S3 signing, source-configuration lookup, or
+  release checksum calculation.
 - No plugin installation, discovery, execution, update selection, or integration with
   `ora-plugin-manager`.
 - No host policy for kind-specific packages: workbench page files on disk, webview origin

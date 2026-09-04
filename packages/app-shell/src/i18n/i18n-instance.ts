@@ -799,6 +799,16 @@ export const translationResources = {
     "settings.plugins.sourceUrl": "Git URL",
     "settings.plugins.sourceUseProxy": "使用代理",
     "settings.plugins.sourceBranch": "分支",
+    "settings.plugins.artifactRetrieval": "插件包获取方式",
+    "settings.plugins.artifactRetrievalDirectHttps": "HTTPS 直接获取",
+    "settings.plugins.artifactRetrievalS3SigV4": "S3 签名获取（SigV4）",
+    "settings.plugins.s3Endpoint": "S3 Endpoint",
+    "settings.plugins.s3Bucket": "Bucket",
+    "settings.plugins.s3Region": "Region",
+    "settings.plugins.s3AccessKeyId": "Access Key ID",
+    "settings.plugins.s3SecretAccessKey": "Secret Access Key",
+    "settings.plugins.s3CredentialsPreserved":
+      "凭据不会回显；两项均留空可保留当前凭据，填写时必须同时替换。",
     "settings.plugins.addSource": "添加来源",
     "settings.plugins.editSource": "编辑",
     "settings.plugins.editSourceDescription":
@@ -2400,6 +2410,16 @@ export const translationResources = {
     "settings.plugins.sourceUrl": "Git URL",
     "settings.plugins.sourceUseProxy": "Use proxy",
     "settings.plugins.sourceBranch": "Branch",
+    "settings.plugins.artifactRetrieval": "Plugin package retrieval",
+    "settings.plugins.artifactRetrievalDirectHttps": "Direct HTTPS",
+    "settings.plugins.artifactRetrievalS3SigV4": "S3 SigV4",
+    "settings.plugins.s3Endpoint": "S3 endpoint",
+    "settings.plugins.s3Bucket": "Bucket",
+    "settings.plugins.s3Region": "Region",
+    "settings.plugins.s3AccessKeyId": "Access Key ID",
+    "settings.plugins.s3SecretAccessKey": "Secret Access Key",
+    "settings.plugins.s3CredentialsPreserved":
+      "Credentials are never displayed. Leave both fields blank to keep them, or fill both to replace them.",
     "settings.plugins.addSource": "Add source",
     "settings.plugins.editSource": "Edit",
     "settings.plugins.editSourceDescription":

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 use ts_rs::TS;
 
 /// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
@@ -301,6 +301,98 @@ pub struct ReadPluginReadmeResponse {
     pub readme: Option<String>,
 }
 
+/// Describes how one marketplace source retrieves its `.orax` release artifacts.
+///
+/// The S3 variant deliberately excludes credentials: source queries may populate editors and
+/// logs, so secrets remain write-only outside the backend persistence boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum MarketplaceArtifactRetrieval {
+    DirectHttps,
+    #[serde(rename = "s3_sigv4")]
+    #[ts(rename = "s3_sigv4")]
+    S3SigV4 {
+        endpoint: String,
+        bucket: String,
+        region: String,
+    },
+}
+
+/// Selects whether an S3 source update retains or atomically replaces its credential pair.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "action",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum MarketplaceS3CredentialsUpdate {
+    Preserve,
+    Replace {
+        access_key_id: String,
+        secret_access_key: String,
+    },
+}
+
+impl fmt::Debug for MarketplaceS3CredentialsUpdate {
+    /// Prevents request diagnostics from rendering either member of the credential pair.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Preserve => formatter.write_str("Preserve"),
+            Self::Replace { .. } => formatter
+                .debug_struct("Replace")
+                .field("credentials", &"[redacted]")
+                .finish(),
+        }
+    }
+}
+
+/// Carries the complete artifact-retrieval state submitted by the source editor.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum MarketplaceArtifactRetrievalUpdate {
+    DirectHttps,
+    #[serde(rename = "s3_sigv4")]
+    #[ts(rename = "s3_sigv4")]
+    S3SigV4 {
+        endpoint: String,
+        bucket: String,
+        region: String,
+        credentials: MarketplaceS3CredentialsUpdate,
+    },
+}
+
+impl fmt::Debug for MarketplaceArtifactRetrievalUpdate {
+    /// Keeps source metadata useful in diagnostics while delegating credential redaction.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DirectHttps => formatter.write_str("DirectHttps"),
+            Self::S3SigV4 {
+                endpoint,
+                bucket,
+                region,
+                credentials,
+            } => formatter
+                .debug_struct("S3SigV4")
+                .field("endpoint", endpoint)
+                .field("bucket", bucket)
+                .field("region", region)
+                .field("credentials", credentials)
+                .finish(),
+        }
+    }
+}
+
 /// Lists one configured marketplace source repository and its tracked branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -314,6 +406,8 @@ pub struct MarketplaceSource {
     pub use_proxy: bool,
     /// Whether this source participates in marketplace sync, listing, and install.
     pub enabled: bool,
+    /// Release-artifact retrieval policy, with S3 credentials omitted.
+    pub artifact_retrieval: MarketplaceArtifactRetrieval,
 }
 
 /// Requests the configured marketplace source repositories.
@@ -361,6 +455,7 @@ pub struct UpdateMarketplaceSourceRequest {
     pub branch: String,
     pub use_proxy: bool,
     pub enabled: bool,
+    pub artifact_retrieval: MarketplaceArtifactRetrievalUpdate,
 }
 
 /// Returns the source list immediately after one source is updated.
@@ -644,6 +739,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     SyncAvailablePluginsResponse::export(config)?;
     ReadPluginReadmeRequest::export(config)?;
     ReadPluginReadmeResponse::export(config)?;
+    MarketplaceArtifactRetrieval::export(config)?;
+    MarketplaceS3CredentialsUpdate::export(config)?;
+    MarketplaceArtifactRetrievalUpdate::export(config)?;
     MarketplaceSource::export(config)?;
     ListMarketplaceSourcesRequest::export(config)?;
     ListMarketplaceSourcesResponse::export(config)?;
@@ -689,11 +787,13 @@ mod tests {
         ImportPluginResponse, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
         InstalledPlugin, InstalledPluginContribution, ListAvailablePluginsRequest,
         ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-        ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, MarketplaceSource,
-        PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
-        ReadPluginReadmeRequest, ReadPluginReadmeResponse, SyncAvailablePluginsRequest,
-        SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
-        UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse,
+        ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse,
+        MarketplaceArtifactRetrieval, MarketplaceArtifactRetrievalUpdate,
+        MarketplaceS3CredentialsUpdate, MarketplaceSource, PluginConfigurationSummary,
+        PluginInstallationValidity, PluginRuntimeStatus, ReadPluginReadmeRequest,
+        ReadPluginReadmeResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
+        UpdatePluginResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -975,6 +1075,7 @@ mod tests {
             branch: "main".to_string(),
             use_proxy: false,
             enabled: true,
+            artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
         };
         assert_eq!(
             serde_json::to_value(ListMarketplaceSourcesRequest {}).unwrap(),
@@ -990,7 +1091,8 @@ mod tests {
                     "url": "https://github.com/example/marketplace",
                     "branch": "main",
                     "useProxy": false,
-                    "enabled": true
+                    "enabled": true,
+                    "artifactRetrieval": { "type": "direct_https" }
                 }]
             })
         );
@@ -1017,7 +1119,8 @@ mod tests {
                     "url": "https://github.com/example/marketplace",
                     "branch": "main",
                     "useProxy": false,
-                    "enabled": true
+                    "enabled": true,
+                    "artifactRetrieval": { "type": "direct_https" }
                 }]
             })
         );
@@ -1028,6 +1131,15 @@ mod tests {
                 branch: "release".to_string(),
                 use_proxy: true,
                 enabled: false,
+                artifact_retrieval: MarketplaceArtifactRetrievalUpdate::S3SigV4 {
+                    endpoint: "https://s3.example.com".to_string(),
+                    bucket: "plugins".to_string(),
+                    region: "region-1".to_string(),
+                    credentials: MarketplaceS3CredentialsUpdate::Replace {
+                        access_key_id: "access".to_string(),
+                        secret_access_key: "secret".to_string(),
+                    },
+                },
             })
             .unwrap(),
             json!({
@@ -1035,7 +1147,18 @@ mod tests {
                 "newUrl": "https://github.com/example/marketplace.git",
                 "branch": "release",
                 "useProxy": true,
-                "enabled": false
+                "enabled": false,
+                "artifactRetrieval": {
+                    "type": "s3_sigv4",
+                    "endpoint": "https://s3.example.com",
+                    "bucket": "plugins",
+                    "region": "region-1",
+                    "credentials": {
+                        "action": "replace",
+                        "accessKeyId": "access",
+                        "secretAccessKey": "secret"
+                    }
+                }
             })
         );
         assert_eq!(
@@ -1045,6 +1168,25 @@ mod tests {
             .unwrap(),
             json!({ "sources": [] })
         );
+        let request = UpdateMarketplaceSourceRequest {
+            url: "https://github.com/example/marketplace".to_string(),
+            new_url: "https://github.com/example/marketplace.git".to_string(),
+            branch: "release".to_string(),
+            use_proxy: true,
+            enabled: false,
+            artifact_retrieval: MarketplaceArtifactRetrievalUpdate::S3SigV4 {
+                endpoint: "https://s3.example.com".to_string(),
+                bucket: "plugins".to_string(),
+                region: "region-1".to_string(),
+                credentials: MarketplaceS3CredentialsUpdate::Replace {
+                    access_key_id: "debug-access-key".to_string(),
+                    secret_access_key: "debug-secret-key".to_string(),
+                },
+            },
+        };
+        let rendered = format!("{request:?}");
+        assert!(!rendered.contains("debug-access-key"));
+        assert!(!rendered.contains("debug-secret-key"));
         assert_eq!(
             serde_json::to_value(DeleteMarketplaceSourceRequest {
                 url: "https://github.com/example/marketplace".to_string(),

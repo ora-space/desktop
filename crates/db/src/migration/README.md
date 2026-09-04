@@ -7,7 +7,7 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains eight dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, durable plugin marketplace source configuration, the immutable marketplace-source namespace bindings, and the per-source marketplace enabled flag.
+- The default catalog contains nine dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, durable plugin marketplace source configuration, the immutable marketplace-source namespace bindings, the per-source marketplace enabled flag, and source-scoped artifact retrieval configuration.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
@@ -28,6 +28,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - Migration `0008` adds an `enabled` flag to marketplace sources. Disabling a source keeps its URL,
   branch, proxy policy, position, and namespace binding, but drops it from marketplace sync,
   listing, and install until it is enabled again.
+- Migration `0009` adds the tagged `artifact_retrieval` JSON configuration. Existing sources
+  default to Direct HTTPS; the S3 SigV4 variant keeps endpoint, bucket, region, and the credential
+  pair together instead of spreading them across nullable columns.
 - A reconcile request carries its own scheduling state: `pending`, `claimed`, `blocked`, or
   `retry_scheduled`, plus the lease that proves who currently owns the surface and the
   `request_token` that fences that owner's writes. Only one worker can hold a surface, an expired

@@ -44,6 +44,7 @@ it("renders configured marketplace sources", async () => {
     branch: "main",
     useProxy: false,
     enabled: true,
+    artifactRetrieval: { type: "direct_https" },
   });
   const client = createMockClient(state);
 
@@ -74,6 +75,7 @@ it("adds a marketplace source through the backend", async () => {
         branch: "main",
         useProxy: false,
         enabled: true,
+        artifactRetrieval: { type: "direct_https" },
       },
     ]),
   );
@@ -86,6 +88,7 @@ it("removes a marketplace source through the backend", async () => {
     branch: "main",
     useProxy: false,
     enabled: true,
+    artifactRetrieval: { type: "direct_https" },
   });
   const client = createMockClient(state);
   const deleteSource = vi.spyOn(client.plugin, "deleteSource");
@@ -113,6 +116,7 @@ it("edits a marketplace source URL and branch", async () => {
     branch: "main",
     useProxy: false,
     enabled: true,
+    artifactRetrieval: { type: "direct_https" },
   });
   const client = createMockClient(state);
   const user = userEvent.setup();
@@ -136,8 +140,73 @@ it("edits a marketplace source URL and branch", async () => {
         branch: "release",
         useProxy: false,
         enabled: true,
+        artifactRetrieval: { type: "direct_https" },
       },
     ]),
+  );
+});
+
+it("configures S3 SigV4 retrieval without returning credentials", async () => {
+  const state = createMockClientState();
+  state.marketplaceSources.push({
+    url: "https://github.com/ora-space/marketplace",
+    branch: "main",
+    useProxy: false,
+    enabled: true,
+    artifactRetrieval: { type: "direct_https" },
+  });
+  const client = createMockClient(state);
+  const updateSource = vi.spyOn(client.plugin, "updateSource");
+  const user = userEvent.setup();
+
+  renderManager(client);
+
+  await user.click(await screen.findByRole("button", { name: /编辑|Edit/ }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByLabelText(/插件包获取方式|Plugin package retrieval/),
+  );
+  await user.click(await screen.findByRole("option", { name: /S3.*SigV4/i }));
+  await user.type(
+    within(dialog).getByLabelText(/S3 Endpoint/i),
+    "https://s3.example.com",
+  );
+  await user.type(within(dialog).getByLabelText(/^Bucket$/i), "plugins");
+  await user.type(within(dialog).getByLabelText(/^Region$/i), "region-1");
+  await user.type(within(dialog).getByLabelText(/Access Key ID/i), "access");
+  await user.type(
+    within(dialog).getByLabelText(/Secret Access Key/i),
+    "secret",
+  );
+  await user.click(within(dialog).getByRole("button", { name: /保存|Save/ }));
+
+  await waitFor(() =>
+    expect(updateSource).toHaveBeenCalledWith({
+      url: "https://github.com/ora-space/marketplace",
+      newUrl: "https://github.com/ora-space/marketplace",
+      branch: "main",
+      useProxy: false,
+      enabled: true,
+      artifactRetrieval: {
+        type: "s3_sigv4",
+        endpoint: "https://s3.example.com",
+        bucket: "plugins",
+        region: "region-1",
+        credentials: {
+          action: "replace",
+          accessKeyId: "access",
+          secretAccessKey: "secret",
+        },
+      },
+    }),
+  );
+  await waitFor(() =>
+    expect(state.marketplaceSources[0]?.artifactRetrieval).toEqual({
+      type: "s3_sigv4",
+      endpoint: "https://s3.example.com",
+      bucket: "plugins",
+      region: "region-1",
+    }),
   );
 });
 
@@ -148,6 +217,7 @@ it("disables a marketplace source without removing it", async () => {
     branch: "main",
     useProxy: false,
     enabled: true,
+    artifactRetrieval: { type: "direct_https" },
   });
   const client = createMockClient(state);
   const user = userEvent.setup();
@@ -163,6 +233,7 @@ it("disables a marketplace source without removing it", async () => {
         branch: "main",
         useProxy: false,
         enabled: false,
+        artifactRetrieval: { type: "direct_https" },
       },
     ]),
   );

@@ -15,6 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
   Switch,
   toast,
 } from "@ora/ui";
@@ -24,7 +28,11 @@ import {
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
-import type { MarketplaceSource } from "@ora/contracts";
+import type {
+  MarketplaceArtifactRetrieval,
+  MarketplaceArtifactRetrievalUpdate,
+  MarketplaceSource,
+} from "@ora/contracts";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   useAddMarketplaceSource,
@@ -76,7 +84,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
     source: MarketplaceSource,
     patch: Partial<
       Pick<MarketplaceSource, "url" | "branch" | "useProxy" | "enabled">
-    >,
+    > & { artifactRetrieval?: MarketplaceArtifactRetrievalUpdate },
     onSuccess?: () => void,
   ) => {
     updateSource.mutate(
@@ -86,6 +94,9 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
         branch: patch.branch ?? source.branch,
         useProxy: patch.useProxy ?? source.useProxy,
         enabled: patch.enabled ?? source.enabled,
+        artifactRetrieval:
+          patch.artifactRetrieval ??
+          preservedArtifactRetrieval(source.artifactRetrieval),
       },
       {
         onSuccess: () => {
@@ -269,11 +280,15 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           onOpenChange={(open) => {
             if (!open) setEditing(null);
           }}
-          onSave={(nextUrl, nextBranch) =>
-            patchSource(editing, { url: nextUrl, branch: nextBranch }, () => {
-              setEditing(null);
-              toast.success(t("settings.plugins.sourceUpdated"));
-            })
+          onSave={(nextUrl, nextBranch, artifactRetrieval) =>
+            patchSource(
+              editing,
+              { url: nextUrl, branch: nextBranch, artifactRetrieval },
+              () => {
+                setEditing(null);
+                toast.success(t("settings.plugins.sourceUpdated"));
+              },
+            )
           }
         />
       )}
@@ -285,10 +300,14 @@ interface SourceEditDialogProps {
   source: MarketplaceSource;
   pending: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (url: string, branch: string) => void;
+  onSave: (
+    url: string,
+    branch: string,
+    artifactRetrieval: MarketplaceArtifactRetrievalUpdate,
+  ) => void;
 }
 
-/** Edits one marketplace source's Git URL and tracked branch. */
+/** Edits one marketplace source's Git identity and artifact retrieval policy. */
 function SourceEditDialog({
   source,
   pending,
@@ -298,7 +317,57 @@ function SourceEditDialog({
   const { t } = useTranslation();
   const [url, setUrl] = useState(source.url);
   const [branch, setBranch] = useState(source.branch);
-  const canSave = url.trim() !== "" && branch.trim() !== "";
+  const [retrievalType, setRetrievalType] = useState(
+    source.artifactRetrieval.type,
+  );
+  const [endpoint, setEndpoint] = useState(
+    source.artifactRetrieval.type === "s3_sigv4"
+      ? source.artifactRetrieval.endpoint
+      : "",
+  );
+  const [bucket, setBucket] = useState(
+    source.artifactRetrieval.type === "s3_sigv4"
+      ? source.artifactRetrieval.bucket
+      : "",
+  );
+  const [region, setRegion] = useState(
+    source.artifactRetrieval.type === "s3_sigv4"
+      ? source.artifactRetrieval.region
+      : "",
+  );
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const keepsCredentials =
+    source.artifactRetrieval.type === "s3_sigv4" &&
+    accessKeyId === "" &&
+    secretAccessKey === "";
+  const hasReplacementCredentials =
+    accessKeyId.trim() !== "" && secretAccessKey.trim() !== "";
+  const canSave =
+    url.trim() !== "" &&
+    branch.trim() !== "" &&
+    (retrievalType === "direct_https" ||
+      (endpoint.trim() !== "" &&
+        bucket.trim() !== "" &&
+        region.trim() !== "" &&
+        (keepsCredentials || hasReplacementCredentials)));
+
+  const artifactRetrieval = (): MarketplaceArtifactRetrievalUpdate => {
+    if (retrievalType === "direct_https") return { type: "direct_https" };
+    return {
+      type: "s3_sigv4",
+      endpoint: endpoint.trim(),
+      bucket: bucket.trim(),
+      region: region.trim(),
+      credentials: keepsCredentials
+        ? { action: "preserve" }
+        : {
+            action: "replace",
+            accessKeyId: accessKeyId.trim(),
+            secretAccessKey: secretAccessKey.trim(),
+          },
+    };
+  };
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -323,6 +392,73 @@ function SourceEditDialog({
           </label>
           <label className="space-y-1.5">
             <span className="text-sm font-medium">
+              {t("settings.plugins.artifactRetrieval")}
+            </span>
+            <Select
+              value={retrievalType}
+              onValueChange={(value) =>
+                setRetrievalType(value as MarketplaceArtifactRetrieval["type"])
+              }
+            >
+              <SelectTrigger
+                className="w-full"
+                aria-label={t("settings.plugins.artifactRetrieval")}
+              >
+                <span className="flex-1 text-left">
+                  {retrievalType === "direct_https"
+                    ? t("settings.plugins.artifactRetrievalDirectHttps")
+                    : t("settings.plugins.artifactRetrievalS3SigV4")}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="direct_https">
+                  {t("settings.plugins.artifactRetrievalDirectHttps")}
+                </SelectItem>
+                <SelectItem value="s3_sigv4">
+                  {t("settings.plugins.artifactRetrievalS3SigV4")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          {retrievalType === "s3_sigv4" && (
+            <div className="space-y-3 rounded-md border border-border/70 p-3">
+              <SourceField
+                label={t("settings.plugins.s3Endpoint")}
+                value={endpoint}
+                onChange={setEndpoint}
+              />
+              <SourceField
+                label={t("settings.plugins.s3Bucket")}
+                value={bucket}
+                onChange={setBucket}
+              />
+              <SourceField
+                label={t("settings.plugins.s3Region")}
+                value={region}
+                onChange={setRegion}
+              />
+              <SourceField
+                label={t("settings.plugins.s3AccessKeyId")}
+                value={accessKeyId}
+                onChange={setAccessKeyId}
+                autoComplete="off"
+              />
+              <SourceField
+                label={t("settings.plugins.s3SecretAccessKey")}
+                value={secretAccessKey}
+                onChange={setSecretAccessKey}
+                type="password"
+                autoComplete="new-password"
+              />
+              {source.artifactRetrieval.type === "s3_sigv4" && (
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.plugins.s3CredentialsPreserved")}
+                </p>
+              )}
+            </div>
+          )}
+          <label className="space-y-1.5">
+            <span className="text-sm font-medium">
               {t("settings.plugins.sourceBranch")}
             </span>
             <Input
@@ -339,7 +475,9 @@ function SourceEditDialog({
           </Button>
           <Button
             disabled={pending || !canSave}
-            onClick={() => onSave(url.trim(), branch.trim())}
+            onClick={() =>
+              onSave(url.trim(), branch.trim(), artifactRetrieval())
+            }
           >
             {pending ? t("settings.plugins.savingSource") : t("common.save")}
           </Button>
@@ -347,4 +485,45 @@ function SourceEditDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+interface SourceFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "password";
+  autoComplete?: string;
+}
+
+/** Renders one labeled marketplace source field with consistent credential behavior. */
+function SourceField({
+  label,
+  value,
+  onChange,
+  type,
+  autoComplete,
+}: SourceFieldProps) {
+  return (
+    <label className="space-y-1.5">
+      <span className="text-sm font-medium">{label}</span>
+      <Input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={label}
+        autoComplete={autoComplete}
+      />
+    </label>
+  );
+}
+
+/** Converts a redacted source projection into an update that keeps any persisted credentials. */
+function preservedArtifactRetrieval(
+  retrieval: MarketplaceArtifactRetrieval,
+): MarketplaceArtifactRetrievalUpdate {
+  if (retrieval.type === "direct_https") return retrieval;
+  return {
+    ...retrieval,
+    credentials: { action: "preserve" },
+  };
 }

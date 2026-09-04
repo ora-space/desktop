@@ -117,6 +117,7 @@ cron = "0.12"
 derive_more = "2"
 futures = "0.3"
 flate2 = "1"
+hmac = "0.12"
 futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = { version = "0.3", default-features = false, features = ["yaml"] }
 libc = "0.2"

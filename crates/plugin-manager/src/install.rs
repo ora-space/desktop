@@ -3,7 +3,9 @@
 use crate::discovery::installed_root;
 use crate::limits::package_extract_limits;
 use ora_domain::{PluginId, PluginNamespace};
-use ora_plugin_manifest::{HookTarget, PluginKind, PluginManifest, PluginReleaseSource};
+use ora_plugin_manifest::{
+    HookTarget, PluginKind, PluginManifest, PluginReleaseSource, ReleaseLocator,
+};
 use ora_utils::archive::{ArchiveFormat, extract_archive};
 use ora_utils::hash;
 use ora_utils::http::{
@@ -178,12 +180,9 @@ pub fn select_release(
     host_target: HostTarget<'_>,
 ) -> Result<ResolvedReleaseSource, InstallError> {
     match manifest.release_source() {
-        Some(PluginReleaseSource::Universal { url, sha256 }) => {
-            Ok(ResolvedReleaseSource::universal(
-                DownloadSource::Url(url.as_url().clone()),
-                *sha256.as_bytes(),
-            ))
-        }
+        Some(PluginReleaseSource::Universal { url, sha256 }) => Ok(
+            ResolvedReleaseSource::universal(download_source(url), *sha256.as_bytes()),
+        ),
         Some(PluginReleaseSource::Targets(targets)) => {
             let HostTarget::Triple(host_target) = host_target else {
                 return Err(InstallError::UnsupportedHost);
@@ -195,12 +194,22 @@ pub fn select_release(
                     target: host_target.to_string(),
                 })?;
             Ok(ResolvedReleaseSource::targeted(
-                DownloadSource::Url(entry.url().as_url().clone()),
+                download_source(entry.url()),
                 *entry.sha256().as_bytes(),
                 entry.target().clone(),
             ))
         }
         None => Err(InstallError::MissingRelease),
+    }
+}
+
+/// Maps a marketplace locator onto the download source the installer injects.
+fn download_source(locator: &ReleaseLocator) -> DownloadSource {
+    match locator {
+        ReleaseLocator::Https(url) => DownloadSource::Url(url.as_url().clone()),
+        ReleaseLocator::ObjectKey(key) => DownloadSource::S3 {
+            key: key.as_str().to_owned(),
+        },
     }
 }
 
@@ -660,7 +669,7 @@ mod tests {
         installed_id,
     };
     use futures::executor::block_on;
-    use ora_domain::{PluginId, PluginNamespace};
+    use ora_domain::PluginNamespace;
     use ora_plugin_manifest::{HookTarget, PluginManifest};
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
     use pretty_assertions::assert_eq;
@@ -1314,6 +1323,42 @@ mod tests {
         .unwrap();
         super::select_release(&manifest, HostTarget::Unsupported)
             .expect("universal release does not need a host");
+    }
+
+    /// A universal object-key listing resolves to an S3 download source rather than an HTTPS URL.
+    #[test]
+    fn select_release_maps_an_object_key_to_s3() {
+        let digest = format!("{}{}", "ab".repeat(31), "ab");
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"weather\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather\"\nurl = \"ora-space.opencode-v0.1.3.orax\"\nsha256 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        let source = super::select_release(&manifest, HostTarget::Unsupported)
+            .expect("object-key universal release");
+        assert_eq!(
+            source.download(),
+            &DownloadSource::S3 {
+                key: "ora-space.opencode-v0.1.3.orax".to_owned(),
+            }
+        );
+    }
+
+    /// An HTTPS listing still resolves to a URL download source.
+    #[test]
+    fn select_release_maps_https_to_a_url() {
+        let digest = format!("{}{}", "ab".repeat(31), "ab");
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"weather\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather\"\nurl = \"https://example.com/weather.orax\"\nsha256 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        let source = super::select_release(&manifest, HostTarget::Unsupported)
+            .expect("https universal release");
+        match source.download() {
+            DownloadSource::Url(url) => {
+                assert_eq!(url.as_str(), "https://example.com/weather.orax");
+            }
+            other => panic!("expected a URL source, got {other:?}"),
+        }
     }
 
     /// A targeted release cannot be selected when the compiled host is not a plugin target.

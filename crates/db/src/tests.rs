@@ -144,6 +144,54 @@ fn runtime_tables_use_direct_workspace_ownership() {
     );
 }
 
+/// Existing marketplace rows receive Direct HTTPS retrieval and invalid tagged JSON is rejected.
+#[test]
+fn marketplace_artifact_retrieval_migration_has_a_safe_default() {
+    let pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource { now: 1 })
+            .bootstrap_repository_pool(
+                &DatabaseLocation::in_memory(),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("bootstrap database")
+    });
+
+    pool.with_connection(|connection| {
+        connection.execute(
+            "INSERT INTO plugin_marketplace_source (
+                url, branch, use_proxy, enabled, position, created_at, updated_at
+             ) VALUES ('https://example.com/marketplace', 'main', 0, 1, 0, 1, 1)",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("insert source using migration default");
+
+    assert_eq!(
+        pool.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT artifact_retrieval FROM plugin_marketplace_source",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+        })
+        .expect("read retrieval default"),
+        r#"{"type":"direct_https"}"#,
+    );
+    assert!(
+        pool.with_connection(|connection| {
+            connection.execute(
+                "UPDATE plugin_marketplace_source SET artifact_retrieval = '{}'",
+                [],
+            )?;
+            Ok(())
+        })
+        .is_err()
+    );
+}
+
 /// Verifies a database with a shorter valid prefix receives and snapshots only the missing tail.
 #[test]
 fn applies_missing_migrations_in_order() {

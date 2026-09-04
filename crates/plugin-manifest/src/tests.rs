@@ -2,7 +2,7 @@ use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
     HookTargetError, InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError,
     Origin, PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
-    PluginName, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
+    PluginName, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseLocator, RepositoryUrl,
     RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
@@ -73,10 +73,10 @@ fn parses_complete_manifest_into_full_domain_object() {
         )),
         license: Some("MIT".to_owned()),
         url: Some(success(
-            ReleaseUrl::parse(
+            ReleaseLocator::parse(
                 "https://github.com/user/ora-weather/releases/download/v1.2.0/ora-weather.orax?signature=abc",
             ),
-            "release URL",
+            "release locator",
         )),
         sha256: Some(success(Sha256Digest::parse(DIGEST), "digest")),
         head: Some(PluginHead {
@@ -93,10 +93,10 @@ fn parses_complete_manifest_into_full_domain_object() {
         webview: None,
         release_source: Some(PluginReleaseSource::Universal {
             url: success(
-                ReleaseUrl::parse(
+                ReleaseLocator::parse(
                     "https://github.com/user/ora-weather/releases/download/v1.2.0/ora-weather.orax?signature=abc",
                 ),
-                "release URL",
+                "release locator",
             ),
             sha256: success(Sha256Digest::parse(DIGEST), "digest"),
         }),
@@ -330,7 +330,7 @@ sha256 = "18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558"
         Some("https://github.com/ora-space/opencode-agent")
     );
     assert_eq!(
-        manifest.url().map(ReleaseUrl::as_str),
+        manifest.url().map(ReleaseLocator::as_str),
         Some(
             "https://github.com/ora-space/opencode-agent/releases/download/v0.1.2/ora-space.opencode-v0.1.2.orax"
         )
@@ -340,6 +340,65 @@ sha256 = "18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558"
         Some("18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558".to_owned())
     );
     assert!(manifest.release().is_some());
+}
+
+/// A marketplace listing may name an object-store key instead of an HTTPS URL.
+#[test]
+fn parses_marketplace_manifest_with_object_key_url() {
+    let source = r#"resolver = 1
+title = "OpenCode"
+identifier = "ora-space.opencode"
+kind = "agent"
+version = "0.1.3"
+description = "Ora Space OpenCode Agent"
+url = "ora-space.opencode-v0.1.3.orax"
+sha256 = "af8a0bc8e8287e280f398a20cd483f02dc40ce8591acade4b5a260082406335d"
+"#;
+    let manifest = success(
+        PluginManifest::parse(source),
+        "object-key marketplace manifest",
+    );
+
+    assert_eq!(
+        manifest.url().map(ReleaseLocator::as_str),
+        Some("ora-space.opencode-v0.1.3.orax")
+    );
+    assert!(matches!(manifest.url(), Some(ReleaseLocator::ObjectKey(_))));
+    assert!(manifest.release().is_some());
+}
+
+/// `http://` release locators are still rejected so a key cannot smuggle a cleartext URL.
+#[test]
+fn rejects_http_release_locator() {
+    let source = MINIMAL_MANIFEST.replace(
+        "https://example.com/ora-weather.orax",
+        "http://example.com/ora-weather.orax",
+    );
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(&source) else {
+        panic!("expected http release locator rejection");
+    };
+    assert_eq!(field, ManifestField::Url);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::InvalidReleaseLocator(_)
+    ));
+}
+
+/// Parent-directory object keys are rejected so a listing cannot traverse the bucket prefix.
+#[test]
+fn rejects_parent_segment_object_key() {
+    let source = MINIMAL_MANIFEST.replace(
+        "https://example.com/ora-weather.orax",
+        "plugins/../secret.orax",
+    );
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(&source) else {
+        panic!("expected parent-segment object key rejection");
+    };
+    assert_eq!(field, ManifestField::Url);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::InvalidReleaseLocator(_)
+    ));
 }
 
 /// Verifies unsupported resolver versions take priority over semantic field validation.
@@ -1149,6 +1208,22 @@ fn parses_targeted_hook_manifest() {
     assert_eq!(targets[0].target().as_str(), "x86_64-pc-windows-msvc");
     assert_eq!(targets[0].url().as_str(), "https://example.com/rtk.orax");
     assert_eq!(manifest.artifact(), None);
+}
+
+/// Targeted release entries accept object keys the same way universal listings do.
+#[test]
+fn parses_targeted_hook_manifest_with_object_key() {
+    let source =
+        TARGETED_HOOK_MANIFEST.replace("https://example.com/rtk.orax", "hooks/rtk-v0.1.0.orax");
+    let manifest = success(
+        PluginManifest::parse(&source),
+        "targeted hook manifest with object key",
+    );
+    let Some(PluginReleaseSource::Targets(targets)) = manifest.release_source() else {
+        panic!("expected a targeted release source");
+    };
+    assert_eq!(targets[0].url().as_str(), "hooks/rtk-v0.1.0.orax");
+    assert!(matches!(targets[0].url(), ReleaseLocator::ObjectKey(_)));
 }
 
 /// Unknown rustc triples never enter the domain model, so a packaging typo cannot look like a

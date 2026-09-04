@@ -260,6 +260,39 @@ export type ListMarketplaceSourcesResponse = {
 };
 
 /**
+ * Describes how one marketplace source retrieves its `.orax` release artifacts.
+ *
+ * The S3 variant deliberately excludes credentials: source queries may populate editors and
+ * logs, so secrets remain write-only outside the backend persistence boundary.
+ */
+export type MarketplaceArtifactRetrieval = { "type": "direct_https" } | {
+  "type": "s3_sigv4";
+  endpoint: string;
+  bucket: string;
+  region: string;
+};
+
+/**
+ * Carries the complete artifact-retrieval state submitted by the source editor.
+ */
+export type MarketplaceArtifactRetrievalUpdate = { "type": "direct_https" } | {
+  "type": "s3_sigv4";
+  endpoint: string;
+  bucket: string;
+  region: string;
+  credentials: MarketplaceS3CredentialsUpdate;
+};
+
+/**
+ * Selects whether an S3 source update retains or atomically replaces its credential pair.
+ */
+export type MarketplaceS3CredentialsUpdate = { "action": "preserve" } | {
+  "action": "replace";
+  accessKeyId: string;
+  secretAccessKey: string;
+};
+
+/**
  * Lists one configured marketplace source repository and its tracked branch.
  */
 export type MarketplaceSource = {
@@ -279,6 +312,10 @@ export type MarketplaceSource = {
    * Whether this source participates in marketplace sync, listing, and install.
    */
   enabled: boolean;
+  /**
+   * Release-artifact retrieval policy, with S3 credentials omitted.
+   */
+  artifactRetrieval: MarketplaceArtifactRetrieval;
 };
 
 /**
@@ -500,6 +537,7 @@ export type UpdateMarketplaceSourceRequest = {
   branch: string;
   useProxy: boolean;
   enabled: boolean;
+  artifactRetrieval: MarketplaceArtifactRetrievalUpdate;
 };
 
 /**

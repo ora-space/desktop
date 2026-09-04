@@ -9,18 +9,20 @@ workspace = true
 [features]
 default = ["validation"]
 archive = ["dep:zip", "dep:tar", "dep:flate2"]
-http = ["dep:url", "dep:sha2"]
+http = ["dep:url", "dep:sha2", "dep:hmac"]
 http-reqwest = [
     "http",
     "dep:reqwest",
     "dep:rustls",
     "dep:rustls-platform-verifier",
     "dep:tokio",
+    "dep:time",
 ]
 validation = ["dep:sha2", "dep:quick-xml"]
 
 [dependencies]
 flate2 = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
 quick-xml = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
@@ -31,6 +33,7 @@ sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["time"] }
 unicode-normalization = { workspace = true }
 url = { workspace = true, optional = true }

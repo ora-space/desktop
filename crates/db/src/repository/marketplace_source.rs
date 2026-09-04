@@ -1,10 +1,12 @@
+use std::fmt;
+
 use rusqlite::{Row, params};
 
 use crate::DatabaseError;
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
 
 /// One durable plugin marketplace source row, ordered by the user-visible position.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PluginMarketplaceSourceRecord {
     /// HTTPS Git repository URL. Duplicate-free primary key.
     pub url: String,
@@ -14,8 +16,25 @@ pub struct PluginMarketplaceSourceRecord {
     pub use_proxy: bool,
     /// Whether this source participates in marketplace sync, listing, and install.
     pub enabled: bool,
+    /// Tagged JSON describing direct HTTPS or source-scoped S3 SigV4 artifact retrieval.
+    pub artifact_retrieval: String,
     /// Stable ordering position used to resolve duplicate plugin ids across sources.
     pub position: i64,
+}
+
+impl fmt::Debug for PluginMarketplaceSourceRecord {
+    /// Redacts the retrieval JSON because its S3 variant contains persisted credentials.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PluginMarketplaceSourceRecord")
+            .field("url", &self.url)
+            .field("branch", &self.branch)
+            .field("use_proxy", &self.use_proxy)
+            .field("enabled", &self.enabled)
+            .field("artifact_retrieval", &"[redacted]")
+            .field("position", &self.position)
+            .finish()
+    }
 }
 
 /// Persists the user-editable plugin marketplace source list in SQLite.
@@ -33,7 +52,7 @@ impl SqlitePluginMarketplaceSourceRepository {
     pub fn list_sources(&self) -> Result<Vec<PluginMarketplaceSourceRecord>, DatabaseError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT url, branch, use_proxy, enabled, position
+                "SELECT url, branch, use_proxy, enabled, artifact_retrieval, position
                  FROM plugin_marketplace_source
                  ORDER BY position",
             )?;
@@ -57,13 +76,14 @@ impl SqlitePluginMarketplaceSourceRepository {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO plugin_marketplace_source (
-                    url, branch, use_proxy, enabled, position, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    url, branch, use_proxy, enabled, artifact_retrieval, position, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
                 params![
                     record.url.as_str(),
                     record.branch.as_str(),
                     bool_to_sqlite(record.use_proxy),
                     bool_to_sqlite(record.enabled),
+                    record.artifact_retrieval.as_str(),
                     record.position,
                     now_ms,
                 ],
@@ -85,13 +105,15 @@ impl SqlitePluginMarketplaceSourceRepository {
         self.pool.with_connection(|connection| {
             let updated = connection.execute(
                 "UPDATE plugin_marketplace_source
-                 SET url = ?1, branch = ?2, use_proxy = ?3, enabled = ?4, updated_at = ?5
-                 WHERE url = ?6",
+                 SET url = ?1, branch = ?2, use_proxy = ?3, enabled = ?4,
+                     artifact_retrieval = ?5, updated_at = ?6
+                 WHERE url = ?7",
                 params![
                     record.url.as_str(),
                     record.branch.as_str(),
                     bool_to_sqlite(record.use_proxy),
                     bool_to_sqlite(record.enabled),
+                    record.artifact_retrieval.as_str(),
                     now_ms,
                     url,
                 ],
@@ -120,6 +142,7 @@ fn map_marketplace_source_row(
         branch: row.get("branch")?,
         use_proxy: row.get::<_, i64>("use_proxy")? != 0,
         enabled: row.get::<_, i64>("enabled")? != 0,
+        artifact_retrieval: row.get("artifact_retrieval")?,
         position: row.get("position")?,
     })
 }

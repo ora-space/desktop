@@ -2,7 +2,9 @@ use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
-use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
+use crate::marketplace_sources::{
+    ConfiguredMarketplaceSource, MarketplaceSourceStore, MarketplaceSourceStoreError,
+};
 use crate::proxy;
 use crate::user_config::UserConfigApi;
 use gitlancer::{CliGitRunner, Git};
@@ -13,12 +15,12 @@ use ora_contracts::{
     EmptyErrorParams, ImportPluginRequest, ImportPluginResponse, InstallOutcome,
     InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest,
     ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-    ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, PluginHostCompatibility,
-    PublicError, ReadPluginReadmeRequest, ReadPluginReadmeResponse, ScanPluginsRequest,
-    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
-    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
-    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
-    UpdatePluginResponse,
+    ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, MarketplaceArtifactRetrieval,
+    PluginHostCompatibility, PublicError, ReadPluginReadmeRequest, ReadPluginReadmeResponse,
+    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
+    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
+    UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    UpdatePluginRequest, UpdatePluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -40,7 +42,9 @@ use ora_plugin_manager::{
 };
 use ora_plugin_manifest::PluginManifest;
 use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
-use ora_utils::http::{ProgressCallback, ProxyConfig, ReqwestDownloader};
+use ora_utils::http::{
+    ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader, S3Config,
+};
 use ora_utils::url::canonical_repository_url;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -310,7 +314,7 @@ impl PluginApi {
         let enabled_urls: HashSet<String> = self
             .enabled_marketplace_sources()?
             .into_iter()
-            .map(|source| canonical_repository_url(&source.url))
+            .map(|source| canonical_repository_url(&source.source().url))
             .collect();
         response
             .plugins
@@ -344,6 +348,7 @@ impl PluginApi {
                     branch: request.branch,
                     use_proxy: request.use_proxy,
                     enabled: true,
+                    artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
                 },
                 self.clock.now_timestamp_millis(),
             )
@@ -370,16 +375,7 @@ impl PluginApi {
     ) -> Result<UpdateMarketplaceSourceResponse, BackendError> {
         let sources = self
             .marketplace_sources
-            .update(
-                &request.url,
-                ora_contracts::MarketplaceSource {
-                    url: request.new_url,
-                    branch: request.branch,
-                    use_proxy: request.use_proxy,
-                    enabled: request.enabled,
-                },
-                self.clock.now_timestamp_millis(),
-            )
+            .update(request, self.clock.now_timestamp_millis())
             .map_err(map_marketplace_source_error)?;
         Ok(UpdateMarketplaceSourceResponse { sources })
     }
@@ -392,13 +388,13 @@ impl PluginApi {
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         let git = Git::new(CliGitRunner);
         let registry_sources = self.prepared_registry_sources()?;
-        for (source, _) in &registry_sources {
+        for (source, _, _) in &registry_sources {
             RegistrySync::sync(&git, source)
                 .map_err(|error| BackendError::internal("failed to sync plugin registry", error))?;
         }
         let synced: Vec<&ora_plugin_registry::RegistrySource> = registry_sources
             .iter()
-            .map(|(source, _use_proxy)| source)
+            .map(|(source, _use_proxy, _s3_config)| source)
             .collect();
         let build =
             RegistryIndex::build_all(&synced, ora_logging::clock::now_local().unix_timestamp());
@@ -475,13 +471,13 @@ impl PluginApi {
     /// Returns configured marketplace sources that currently participate in listing and sync.
     fn enabled_marketplace_sources(
         &self,
-    ) -> Result<Vec<ora_contracts::MarketplaceSource>, BackendError> {
+    ) -> Result<Vec<ConfiguredMarketplaceSource>, BackendError> {
         Ok(self
             .marketplace_sources
-            .list()
+            .configured_sources()
             .map_err(map_marketplace_source_error)?
             .into_iter()
-            .filter(|source| source.enabled)
+            .filter(|source| source.source().enabled)
             .collect())
     }
 
@@ -496,7 +492,7 @@ impl PluginApi {
             .iter()
             .map(|source| {
                 self.marketplace_sources
-                    .registry_source(source, now_ms)
+                    .registry_source(source.source(), now_ms)
                     .map_err(map_marketplace_source_error)
             })
             .collect()
@@ -505,13 +501,14 @@ impl PluginApi {
     /// Binds every enabled marketplace source to a registry checkout, applying proxy policy.
     fn prepared_registry_sources(
         &self,
-    ) -> Result<Vec<(ora_plugin_registry::RegistrySource, bool)>, BackendError> {
+    ) -> Result<Vec<(ora_plugin_registry::RegistrySource, bool, Option<S3Config>)>, BackendError>
+    {
         let configured = self.enabled_marketplace_sources()?;
         let proxy_settings = self.user_config.network_proxy_settings()?;
         let mut registry_sources = Vec::with_capacity(configured.len());
 
         for (source, mut registry_source) in configured.iter().zip(self.registry_sources()?) {
-            if source.use_proxy {
+            if source.source().use_proxy {
                 let git_env = proxy::git_proxy_env(proxy_settings.as_ref())?.ok_or_else(|| {
                     BackendError::invalid_proxy_settings(
                         "a marketplace source uses the proxy but no proxy is configured",
@@ -519,7 +516,11 @@ impl PluginApi {
                 })?;
                 registry_source = registry_source.with_git_env(git_env);
             }
-            registry_sources.push((registry_source, source.use_proxy));
+            registry_sources.push((
+                registry_source,
+                source.source().use_proxy,
+                source.s3_config(),
+            ));
         }
 
         Ok(registry_sources)
@@ -704,7 +705,7 @@ impl PluginApi {
         request: InstallPluginRequest,
         progress: Option<ProgressCallback>,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let (manifest, namespace, use_proxy) =
+        let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id)?;
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
@@ -714,9 +715,11 @@ impl PluginApi {
             ora_utils::http::DownloadSource::Local(path) => {
                 ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "installing marketplace plugin from local source");
             }
+            ora_utils::http::DownloadSource::S3 { key } => {
+                ora_info!(plugin_id = %request.plugin_id, key = %key, "installing marketplace plugin from object store");
+            }
         }
-        let download_proxy = self.download_proxy_for(use_proxy)?;
-        let installer = Installer::new(ReqwestDownloader::new(download_proxy));
+        let installer = self.marketplace_installer(use_proxy, s3_config)?;
         match progress {
             Some(progress) => {
                 installer
@@ -754,7 +757,7 @@ impl PluginApi {
         &self,
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
-        let (manifest, namespace, use_proxy) =
+        let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id)?;
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
@@ -763,6 +766,9 @@ impl PluginApi {
             }
             ora_utils::http::DownloadSource::Local(path) => {
                 ora_info!(plugin_id = %request.plugin_id, path = %path.display(), "updating marketplace plugin from local source");
+            }
+            ora_utils::http::DownloadSource::S3 { key } => {
+                ora_info!(plugin_id = %request.plugin_id, key = %key, "updating marketplace plugin from object store");
             }
         }
         // The package directory is replaced while the plugin may be running, so the process is
@@ -773,8 +779,7 @@ impl PluginApi {
             })
             .await
             .map_err(BackendError::from)?;
-        let download_proxy = self.download_proxy_for(use_proxy)?;
-        Installer::new(ReqwestDownloader::new(download_proxy))
+        self.marketplace_installer(use_proxy, s3_config)?
             .update(&manifest, &namespace, release_source, &self.home_directory)
             .await
             .map_err(|error| self.map_update_error("failed to update plugin", error))?;
@@ -794,7 +799,7 @@ impl PluginApi {
     fn resolve_marketplace_release(
         &self,
         plugin_id: &str,
-    ) -> Result<(PluginManifest, PluginNamespace, bool), BackendError> {
+    ) -> Result<(PluginManifest, PluginNamespace, bool, Option<S3Config>), BackendError> {
         let registry_sources = self.prepared_registry_sources()?;
         // A malformed identifier can never name a registry entry, so it is reported the same way
         // as an unknown one instead of leaking the id grammar as a separate error class.
@@ -805,13 +810,18 @@ impl PluginApi {
                 "marketplace plugin id is not a valid `<namespace>/<name>`",
             )
         })?;
-        for (source, use_proxy) in &registry_sources {
+        for (source, use_proxy, s3_config) in &registry_sources {
             if let Some(manifest) =
                 RegistryIndex::resolve_manifest(source, &plugin_id).map_err(|error| {
                     BackendError::internal("failed to resolve plugin release manifest", error)
                 })?
             {
-                return Ok((manifest, source.namespace().clone(), *use_proxy));
+                return Ok((
+                    manifest,
+                    source.namespace().clone(),
+                    *use_proxy,
+                    s3_config.clone(),
+                ));
             }
         }
         Err(BackendError::new(
@@ -869,6 +879,19 @@ impl PluginApi {
                 "a marketplace source uses the proxy but no proxy is configured",
             )
         })
+    }
+
+    /// Builds a source-scoped downloader that signs only the configured S3 endpoint and bucket.
+    fn marketplace_installer(
+        &self,
+        use_proxy: bool,
+        s3_config: Option<S3Config>,
+    ) -> Result<Installer<S3AwareDownloader>, BackendError> {
+        let download_proxy = self.download_proxy_for(use_proxy)?;
+        Ok(Installer::new(S3AwareDownloader::new(
+            ReqwestDownloader::new(download_proxy),
+            s3_config,
+        )))
     }
 
     /// Imports a local `.orax` release archive: verifies and extracts it, refreshes the installed
@@ -1057,6 +1080,11 @@ fn map_marketplace_source_error(error: MarketplaceSourceStoreError) -> BackendEr
             ErrorClassification::NotFound,
             PublicError::InvalidRequest(EmptyErrorParams {}),
             format!("plugin marketplace source was not found: {url}"),
+        ),
+        MarketplaceSourceStoreError::ArtifactRetrieval(error) => BackendError::new(
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            format!("invalid marketplace artifact retrieval: {error}"),
         ),
         error => BackendError::internal(
             "failed to persist configured plugin marketplace sources",
