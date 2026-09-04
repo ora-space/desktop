@@ -142,9 +142,13 @@ fn upsert_consumer_revision(
     if let Some((revision_id, digest)) = current
         && digest == declaration_digest.as_str()
     {
+        // Agent startup and the Effect worker sample time before acquiring the write lock.
+        // An unchanged declaration can therefore arrive after one with a later timestamp;
+        // preserve the latest audit time so replay cannot violate updated_at >= created_at.
         transaction.execute(
             "UPDATE effect_consumers
-             SET lifecycle = 'declared', adapter_id = ?2, updated_at = ?3 WHERE id = ?1",
+             SET lifecycle = 'declared', adapter_id = ?2, updated_at = MAX(updated_at, ?3)
+             WHERE id = ?1",
             params![&consumer_id, declaration.adapter.as_str(), updated_at,],
         )?;
         return Ok((consumer_id, ConsumerRevisionId::new(revision_id), false));

@@ -52,6 +52,10 @@ An unchanged Consumer declaration does not touch Target status or requests. New 
 paired with existing Workspaces immediately, while every worker pass converges existing Consumer
 declarations into Workspaces created later.
 
+Agent startup and the Effect worker can persist the same Consumer declaration in a different
+order from their sampled timestamps. Replaying an unchanged declaration preserves the latest
+Consumer audit timestamp so startup cannot fail the database's timestamp ordering constraint.
+
 ## Filesystem safety and recovery
 
 Filesystem Resources use Workspace roots plus validated portable relative paths. Path construction

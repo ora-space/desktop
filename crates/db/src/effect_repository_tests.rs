@@ -1,3 +1,5 @@
+mod declaration;
+
 use crate::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
     SqliteEffectRepository, SqliteSkillRepository, TimestampSource, default_migration_catalog,
