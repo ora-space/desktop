@@ -57,6 +57,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             materialization_format: SKILL_DIRECTORY_V1.to_string(),
             coordination: PluginEffectCoordination::QuiesceBeforeMutation,
         }]),
+        trace_providers: None,
     };
     write_message(
         &mut output,

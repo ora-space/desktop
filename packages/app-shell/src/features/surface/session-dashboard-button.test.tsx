@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
+import { AppI18nProvider } from "../../i18n/i18n";
 import { PlatformProvider } from "../../platform";
 import { useSurfaceStore } from "../../state/stores/surface-store";
 import { createSurfaceTestPlatform } from "../../test/surface-test-platform";
@@ -19,16 +20,20 @@ describe("SessionDashboardButton", () => {
   it("renders only for a persisted session", () => {
     const host = createSurfaceTestPlatform({ embedded: true });
     const { rerender } = render(
-      <PlatformProvider adapter={host.platform}>
-        <SessionDashboardButton sessionId={null} />
-      </PlatformProvider>,
+      <AppI18nProvider>
+        <PlatformProvider adapter={host.platform}>
+          <SessionDashboardButton sessionId={null} />
+        </PlatformProvider>
+      </AppI18nProvider>,
     );
     expect(screen.queryByRole("button")).toBeNull();
 
     rerender(
-      <PlatformProvider adapter={host.platform}>
-        <SessionDashboardButton sessionId="session-1" />
-      </PlatformProvider>,
+      <AppI18nProvider>
+        <PlatformProvider adapter={host.platform}>
+          <SessionDashboardButton sessionId="session-1" />
+        </PlatformProvider>
+      </AppI18nProvider>,
     );
     expect(screen.getByRole("button")).toBeInTheDocument();
   });
@@ -38,9 +43,11 @@ describe("SessionDashboardButton", () => {
     const host = createSurfaceTestPlatform({ embedded: true });
     useSurfaceStore.getState().setEmbeddedSupported(true);
     render(
-      <PlatformProvider adapter={host.platform}>
-        <SessionDashboardButton sessionId="session-1" />
-      </PlatformProvider>,
+      <AppI18nProvider>
+        <PlatformProvider adapter={host.platform}>
+          <SessionDashboardButton sessionId="session-1" />
+        </PlatformProvider>
+      </AppI18nProvider>,
     );
 
     await user.click(screen.getByRole("button"));
@@ -62,9 +69,11 @@ describe("SessionDashboardButton", () => {
     const host = createSurfaceTestPlatform({ embedded: false });
     useSurfaceStore.getState().setEmbeddedSupported(false);
     render(
-      <PlatformProvider adapter={host.platform}>
-        <SessionDashboardButton sessionId="session-2" />
-      </PlatformProvider>,
+      <AppI18nProvider>
+        <PlatformProvider adapter={host.platform}>
+          <SessionDashboardButton sessionId="session-2" />
+        </PlatformProvider>
+      </AppI18nProvider>,
     );
 
     await user.click(screen.getByRole("button"));
