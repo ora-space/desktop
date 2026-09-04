@@ -319,14 +319,32 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
                 .adoptSwitchedAgent(session.id, response.configOptions);
               return { availableCommands: response.availableCommands };
             };
+      // A model recorded against the agent this session already runs on had nowhere to go
+      // while the session held no provider, so it travels with the send that attaches one. A
+      // pending move carries its own into `switchAgent` above, and the session it creates is
+      // attached before the prompt, so the two never both apply.
+      const boundModelKey =
+        pendingSwitch === undefined
+          ? pendingModelKey(selection, session.agentRef)
+          : null;
+      const boundModel =
+        boundModelKey === null
+          ? undefined
+          : usePendingAgentStore.getState().models[boundModelKey];
       try {
         await chatStore.getState().sendMessage({
           oraSessionId: session.id,
           text: displayText,
           agentText,
           images,
+          ...(boundModel === undefined ? {} : { model: boundModel }),
           prepare,
         });
+        // Cleared only after the send returns: a prompt that never reached the agent leaves the
+        // pick intact, so the retry still carries it into the attach that eventually succeeds.
+        if (boundModelKey !== null) {
+          usePendingAgentStore.getState().clearPendingModel(boundModelKey);
+        }
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.

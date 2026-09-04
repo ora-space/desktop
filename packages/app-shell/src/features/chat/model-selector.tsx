@@ -152,28 +152,49 @@ export function ModelSelector({
         workspace.kind === "main",
     )?.id ??
     null;
-  const usesPersistedOptions =
-    sessionId !== undefined ||
-    (boundSession !== undefined && pendingSwitch === undefined);
-  const discovered = useAgentModels(
-    usesPersistedOptions ? null : agentCli,
-    usesPersistedOptions ? null : workspaceId,
-  );
-  const activeSessionId = usesPersistedOptions
-    ? modelSelection.sessionId
-    : null;
+  // The conversation this picker reads from, which is a question about identity rather than
+  // about state: a workflow node names its session explicitly, and a chat reads the one it is
+  // bound to unless a move onto another agent is pending, which no session's options describe.
+  const optionsSessionId =
+    sessionId ??
+    (boundSession !== undefined && pendingSwitch === undefined
+      ? modelSelection.sessionId
+      : null);
   // Selected narrowly rather than as one conversation object, so a streaming
   // turn does not re-render the picker on every token.
   const liveOptions = useStore(chatStore, (state) =>
-    activeSessionId === null
+    optionsSessionId === null
       ? undefined
-      : state.conversations[activeSessionId]?.configOptions,
+      : state.conversations[optionsSessionId]?.configOptions,
   );
   const isReplayingHistory = useStore(chatStore, (state) =>
-    activeSessionId === null
+    optionsSessionId === null
       ? false
-      : state.conversations[activeSessionId]?.isLoading === true,
+      : state.conversations[optionsSessionId]?.isLoading === true,
   );
+  const conversationLoaded = useStore(chatStore, (state) =>
+    optionsSessionId === null
+      ? false
+      : state.conversations[optionsSessionId]?.isLoaded === true,
+  );
+  // Reporting options is what says a session has a provider to configure. Reading a conversation
+  // does not attach it, so a persisted session can exist with none — and is then in exactly the
+  // position of a chat that has not started: it offers the agent's own catalog and records the
+  // pick as an intent for the message that will attach. The backend answers a load with the live
+  // options whenever there is a provider behind it, so once that load has finished, an empty list
+  // means unattached.
+  //
+  // Until it finishes, the session stays the source. "Not answered yet" is not "has no provider",
+  // and offering the catalog on it would record an intent for a session that turns out to be
+  // attached — where the next message ignores it, because there is no attach left to apply it.
+  const usesSessionOptions =
+    optionsSessionId !== null &&
+    (!conversationLoaded || (liveOptions?.length ?? 0) > 0);
+  const discovered = useAgentModels(
+    usesSessionOptions ? null : agentCli,
+    usesSessionOptions ? null : workspaceId,
+  );
+  const activeSessionId = usesSessionOptions ? optionsSessionId : null;
   // A session can retain the last options reported before its plugin stopped.
   // They are no longer actionable once runtime availability drops, so do not
   // let that session-local snapshot outlive the agent row that owned it.
@@ -207,7 +228,7 @@ export function ModelSelector({
   const rememberModel = useAgentModelPreferenceStore(
     (state) => state.rememberModel,
   );
-  const modelValues = usesPersistedOptions
+  const modelValues = usesSessionOptions
     ? modelOption
       ? selectableValues(modelOption).map((value) => ({
           value: value.value,
@@ -236,7 +257,7 @@ export function ModelSelector({
     discoveredModels.some((model) => model.id === rememberedModel)
       ? rememberedModel
       : undefined;
-  const selectedValue = usesPersistedOptions
+  const selectedValue = usesSessionOptions
     ? modelOption?.type === "select"
       ? modelOption.currentValue
       : undefined
@@ -246,7 +267,7 @@ export function ModelSelector({
   // its conversation is loaded — and replay seeds empty options first, which is
   // a placeholder and not a list — while a not-yet-started chat is waiting on
   // discovery instead.
-  const isSettling = usesPersistedOptions
+  const isSettling = usesSessionOptions
     ? liveOptions === undefined || isReplayingHistory
     : discovered.isLoading;
   const isLoadingModels = isSettling && modelValues.length === 0;
@@ -254,7 +275,7 @@ export function ModelSelector({
   // rather than blanking what the user is reading.
   const isUpdatingModels = discovered.isFetching && discoveredModels.length > 0;
   const activeLabel =
-    usesPersistedOptions && modelOption
+    usesSessionOptions && modelOption
       ? currentValueName(modelOption)
       : (modelValues.find((value) => value.value === selectedValue)?.name ??
         t(
@@ -265,7 +286,7 @@ export function ModelSelector({
   // Applying a choice needs somewhere to put it: a persisted session needs the
   // option the agent reported, and a not-yet-started chat needs a target key to
   // record the intent against.
-  const canSelectModel = usesPersistedOptions
+  const canSelectModel = usesSessionOptions
     ? agentIsAvailable && activeSessionId !== null && modelOption !== null
     : agentIsAvailable && intentKey !== null;
 
@@ -302,7 +323,7 @@ export function ModelSelector({
   };
 
   const selectModel = (value: string) => {
-    if (!usesPersistedOptions) {
+    if (!usesSessionOptions) {
       if (intentKey !== null) setPendingModel(intentKey, value);
       // Recorded alongside the surface-local intent rather than instead of it:
       // the intent is consumed by this chat's first send, while the preference

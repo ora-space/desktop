@@ -109,6 +109,7 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
   const discover = vi.spyOn(client.agentRuntime, "listModels");
+  const setConfig = vi.spyOn(client.session, "setConfig");
   const chatStore = createChatStore(client.session);
   const queryClient = createTestQueryClient();
   const Wrapper = createHookWrapper(client, queryClient, chatStore);
@@ -123,7 +124,22 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
       </AppI18nProvider>
     </Wrapper>,
   );
-  return { queryClient, state, discover, chatStore };
+  return { queryClient, state, discover, setConfig, chatStore };
+}
+
+/** One persisted session bound to OpenCode, selected as the surface the picker reads. */
+function selectPersistedSession(state: FixtureState) {
+  state.sessions = [
+    {
+      id: "s1",
+      workspaceId: "workspace-t1",
+      title: null,
+      agentRef: AGENT_REF.opencode,
+      status: "stopped",
+      historyState: { type: "writable" },
+    },
+  ];
+  useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
 }
 
 /** The collapsed trigger, which names the agent this surface is currently on. */
@@ -147,6 +163,106 @@ async function pickAgent(
   await user.click(within(menu).getByText(agentLabel));
   await user.keyboard("{Escape}");
 }
+
+/**
+ * Replays the conversation the way opening one does, which reports no options.
+ *
+ * A load that finishes without them is what settles the session as unattached; before it does,
+ * "not answered yet" must not read as "has no provider".
+ */
+async function openDetachedConversation(
+  chatStore: ReturnType<typeof createChatStore>,
+) {
+  await act(async () => {
+    await chatStore.getState().loadSession("s1");
+  });
+}
+
+describe("ModelSelector for a session that has not attached", () => {
+  /**
+   * Reading a conversation never reaches its agent, so a persisted session can be open with no
+   * provider and nothing to configure. The picker is then in exactly the position of a chat that
+   * has not started, and asking the agent for its own catalog is the only way to offer anything.
+   */
+  it("offers the agent's own catalog while the session reports no options", async () => {
+    const { discover, chatStore } = renderModelSelector(selectPersistedSession);
+    await openDetachedConversation(chatStore);
+
+    await waitFor(() =>
+      expect(discover).toHaveBeenCalledWith(
+        expect.objectContaining({ agentRef: AGENT_REF.opencode }),
+      ),
+    );
+    const user = userEvent.setup();
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText(/Big Pickle/)).toBeInTheDocument();
+  });
+
+  /**
+   * The pick has nowhere to go while no provider exists, so it is recorded and carried by the
+   * message that attaches one. Writing it through `setSessionConfig` would address a provider
+   * session the agent has never heard of.
+   */
+  it("records a pick as an intent instead of configuring an absent provider", async () => {
+    const { setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    await openDetachedConversation(chatStore);
+    const user = userEvent.setup();
+
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Small Pickle/));
+
+    await waitFor(() =>
+      expect(
+        usePendingAgentStore.getState().models[
+          `session:s1|agent:${AGENT_REF.opencode}`
+        ],
+      ).toEqual("opencode/small-pickle"),
+    );
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Options are what say a provider is there to configure. Once one reports them the session is
+   * authoritative about its own model, and the agent's pre-session catalog must not be asked for
+   * or shown — it lists what the agent can serve, not what this conversation is running.
+   */
+  it("configures the live session once it reports options of its own", async () => {
+    const { discover, setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    act(() => {
+      chatStore.getState().setConfigOptions("s1", [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "session/current",
+          options: [
+            { value: "session/current", name: "Session Current" },
+            { value: "session/other", name: "Session Other" },
+          ],
+        },
+      ]);
+    });
+
+    const user = userEvent.setup();
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Session Other/));
+
+    await waitFor(() =>
+      expect(setConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "s1", value: "session/other" }),
+      ),
+    );
+    expect(discover).not.toHaveBeenCalled();
+  });
+});
 
 describe("ModelSelector agent isolation across not-yet-started chats", () => {
   it("keeps one task's picked agent stable while another task's pick changes", async () => {

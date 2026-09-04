@@ -49,6 +49,14 @@ export interface SendMessageRequest {
    */
   oraSessionId: string;
   /**
+   * A model chosen while this session held no provider, for the attach this send performs.
+   *
+   * Reading a conversation does not reach its agent, so a session can be open with nothing to
+   * configure; its picker offers the agent's own catalog instead and the pick waits here. A
+   * session that already reports options is configured directly and sends none.
+   */
+  model?: string;
+  /**
    * Runs after the user's turn is on screen and before the prompt is sent, for
    * work the session needs first — creating its Task and persisting it.
    *
@@ -355,6 +363,7 @@ export function createChatStore(
       text,
       images = [],
       agentText,
+      model,
       prepare,
     }) => {
       const content = text.trim();
@@ -533,6 +542,7 @@ export function createChatStore(
           key,
           prompt,
           recordPrompt,
+          model,
           controller.signal,
         )) {
           if (event.type === "session_update") {
@@ -1348,6 +1358,7 @@ async function* promptWithReattach(
   sessionId: string,
   prompt: acp.ContentBlock[],
   recordPrompt: acp.ContentBlock[] | undefined,
+  model: string | undefined,
   signal: AbortSignal,
 ): AsyncGenerator<PromptSessionEvent> {
   let delivered = false;
@@ -1357,6 +1368,7 @@ async function* promptWithReattach(
         sessionId,
         prompt,
         ...(recordPrompt === undefined ? {} : { recordPrompt }),
+        ...(model === undefined ? {} : { model }),
       },
       { signal },
     )) {
@@ -1373,6 +1385,7 @@ async function* promptWithReattach(
       sessionId,
       prompt,
       ...(recordPrompt === undefined ? {} : { recordPrompt }),
+      ...(model === undefined ? {} : { model }),
     },
     { signal },
   );
