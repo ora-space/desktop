@@ -51,13 +51,6 @@ pub(super) type AgentAcpClient = AcpClient<PluginAcpTransport>;
 /// of the two would be dropped, only one would reach the picker, and which one won would depend
 /// on the order installed packages happen to be walked. Sessions persist the same full id in
 /// `agent_cli`, so a stored binding always resolves back to the package that answered it.
-fn agent_identity(plugin_id: &PluginId) -> AgentRef {
-    // A canonical plugin id is non-empty by construction, so this cannot fail; parsing keeps one
-    // construction path for the value object rather than a second, unchecked one.
-    AgentRef::parse(plugin_id.canonical())
-        .unwrap_or_else(|error| unreachable!("a canonical plugin id is an agent ref: {error}"))
-}
-
 /// Exposes one initialized ACP connection without transferring child-process ownership.
 #[derive(Clone)]
 pub(super) struct RuntimeConnection {
@@ -188,7 +181,7 @@ impl ConnectionSupervisors {
         // Every installed package has a distinct id, so no two agents can claim one identity and
         // there is nothing to arbitrate: the desired set is exactly the installed set.
         let desired = agent_plugins
-            .map(|plugin_id| (agent_identity(&plugin_id), plugin_id))
+            .map(|plugin_id| (AgentRef::for_plugin(&plugin_id), plugin_id))
             .collect::<Vec<_>>();
 
         let mut supervisors = self
@@ -230,7 +223,7 @@ impl ConnectionSupervisors {
             .plugins
             .iter()
             .any(|plugin| plugin.id == plugin_id.canonical())
-            .then(|| agent_identity(plugin_id))
+            .then(|| AgentRef::for_plugin(plugin_id))
     }
 
     /// Selects the sole application-scoped connection for one persisted agent identity.
@@ -843,7 +836,7 @@ fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, agen
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure, agent_identity,
+        ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure,
         plugin_attach_error, plugin_start_error, spawn_runtime_thread,
     };
     use crate::app_event::AppEventHub;
@@ -870,7 +863,7 @@ mod tests {
         let plugin_id = PluginId::new("official", "ora-space.opencode").expect("plugin id");
 
         assert_eq!(
-            agent_identity(&plugin_id),
+            AgentRef::for_plugin(&plugin_id),
             AgentRef::parse("official/ora-space.opencode").expect("parse plugin identity"),
         );
     }
@@ -887,7 +880,7 @@ mod tests {
             PluginId::new("official", "acme.agent").expect("plugin id"),
             PluginId::new("plugins.2aa64f48", "acme.agent").expect("plugin id"),
         ]
-        .map(|plugin_id| agent_identity(&plugin_id));
+        .map(|plugin_id| AgentRef::for_plugin(&plugin_id));
 
         assert_eq!(
             identities.to_vec(),

@@ -1,4 +1,4 @@
-use crate::DomainModelError;
+use crate::{DomainModelError, PluginId};
 use serde::{Deserialize, Serialize};
 
 /// Identifies one agent provider Ora can bind a session to.
@@ -19,6 +19,18 @@ impl AgentRef {
             return Err(DomainModelError::InvalidAgentRef(value.as_ref().to_owned()));
         }
         Ok(Self(normalized.to_owned()))
+    }
+
+    /// Names the agent one installed package supplies.
+    ///
+    /// The identity is the package's whole canonical plugin id rather than its bare name, so two
+    /// marketplace sources publishing the same identifier stay separately selectable instead of
+    /// collapsing onto one. Every side that has to agree on what an agent is called derives it
+    /// here: the supervised set, the session row, the pickers, and the lookups that map a session
+    /// back to the package behind it. Spelling the rule out again at any of those is what lets
+    /// two halves of Ora disagree about an agent that is plainly installed.
+    pub fn for_plugin(plugin_id: &PluginId) -> Self {
+        Self(plugin_id.canonical())
     }
 
     /// Returns the namespaced identity used for persistence and contract mapping.

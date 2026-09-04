@@ -67,16 +67,18 @@ impl SessionMcpHost {
     }
 
     /// Translates a Session's persisted agent identity into the plugin that owns its barrier.
+    ///
+    /// The identity is derived from each package the same way the runtime derives the one it
+    /// supervises and the one a session persists, so the two sides cannot disagree about the
+    /// spelling and answer "no such plugin" for an agent that is installed and running.
     pub(crate) fn plugin_id_for_agent(&self, agent_ref: &AgentRef) -> Option<PluginId> {
         self.plugin_host
             .list(ListInstalledPluginsRequest {})
             .plugins
             .into_iter()
             .find_map(|plugin| {
-                let parsed = AgentRef::parse(&plugin.name).ok()?;
-                (parsed == *agent_ref)
-                    .then(|| PluginId::parse(&plugin.id).ok())
-                    .flatten()
+                let plugin_id = PluginId::parse(&plugin.id).ok()?;
+                (AgentRef::for_plugin(&plugin_id) == *agent_ref).then_some(plugin_id)
             })
     }
 }

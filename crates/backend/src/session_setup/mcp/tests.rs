@@ -1,11 +1,18 @@
+use super::SessionMcpHost;
 use super::{
     AgentSessionMcpCapabilities, InstalledMcpCandidate, LiveMcpEvent, LiveMcpPromptAdmission,
     LiveMcpState, McpConfigurationEligibility, SessionMcpCatalog, SessionMcpConfigurationSource,
     SessionMcpError, SessionMcpMemberRevision, SessionMcpRevision, SessionMcpTransportKind,
     resolve_session_mcp, resolve_session_mcp_revision,
 };
+use crate::app_event::AppEventHub;
+use crate::clock::SystemClock;
+use crate::plugin::PluginApi;
+use crate::settings::Settings;
 use agent_client_protocol_schema::v1::McpServer;
-use ora_domain::PluginId;
+use ora_contracts::ScanPluginsRequest;
+use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
+use ora_domain::{AgentRef, PluginId};
 use ora_plugin_config::{
     CompiledMcpConfiguration, McpArgument, McpHttpTransport, McpStdioTransport, McpTransport,
     McpValueExpression, SettingValue,
@@ -616,5 +623,87 @@ fn unrelated_agents_do_not_share_a_barrier() {
             .for_plugin(&plugin("claude"))
             .try_acquire(BarrierReason::EffectMutation)
             .is_some()
+    );
+}
+
+/// The barrier lookup must resolve the identity the runtime actually supervises a session under.
+///
+/// Both sides derive it from the installed package, so this pins that they agree. They once did
+/// not: the runtime keyed an agent by the package's whole canonical plugin id while this lookup
+/// compared against its bare name, so it answered "no such plugin" for every installed agent and
+/// the barrier it exists to find was silently never taken.
+#[tokio::test]
+async fn resolves_the_plugin_behind_the_agent_identity_the_runtime_supervises() {
+    let temporary = TempDir::new().expect("create host test directory");
+    let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
+        .bootstrap_repository_pool(
+            &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
+            &default_migration_catalog().expect("build migration catalog"),
+        )
+        .expect("create repository pool");
+    let package_root = temporary
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("official")
+        .join("acme.opencode")
+        .join("1.0.0");
+    std::fs::create_dir_all(&package_root).expect("create plugin package");
+    std::fs::write(package_root.join("main.js"), "export {};\n").expect("write entrypoint");
+    std::fs::write(
+        package_root.join("orax.toml"),
+        "resolver = 1\nidentifier = \"acme.opencode\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n",
+    )
+    .expect("write plugin manifest");
+    let plugin_host = Arc::new(
+        PluginApi::open(
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            PathBuf::from("deno"),
+            SystemClock,
+            AppEventHub::new().publisher(),
+            Arc::new(Settings::new(pool.clone())),
+        )
+        .expect("open plugin host"),
+    );
+    plugin_host
+        .scan(ScanPluginsRequest {})
+        .await
+        .expect("scan plugins");
+    let plugin_id = PluginId::new("official", "acme.opencode").expect("plugin id");
+    let host = SessionMcpHost::from_plugin_api(plugin_host);
+
+    assert_eq!(
+        host.plugin_id_for_agent(&AgentRef::for_plugin(&plugin_id)),
+        Some(plugin_id),
+    );
+}
+
+/// An agent no installed package supplies resolves to nothing rather than to a neighbour.
+#[test]
+fn resolves_nothing_for_an_agent_no_package_supplies() {
+    let temporary = TempDir::new().expect("create host test directory");
+    let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
+        .bootstrap_repository_pool(
+            &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
+            &default_migration_catalog().expect("build migration catalog"),
+        )
+        .expect("create repository pool");
+    let plugin_host = Arc::new(
+        PluginApi::open(
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            PathBuf::from("deno"),
+            SystemClock,
+            AppEventHub::new().publisher(),
+            Arc::new(Settings::new(pool.clone())),
+        )
+        .expect("open plugin host"),
+    );
+    let host = SessionMcpHost::from_plugin_api(plugin_host);
+
+    assert_eq!(
+        host.plugin_id_for_agent(&AgentRef::parse("official/absent").expect("agent identity")),
+        None,
     );
 }
