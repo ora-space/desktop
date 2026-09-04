@@ -326,8 +326,8 @@ impl RuntimeActor {
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
-                ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
-                    let _ = response.send(());
+                ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
+                    let _ = response.send(self.provider_session_id().to_string());
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);

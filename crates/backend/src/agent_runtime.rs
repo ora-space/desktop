@@ -211,8 +211,15 @@ pub(super) enum RuntimeCommand {
     Cancel {
         operation_id: u64,
     },
-    PreemptTitlePolling {
-        response: oneshot::Sender<()>,
+    /// A caller outside the actor is about to address this session's provider directly.
+    ///
+    /// Answers with the provider session it must address. That is not always the binding in the
+    /// row: a session rebuilt to replace one that could not be restored is only persisted once the
+    /// prompt carrying the transcript is accepted, so until then the actor is the only holder of
+    /// the identity the agent actually answers to. Standing down title polling comes with it,
+    /// because the reply is the point at which the caller starts using that identity.
+    ClaimDirectProviderCall {
+        response: oneshot::Sender<String>,
     },
     AdoptUserTitle {
         title: SessionTitle,
@@ -520,20 +527,27 @@ impl AgentRuntimeManager {
         let config_id = SessionConfigId::new(request.config_id);
         let value = SessionConfigOptionValue::value_id(request.value);
         let session = self.find_session(&request.session_id)?;
-        if let Some(handle) = self.lookup_actor(&session.id)? {
-            let (response, acknowledged) = oneshot::channel();
-            handle
-                .commands
-                .send(RuntimeCommand::PreemptTitlePolling { response })
-                .map_err(|_error| runtime_unavailable())?;
-            acknowledged.await.map_err(|_error| runtime_unavailable())?;
-        }
+        // The live actor is asked which provider session to address rather than reading the row,
+        // because a session it rebuilt is not in the row until the transcript reaches it — writing
+        // configuration to the row's identity would reach the provider being replaced. A session
+        // with no actor holds no rebuilt binding, so its row is authoritative.
+        let agent_session_id = match self.lookup_actor(&session.id)? {
+            Some(handle) => {
+                let (response, claimed) = oneshot::channel();
+                handle
+                    .commands
+                    .send(RuntimeCommand::ClaimDirectProviderCall { response })
+                    .map_err(|_error| runtime_unavailable())?;
+                claimed.await.map_err(|_error| runtime_unavailable())?
+            }
+            None => session.agent_session_id.clone(),
+        };
         // The provider request remains direct because it is independent of the actor's
-        // serialized prompt/load stream; only the title-polling attempt needs preemption.
+        // serialized prompt/load stream; only the title-polling attempt needs standing down.
         let config_options = start::request_config_option(
             &self.inner.connections,
             &session.agent_ref,
-            &session.agent_session_id,
+            &agent_session_id,
             &config_id,
             &value,
         )

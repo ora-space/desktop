@@ -120,10 +120,10 @@ impl RuntimeActor {
                             // it is not a cancellation of the independent title fallback.
                         }
                         RuntimeCommand::CancelActivePrompt => {}
-                        RuntimeCommand::PreemptTitlePolling { response } => {
+                        RuntimeCommand::ClaimDirectProviderCall { response } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            let _ = response.send(());
+                            let _ = response.send(self.provider_session_id().to_string());
                             return;
                         }
                         RuntimeCommand::AdoptUserTitle { title, response } => {

@@ -145,8 +145,8 @@ impl RuntimeActor {
                 }
                 RuntimeCommand::CancelActivePrompt => {}
                 RuntimeCommand::Cancel { .. } => {}
-                RuntimeCommand::PreemptTitlePolling { response } => {
-                    let _ = response.send(());
+                RuntimeCommand::ClaimDirectProviderCall { response } => {
+                    let _ = response.send(self.provider_session_id().to_string());
                 }
                 RuntimeCommand::AdoptUserTitle { title, response } => {
                     self.adopt_user_title(title);
@@ -502,8 +502,8 @@ impl RuntimeActor {
                         );
                     }
                 }
-                ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
-                    let _ = response.send(());
+                ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
+                    let _ = response.send(self.provider_session_id().to_string());
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);
