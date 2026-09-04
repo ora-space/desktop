@@ -144,7 +144,7 @@ fn runtime_tables_use_direct_workspace_ownership() {
     );
 }
 
-/// Existing marketplace rows receive Direct HTTPS retrieval and invalid tagged JSON is rejected.
+/// Existing marketplace rows receive Direct HTTPS while future tagged variants remain extensible.
 #[test]
 fn marketplace_artifact_retrieval_migration_has_a_safe_default() {
     let pool = with_trace_logging(|| {
@@ -180,6 +180,15 @@ fn marketplace_artifact_retrieval_migration_has_a_safe_default() {
         .expect("read retrieval default"),
         r#"{"type":"direct_https"}"#,
     );
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE plugin_marketplace_source
+             SET artifact_retrieval = '{\"type\":\"future_retrieval\"}'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("accept future tagged retrieval variant");
     assert!(
         pool.with_connection(|connection| {
             connection.execute(

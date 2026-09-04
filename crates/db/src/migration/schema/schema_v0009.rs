@@ -7,8 +7,7 @@ ALTER TABLE plugin_marketplace_source
         CHECK (
             CASE WHEN json_valid(artifact_retrieval)
                 THEN json_type(artifact_retrieval) = 'object'
-                    AND COALESCE(json_extract(artifact_retrieval, '$.type'), '')
-                        IN ('direct_https', 's3_sigv4')
+                    AND json_extract(artifact_retrieval, '$.type') IS NOT NULL
                 ELSE 0
             END
         );
