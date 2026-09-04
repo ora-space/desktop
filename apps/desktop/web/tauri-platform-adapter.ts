@@ -129,6 +129,10 @@ function createTauriSurfaces(): SurfaceCapability {
           target: mount,
         },
       }),
+    openSessionTraceDashboard: (sessionId: string, mount: SurfaceTarget) =>
+      invoke<SurfaceRecord>("surface_open_session_trace_dashboard", {
+        request: { sessionId, target: mount },
+      }),
     close: (instance: number) =>
       invoke("surface_close", { request: { instance } }),
     resolveDownload: (

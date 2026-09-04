@@ -53,6 +53,7 @@ import { SessionHistoryBanner } from "../chat/session-history-banner";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
+import { SessionDashboardButton } from "../surface/session-dashboard-button";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { WorkflowEditor } from "../workflow-editor/workflow-editor";
 import {
@@ -617,6 +618,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           </DragRegion>
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
           <SurfaceLauncher />
+          <SessionDashboardButton sessionId={session?.id ?? null} />
           <WindowControls />
         </div>
         <SessionAgentBanner session={session} />
