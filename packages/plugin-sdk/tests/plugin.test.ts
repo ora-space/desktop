@@ -107,6 +107,52 @@ Deno.test("rejects duplicate and late method registration", async () => {
   await run;
 });
 
+Deno.test("registers immutable trace providers", async () => {
+  const plugin = createPlugin();
+  plugin.declareTraceProvider({
+    providerId: "claude-code",
+    format: "ora/trace.claude-code-jsonl.v1",
+    root: "home",
+    directory: ".claude/projects",
+    fileNameTemplate: "{provider_session_id}.jsonl",
+    recursive: true,
+  });
+  assertThrows(
+    () =>
+      plugin.declareTraceProvider({
+        providerId: "claude-code",
+        format: "ora/trace.claude-code-jsonl.v1",
+        root: "home",
+        directory: ".claude/projects",
+        fileNameTemplate: "{provider_session_id}.jsonl",
+      }),
+    /already registered/,
+  );
+
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    method: "ora/register",
+    params: {
+      methods: [],
+      emits: [],
+      traceProviders: [{
+        providerId: "claude-code",
+        format: "ora/trace.claude-code-jsonl.v1",
+        locator: {
+          root: "home",
+          directory: ".claude/projects",
+          fileNameTemplate: "{provider_session_id}.jsonl",
+          recursive: true,
+        },
+      }],
+    },
+  });
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
 Deno.test("maps handler failures to JSON-RPC errors", async () => {
   const plugin = createPlugin();
   plugin.registerMethod("example.fail", () => {

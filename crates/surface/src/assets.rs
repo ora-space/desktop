@@ -109,14 +109,14 @@ pub fn asset_content_type(extension: &str) -> &'static str {
 /// Inline script and style are forbidden (no nonce can reach a static page), every resource must
 /// come from this instance's own asset base, and the page cannot talk to the network; the two
 /// `connect-src` entries are the transports Tauri's IPC itself uses on platforms where it goes
-/// through `fetch`, so the bridge keeps working without opening anything else. A plugin cannot
-/// relax this policy.
+/// through `fetch`, and the instance asset base permits browser-native module and WASM loading.
+/// A plugin cannot relax this policy or reach any other origin.
 pub fn workbench_csp(base: &Url) -> String {
     format!(
         "default-src 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; \
          frame-ancestors 'none'; form-action 'none'; worker-src 'none'; \
-         connect-src ipc: http://ipc.localhost; \
-         script-src {base}; style-src {base}; img-src {base} data:; font-src {base}"
+         connect-src {base} ipc: http://ipc.localhost; \
+         script-src {base} 'wasm-unsafe-eval'; style-src {base}; img-src {base} data:; font-src {base}"
     )
 }
 
@@ -218,11 +218,13 @@ mod tests {
             (
                 csp.contains("default-src 'none'"),
                 csp.contains("script-src ora-plugin://localhost/7/"),
+                csp.contains("connect-src ora-plugin://localhost/7/ ipc:"),
+                csp.contains("'wasm-unsafe-eval'"),
                 csp.contains("unsafe-inline"),
-                csp.contains("unsafe-eval"),
+                csp.contains("'unsafe-eval'"),
                 csp.contains("frame-ancestors 'none'"),
             ),
-            (true, true, false, false, true)
+            (true, true, true, true, false, false, true)
         );
     }
 }

@@ -11,7 +11,7 @@ use crate::surface::gateway::{SurfaceConnection, SurfacePluginGateway};
 use crate::surface::service::SurfaceService;
 use ora_logging::{ora_debug, ora_warn};
 use ora_plugin_lifecycle::PluginCallError;
-use ora_plugin_protocol::{WorkbenchCallParams, WorkbenchSurface};
+use ora_plugin_protocol::{PluginInvocationContext, WorkbenchCallParams};
 use ora_surface::SurfaceSource;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -147,11 +147,15 @@ impl<G: SurfacePluginGateway, R: Runtime> SurfaceService<G, R> {
             return Err(BridgeError::host(HostErrorCode::MethodUnavailable));
         }
 
+        let context_id = self
+            .registry
+            .workbench_context(record.instance, || {
+                self.gateway
+                    .issue_invocation_context(plugin_id.clone(), connection.key())
+            })
+            .ok_or_else(|| BridgeError::host(HostErrorCode::SurfaceUnavailable))?;
         let envelope = json!(WorkbenchCallParams {
-            surface: WorkbenchSurface {
-                instance_id: record.instance.value(),
-                generation,
-            },
+            context: PluginInvocationContext { id: context_id },
             input: request.params,
         });
         ora_debug!(

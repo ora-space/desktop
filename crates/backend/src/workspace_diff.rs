@@ -374,6 +374,7 @@ mod tests {
         Backend::open(BackendPaths {
             app_data_directory: temporary.path().to_path_buf(),
             home_directory: temporary.path().to_path_buf(),
+            user_home_directory: temporary.path().to_path_buf(),
             deno_path: std::path::PathBuf::from("deno"),
             relative_path_base: temporary.path().to_path_buf(),
             timezone: chrono_tz::UTC,

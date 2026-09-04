@@ -30,6 +30,14 @@ export function createStubPlatform(): PlatformAdapter {
         target: mount,
         state: "open" as const,
       }),
+      openSessionTraceDashboard: async (_sessionId, mount) => ({
+        instance: 0,
+        pluginId: "official/ora-space.agent-dashboard",
+        kind: "workbench" as const,
+        title: "Agent Dashboard",
+        target: mount,
+        state: "open" as const,
+      }),
       close: async () => undefined,
       resolveDownload: async () => ({
         action: "save_as",

@@ -213,6 +213,11 @@ export interface SurfaceCapability {
   capabilities(): Promise<{ embedded: boolean }>;
   list(): Promise<SurfaceRecord[]>;
   open(target: SurfaceOpenTarget, mount: SurfaceTarget): Promise<SurfaceRecord>;
+  /** Opens the Dashboard with a host-issued trace grant for this existing chat session. */
+  openSessionTraceDashboard(
+    sessionId: string,
+    mount: SurfaceTarget,
+  ): Promise<SurfaceRecord>;
   close(instance: number): Promise<void>;
   setBounds(instance: number, bounds: SurfaceBounds): Promise<void>;
   setVisible(instance: number, visible: boolean): Promise<void>;

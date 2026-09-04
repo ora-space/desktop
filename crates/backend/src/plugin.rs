@@ -33,8 +33,9 @@ use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
     ConnectionError, DenoPluginRuntime, DenoPluginRuntimeLauncher, InboundNotification,
-    PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
-    PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
+    NoChildProcessEnvironment, PluginGenerationKey, PluginGenerationLease,
+    PluginInvocationContexts, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
+    PluginNotificationSink, PluginRuntimeTimeouts, TraceContextGrant,
 };
 use ora_plugin_manager::{
     HostTarget, InstallError, Installer, PluginContribution, PluginManager, UpdateError,
@@ -167,6 +168,7 @@ pub(crate) struct AgentPluginAttachment {
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
     pub(crate) lifecycle: BackendPluginLifecycle,
+    invocation_contexts: PluginInvocationContexts,
     marketplace_sources: MarketplaceSourceStore,
     user_config: Arc<UserConfigApi>,
     registry_index_path: PathBuf,
@@ -193,6 +195,7 @@ impl PluginApi {
     pub(crate) fn open(
         pool: RepositoryPool,
         home_directory: PathBuf,
+        user_home_directory: PathBuf,
         deno_path: PathBuf,
         clock: SystemClock,
         publisher: AppEventPublisher,
@@ -215,12 +218,18 @@ impl PluginApi {
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
         let configuration = ConfigurationService::new(home_directory.clone());
+        let invocation_contexts = PluginInvocationContexts::default();
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: home_directory.clone(),
                 deno_path,
             },
-            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
+            DenoPluginRuntimeLauncher::with_host_capabilities(
+                PluginRuntimeTimeouts::default(),
+                NoChildProcessEnvironment,
+                invocation_contexts.clone(),
+                user_home_directory,
+            ),
             publisher,
             notifications.clone(),
         )
@@ -228,6 +237,7 @@ impl PluginApi {
 
         Ok(Self {
             lifecycle,
+            invocation_contexts,
             marketplace_sources,
             user_config,
             registry_index_path,
@@ -529,6 +539,25 @@ impl PluginApi {
     /// Exposes the lifecycle to the gateway that serves desktop surfaces.
     pub(crate) fn lifecycle(&self) -> &BackendPluginLifecycle {
         &self.lifecycle
+    }
+
+    /// Issues a context only after the trusted desktop host resolved the consumer generation.
+    pub(crate) fn issue_invocation_context(
+        &self,
+        plugin_id: PluginId,
+        generation: PluginGenerationKey,
+    ) -> String {
+        self.invocation_contexts.issue(plugin_id, generation)
+    }
+
+    /// Attaches host-resolved trace authority to an existing invocation context.
+    pub(crate) fn grant_trace_context(&self, context_id: &str, grant: TraceContextGrant) -> bool {
+        self.invocation_contexts.grant_trace(context_id, grant)
+    }
+
+    /// Revokes a host-issued invocation context when its owning surface closes.
+    pub(crate) fn revoke_invocation_context(&self, context_id: &str) {
+        self.invocation_contexts.revoke(context_id);
     }
 
     /// Opens a receiver of every notification running plugin processes emit from now on.

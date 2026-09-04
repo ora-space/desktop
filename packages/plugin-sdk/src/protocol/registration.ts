@@ -23,4 +23,29 @@ export type PluginRegistrationParams = {
   methods: Array<string>;
   emits: Array<string>;
   effectResources?: Array<PluginEffectResource>;
+  traceProviders?: Array<PluginTraceProvider>;
 };
+
+/**
+ * A safe trace file template below one host-owned filesystem root.
+ */
+export type PluginTraceLocator = {
+  root: PluginTraceRoot;
+  directory: string;
+  fileNameTemplate: string;
+  recursive: boolean;
+};
+
+/**
+ * One host-resolved trace source declared by a provider plugin.
+ */
+export type PluginTraceProvider = {
+  providerId: string;
+  format: string;
+  locator: PluginTraceLocator;
+};
+
+/**
+ * Filesystem roots a provider may name without learning a concrete host path.
+ */
+export type PluginTraceRoot = "home" | "workspace";

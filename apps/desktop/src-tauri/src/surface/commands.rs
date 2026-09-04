@@ -17,6 +17,14 @@ pub struct OpenSurfaceRequest {
     target: MountTarget,
 }
 
+/// Trusted main-webview request to open the Dashboard for one existing Ora session.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSessionTraceDashboardRequest {
+    session_id: String,
+    target: MountTarget,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SurfaceInstanceRequest {
@@ -118,6 +126,18 @@ pub async fn surface_open(
     request: OpenSurfaceRequest,
 ) -> Result<SurfaceRecordDto, CommandError> {
     let record = state.surfaces.open(&request.plugin_id, request.target)?;
+    Ok(SurfaceRecordDto::from(&record))
+}
+
+#[tauri::command]
+pub async fn surface_open_session_trace_dashboard(
+    state: State<'_, DesktopState>,
+    request: OpenSessionTraceDashboardRequest,
+) -> Result<SurfaceRecordDto, CommandError> {
+    let record = state
+        .surfaces
+        .open_session_trace_dashboard(&request.session_id, request.target)
+        .await?;
     Ok(SurfaceRecordDto::from(&record))
 }
 

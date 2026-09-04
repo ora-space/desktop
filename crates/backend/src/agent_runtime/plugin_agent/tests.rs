@@ -40,6 +40,7 @@ fn complete_registration() -> PluginRegistration {
         ]),
         emits: HashSet::from(["agent/acp".to_string()]),
         effect_resources: Vec::new(),
+        trace_providers: Vec::new(),
     }
 }
 

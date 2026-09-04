@@ -43,6 +43,7 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
     let backend = Backend::open(BackendPaths {
         app_data_directory: temporary.path().join("data"),
         home_directory: temporary.path().join("home"),
+        user_home_directory: temporary.path().join("user-home"),
         deno_path: PathBuf::from("deno"),
         relative_path_base: temporary.path().to_path_buf(),
         timezone: "Asia/Shanghai".parse().expect("local timezone"),

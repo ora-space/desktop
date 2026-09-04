@@ -93,16 +93,19 @@ mod tests {
             methods: HashSet::from(["counter/get".to_string()]),
             emits: HashSet::from(["counter/tick".to_string()]),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         };
         let bad_name = PluginRegistration {
             methods: HashSet::from(["Counter.Get".to_string()]),
             emits: HashSet::new(),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         };
         let superset = PluginRegistration {
             methods: HashSet::from(["counter/get".to_string(), "internal/reset".to_string()]),
             emits: HashSet::new(),
             effect_resources: Vec::new(),
+            trace_providers: Vec::new(),
         };
         assert_eq!(
             (

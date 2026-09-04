@@ -70,6 +70,7 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
         .launcher
         .launch(PluginLaunchRequest {
             plugin_id: plugin_id.clone(),
+            generation: PluginGenerationKey(attempt),
             deno_path: inner.config.deno_path.clone(),
             entrypoint: plugin.package_root.join(entrypoint.to_path_buf()),
             package_root: plugin.package_root.clone(),

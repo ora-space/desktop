@@ -3,25 +3,14 @@ import {
   INVALID_PARAMS,
   type JsonValue,
   type WorkbenchCallParams,
-  type WorkbenchSurface as WireWorkbenchSurface,
 } from "./protocol/index.ts";
 import { createStorage, type PluginStorage } from "./storage.ts";
-
-/**
- * Identifies which page instance, on which process generation, a workbench call came from.
- *
- * The host fills these in from the calling webview; a `main.js` needs them only to tell its own
- * multiple open pages apart. They never widen what the call may do.
- */
-export type WorkbenchSurface = {
-  instanceId: WireWorkbenchSurface["instance_id"];
-  /** Generation of the plugin process Ora addressed for this call. */
-  generation: WireWorkbenchSurface["generation"];
-};
+import type { PluginInvocationContext } from "./context.ts";
 
 /** One method call from a workbench page, with the page-supplied input. */
 export interface WorkbenchCall<Input = JsonValue> {
-  surface: WorkbenchSurface;
+  /** Host-issued authority for contextual APIs; opaque to both page and plugin. */
+  context: PluginInvocationContext;
   input: Input;
 }
 
@@ -47,7 +36,7 @@ export interface WorkbenchPlugin {
  * Builds a workbench plugin whose page-callable methods are exactly the keys of `methods`.
  *
  * Each key is registered as a plugin method; the host wraps the page's params in the envelope
- * `{ surface: { instance_id, generation }, input }`, which this SDK unpacks into a
+ * `{ context: { id }, input }`, which this SDK unpacks into a
  * {@link WorkbenchCall} so plugin code never parses the envelope. The v1 contract has no
  * plugin-to-page channel, so no notification is ever declared: a `main.js` only answers calls.
  *
@@ -74,22 +63,19 @@ export function defineWorkbenchPlugin(
 
 /** Unpacks the host envelope of one workbench call. */
 function parseCall(method: string, params: JsonValue): WorkbenchCall {
-  const surface = isRecord(params) ? params.surface : undefined;
+  const context = isRecord(params) ? params.context : undefined;
   if (
-    !isRecord(surface) || typeof surface.instance_id !== "number" ||
-    typeof surface.generation !== "number"
+    !isRecord(context) || typeof context.id !== "string" ||
+    context.id.length === 0
   ) {
     throw new PluginMethodError(
       INVALID_PARAMS,
-      `${method} was not called with a valid surface envelope`,
+      `${method} was not called with a valid invocation context`,
     );
   }
   const envelope = params as WorkbenchCallParams;
   return {
-    surface: {
-      instanceId: envelope.surface.instance_id,
-      generation: envelope.surface.generation,
-    },
+    context: envelope.context,
     input: envelope.input ?? null,
   };
 }

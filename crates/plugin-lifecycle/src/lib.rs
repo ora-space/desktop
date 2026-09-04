@@ -1,5 +1,6 @@
 mod childprocess;
 mod connection;
+mod context;
 mod data_dir;
 mod launch;
 mod permissions;
@@ -10,6 +11,7 @@ mod scan;
 mod state;
 mod storage;
 mod surface_closer;
+mod trace;
 mod uninstall;
 
 pub use childprocess::{
@@ -18,6 +20,7 @@ pub use childprocess::{
     PluginProcessHost,
 };
 pub use connection::{ConnectionError, PluginGenerationKey, PluginGenerationLease};
+pub use context::{PluginInvocationContexts, TraceContextGrant, TraceSessionGrant};
 pub use data_dir::PluginDataDirectories;
 pub use ora_plugin_runtime::{PluginNotification, PluginRegistration};
 pub use permissions::{
@@ -36,6 +39,9 @@ pub use storage::{
     StorageErrorKind,
 };
 pub use surface_closer::SurfaceCloser;
+pub use trace::{
+    MAX_TRACE_CHUNK_BYTES, PluginTraceHost, TRACE_LIST_METHOD, TRACE_READ_METHOD, TRACE_STAT_METHOD,
+};
 
 use launch::{complete_launch, transition_to_stopped};
 use state::{

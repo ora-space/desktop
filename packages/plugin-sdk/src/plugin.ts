@@ -11,6 +11,7 @@ import {
   PLUGIN_METHODS,
   type PluginEffectResource,
   type PluginRegistrationParams,
+  type PluginTraceProvider,
   type PluginTransport,
   type RequestId,
   SKILL_DIRECTORY_V1,
@@ -58,6 +59,22 @@ export type EffectResourceDeclaration =
       | typeof CLAUDE_MCP_CONFIG_V1;
   };
 
+/** One trace source a provider plugin makes discoverable to Ora. */
+export interface TraceProviderDeclaration {
+  /** Stable within this plugin; consumers receive it as opaque metadata. */
+  providerId: string;
+  /** Versioned format understood by a trace consumer such as the Dashboard plugin. */
+  format: string;
+  /** Filesystem root interpreted by the host, never by another plugin. */
+  root: "home" | "workspace";
+  /** Safe slash-separated directory below `root`. */
+  directory: string;
+  /** File name containing exactly one `{provider_session_id}` placeholder. */
+  fileNameTemplate: string;
+  /** Whether Ora may search directories below `directory` for the file name. */
+  recursive?: boolean;
+}
+
 /**
  * A host method failed, or could not be completed.
  *
@@ -97,6 +114,7 @@ export class Plugin {
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #effectResources: EffectResourceDeclaration[] = [];
+  readonly #traceProviders: TraceProviderDeclaration[] = [];
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
   readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
   #nextHostRequestId = 1;
@@ -139,6 +157,28 @@ export class Plugin {
       throw new Error("Effect Resource locator and format cannot be empty");
     }
     this.#effectResources.push({ ...resource });
+  }
+
+  /** Declares one host-resolved trace provider before registration is sent. */
+  declareTraceProvider(provider: TraceProviderDeclaration): void {
+    this.#assertRegistering();
+    if (
+      provider.providerId.length === 0 || provider.format.length === 0 ||
+      provider.directory.length === 0 ||
+      provider.fileNameTemplate.length === 0
+    ) {
+      throw new Error("Trace provider fields cannot be empty");
+    }
+    if (
+      this.#traceProviders.some((candidate) =>
+        candidate.providerId === provider.providerId
+      )
+    ) {
+      throw new Error(
+        `Trace provider ${provider.providerId} is already registered`,
+      );
+    }
+    this.#traceProviders.push({ ...provider });
   }
 
   /** Handles one host-sent notification, which never produces a response. */
@@ -242,6 +282,20 @@ export class Plugin {
       ...(this.#effectResources.length === 0
         ? {}
         : { effectResources: this.#effectResources }),
+      ...(this.#traceProviders.length === 0
+        ? {}
+        : {
+          traceProviders: this.#traceProviders.map((provider) => ({
+            providerId: provider.providerId,
+            format: provider.format,
+            locator: {
+              root: provider.root,
+              directory: provider.directory,
+              fileNameTemplate: provider.fileNameTemplate,
+              recursive: provider.recursive ?? false,
+            },
+          } satisfies PluginTraceProvider)),
+        }),
     } satisfies PluginRegistrationParams;
     await writer.write({
       jsonrpc: JSON_RPC_VERSION,

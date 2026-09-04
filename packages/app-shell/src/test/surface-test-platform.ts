@@ -26,6 +26,16 @@ export function createSurfaceTestPlatform(options: { embedded: boolean }): {
         state: "open" as const,
       }),
     ),
+    openSessionTraceDashboard: vi.fn(
+      async (_sessionId: string, mount: "embedded" | "windowed") => ({
+        instance: 1,
+        pluginId: "official/ora-space.agent-dashboard",
+        kind: "workbench" as const,
+        title: "Agent Dashboard",
+        target: mount,
+        state: "open" as const,
+      }),
+    ),
     close: vi.fn(async () => undefined),
     resolveDownload: vi.fn(async () => ({
       action: "save_as",

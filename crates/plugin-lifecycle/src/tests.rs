@@ -1,8 +1,8 @@
 use super::{
-    DenoPermission, InboundNotification, LaunchedRuntime, PluginCallError, PluginLaunchRequest,
-    PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError, PluginNotificationSink,
-    PluginRegistration, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
-    PluginRuntimeLauncher, PluginStatusPublisher, ReadScope,
+    DenoPermission, InboundNotification, LaunchedRuntime, PluginCallError, PluginGenerationKey,
+    PluginLaunchRequest, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
+    PluginNotificationSink, PluginRegistration, PluginRuntime, PluginRuntimeExit,
+    PluginRuntimeFailure, PluginRuntimeLauncher, PluginStatusPublisher, ReadScope,
 };
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, InstalledPlugin, InstalledPluginContribution,
@@ -437,6 +437,7 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
         launched.recv().await,
         Some(PluginLaunchRequest {
             plugin_id: PluginId::new("official", "ora.example").expect("plugin id"),
+            generation: PluginGenerationKey(1),
             deno_path: PathBuf::from("deno"),
             entrypoint: example_package_root(temp_dir.path()).join("main.js"),
             package_root: example_package_root(temp_dir.path()),

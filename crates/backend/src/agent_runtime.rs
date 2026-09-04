@@ -147,6 +147,17 @@ pub(crate) struct AgentRuntimeManager {
     inner: Arc<ManagerInner>,
 }
 
+/// Host-resolved provider facts for one Ora session; never exposed to a plugin page.
+#[derive(Debug, Clone)]
+pub(crate) struct TraceSessionBinding {
+    pub ora_session_id: String,
+    pub provider_plugin_id: PluginId,
+    pub provider_session_id: String,
+    pub workspace_root: PathBuf,
+    pub label: String,
+    pub updated_at_ms: i64,
+}
+
 struct ManagerInner {
     pool: RepositoryPool,
     actors: RwLock<HashMap<SessionId, RuntimeActorHandle>>,
@@ -276,6 +287,63 @@ pub(crate) struct AgentRuntimeSetup {
 }
 
 impl AgentRuntimeManager {
+    /// Resolves the provider and workspace that own one Ora session's trace stream.
+    pub(crate) fn trace_session_binding(
+        &self,
+        ora_session_id: &str,
+    ) -> Result<TraceSessionBinding, BackendError> {
+        let session = self.find_session(ora_session_id)?;
+        self.trace_binding_for_session(session)
+    }
+
+    /// Lists trace-capable sessions in the selected session's workspace. The host retains the
+    /// durable identities and turns these bindings into opaque dashboard handles later.
+    pub(crate) fn trace_session_catalog(
+        &self,
+        ora_session_id: &str,
+    ) -> Result<Vec<TraceSessionBinding>, BackendError> {
+        let selected = self.find_session(ora_session_id)?;
+        let sessions = SqliteSessionRepository::new(self.inner.pool.clone())
+            .list_sessions()
+            .map_err(|source| BackendError::internal("failed to list trace sessions", source))?;
+        Ok(sessions
+            .into_iter()
+            .filter(|session| session.workspace_id == selected.workspace_id)
+            .filter_map(|session| self.trace_binding_for_session(session).ok())
+            .collect())
+    }
+
+    fn trace_binding_for_session(
+        &self,
+        session: Session,
+    ) -> Result<TraceSessionBinding, BackendError> {
+        let provider_plugin_id = self
+            .inner
+            .connections
+            .plugin_for_agent(&session.agent_ref)
+            .ok_or_else(|| {
+                runtime_internal(
+                    "trace_provider_unavailable",
+                    format!(
+                        "{} no longer supplies an installed trace provider",
+                        session.agent_ref
+                    ),
+                )
+            })?;
+        Ok(TraceSessionBinding {
+            ora_session_id: session.id.as_ref().to_string(),
+            provider_plugin_id,
+            provider_session_id: session.agent_session_id,
+            workspace_root: self.workspace_cwd(&session.workspace_id)?,
+            label: session
+                .title
+                .as_ref()
+                .map(|title| title.as_str().to_string())
+                .unwrap_or_else(|| "未命名会话".to_string()),
+            updated_at_ms: session.audit_fields.updated_at,
+        })
+    }
+
     /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
     pub(crate) fn new(setup: AgentRuntimeSetup) -> Result<Self, BackendError> {
         let AgentRuntimeSetup {

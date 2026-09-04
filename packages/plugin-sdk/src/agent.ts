@@ -3,6 +3,7 @@ import {
   type EffectResourceDeclaration,
   type Plugin,
   PluginMethodError,
+  type TraceProviderDeclaration,
 } from "./plugin.ts";
 import {
   AGENT_METHODS,
@@ -85,6 +86,8 @@ export interface AgentDefinition {
   onAcp(frame: JsonValue): void | Promise<void>;
   /** Declares Resources this Agent consumes and the adapter proving safe convergence. */
   effects?: AgentEffectDefinition;
+  /** Declares trace files this provider produces; Ora resolves them for authorized consumers. */
+  traceProviders?: readonly TraceProviderDeclaration[];
 }
 
 /**
@@ -143,6 +146,9 @@ export function defineAgent(definition: AgentDefinition): Plugin {
       EFFECT_METHODS.verifyReady,
       (input) => effects.verifyReady(parseReadinessContext(input)),
     );
+  }
+  for (const provider of definition.traceProviders ?? []) {
+    plugin.declareTraceProvider(provider);
   }
 
   return plugin;

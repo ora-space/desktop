@@ -69,9 +69,9 @@ impl From<GatewayError> for GatewayFailure {
     fn from(error: GatewayError) -> Self {
         match error {
             GatewayError::Connection(connection) => Self::Connection(connection),
-            GatewayError::DataDirectory(_) | GatewayError::Lifecycle(_) => {
-                Self::Other(error.to_string())
-            }
+            GatewayError::DataDirectory(_)
+            | GatewayError::Lifecycle(_)
+            | GatewayError::TraceContext(_) => Self::Other(error.to_string()),
         }
     }
 }
@@ -97,6 +97,23 @@ pub trait SurfacePluginGateway: Clone + Send + Sync + 'static {
         plugin_id: &PluginId,
         wait: Duration,
     ) -> impl Future<Output = Result<Self::Connection, GatewayFailure>> + Send;
+
+    /// Issues an opaque context bound to the exact consumer generation serving a workbench call.
+    fn issue_invocation_context(
+        &self,
+        plugin_id: PluginId,
+        generation: PluginGenerationKey,
+    ) -> String;
+
+    /// Adds the selected Ora session's trace grant to a previously issued context.
+    fn grant_session_trace_context(
+        &self,
+        context_id: &str,
+        session_id: &str,
+    ) -> Result<(), GatewayFailure>;
+
+    /// Revokes a context as soon as the owning workbench closes.
+    fn revoke_invocation_context(&self, context_id: &str);
 
     /// Stops the plugin process; the caller has already verified that no instance is left.
     fn stop_if_idle(
@@ -125,6 +142,27 @@ impl SurfacePluginGateway for Arc<PluginGateway> {
         PluginGateway::ensure_running(self, plugin_id, wait)
             .await
             .map_err(GatewayFailure::from)
+    }
+
+    fn issue_invocation_context(
+        &self,
+        plugin_id: PluginId,
+        generation: PluginGenerationKey,
+    ) -> String {
+        PluginGateway::issue_invocation_context(self, plugin_id, generation)
+    }
+
+    fn grant_session_trace_context(
+        &self,
+        context_id: &str,
+        session_id: &str,
+    ) -> Result<(), GatewayFailure> {
+        PluginGateway::grant_session_trace_context(self, context_id, session_id)
+            .map_err(GatewayFailure::from)
+    }
+
+    fn revoke_invocation_context(&self, context_id: &str) {
+        PluginGateway::revoke_invocation_context(self, context_id);
     }
 
     async fn stop_if_idle(&self, plugin_id: &PluginId) -> Result<(), GatewayFailure> {

@@ -37,6 +37,8 @@ pub struct BackendPaths {
     pub app_data_directory: PathBuf,
     /// Ora home root (`~/.ora`) containing plugins and worktrees.
     pub home_directory: PathBuf,
+    /// Operating-system user home used to resolve host-authorized plugin resources.
+    pub user_home_directory: PathBuf,
     /// Bundled Deno executable used for plugin activation.
     pub deno_path: PathBuf,
     /// Directory against which persisted relative local Workspace locations are resolved.
@@ -152,6 +154,7 @@ impl Backend {
             PluginApi::open(
                 pool.clone(),
                 paths.home_directory.clone(),
+                paths.user_home_directory,
                 paths.deno_path,
                 clock,
                 app_events.publisher(),
@@ -272,7 +275,10 @@ impl Backend {
 
     /// Returns the plugin data-plane gateway the desktop surface layer drives.
     pub fn plugin_gateway(&self) -> Arc<PluginGateway> {
-        Arc::new(PluginGateway::new(Arc::clone(&self.plugin)))
+        Arc::new(PluginGateway::new(
+            Arc::clone(&self.plugin),
+            Arc::clone(&self.agent_runtime),
+        ))
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
@@ -1631,6 +1637,7 @@ mod tests {
         BackendPaths {
             app_data_directory: app_data_directory.to_path_buf(),
             home_directory: home_directory.to_path_buf(),
+            user_home_directory: home_directory.to_path_buf(),
             deno_path: PathBuf::from("deno"),
             relative_path_base: app_data_directory.to_path_buf(),
             timezone: chrono_tz::UTC,
