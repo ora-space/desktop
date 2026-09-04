@@ -128,6 +128,7 @@ fn concurrent_completions_commit_once_and_leave_the_session_read_only() {
                 session_id: "session-1".to_string(),
                 prompt: vec![],
                 record_prompt: None,
+                model: None,
             })
             .await
             .err()
@@ -182,6 +183,7 @@ fn failed_prompt_start_restores_the_awaiting_node_before_returning() {
                 session_id: "session-1".to_string(),
                 prompt: Vec::new(),
                 record_prompt: None,
+                model: None,
             })
             .await
             .err()

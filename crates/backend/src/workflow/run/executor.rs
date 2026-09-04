@@ -334,6 +334,9 @@ async fn drive_agent_node(
                 session_id: session_id.to_string(),
                 prompt,
                 record_prompt: None,
+                // The node's executor model was applied by the `startSession` above, which is
+                // still holding this session's provider; there is no attach left to carry one.
+                model: None,
             })
             .await?;
 

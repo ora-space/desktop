@@ -7,7 +7,9 @@
 
 use super::handoff::HandoffDebt;
 use super::routing::{SessionChannel, SessionControl, SessionEvent};
-use super::start::{PendingProviderSession, ProviderSessionRelease, create_provider_session};
+use super::start::{
+    PendingProviderSession, ProviderSessionRelease, apply_model_intent, create_provider_session,
+};
 use super::support::{map_acp_error, runtime_internal};
 use super::{RuntimeActor, SESSION_SETUP_TIMEOUT};
 use crate::BackendError;
@@ -46,17 +48,27 @@ impl RuntimeActor {
     /// The MCP check runs either way. An attach resolved its Snapshot moments earlier, but the
     /// configured set can change between that handshake and admission, and a session that was
     /// already attached has not been asked at all since its last turn.
-    pub(super) async fn ensure_attached(&mut self) -> Result<Vec<SessionUpdate>, BackendError> {
+    ///
+    /// `model` is the choice a picker had nowhere to put while this session held no provider. It
+    /// belongs to acquiring one, so it is consumed by the attach and ignored when none happens: a
+    /// session already holding a channel reports its own options and is configured through them.
+    pub(super) async fn ensure_attached(
+        &mut self,
+        model: Option<&str>,
+    ) -> Result<Vec<SessionUpdate>, BackendError> {
         let setup = match self.channel {
             Some(_) => Vec::new(),
-            None => self.attach_provider_session().await?,
+            None => self.attach_provider_session(model).await?,
         };
         self.ensure_current_mcp().await?;
         Ok(setup)
     }
 
     /// Acquires a provider channel for a session holding none, rebuilding when the old is unusable.
-    async fn attach_provider_session(&mut self) -> Result<Vec<SessionUpdate>, BackendError> {
+    async fn attach_provider_session(
+        &mut self,
+        model: Option<&str>,
+    ) -> Result<Vec<SessionUpdate>, BackendError> {
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
@@ -68,7 +80,9 @@ impl RuntimeActor {
             match self.restore_provider_session(channel, &snapshot).await {
                 Ok(config_options) => {
                     self.record_loaded_mcp(&snapshot);
-                    Some(config_options)
+                    // Applied against what this restore reported rather than the catalog the
+                    // picker offered: only the agent can say whether it still serves that model.
+                    Some(self.apply_restored_model(model, config_options).await)
                 }
                 Err(error) => {
                     // An agent that cannot restore this session is not a failed send: the
@@ -94,7 +108,7 @@ impl RuntimeActor {
                 self.persist_session_status(SessionStatus::Running);
                 Ok(setup_updates(config_options, Vec::new()))
             }
-            None => self.rebuild_provider_session().await,
+            None => self.rebuild_provider_session(model).await,
         }
     }
 
@@ -185,7 +199,10 @@ impl RuntimeActor {
     ///
     /// The debt is only raised when none is outstanding: a switch that has not delivered its
     /// transcript yet already owes the same conversation and already keeps its own books.
-    async fn rebuild_provider_session(&mut self) -> Result<Vec<SessionUpdate>, BackendError> {
+    async fn rebuild_provider_session(
+        &mut self,
+        model: Option<&str>,
+    ) -> Result<Vec<SessionUpdate>, BackendError> {
         let PendingProviderSession {
             release,
             agent_session_id,
@@ -200,7 +217,7 @@ impl RuntimeActor {
             &self.session.id,
             &self.session.agent_ref,
             &self.cwd,
-            /*model*/ None,
+            model,
         )
         .await?;
         ora_debug!(
@@ -221,6 +238,29 @@ impl RuntimeActor {
         self.live_mcp = LiveMcpState::Active(mcp_revision);
         self.persist_session_status(SessionStatus::Running);
         Ok(setup_updates(config_options, available_commands))
+    }
+
+    /// Applies a pending model choice to the provider session this attach just restored.
+    ///
+    /// `session/new` applies its caller's intent inside the handshake, so only the restore path
+    /// needs this. Nothing is owed when no choice was pending, which is every prompt after the
+    /// first one a reopened conversation sends.
+    async fn apply_restored_model(
+        &self,
+        model: Option<&str>,
+        config_options: Vec<SessionConfigOption>,
+    ) -> Vec<SessionConfigOption> {
+        let Some(model) = model else {
+            return config_options;
+        };
+        apply_model_intent(
+            &self.connections,
+            &self.session.agent_ref,
+            self.provider_session_id(),
+            model,
+            config_options,
+        )
+        .await
     }
 
     /// Persists a rebuilt binding once the prompt that carried the transcript was accepted.

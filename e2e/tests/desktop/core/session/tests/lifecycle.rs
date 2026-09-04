@@ -43,6 +43,7 @@ fn held_prompt(session_id: &str) -> PromptSessionRequest {
         session_id: session_id.to_string(),
         prompt: vec![ContentBlock::Text(TextContent::new("[hold-for-cancel]"))],
         record_prompt: None,
+        model: None,
     }
 }
 

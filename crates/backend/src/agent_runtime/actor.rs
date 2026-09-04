@@ -106,6 +106,7 @@ impl RuntimeActor {
                     operation_id,
                     prompt,
                     record_prompt,
+                    model,
                     events,
                     accepted,
                 } => {
@@ -113,7 +114,7 @@ impl RuntimeActor {
                     // acquired. Admission waits on that: a prompt that cannot reach an agent, or
                     // that cannot be given the MCP set configured right now, has to fail as the
                     // send it was, not as a turn that started and produced nothing.
-                    match self.ensure_attached().await {
+                    match self.ensure_attached(model.as_deref()).await {
                         Ok(setup) => {
                             let _ = accepted.send(Ok(()));
                             if publish_setup(&events, setup) {

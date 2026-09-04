@@ -5,7 +5,7 @@ mod tests {
 
     use crate::setup::DesktopTestSetup;
     use agent_client_protocol_schema::v1::{
-        ContentBlock, SessionConfigKind, SessionConfigOption, TextContent,
+        ContentBlock, SessionConfigKind, SessionConfigOption, SessionUpdate, TextContent,
     };
     use ora_backend::{Backend, BackendError, SessionEventStream};
     use ora_contracts::{
@@ -192,6 +192,7 @@ mod tests {
                 session_id,
                 prompt: vec![ContentBlock::Text(TextContent::new("hello"))],
                 record_prompt: None,
+                model: None,
             },
         )))?;
 
@@ -241,6 +242,7 @@ mod tests {
                 session_id,
                 prompt: vec![ContentBlock::Text(TextContent::new("hello"))],
                 record_prompt: None,
+                model: None,
             },
         )))?;
 
@@ -256,6 +258,67 @@ mod tests {
                 "session/prompt fake-session-1".to_string(),
             ],
             "a refused restore is answered with a replacement session that serves the turn",
+        );
+        Ok(())
+    }
+
+    /// A model chosen while a reopened conversation held no provider reaches the restored one.
+    ///
+    /// Reading a conversation never attaches, so its picker offers the agent's own pre-session
+    /// catalog and the choice made there has nowhere to go until a provider exists. The prompt
+    /// that attaches is what carries it, exactly as `startSession` carries one into `session/new`.
+    #[test]
+    fn a_model_chosen_before_attaching_is_applied_by_the_prompt_that_attaches()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let setup = DesktopTestSetup::new()?;
+        install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let runtime = current_thread_runtime()?;
+        let (session_id, workspace_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let session_id = runtime
+                .block_on(backend.sessions().start(StartSessionRequest {
+                    workspace_id: workspace_id.clone(),
+                    agent_ref: agent_ref(),
+                    model: None,
+                }))?
+                .session
+                .id;
+            (session_id, workspace_id)
+        };
+
+        // A fresh Backend over the same data directory is what a restart leaves behind: the row
+        // survives, every actor and provider session does not.
+        let backend = open_ready_backend(&setup)?;
+        // The catalog a picker offers for an unattached session comes from the agent itself, not
+        // from the session, so the intent is expressed in the agent's own vocabulary.
+        let chosen = runtime
+            .block_on(backend.agent_runtime().models(ListAgentModelsRequest {
+                agent_ref: agent_ref(),
+                workspace_id,
+            }))?
+            .models
+            .into_iter()
+            .find(|model| !model.default)
+            .ok_or("the fake agent offers a model other than its default")?
+            .id;
+        runtime.block_on(drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        })))?;
+
+        let updates = runtime.block_on(collect_prompt(backend.sessions().prompt(
+            PromptSessionRequest {
+                session_id,
+                prompt: vec![ContentBlock::Text(TextContent::new("hello"))],
+                record_prompt: None,
+                model: Some(chosen.clone()),
+            },
+        )))?;
+
+        assert_eq!(
+            attached_model(&updates),
+            Some(chosen),
+            "the attach publishes the options it reported, with the pending choice applied",
         );
         Ok(())
     }
@@ -289,11 +352,29 @@ mod tests {
     async fn drain_prompt(
         sending: impl Future<Output = Result<SessionEventStream<PromptSessionEvent>, BackendError>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        collect_prompt(sending).await.map(drop)
+    }
+
+    /// Consumes one prompt turn, keeping the session-scoped updates it carried ahead of the turn.
+    async fn collect_prompt(
+        sending: impl Future<Output = Result<SessionEventStream<PromptSessionEvent>, BackendError>>,
+    ) -> Result<Vec<SessionUpdate>, Box<dyn std::error::Error>> {
         let mut stream = sending.await?;
+        let mut updates = Vec::new();
         while let Some(event) = stream.recv().await {
-            event?;
+            if let PromptSessionEvent::SessionUpdate { update } = event? {
+                updates.push(update);
+            }
         }
-        Ok(())
+        Ok(updates)
+    }
+
+    /// Reads the model the agent reports as current in the options one attach published.
+    fn attached_model(updates: &[SessionUpdate]) -> Option<String> {
+        updates.iter().find_map(|update| match update {
+            SessionUpdate::ConfigOptionUpdate(config) => selected_model(&config.config_options),
+            _ => None,
+        })
     }
 
     /// Returns the session-lifecycle ACP calls the fake agent recorded, in order.

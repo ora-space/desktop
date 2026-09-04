@@ -197,6 +197,8 @@ pub(super) enum RuntimeCommand {
         operation_id: u64,
         prompt: Vec<ContentBlock>,
         record_prompt: Option<Vec<ContentBlock>>,
+        /// Applied by the attach this prompt performs, and ignored when none is needed.
+        model: Option<String>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
     },
@@ -919,6 +921,7 @@ impl AgentRuntimeManager {
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
         let prompt = request.prompt;
         let record_prompt = request.record_prompt;
+        let model = request.model;
         if prompt.is_empty()
             || prompt.iter().all(|content| {
                 matches!(content, ContentBlock::Text(text) if text.text.trim().is_empty())
@@ -961,6 +964,7 @@ impl AgentRuntimeManager {
                 operation_id,
                 prompt,
                 record_prompt,
+                model,
                 events: events_sender,
                 accepted: accepted_sender,
             })

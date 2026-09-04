@@ -134,6 +134,17 @@ export type PromptSessionRequest = {
   sessionId: string;
   prompt: Array<import("@agentclientprotocol/sdk").ContentBlock>;
   /**
+   * The model selected for a session that holds no provider session yet.
+   *
+   * A conversation is opened without reaching its agent, so one that has only been read has no
+   * configuration options to select against — its picker offers the agent's own pre-session
+   * catalog instead, and the choice made there has nowhere to go until a provider exists. This
+   * carries it to the attach this prompt performs, the same way `startSession` and
+   * `switchSessionAgent` carry one into the handshake they perform. A session already holding a
+   * provider ignores it and is configured through `setSessionConfig`.
+   */
+  model?: string | null;
+  /**
    * What Ora records as the user turn, when it differs from the prompt the
    * agent actually receives (e.g. a role/skill expansion the user should not
    * see echoed back). Defaults to `prompt` when omitted.

@@ -65,13 +65,13 @@ impl RuntimeActor {
                             self.run_load(events, accepted).await;
                             return;
                         }
-                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, events, accepted } => {
+                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, model, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             // Admission goes through the same attach as the idle loop's. The
                             // channel is already back, so nothing is opened here; what still has
                             // to hold is that the provider carries the current MCP set.
-                            match self.ensure_attached().await {
+                            match self.ensure_attached(model.as_deref()).await {
                                 Ok(setup) => {
                                     let _ = accepted.send(Ok(()));
                                     if super::publish_setup(&events, setup) {

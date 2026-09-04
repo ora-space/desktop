@@ -213,6 +213,16 @@ pub struct PromptSessionRequest {
     pub session_id: String,
     #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").ContentBlock>")]
     pub prompt: Vec<ContentBlock>,
+    /// The model selected for a session that holds no provider session yet.
+    ///
+    /// A conversation is opened without reaching its agent, so one that has only been read has no
+    /// configuration options to select against — its picker offers the agent's own pre-session
+    /// catalog instead, and the choice made there has nowhere to go until a provider exists. This
+    /// carries it to the attach this prompt performs, the same way `startSession` and
+    /// `switchSessionAgent` carry one into the handshake they perform. A session already holding a
+    /// provider ignores it and is configured through `setSessionConfig`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// What Ora records as the user turn, when it differs from the prompt the
     /// agent actually receives (e.g. a role/skill expansion the user should not
     /// see echoed back). Defaults to `prompt` when omitted.
@@ -488,6 +498,7 @@ mod tests {
             session_id: "session-1".to_string(),
             prompt: vec![ContentBlock::Text(TextContent::new("hello").meta(metadata))],
             record_prompt: None,
+            model: None,
         };
 
         assert_eq!(
