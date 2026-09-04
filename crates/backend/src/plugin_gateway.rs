@@ -7,12 +7,14 @@
 //! emit (`ui/push`), and register the surface closer. The wider plugin management API stays on
 //! `Backend`.
 
+use crate::agent_runtime::AgentRuntimeManager;
 use crate::plugin::PluginApi;
 use ora_contracts::StopPluginRequest;
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::{
-    ConnectionError, DenoPluginRuntime, InboundNotification, PluginGenerationLease,
-    PluginLifecycleError, SurfaceCloser,
+    ConnectionError, DenoPluginRuntime, InboundNotification, PluginGenerationKey,
+    PluginGenerationLease, PluginLifecycleError, SurfaceCloser, TraceContextGrant,
+    TraceSessionGrant,
 };
 use ora_plugin_manager::InstalledPlugin;
 use std::path::PathBuf;
@@ -30,17 +32,23 @@ pub enum GatewayError {
     Connection(#[source] ConnectionError),
     #[error("plugin lifecycle operation failed")]
     Lifecycle(#[source] PluginLifecycleError),
+    #[error("trace context could not be prepared: {0}")]
+    TraceContext(String),
 }
 
 /// Plugin process access for the desktop surface layer.
 pub struct PluginGateway {
     plugin: Arc<PluginApi>,
+    agent_runtime: Arc<AgentRuntimeManager>,
 }
 
 impl PluginGateway {
     /// Wraps the backend's plugin composition.
-    pub(crate) fn new(plugin: Arc<PluginApi>) -> Self {
-        Self { plugin }
+    pub(crate) fn new(plugin: Arc<PluginApi>, agent_runtime: Arc<AgentRuntimeManager>) -> Self {
+        Self {
+            plugin,
+            agent_runtime,
+        }
     }
 
     /// Returns the installed package for `plugin_id` from the cached discovery snapshot.
@@ -82,6 +90,81 @@ impl PluginGateway {
             .lifecycle()
             .connection(plugin_id)
             .map_err(GatewayError::Connection)
+    }
+
+    /// Issues an opaque invocation context bound to the exact consumer process generation.
+    pub fn issue_invocation_context(
+        &self,
+        plugin_id: PluginId,
+        generation: PluginGenerationKey,
+    ) -> String {
+        self.plugin.issue_invocation_context(plugin_id, generation)
+    }
+
+    /// Grants a consumer context access to the selected Ora session's provider-declared traces.
+    pub fn grant_session_trace_context(
+        &self,
+        context_id: &str,
+        ora_session_id: &str,
+    ) -> Result<(), GatewayError> {
+        let current = self
+            .agent_runtime
+            .trace_session_binding(ora_session_id)
+            .map_err(|error| GatewayError::TraceContext(error.to_string()))?;
+        let mut bindings = self
+            .agent_runtime
+            .trace_session_catalog(ora_session_id)
+            .map_err(|error| GatewayError::TraceContext(error.to_string()))?;
+        if !bindings
+            .iter()
+            .any(|binding| binding.ora_session_id == current.ora_session_id)
+        {
+            bindings.push(current);
+        }
+        let sessions = bindings
+            .into_iter()
+            .filter_map(|binding| {
+                let provider = self
+                    .plugin
+                    .lifecycle()
+                    .connection(&binding.provider_plugin_id)
+                    .ok()?;
+                Some(TraceSessionGrant {
+                    ora_session_id: binding.ora_session_id,
+                    provider_plugin_id: binding.provider_plugin_id,
+                    provider_generation: provider.key(),
+                    provider_session_id: binding.provider_session_id,
+                    workspace_root: binding.workspace_root,
+                    providers: provider.registration().trace_providers,
+                    label: binding.label,
+                    updated_at_ms: binding.updated_at_ms,
+                })
+            })
+            .collect::<Vec<_>>();
+        if sessions.is_empty() {
+            return Err(GatewayError::TraceContext(
+                "no trace providers are currently available".to_string(),
+            ));
+        }
+        let granted = self.plugin.grant_trace_context(
+            context_id,
+            TraceContextGrant {
+                current_ora_session_id: ora_session_id.to_string(),
+                sessions,
+            },
+        );
+        if granted {
+            Ok(())
+        } else {
+            Err(GatewayError::TraceContext(
+                "invocation context is unavailable".to_string(),
+            ))
+        }
+    }
+
+    /// Revokes an invocation context after its owning page is closed.
+    pub fn revoke_invocation_context(&self, context_id: &str) {
+        self.plugin.revoke_invocation_context(context_id);
     }
 
     /// Stops the plugin process after its last surface instance has been idle long enough.

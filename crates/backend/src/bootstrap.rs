@@ -275,7 +275,10 @@ impl Backend {
 
     /// Returns the plugin data-plane gateway the desktop surface layer drives.
     pub fn plugin_gateway(&self) -> Arc<PluginGateway> {
-        Arc::new(PluginGateway::new(Arc::clone(&self.plugin)))
+        Arc::new(PluginGateway::new(
+            Arc::clone(&self.plugin),
+            Arc::clone(&self.agent_runtime),
+        ))
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.

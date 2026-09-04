@@ -121,6 +121,7 @@ commands.allow = [
     "surface_capabilities",
     "surface_list",
     "surface_open",
+    "surface_open_session_trace_dashboard",
     "surface_close",
     "surface_set_bounds",
     "surface_set_visible",

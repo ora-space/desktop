@@ -118,6 +118,7 @@ desktop_command_registry! {
     surface::commands::surface_capabilities,
     surface::commands::surface_list,
     surface::commands::surface_open,
+    surface::commands::surface_open_session_trace_dashboard,
     surface::commands::surface_close,
     surface::commands::surface_set_bounds,
     surface::commands::surface_set_visible,

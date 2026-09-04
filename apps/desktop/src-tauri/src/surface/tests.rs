@@ -134,6 +134,24 @@ impl SurfacePluginGateway for FakeGateway {
         Ok(self.connection.clone())
     }
 
+    fn issue_invocation_context(
+        &self,
+        _plugin_id: PluginId,
+        generation: PluginGenerationKey,
+    ) -> String {
+        format!("test-context-{}", generation.0)
+    }
+
+    fn grant_session_trace_context(
+        &self,
+        _context_id: &str,
+        _session_id: &str,
+    ) -> Result<(), GatewayFailure> {
+        Ok(())
+    }
+
+    fn revoke_invocation_context(&self, _context_id: &str) {}
+
     async fn stop_if_idle(&self, _plugin_id: &PluginId) -> Result<(), GatewayFailure> {
         Ok(())
     }
@@ -381,7 +399,7 @@ async fn workbench_bridge_enforces_the_effective_method_set() {
             vec![(
                 "counter/get".to_owned(),
                 json!({
-                    "surface": { "instance_id": record.instance.value(), "generation": 3 },
+                    "context": { "id": "test-context-3" },
                     "input": { "city": "SH" },
                 }),
             )],

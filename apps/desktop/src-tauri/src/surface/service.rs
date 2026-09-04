@@ -4,7 +4,7 @@
 use crate::surface::capabilities::SurfaceCapabilities;
 use crate::surface::downloads::DownloadDispatcher;
 use crate::surface::error::SurfaceError;
-use crate::surface::gateway::SurfacePluginGateway;
+use crate::surface::gateway::{SurfaceConnection, SurfacePluginGateway};
 use crate::surface::idle::IdleTimers;
 use crate::surface::windowed::WindowedAdapter;
 use ora_domain::PluginId;
@@ -95,8 +95,105 @@ impl<G: SurfacePluginGateway, R: Runtime> SurfaceService<G, R> {
         Ok(self.registry.record(record.instance).unwrap_or(record))
     }
 
+    /// Opens the built-in Dashboard workbench with a trace grant for one Ora session.
+    pub async fn open_session_trace_dashboard(
+        &self,
+        session_id: &str,
+        target: MountTarget,
+    ) -> Result<SurfaceRecord, SurfaceError> {
+        let plugin_id = PluginId::new("official", "ora-space.agent-dashboard")
+            .expect("the built-in dashboard plugin id is valid");
+        let definition = self.definition(&plugin_id)?;
+        let target = match target {
+            MountTarget::Embedded if !self.capabilities.embedded => MountTarget::Windowed,
+            MountTarget::Embedded | MountTarget::Windowed => target,
+        };
+        self.idle.disarm(&plugin_id);
+
+        let connection = self
+            .gateway
+            .ensure_running(&plugin_id, std::time::Duration::from_secs(15))
+            .await
+            .map_err(|error| SurfaceError::Internal(error.to_string()))?;
+        let generation = connection.key();
+        let prepared_context = self
+            .gateway
+            .issue_invocation_context(plugin_id.clone(), generation);
+        if let Err(error) = self
+            .gateway
+            .grant_session_trace_context(&prepared_context, session_id)
+        {
+            self.gateway.revoke_invocation_context(&prepared_context);
+            return Err(SurfaceError::Internal(error.to_string()));
+        }
+
+        let (record, effects) = match self.registry.open(definition, target) {
+            Ok(opened) => opened,
+            Err(OpenError::AlreadyOpen(existing)) => {
+                let Some(bound) = self
+                    .registry
+                    .bind_workbench_generation(existing.instance, generation.0)
+                else {
+                    self.gateway.revoke_invocation_context(&prepared_context);
+                    return Err(SurfaceError::Internal(
+                        "dashboard instance disappeared".to_owned(),
+                    ));
+                };
+                if bound != generation.0 {
+                    self.gateway.revoke_invocation_context(&prepared_context);
+                    return Err(SurfaceError::Internal(
+                        "dashboard plugin restarted; close and reopen the dashboard".to_owned(),
+                    ));
+                }
+                let Some(context_id) = self
+                    .registry
+                    .workbench_context(existing.instance, || prepared_context.clone())
+                else {
+                    self.gateway.revoke_invocation_context(&prepared_context);
+                    return Err(SurfaceError::Internal(
+                        "dashboard instance disappeared".to_owned(),
+                    ));
+                };
+                if context_id != prepared_context {
+                    self.gateway.revoke_invocation_context(&prepared_context);
+                    self.gateway
+                        .grant_session_trace_context(&context_id, session_id)
+                        .map_err(|error| SurfaceError::Internal(error.to_string()))?;
+                }
+                self.reload(existing.instance)?;
+                self.focus(&existing);
+                return Ok(*existing);
+            }
+        };
+        if self
+            .registry
+            .bind_workbench_generation(record.instance, generation.0)
+            .filter(|bound| *bound == generation.0)
+            .is_none()
+        {
+            self.gateway.revoke_invocation_context(&prepared_context);
+            return Err(SurfaceError::Internal(
+                "dashboard instance disappeared".to_owned(),
+            ));
+        }
+        if !self
+            .registry
+            .bind_workbench_context(record.instance, prepared_context.clone())
+        {
+            self.gateway.revoke_invocation_context(&prepared_context);
+            return Err(SurfaceError::Internal(
+                "dashboard instance disappeared".to_owned(),
+            ));
+        }
+        self.execute(record.instance, effects);
+        Ok(self.registry.record(record.instance).unwrap_or(record))
+    }
+
     /// Closes one instance; a close that is already in flight is accepted silently.
     pub fn close(&self, instance: SurfaceInstanceId) -> Result<(), SurfaceError> {
+        if let Some(context_id) = self.registry.take_workbench_context(instance) {
+            self.gateway.revoke_invocation_context(&context_id);
+        }
         self.command(instance, SurfaceCommand::Close)
     }
 

@@ -25,6 +25,8 @@ struct RegistryInner {
     /// first successful bridge connection and never rebound: a page keeps state derived from
     /// one process generation, so a restarted process must get a fresh instance instead.
     workbench_generations: HashMap<SurfaceInstanceId, u64>,
+    /// Opaque host-issued context, stable for the life of one workbench page instance.
+    workbench_contexts: HashMap<SurfaceInstanceId, String>,
     /// Keyed by label text because hosts report raw strings from the webview runtime.
     by_label: HashMap<String, SurfaceInstanceId>,
     /// Conflict table for `InstancePolicy::Singleton`, keyed by the plugin that owns the surface.
@@ -198,6 +200,43 @@ impl SurfaceRegistry {
         )
     }
 
+    /// Returns the page instance's stable host-issued invocation context, creating it once.
+    pub fn workbench_context(
+        &self,
+        instance: SurfaceInstanceId,
+        issue: impl FnOnce() -> String,
+    ) -> Option<String> {
+        let mut inner = self.lock();
+        let record = inner.instances.get(&instance)?;
+        if !matches!(record.definition.source, SurfaceSource::Workbench(_)) {
+            return None;
+        }
+        if let Some(context) = inner.workbench_contexts.get(&instance) {
+            return Some(context.clone());
+        }
+        let context = issue();
+        inner.workbench_contexts.insert(instance, context.clone());
+        Some(context)
+    }
+
+    /// Installs a context prepared by a trusted host action before the page is created.
+    pub fn bind_workbench_context(&self, instance: SurfaceInstanceId, context: String) -> bool {
+        let mut inner = self.lock();
+        let Some(record) = inner.instances.get(&instance) else {
+            return false;
+        };
+        if !matches!(record.definition.source, SurfaceSource::Workbench(_)) {
+            return false;
+        }
+        inner.workbench_contexts.insert(instance, context);
+        true
+    }
+
+    /// Removes and returns a page's context so the host can revoke its authority immediately.
+    pub fn take_workbench_context(&self, instance: SurfaceInstanceId) -> Option<String> {
+        self.lock().workbench_contexts.remove(&instance)
+    }
+
     /// Resolves a webview label to its record; the authorization source for assets, downloads,
     /// and bridge calls. Unregistered labels yield `None`.
     pub fn resolve_label(&self, label: &str) -> Option<SurfaceRecord> {
@@ -261,6 +300,7 @@ impl RegistryInner {
                     self.by_label.remove(record.label.as_str());
                     self.by_plugin.remove(&record.definition.plugin_id);
                     self.workbench_generations.remove(&instance);
+                    self.workbench_contexts.remove(&instance);
                 }
             }
         }
@@ -540,6 +580,30 @@ mod tests {
                 after_close,
             ),
             (Some(3), Some(3), true, true, true, None)
+        );
+    }
+
+    /// Invocation contexts are stable per workbench and disappear when explicitly taken.
+    #[test]
+    fn binds_and_takes_workbench_invocation_context() {
+        let registry = SurfaceRegistry::default();
+        let (record, _) = registry
+            .open(workbench_definition("acme.panel"), MountTarget::Windowed)
+            .expect("open");
+
+        let first = registry.workbench_context(record.instance, || "context-1".to_string());
+        let second = registry.workbench_context(record.instance, || "context-2".to_string());
+        let taken = registry.take_workbench_context(record.instance);
+        let after_take = registry.workbench_context(record.instance, || "context-3".to_string());
+
+        assert_eq!(
+            (first, second, taken, after_take),
+            (
+                Some("context-1".to_string()),
+                Some("context-1".to_string()),
+                Some("context-1".to_string()),
+                Some("context-3".to_string()),
+            )
         );
     }
 

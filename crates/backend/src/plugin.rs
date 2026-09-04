@@ -554,6 +554,11 @@ impl PluginApi {
         self.invocation_contexts.grant_trace(context_id, grant)
     }
 
+    /// Revokes a host-issued invocation context when its owning surface closes.
+    pub(crate) fn revoke_invocation_context(&self, context_id: &str) {
+        self.invocation_contexts.revoke(context_id);
+    }
+
     /// Opens a receiver of every notification running plugin processes emit from now on.
     pub(crate) fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
         self.notifications.subscribe()
