@@ -27,7 +27,6 @@ import {
   IconArrowBigUpLines,
   IconDots,
   IconLoader2,
-  IconProgressDown,
   IconRefresh,
   IconSearch,
   IconSettingsBolt,
@@ -40,6 +39,7 @@ import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
+import { PluginDownloadProgress } from "./plugin-download-progress";
 
 /** The installed-plugin manager exposes package lifecycle commands without process start/stop. */
 export function PluginManager({
@@ -236,13 +236,27 @@ function InstalledPluginRow({
 
         {hasUpdate && (
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             disabled={busy}
+            className={update.isPending ? "disabled:opacity-100" : undefined}
             onClick={() => update.mutate({}, { onError: failUpdate })}
           >
-            {update.isPending ? <IconProgressDown /> : <IconArrowBigUpLines />}
-            {t("settings.plugins.update")}
+            {update.isPending ? (
+              <PluginDownloadProgress
+                progress={update.progress}
+                label={t("settings.plugins.downloadProgress")}
+              >
+                <IconArrowBigUpLines className="size-3.5" />
+              </PluginDownloadProgress>
+            ) : (
+              <IconArrowBigUpLines />
+            )}
+            {t(
+              update.isPending
+                ? "settings.plugins.updating"
+                : "settings.plugins.update",
+            )}
           </Button>
         )}
 

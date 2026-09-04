@@ -16,8 +16,8 @@ interface PluginOperationState {
   activities: Record<string, PluginOperationActivity>;
   /** Starts an operation only when the same plugin has no conflicting work in flight. */
   begin: (pluginId: string, kind: PluginOperationKind) => boolean;
-  /** Retains native install transfer progress across settings-page navigation. */
-  reportInstallProgress: (progress: PluginInstallProgress) => void;
+  /** Retains native package transfer progress across settings-page navigation. */
+  reportTransferProgress: (progress: PluginInstallProgress) => void;
   /** Briefly records install success so the completion glyph can animate after query refresh. */
   completeInstall: (pluginId: string) => void;
   /** Clears the exact completion after its glyph animation ends. */
@@ -42,15 +42,19 @@ export const usePluginOperationStore = create<PluginOperationState>(
       }));
       return true;
     },
-    reportInstallProgress: (progress) => {
+    reportTransferProgress: (progress) => {
       const activity = get().activities[progress.pluginId];
-      if (activity?.state !== "pending" || activity.kind !== "install") return;
+      if (
+        activity?.state !== "pending" ||
+        (activity.kind !== "install" && activity.kind !== "update")
+      )
+        return;
       set((state) => ({
         activities: {
           ...state.activities,
           [progress.pluginId]: {
             state: "pending",
-            kind: "install",
+            kind: activity.kind,
             progress,
           },
         },

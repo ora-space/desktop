@@ -49,5 +49,9 @@ export function useUpdatePlugin(pluginId: string) {
     isPending: activity?.state === "pending" && activity.kind === "update",
     mutate,
     mutateAsync,
+    progress:
+      activity?.state === "pending" && activity.kind === "update"
+        ? activity.progress
+        : null,
   };
 }

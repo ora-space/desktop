@@ -400,6 +400,34 @@ where
         source: ResolvedReleaseSource,
         data_dir: &Path,
     ) -> Result<InstalledPackage, UpdateError> {
+        self.update_package(
+            manifest, namespace, source, data_dir, /*progress*/ None,
+        )
+        .await
+    }
+
+    /// Updates a release while forwarding byte-level network download progress to the caller.
+    pub async fn update_with_progress(
+        &self,
+        manifest: &PluginManifest,
+        namespace: &PluginNamespace,
+        source: ResolvedReleaseSource,
+        data_dir: &Path,
+        progress: ProgressCallback,
+    ) -> Result<InstalledPackage, UpdateError> {
+        self.update_package(manifest, namespace, source, data_dir, Some(progress))
+            .await
+    }
+
+    /// Shares update validation and retirement between observed and unobserved transfers.
+    async fn update_package(
+        &self,
+        manifest: &PluginManifest,
+        namespace: &PluginNamespace,
+        source: ResolvedReleaseSource,
+        data_dir: &Path,
+        progress: Option<ProgressCallback>,
+    ) -> Result<InstalledPackage, UpdateError> {
         let name = manifest.name();
         let id = installed_id(namespace, name.as_str());
         let plugin_root = installed_root(data_dir)
@@ -434,7 +462,9 @@ where
                 available: manifest.version().to_string(),
             });
         }
-        let package_dir = self.install(manifest, namespace, source, data_dir).await?;
+        let package_dir = self
+            .install_package(manifest, namespace, source, data_dir, progress)
+            .await?;
         retire_stale_versions(&id.canonical(), &plugin_root, &package_dir)?;
         Ok(InstalledPackage { package_dir, id })
     }
@@ -660,17 +690,43 @@ mod tests {
         installed_id,
     };
     use futures::executor::block_on;
-    use ora_domain::{PluginId, PluginNamespace};
+    use ora_domain::PluginNamespace;
     use ora_plugin_manifest::{HookTarget, PluginManifest};
-    use ora_utils::http::{DownloadSource, LocalFileDownloader};
+    use ora_utils::http::{
+        DownloadError, DownloadOutcome, DownloadRequest, DownloadSource, HttpDownload,
+        LocalFileDownloader, Progress,
+    };
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
     use std::fs::{self, File};
+    use std::future::Future;
     use std::io::Write;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    /// Emits a deterministic snapshot before delegating to the real local-file copy path.
+    #[derive(Clone, Copy)]
+    struct ProgressReportingLocalDownloader;
+
+    impl HttpDownload for ProgressReportingLocalDownloader {
+        fn download(
+            &self,
+            request: DownloadRequest,
+        ) -> impl Future<Output = Result<DownloadOutcome, DownloadError>> + Send {
+            async move {
+                if let Some(progress) = &request.progress {
+                    progress(Progress {
+                        bytes: 3,
+                        total: Some(4),
+                    });
+                }
+                LocalFileDownloader.download(request).await
+            }
+        }
+    }
 
     /// Computes the SHA-256 digest of a file as raw bytes for the manifest.
     fn sha256_file(path: &Path) -> [u8; 32] {
@@ -1394,12 +1450,20 @@ mod tests {
         let manifest =
             PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", digest)).unwrap();
 
-        let package = block_on(Installer::new(LocalFileDownloader).update(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
-        ))
+        let recorded_progress = Arc::new(Mutex::new(Vec::new()));
+        let progress = {
+            let recorded_progress = Arc::clone(&recorded_progress);
+            Arc::new(move |snapshot| recorded_progress.lock().unwrap().push(snapshot))
+        };
+        let package = block_on(
+            Installer::new(ProgressReportingLocalDownloader).update_with_progress(
+                &manifest,
+                &PluginNamespace::official(),
+                ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+                temp_dir.path(),
+                progress,
+            ),
+        )
         .unwrap();
 
         let new_package = temp_dir
@@ -1417,6 +1481,13 @@ mod tests {
             }
         );
         assert!(new_package.join("main.js").is_file());
+        assert_eq!(
+            *recorded_progress.lock().unwrap(),
+            vec![Progress {
+                bytes: 3,
+                total: Some(4),
+            }]
+        );
         assert!(
             !temp_dir
                 .path()

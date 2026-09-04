@@ -20,7 +20,6 @@ import {
   IconCheck,
   IconDownload,
   IconLoader2,
-  IconProgressDown,
   IconRefresh,
   IconSearch,
   IconSettings,
@@ -39,6 +38,7 @@ import { PluginManager } from "./plugin-manager";
 import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
+import { PluginDownloadProgress } from "./plugin-download-progress";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -333,17 +333,6 @@ function AvailablePluginCard({
   const showContractError = useContractErrorToast();
   const install = useInstallPlugin(plugin.id);
   const update = useUpdatePlugin(plugin.id);
-  const downloadPercentage =
-    install.progress?.total !== null &&
-    install.progress?.total !== undefined &&
-    install.progress.total > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (install.progress.downloaded / install.progress.total) * 100,
-          ),
-        )
-      : null;
   const hasUpdate = plugin.version !== installed?.version;
   const incompatible = plugin.compatibility === "incompatible";
 
@@ -404,8 +393,8 @@ function AvailablePluginCard({
             className="shrink-0 disabled:opacity-100"
             aria-label={t("settings.plugins.installing")}
           >
-            <CircularDownloadProgress
-              value={downloadPercentage}
+            <PluginDownloadProgress
+              progress={install.progress}
               label={t("settings.plugins.downloadProgress")}
             />
           </Button>
@@ -414,10 +403,15 @@ function AvailablePluginCard({
             variant="ghost"
             size="icon"
             disabled
-            className="shrink-0"
+            className="shrink-0 disabled:opacity-100"
             aria-label={t("settings.plugins.updating")}
           >
-            <IconProgressDown />
+            <PluginDownloadProgress
+              progress={update.progress}
+              label={t("settings.plugins.downloadProgress")}
+            >
+              <IconArrowBigUpLines className="size-3.5" />
+            </PluginDownloadProgress>
           </Button>
         ) : installed === undefined ? (
           <Button
@@ -497,63 +491,6 @@ function CompletedInstallIcon({
             : "size-3.5 stroke-[2.5]"
         }
       />
-    </span>
-  );
-}
-
-/** Renders determinate or indeterminate package progress inside the marketplace action button. */
-function CircularDownloadProgress({
-  value,
-  label,
-}: {
-  value: number | null;
-  label: string;
-}) {
-  const radius = 11;
-  const circumference = 2 * Math.PI * radius;
-  const offset =
-    value === null ? 0 : circumference * (1 - Math.max(0, value) / 100);
-
-  return (
-    <span
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={value ?? undefined}
-      className="relative grid size-7 place-items-center"
-    >
-      <svg
-        viewBox="0 0 28 28"
-        aria-hidden="true"
-        className={
-          value === null
-            ? "size-7 -rotate-90 animate-spin"
-            : "size-7 -rotate-90"
-        }
-      >
-        <circle
-          cx="14"
-          cy="14"
-          r={radius}
-          fill="none"
-          strokeWidth="2.5"
-          className="stroke-muted"
-        />
-        <circle
-          cx="14"
-          cy="14"
-          r={radius}
-          fill="none"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeDasharray={
-            value === null ? `18 ${circumference}` : circumference
-          }
-          strokeDashoffset={offset}
-          className="stroke-primary transition-[stroke-dashoffset] duration-300 ease-out"
-        />
-      </svg>
     </span>
   );
 }
