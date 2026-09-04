@@ -106,6 +106,7 @@ impl RuntimeActor {
         match restored {
             Some(config_options) => {
                 self.persist_session_status(SessionStatus::Running);
+                self.reported_config_options = config_options.clone();
                 Ok(setup_updates(config_options, Vec::new()))
             }
             None => self.rebuild_provider_session(model).await,
@@ -237,6 +238,7 @@ impl RuntimeActor {
         // rather than owing the refresh that an attach through `session/load` has to record.
         self.live_mcp = LiveMcpState::Active(mcp_revision);
         self.persist_session_status(SessionStatus::Running);
+        self.reported_config_options = config_options.clone();
         Ok(setup_updates(config_options, available_commands))
     }
 

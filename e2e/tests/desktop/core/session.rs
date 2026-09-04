@@ -323,6 +323,53 @@ mod tests {
         Ok(())
     }
 
+    /// A load answers with the live options while the session is attached, and with none when not.
+    ///
+    /// The client decides between configuring the live session and offering the agent's own
+    /// catalog on exactly this signal, so it has to mean attachment rather than merely "nothing
+    /// arrived yet" — otherwise a model chosen for a session that could already have been told
+    /// would be recorded as an intent and dropped by the prompt that finds it attached.
+    #[test]
+    fn a_load_reports_configuration_options_only_while_the_session_is_attached()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let setup = DesktopTestSetup::new()?;
+        install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let runtime = current_thread_runtime()?;
+        let session_id = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let started = runtime.block_on(backend.sessions().start(StartSessionRequest {
+                workspace_id,
+                agent_ref: agent_ref(),
+                model: None,
+            }))?;
+            // Still attached: `startSession` handed its channel straight to the actor.
+            let attached =
+                runtime.block_on(collect_load(backend.sessions().load(LoadSessionRequest {
+                    session_id: started.session.id.clone(),
+                })))?;
+            assert!(
+                attached_model(&attached).is_some(),
+                "a session holding its provider reports what that provider offers",
+            );
+            started.session.id
+        };
+
+        // A fresh Backend over the same data directory is what a restart leaves behind: the row
+        // survives, every actor and provider session does not.
+        let backend = open_ready_backend(&setup)?;
+        let updates = runtime.block_on(collect_load(
+            backend.sessions().load(LoadSessionRequest { session_id }),
+        ))?;
+
+        assert_eq!(
+            attached_model(&updates),
+            None,
+            "a conversation read without an agent has no provider to describe",
+        );
+        Ok(())
+    }
+
     /// Creates the project checkout these session tests run against and returns its Workspace.
     fn seed_workspace(
         setup: &DesktopTestSetup,
@@ -341,11 +388,21 @@ mod tests {
     async fn drain_load(
         opening: impl Future<Output = Result<SessionEventStream<LoadSessionEvent>, BackendError>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        collect_load(opening).await.map(drop)
+    }
+
+    /// Consumes a finite load stream, keeping the session-scoped updates it carried.
+    async fn collect_load(
+        opening: impl Future<Output = Result<SessionEventStream<LoadSessionEvent>, BackendError>>,
+    ) -> Result<Vec<SessionUpdate>, Box<dyn std::error::Error>> {
         let mut stream = opening.await?;
+        let mut updates = Vec::new();
         while let Some(event) = stream.recv().await {
-            event?;
+            if let LoadSessionEvent::SessionUpdate { update } = event? {
+                updates.push(update);
+            }
         }
-        Ok(())
+        Ok(updates)
     }
 
     /// Consumes one prompt turn, surfacing the first failure it carries.

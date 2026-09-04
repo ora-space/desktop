@@ -14,7 +14,9 @@ mod title_polling;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::CancelNotification;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
-use agent_client_protocol_schema::v1::{CloseSessionRequest, CloseSessionResponse, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate, SessionUpdate,
+};
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, StopReason};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_logging::{ora_debug, ora_warn};
@@ -175,6 +177,22 @@ impl RuntimeActor {
     ) {
         if accepted.send(Ok(())).is_err() {
             return;
+        }
+        // Ahead of the replay, and only while attached: these describe the provider serving this
+        // conversation, so a client can read their presence as "this session has an agent to
+        // configure" and their absence as "offer the agent's own catalog and let the next message
+        // carry the choice". Not recorded — this is the session's present, not its transcript.
+        if self.channel.is_some() && !self.reported_config_options.is_empty() {
+            let update = SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                self.reported_config_options.clone(),
+            ));
+            if events
+                .send(Ok(LoadSessionEvent::SessionUpdate { update }))
+                .await
+                .is_err()
+            {
+                return;
+            }
         }
         if let Replay::Delivered = self.replay_recorded_history(&events).await {
             let _ = events.send(Ok(LoadSessionEvent::Completed)).await;
@@ -722,6 +740,7 @@ impl RuntimeActor {
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
+        self.reported_config_options.clear();
         self.title_acquisition.close();
         self.live_mcp = LiveMcpState::Inactive;
         self.persist_session_status(SessionStatus::Stopped);
@@ -885,6 +904,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             app_events: AppEventHub::new().publisher(),
             title_acquisition: TitleAcquisition::disabled(),
@@ -958,6 +978,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             app_events: AppEventHub::new().publisher(),
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),

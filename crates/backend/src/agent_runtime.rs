@@ -45,7 +45,9 @@ use agent_client_protocol_schema::v1::AvailableCommand;
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
-use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
+use agent_client_protocol_schema::v1::{
+    SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
+};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::{
@@ -254,6 +256,14 @@ struct RuntimeActor {
     handoff: HandoffDebt,
     /// A provider session built to replace one that could not be restored, not yet in the row.
     rebuilt_binding: Option<RebuiltBinding>,
+    /// What the provider this actor is attached to last reported as its configuration.
+    ///
+    /// Held rather than recorded because it describes the provider serving the conversation right
+    /// now, not what was said in it. A load answers with it so that "this session reports options"
+    /// means "this session is attached" — the client decides between configuring the live session
+    /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
+    /// would silently drop a model chosen for a session that could already have been told.
+    reported_config_options: Vec<SessionConfigOption>,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
     title_acquisition: TitleAcquisition,
@@ -414,6 +424,7 @@ impl AgentRuntimeManager {
                     handoff: HandoffDebt::Settled,
                     title_acquisition,
                     live_mcp: LiveMcpState::Active(mcp_revision),
+                    config_options: config_options.clone(),
                 },
             )?;
             Ok::<_, BackendError>(StartSessionResponse {
@@ -673,6 +684,7 @@ impl AgentRuntimeManager {
                     handoff: HandoffDebt::Recorded,
                     title_acquisition: TitleAcquisition::locked(),
                     live_mcp: LiveMcpState::Active(mcp_revision),
+                    config_options: config_options.clone(),
                 },
             )?;
             Ok::<_, BackendError>(SwitchSessionAgentResponse {
@@ -1102,6 +1114,7 @@ impl AgentRuntimeManager {
                 handoff,
                 title_acquisition: TitleAcquisition::disabled(),
                 live_mcp: LiveMcpState::Inactive,
+                config_options: Vec::new(),
             },
         )
     }
@@ -1147,6 +1160,7 @@ impl AgentRuntimeManager {
                 connections: self.inner.connections.clone(),
                 handoff: setup.handoff,
                 rebuilt_binding: None,
+                reported_config_options: setup.config_options,
                 scheduler: self.inner.scheduler.clone(),
                 app_events: self.inner.app_events.clone(),
                 title_acquisition: setup.title_acquisition,
@@ -1193,6 +1207,8 @@ struct ActorSetup {
     handoff: HandoffDebt,
     title_acquisition: TitleAcquisition,
     live_mcp: LiveMcpState,
+    /// What the handshake that produced `channel` reported, empty when there is no channel.
+    config_options: Vec<SessionConfigOption>,
 }
 
 /// Builds the refusal returned while a session's history cannot be extended.

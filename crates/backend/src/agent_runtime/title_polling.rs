@@ -284,13 +284,19 @@ impl RuntimeActor {
 
     /// Accepts an ACP session-info title only while the actor's acquisition window is open.
     pub(in crate::agent_runtime) fn observe_session_update(&mut self, update: &SessionUpdate) {
-        let SessionUpdate::SessionInfoUpdate(info) = update else {
-            return;
-        };
-        let Some(title) = info.title.value() else {
-            return;
-        };
-        self.persist_agent_title(title);
+        match update {
+            SessionUpdate::SessionInfoUpdate(info) => {
+                if let Some(title) = info.title.value() {
+                    self.persist_agent_title(title);
+                }
+            }
+            // An agent may reconfigure itself mid-turn, so what this actor answers loads with
+            // stays level with what the provider last said rather than frozen at attach.
+            SessionUpdate::ConfigOptionUpdate(config) => {
+                self.reported_config_options = config.config_options.clone();
+            }
+            _ => {}
+        }
     }
 
     /// Locks acquisition and records the user-chosen title so later agent titles cannot win.
