@@ -66,7 +66,7 @@ Deno.test(
       id: 1,
       method: "counter/get",
       params: {
-        surface: { instance_id: 7, generation: 3 },
+        context: { id: "ctx-7" },
         input: { city: "SH" },
       },
     });
@@ -78,7 +78,7 @@ Deno.test(
       result: { value: 42 },
     });
     assertEquals(lastCall, {
-      surface: { instanceId: 7, generation: 3 },
+      context: { id: "ctx-7" },
       input: { city: "SH" },
     });
 
@@ -87,7 +87,7 @@ Deno.test(
   },
 );
 
-Deno.test("rejects a call missing its surface envelope", async () => {
+Deno.test("rejects a call missing its invocation context", async () => {
   const workbench = defineWorkbenchPlugin({
     methods: { "counter/get": () => null },
   });

@@ -56,6 +56,7 @@ impl DesktopTestSetup {
             paths: BackendPaths {
                 app_data_directory,
                 home_directory,
+                user_home_directory: root.join("user-home"),
                 deno_path: PathBuf::from("deno"),
                 relative_path_base: root,
                 timezone: chrono_tz::Asia::Shanghai,

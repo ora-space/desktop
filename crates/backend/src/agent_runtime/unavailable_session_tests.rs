@@ -44,6 +44,7 @@ fn test_manager(root: &Path, pool: &RepositoryPool, scheduler: Scheduler) -> Age
         PluginApi::open(
             pool.clone(),
             root.to_path_buf(),
+            root.to_path_buf(),
             PathBuf::from("deno"),
             SystemClock,
             app_events.clone(),

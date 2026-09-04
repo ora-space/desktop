@@ -31,6 +31,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> PluginApi {
     PluginApi::open(
         pool.clone(),
         root.to_path_buf(),
+        root.to_path_buf(),
         std::path::PathBuf::from("deno"),
         SystemClock,
         AppEventHub::new().publisher(),

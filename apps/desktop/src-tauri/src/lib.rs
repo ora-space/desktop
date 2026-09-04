@@ -155,6 +155,7 @@ fn bootstrap_desktop(
     let backend_paths = BackendPaths {
         app_data_directory: app_data_directory.clone(),
         home_directory: home_directory.clone(),
+        user_home_directory,
         deno_path: binary_paths.deno_path().to_path_buf(),
         relative_path_base: desktop_relative_path_base(&app_data_directory),
         timezone: resolved_timezone.timezone,
@@ -610,6 +611,7 @@ mod tests {
         BackendPaths {
             app_data_directory: root.to_path_buf(),
             home_directory: root.to_path_buf(),
+            user_home_directory: root.to_path_buf(),
             deno_path: std::path::PathBuf::from("deno"),
             relative_path_base: root.to_path_buf(),
             timezone: chrono_tz::UTC,

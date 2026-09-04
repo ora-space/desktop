@@ -15,6 +15,7 @@ export {
   type AgentProgram,
   spawnAgentProcess,
 } from "./agent_process.ts";
+export type { PluginInvocationContext } from "./context.ts";
 export type {
   EffectResourceDeclaration,
   TraceProviderDeclaration,
@@ -53,14 +54,23 @@ export {
 } from "./protocol/index.ts";
 export {
   createStorage,
+  decodeBase64,
+  encodeBase64,
   type PluginStorage,
   type StorageEntry,
 } from "./storage.ts";
+export {
+  createTraceClient,
+  DEFAULT_TRACE_CHUNK_BYTES,
+  MAX_TRACE_CHUNK_BYTES,
+  type TraceChunk,
+  type TraceClient,
+  type TraceResource,
+} from "./trace.ts";
 export {
   defineWorkbenchPlugin,
   type WorkbenchCall,
   type WorkbenchMethod,
   type WorkbenchPlugin,
   type WorkbenchPluginDefinition,
-  type WorkbenchSurface,
 } from "./workbench.ts";

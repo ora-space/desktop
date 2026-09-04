@@ -81,6 +81,11 @@ impl<Runtime: PluginRuntime> PluginGenerationLease<Runtime> {
     pub fn registered_methods(&self) -> HashSet<String> {
         self.runtime.registration().methods
     }
+
+    /// Returns the complete immutable registration for host-only capability composition.
+    pub fn registration(&self) -> ora_plugin_runtime::PluginRegistration {
+        self.runtime.registration()
+    }
 }
 
 impl<RuntimeLauncher, StatusPublisher, NotificationSink>

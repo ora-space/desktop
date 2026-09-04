@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginLaunchRequest {
     pub plugin_id: PluginId,
+    /// Lifecycle generation bound into contextual host capabilities for this process.
+    pub generation: crate::connection::PluginGenerationKey,
     pub deno_path: PathBuf,
     pub entrypoint: PathBuf,
     /// Package root, used as the process working directory so relative imports resolve locally.

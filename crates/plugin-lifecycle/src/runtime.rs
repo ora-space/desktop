@@ -1,11 +1,13 @@
 use crate::childprocess::{
     ChildProcessEnvironmentProvider, NoChildProcessEnvironment, PluginProcessHost,
 };
+use crate::context::PluginInvocationContexts;
 use crate::ports::{
     LaunchedRuntime, PluginCallError, PluginLaunchRequest, PluginRuntime, PluginRuntimeExit,
     PluginRuntimeFailure, PluginRuntimeLauncher,
 };
 use crate::storage::PluginStorage;
+use crate::trace::PluginTraceHost;
 use ora_plugin_runtime::{
     HostRequestError, HostRequestHandler, PluginProcessExit, PluginRegistration,
     PluginRuntime as ProcessPluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
@@ -25,6 +27,7 @@ use std::time::Duration;
 struct PluginHostRequests<E: ChildProcessEnvironmentProvider> {
     storage: PluginStorage,
     processes: Option<PluginProcessHost<TokioProcessSpawner, E>>,
+    trace: PluginTraceHost,
 }
 
 impl<E: ChildProcessEnvironmentProvider> HostRequestHandler for PluginHostRequests<E> {
@@ -34,6 +37,8 @@ impl<E: ChildProcessEnvironmentProvider> HostRequestHandler for PluginHostReques
                 Some(processes) => processes.handle(method, params).await,
                 None => Err(HostRequestError::method_not_found(method)),
             }
+        } else if method.starts_with("ora/trace/") {
+            self.trace.handle(method, params).await
         } else {
             self.storage.handle(method, params).await
         }
@@ -64,6 +69,8 @@ pub struct DenoPluginRuntimeLauncher<E: ChildProcessEnvironmentProvider = NoChil
 {
     timeouts: PluginRuntimeTimeouts,
     environment_provider: E,
+    contexts: PluginInvocationContexts,
+    user_home: std::path::PathBuf,
 }
 
 impl DenoPluginRuntimeLauncher<NoChildProcessEnvironment> {
@@ -72,6 +79,8 @@ impl DenoPluginRuntimeLauncher<NoChildProcessEnvironment> {
         Self {
             timeouts,
             environment_provider: NoChildProcessEnvironment,
+            contexts: PluginInvocationContexts::default(),
+            user_home: std::path::PathBuf::new(),
         }
     }
 }
@@ -85,7 +94,29 @@ impl<E: ChildProcessEnvironmentProvider> DenoPluginRuntimeLauncher<E> {
         Self {
             timeouts,
             environment_provider,
+            contexts: PluginInvocationContexts::default(),
+            user_home: std::path::PathBuf::new(),
         }
+    }
+
+    /// Creates a launcher with both subprocess environment and contextual host capabilities.
+    pub fn with_host_capabilities(
+        timeouts: PluginRuntimeTimeouts,
+        environment_provider: E,
+        contexts: PluginInvocationContexts,
+        user_home: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            timeouts,
+            environment_provider,
+            contexts,
+            user_home,
+        }
+    }
+
+    /// Returns the registry shared with every launched process handler.
+    pub fn invocation_contexts(&self) -> PluginInvocationContexts {
+        self.contexts.clone()
     }
 }
 
@@ -120,6 +151,8 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
     {
         let timeouts = self.timeouts;
         let environment_provider = self.environment_provider.clone();
+        let contexts = self.contexts.clone();
+        let user_home = self.user_home.clone();
         async move {
             let permissions = request
                 .permissions
@@ -142,6 +175,12 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
             let host_requests = PluginHostRequests {
                 storage: PluginStorage::new(request.data_dir),
                 processes: processes.clone(),
+                trace: PluginTraceHost::new(
+                    contexts.clone(),
+                    request.plugin_id.clone(),
+                    request.generation,
+                    user_home,
+                ),
             };
             let (runtime, notifications) = ProcessPluginRuntime::launch(
                 &TokioProcessSpawner::new(),
@@ -170,8 +209,12 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
             tokio::spawn({
                 let processes = processes.clone();
                 let runtime = runtime.clone();
+                let contexts = contexts.clone();
+                let plugin_id = request.plugin_id.clone();
+                let generation = request.generation;
                 async move {
                     runtime.wait_for_exit().await;
+                    contexts.revoke_generation(&plugin_id, generation);
                     if let Some(processes) = processes {
                         processes.kill_all().await;
                     }
@@ -254,6 +297,8 @@ mod tests {
     use super::{NoChildProcessEnvironment, PluginHostRequests};
     use crate::childprocess::CHILDPROCESS_SPAWN_METHOD;
     use crate::storage::PluginStorage;
+    use crate::{PluginGenerationKey, PluginInvocationContexts, PluginTraceHost};
+    use ora_domain::PluginId;
     use ora_plugin_runtime::{HostRequestError, HostRequestHandler};
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -266,6 +311,12 @@ mod tests {
         let host_requests: PluginHostRequests<NoChildProcessEnvironment> = PluginHostRequests {
             storage: PluginStorage::new(PathBuf::from(".")),
             processes: None,
+            trace: PluginTraceHost::new(
+                PluginInvocationContexts::default(),
+                PluginId::new("official", "example").expect("plugin id"),
+                PluginGenerationKey(1),
+                PathBuf::new(),
+            ),
         };
 
         let error = host_requests
