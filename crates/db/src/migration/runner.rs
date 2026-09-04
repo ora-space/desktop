@@ -46,6 +46,10 @@ where
     rollback_migration_suffix(connection, &applied_migrations, shared_version_count)?;
     apply_migration_suffix(connection, catalog, timestamp_source, shared_version_count)?;
 
+    if applied_migrations.is_empty() && pending_up_count > 0 {
+        apply_first_install_data(connection, catalog)?;
+    }
+
     if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
             message = "database already contains the target migration versions",
@@ -90,6 +94,10 @@ where
 
     apply_migration_suffix(connection, catalog, timestamp_source, reconciliation_start)?;
 
+    if applied_migrations.is_empty() && pending_up_count > 0 && pending_down_count == 0 {
+        apply_first_install_data(connection, catalog)?;
+    }
+
     if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
             message = "database schema already matches the target migration prefix",
@@ -98,6 +106,27 @@ where
     }
 
     Ok(())
+}
+
+/// Initializes optional distribution data after a new database reaches its requested target.
+fn apply_first_install_data(
+    connection: &mut Connection,
+    catalog: &MigrationCatalog,
+) -> Result<(), DatabaseError> {
+    let sql = catalog.first_install_sql();
+    if sql.is_empty() {
+        return Ok(());
+    }
+
+    // Keeping distribution data outside migration snapshots lets an internal build patch its
+    // first-run defaults without creating SQL drift for databases created by another build.
+    execute_migration_step(
+        connection,
+        "first-install-data",
+        &sql,
+        MigrationDirection::Up,
+        |_| Ok(()),
+    )
 }
 
 /// Rolls back an applied suffix in reverse order using the SQL snapshots stored in the database.

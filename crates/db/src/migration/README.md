@@ -12,6 +12,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
 - Applied rows record `version`, `up_sql`, `down_sql`, and an injected `executed_at` timestamp.
+- The default catalog carries a separate first-install SQL statement list. Public builds keep the
+  list empty; distribution patches may populate it without changing any versioned migration
+  snapshot. Its contents are omitted from `MigrationCatalog` debug output.
 - Migration `0005` is the Effect v2 model: stable Sources, immutable Revisions and explicit Heads;
   normalized Workspace Desired items; Surface and Consumer declarations/status; Managed ownership;
   current Conditions; durable reconcile/propagation requests; mutation Operations and recovery
@@ -52,6 +55,13 @@ reverse order and removes its bookkeeping rows. It does not compare persisted SQ
 shared versions, so changing a previously published migration definition cannot trigger a schema
 rebuild during packaged application startup.
 
+After a database with no prior migration rows reaches its target, application bootstrap executes
+the catalog's first-install SQL in one separate transaction. An existing database never runs that
+SQL, including when a later build first supplies a non-empty list. The SQL is data initialization,
+not migration history: it has no migration row, does not participate in drift comparison, and is
+not rolled back with a target suffix. If initialization fails, the already committed schema
+migrations remain applied and bootstrap returns the failure.
+
 ## Explicit development reconciliation
 
 `reconcile_database` first verifies that the applied and target histories have an identical shared version prefix. Unknown, skipped, or reordered versions inside that prefix are hard errors; an applied suffix beyond the target is rollback input and does not need to exist in the current catalog.
@@ -65,6 +75,9 @@ An applied version absent from the catalog inside the shared target prefix is an
 The public `reconcile_migration_history` interface opens and reconciles a database for explicit
 tooling. `cargo xtask reconcile-migrations DATA_DIRECTORY` calls it before `task run:desktop`
 starts the application; packaged application startup never calls this interface.
+
+Explicit reconciliation uses the same first-install rule when it opens a database with no applied
+migration history.
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 

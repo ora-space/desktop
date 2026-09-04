@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 use crate::DatabaseError;
 
@@ -43,11 +43,28 @@ impl Migration {
 }
 
 /// Holds every migration definition plus the active target prefix the bootstrapper should enforce.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MigrationCatalog {
     migrations: Vec<Migration>,
     target_versions: Vec<&'static str>,
     migrations_by_version: BTreeMap<&'static str, usize>,
+    first_install_sql: &'static [&'static str],
+}
+
+impl fmt::Debug for MigrationCatalog {
+    /// Reports catalog structure without rendering distribution-specific initialization SQL.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MigrationCatalog")
+            .field("migrations", &self.migrations)
+            .field("target_versions", &self.target_versions)
+            .field("migrations_by_version", &self.migrations_by_version)
+            .field(
+                "first_install_statement_count",
+                &self.first_install_sql.len(),
+            )
+            .finish()
+    }
 }
 
 impl MigrationCatalog {
@@ -76,7 +93,19 @@ impl MigrationCatalog {
             migrations,
             target_versions,
             migrations_by_version,
+            first_install_sql: &[],
         })
+    }
+
+    /// Attaches data initialization that runs only after a brand-new database reaches the target.
+    pub fn with_first_install_sql(mut self, statements: &'static [&'static str]) -> Self {
+        self.first_install_sql = statements;
+        self
+    }
+
+    /// Serializes the optional first-install statements without adding them to migration history.
+    pub(crate) fn first_install_sql(&self) -> String {
+        serialize_statements(self.first_install_sql)
     }
 
     /// Returns the active target versions the database should match after reconciliation.
@@ -94,7 +123,8 @@ impl MigrationCatalog {
 
 /// Builds the default migration catalog shipped by the crate.
 pub fn default_migration_catalog() -> Result<MigrationCatalog, DatabaseError> {
-    MigrationCatalog::new(schema::migrations())
+    Ok(MigrationCatalog::new(schema::migrations())?
+        .with_first_install_sql(schema::FIRST_INSTALL_SQL))
 }
 
 /// Produces stable, executable SQL from an ordered statement list.

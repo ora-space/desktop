@@ -201,6 +201,85 @@ fn marketplace_artifact_retrieval_migration_has_a_safe_default() {
     );
 }
 
+/// First-install SQL runs after a new database reaches the requested migration target.
+#[test]
+fn first_install_sql_runs_after_new_database_migrations() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("first-install.sqlite3");
+    let catalog = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build migration catalog")
+        .with_first_install_sql(&["INSERT INTO alpha (id) VALUES (7);"]);
+
+    bootstrap_file_database(&database_path, &catalog, 100)
+        .expect("bootstrap database with first-install data");
+
+    let connection = Connection::open(database_path).expect("open database");
+    assert_eq!(
+        connection
+            .query_row("SELECT id FROM alpha", [], |row| row.get::<_, i64>(0))
+            .expect("read first-install row"),
+        7,
+    );
+}
+
+/// Adding distribution defaults later must not mutate an already initialized database.
+#[test]
+fn existing_database_does_not_run_first_install_sql() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("existing.sqlite3");
+    let schema_only = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build schema-only catalog");
+    let with_defaults = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build distribution catalog")
+        .with_first_install_sql(&["INSERT INTO alpha (id) VALUES (7);"]);
+
+    bootstrap_file_database(&database_path, &schema_only, 100)
+        .expect("bootstrap existing database");
+    bootstrap_file_database(&database_path, &with_defaults, 200)
+        .expect("reopen with distribution defaults");
+
+    let connection = Connection::open(database_path).expect("open database");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM alpha", [], |row| row.get::<_, i64>(0))
+            .expect("count first-install rows"),
+        0,
+    );
+}
+
+/// Explicit reconciliation applies first-install SQL for a database with no migration history.
+#[test]
+fn explicit_reconciliation_runs_first_install_sql_for_new_database() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("explicit-first-install.sqlite3");
+    let catalog = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build migration catalog")
+        .with_first_install_sql(&["INSERT INTO alpha (id) VALUES (7);"]);
+
+    reconcile_file_database(&database_path, &catalog, 100)
+        .expect("reconcile new database with first-install data");
+
+    let connection = Connection::open(database_path).expect("open database");
+    assert_eq!(
+        connection
+            .query_row("SELECT id FROM alpha", [], |row| row.get::<_, i64>(0))
+            .expect("read first-install row"),
+        7,
+    );
+}
+
+/// Catalog diagnostics expose only the first-install statement count, never their contents.
+#[test]
+fn migration_catalog_debug_redacts_first_install_sql() {
+    let catalog = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build migration catalog")
+        .with_first_install_sql(&["INSERT INTO alpha (id) VALUES (8675309);"]);
+
+    let rendered = format!("{catalog:?}");
+    assert!(rendered.contains("first_install_statement_count: 1"));
+    assert!(!rendered.contains("8675309"));
+}
+
 /// Verifies a database with a shorter valid prefix receives and snapshots only the missing tail.
 #[test]
 fn applies_missing_migrations_in_order() {
