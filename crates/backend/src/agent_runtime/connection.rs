@@ -233,6 +233,20 @@ impl ConnectionSupervisors {
             .then(|| agent_identity(plugin_id))
     }
 
+    /// Resolves a persisted Agent identity back to the package that currently supplies it.
+    pub fn plugin_for_agent(&self, agent_ref: &AgentRef) -> Option<PluginId> {
+        self.plugin_host
+            .list(ListInstalledPluginsRequest {})
+            .plugins
+            .into_iter()
+            .find_map(|plugin| {
+                let candidate = AgentRef::parse(plugin.name).ok()?;
+                (candidate == *agent_ref)
+                    .then(|| PluginId::parse(&plugin.id).ok())
+                    .flatten()
+            })
+    }
+
     /// Selects the sole application-scoped connection for one persisted agent identity.
     ///
     /// A miss is a normal runtime state rather than data corruption: a session can outlive the
