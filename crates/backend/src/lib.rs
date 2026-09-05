@@ -22,6 +22,8 @@ mod skill;
 mod skill_reconciliation;
 mod source_boundary;
 mod task;
+#[cfg(test)]
+mod test_clock;
 mod user_config;
 mod workflow;
 mod workspace_diff;

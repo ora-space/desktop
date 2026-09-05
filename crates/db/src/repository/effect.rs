@@ -1,27 +1,43 @@
 mod claims;
+mod conditions;
 mod declaration;
 mod journal;
 mod ledger_validation;
 mod mapping;
+mod operations;
 mod persistence;
 mod projection_persistence;
 mod queue;
+mod read;
 mod recovery;
 mod source;
 mod store;
 mod validation;
+mod write;
 
-use crate::RepositoryPool;
+use crate::{LocalTimestampSource, RepositoryPool, TimestampSource};
+pub(crate) use write::EffectWriteContext;
 
 /// SQLite adapter for the Generic Target Effect persistence interface.
 #[derive(Clone, Debug)]
-pub struct SqliteEffectRepository {
+pub struct SqliteEffectRepository<Clock = LocalTimestampSource> {
     pub(super) pool: RepositoryPool,
+    pub(super) clock: Clock,
 }
 
 impl SqliteEffectRepository {
     pub fn new(pool: RepositoryPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            clock: LocalTimestampSource,
+        }
+    }
+}
+
+impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
+    /// Supplies an independent clock without letting callers choose individual audit timestamps.
+    pub fn with_clock(pool: RepositoryPool, clock: Clock) -> Self {
+        Self { pool, clock }
     }
 }
 

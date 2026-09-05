@@ -1,21 +1,21 @@
+use super::EffectWriteContext;
 use super::SqliteEffectRepository;
 use super::mapping::{
-    effect_json, generation_to_sql, load_desired_state, load_target_status, parse_effect_json,
-    resource_phase_value, status_version_to_sql, target_phase_value,
+    effect_json, generation_to_sql, load_desired_state, resource_phase_value,
+    status_version_to_sql, target_phase_value,
 };
 use super::source::wake_scope_targets;
 use crate::DatabaseError;
+use crate::TimestampSource;
 use ora_effect::{
-    ConditionGeneration, ConditionImpact, ConditionOwner, ConditionProposal, ConditionRetry,
-    ConditionSubject, DesiredEffect, DesiredState, EffectCondition, EffectRepository,
-    EffectScopeId, EffectTargetId, Generation, LocalTimestamp, ReplaceDesiredStateOutcome,
-    RepositoryError, ResourceStatus, StableConditionCode, TargetStatus,
+    ConditionProposal, DesiredEffect, DesiredState, EffectRepository, EffectScopeId,
+    EffectTargetId, Generation, LocalTimestamp, ReplaceDesiredStateOutcome, RepositoryError,
+    ResourceStatus, TargetStatus,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
-use std::collections::BTreeMap;
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use uuid::Uuid;
 
-impl EffectRepository for SqliteEffectRepository {
+impl<Clock: TimestampSource> EffectRepository for SqliteEffectRepository<Clock> {
     fn load_desired_state(&self, scope: &EffectScopeId) -> Result<DesiredState, RepositoryError> {
         self.pool
             .with_connection(|connection| load_desired_state(connection, scope))
@@ -27,12 +27,12 @@ impl EffectRepository for SqliteEffectRepository {
         scope: &EffectScopeId,
         expected_generation: Generation,
         effects: Vec<DesiredEffect>,
-        updated_at: LocalTimestamp,
     ) -> Result<ReplaceDesiredStateOutcome, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction =
                     connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let written_at = EffectWriteContext::new(&transaction, &self.clock).timestamp();
                 let current = load_desired_state(&transaction, scope)?;
                 if current.generation != expected_generation {
                     transaction.commit()?;
@@ -90,21 +90,21 @@ impl EffectRepository for SqliteEffectRepository {
                     params![scope.storage_key()],
                 )?;
                 for desired in normalized.effects.values() {
-                    insert_desired_effect(&transaction, scope, desired, updated_at.millis())?;
+                    insert_desired_effect(&transaction, scope, desired, written_at.millis())?;
                 }
                 transaction.execute(
-                    "UPDATE effect_scopes SET generation = ?2, updated_at = ?3 WHERE id = ?1",
+                    "UPDATE effect_scopes SET generation = ?2, updated_at = MAX(updated_at, ?3) WHERE id = ?1",
                     params![
                         scope.storage_key(),
                         generation_to_sql(generation)?,
-                        updated_at.millis(),
+                        written_at.millis(),
                     ],
                 )?;
                 wake_scope_targets(
                     &transaction,
                     &scope.storage_key(),
                     generation,
-                    updated_at.millis(),
+                    written_at.millis(),
                     "desired_changed",
                 )?;
                 transaction.execute(
@@ -117,7 +117,7 @@ impl EffectRepository for SqliteEffectRepository {
                         Uuid::new_v4().to_string(),
                         scope.storage_key(),
                         generation_to_sql(generation)?,
-                        updated_at.millis(),
+                        written_at.millis(),
                     ],
                 )?;
                 transaction.commit()?;
@@ -133,16 +133,13 @@ impl EffectRepository for SqliteEffectRepository {
     fn load_target_status(
         &self,
         target: &EffectTargetId,
-    ) -> Result<Option<(TargetStatus, Vec<EffectCondition>)>, RepositoryError> {
+    ) -> Result<Option<ora_effect::TargetStatusView>, RepositoryError> {
         self.pool
-            .with_connection(|connection| {
-                let status = load_target_status(connection, target)?;
-                status
-                    .map(|status| {
-                        load_conditions(connection, &ConditionOwner::Target(target.clone()))
-                            .map(|conditions| (status, conditions))
-                    })
-                    .transpose()
+            .with_connection_mut(|connection| {
+                let transaction = connection.transaction()?;
+                let view = super::read::load_target_view(&transaction, target)?;
+                transaction.commit()?;
+                Ok(view)
             })
             .map_err(RepositoryError::new)
     }
@@ -151,31 +148,20 @@ impl EffectRepository for SqliteEffectRepository {
         &self,
         scope: &EffectScopeId,
         consumer: &ora_effect::ConsumerIdentity,
-    ) -> Result<Option<(TargetStatus, Vec<EffectCondition>)>, RepositoryError> {
-        self.pool
-            .with_connection(|connection| {
-                let target = connection
-                    .query_row(
-                        "SELECT id FROM effect_targets
-                         WHERE scope_id = ?1 AND consumer_id = ?2 AND lifecycle = 'active'",
-                        params![scope.storage_key(), consumer.storage_key()],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()?
-                    .map(EffectTargetId::new);
-                target
-                    .map(|target| {
-                        let status = load_target_status(connection, &target)?.ok_or_else(|| {
-                            DatabaseError::CorruptEffectState(
-                                "active Effect Target has no status".to_string(),
-                            )
-                        })?;
-                        load_conditions(connection, &ConditionOwner::Target(target))
-                            .map(|conditions| (status, conditions))
-                    })
-                    .transpose()
-            })
-            .map_err(RepositoryError::new)
+    ) -> Result<Option<ora_effect::TargetStatusView>, RepositoryError> {
+        self.pool.with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            let target = transaction.query_row(
+                "SELECT id FROM effect_targets WHERE scope_id = ?1 AND consumer_id = ?2 AND lifecycle = 'active'",
+                params![scope.storage_key(), consumer.storage_key()],
+                |row| row.get::<_, String>(0),
+            ).optional()?.map(EffectTargetId::new);
+            let view = target.map(|target| super::read::load_target_view(&transaction, &target)?.ok_or_else(|| {
+                DatabaseError::CorruptEffectState("active Effect Target has no status".to_string())
+            })).transpose()?;
+            transaction.commit()?;
+            Ok(view)
+        }).map_err(RepositoryError::new)
     }
 
     fn request_reconcile(
@@ -187,6 +173,7 @@ impl EffectRepository for SqliteEffectRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let written_at = EffectWriteContext::new(&transaction, &self.clock).timestamp();
                 let generation = transaction
                     .query_row(
                         "SELECT scope.generation
@@ -207,6 +194,7 @@ impl EffectRepository for SqliteEffectRepository {
                     super::mapping::generation_from_sql(generation)?,
                     requested_at.millis(),
                     "user_requested",
+                    written_at.millis(),
                 )?;
                 transaction.commit()?;
                 Ok(true)
@@ -273,7 +261,6 @@ impl EffectRepository for SqliteEffectRepository {
         attempt: &ora_effect::ReconcileAttempt,
         operations: &[ora_effect::EffectOperation],
         coordination_receipts: &[ora_effect::CoordinationReceipt],
-        updated_at: LocalTimestamp,
     ) -> Result<(), RepositoryError> {
         super::journal::record_attempt_progress(
             self,
@@ -281,7 +268,6 @@ impl EffectRepository for SqliteEffectRepository {
             attempt,
             operations,
             coordination_receipts,
-            updated_at,
         )
         .map_err(RepositoryError::new)
     }
@@ -293,7 +279,6 @@ impl EffectRepository for SqliteEffectRepository {
         target_status: TargetStatus,
         resource_statuses: Vec<ResourceStatus>,
         conditions: Vec<ConditionProposal>,
-        updated_at: LocalTimestamp,
     ) -> Result<(), RepositoryError> {
         super::queue::block_target(
             self,
@@ -302,7 +287,6 @@ impl EffectRepository for SqliteEffectRepository {
             target_status,
             resource_statuses,
             conditions,
-            updated_at,
         )
         .map_err(RepositoryError::new)
     }
@@ -328,9 +312,9 @@ impl EffectRepository for SqliteEffectRepository {
         target: &EffectTargetId,
         claim: &ora_effect::ReconcileClaim,
         not_before: LocalTimestamp,
-        updated_at: LocalTimestamp,
+        scheduled_at: LocalTimestamp,
     ) -> Result<Option<ora_effect::RetryAttempt>, RepositoryError> {
-        super::queue::schedule_retry(self, target, claim, not_before, updated_at)
+        super::queue::schedule_retry(self, target, claim, not_before, scheduled_at)
             .map_err(RepositoryError::new)
     }
 
@@ -360,10 +344,8 @@ impl EffectRepository for SqliteEffectRepository {
     fn mark_artifact_cleanup_failed(
         &self,
         artifact: ora_effect::OperationArtifact,
-        failed_at: LocalTimestamp,
     ) -> Result<(), RepositoryError> {
-        super::recovery::mark_artifact_cleanup_failed(self, artifact, failed_at)
-            .map_err(RepositoryError::new)
+        super::recovery::mark_artifact_cleanup_failed(self, artifact).map_err(RepositoryError::new)
     }
 }
 
@@ -399,184 +381,11 @@ fn parameters_kind(parameters: &ora_effect::ValidatedEffectParameters) -> &'stat
     }
 }
 
-/// Replaces current Conditions for one owner while retaining identity and first-observed time.
-pub(super) fn replace_conditions(
-    transaction: &Transaction<'_>,
-    owner: &ConditionOwner,
-    proposals: &[ConditionProposal],
-    observed_at: LocalTimestamp,
-) -> Result<Vec<ora_effect::ConditionId>, DatabaseError> {
-    let (owner_kind, owner_id) = owner_parts(owner);
-    let mut existing = BTreeMap::new();
-    {
-        let mut statement = transaction.prepare(
-            "SELECT id, subject_kind, subject_id, code, first_observed_at
-             FROM effect_conditions WHERE owner_kind = ?1 AND owner_id = ?2",
-        )?;
-        let rows = statement.query_map(params![owner_kind, owner_id], |row| {
-            Ok((
-                (
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ),
-                (row.get::<_, String>(0)?, row.get::<_, i64>(4)?),
-            ))
-        })?;
-        for row in rows {
-            let (key, value) = row?;
-            existing.insert(key, value);
-        }
-    }
-    transaction.execute(
-        "DELETE FROM effect_conditions WHERE owner_kind = ?1 AND owner_id = ?2",
-        params![owner_kind, owner_id],
-    )?;
-    let mut identities = Vec::new();
-    for proposal in proposals {
-        let (subject_kind, subject_id) = subject_parts(&proposal.subject)?;
-        let key = (
-            subject_kind.to_string(),
-            subject_id.clone(),
-            proposal.code.as_str().to_string(),
-        );
-        let (identity, first_observed_at) = existing
-            .remove(&key)
-            .unwrap_or_else(|| (Uuid::new_v4().to_string(), observed_at.millis()));
-        let (retry_kind, retry_version, retry_json) = retry_parts(&proposal.retry)?;
-        transaction.execute(
-            "INSERT INTO effect_conditions (
-                 id, owner_kind, owner_id, subject_kind, subject_id, code, impact,
-                 retry_kind, retry_policy_version, retry_policy_json, generation,
-                 safe_details_version, safe_details_json, first_observed_at, last_observed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12, ?13, ?14)",
-            params![
-                &identity,
-                owner_kind,
-                owner_id,
-                subject_kind,
-                subject_id,
-                proposal.code.as_str(),
-                match proposal.impact {
-                    ConditionImpact::Blocking => "blocking",
-                    ConditionImpact::NonBlocking => "non_blocking",
-                },
-                retry_kind,
-                retry_version,
-                retry_json,
-                match proposal.generation {
-                    ConditionGeneration::Unscoped => None,
-                    ConditionGeneration::At(generation) => Some(generation_to_sql(generation)?),
-                },
-                effect_json(&proposal.safe_details)?,
-                first_observed_at,
-                observed_at.millis(),
-            ],
-        )?;
-        identities.push(ora_effect::ConditionId::new(identity));
-    }
-    Ok(identities)
-}
-
-/// Loads every current Condition for one Target or Resource owner.
-fn load_conditions(
-    connection: &Connection,
-    owner: &ConditionOwner,
-) -> Result<Vec<EffectCondition>, DatabaseError> {
-    let (owner_kind, owner_id) = owner_parts(owner);
-    let mut statement = connection.prepare(
-        "SELECT id, subject_id, code, impact, retry_kind, retry_policy_json,
-                generation, safe_details_json, first_observed_at, last_observed_at
-         FROM effect_conditions
-         WHERE owner_kind = ?1 AND owner_id = ?2 ORDER BY code, subject_kind, subject_id",
-    )?;
-    let mut rows = statement.query(params![owner_kind, owner_id])?;
-    let mut conditions = Vec::new();
-    while let Some(row) = rows.next()? {
-        let retry_kind = row.get::<_, String>("retry_kind")?;
-        let retry = match retry_kind.as_str() {
-            "on_change" => ConditionRetry::OnChange,
-            "manual" => ConditionRetry::Manual,
-            "backoff" => ConditionRetry::Backoff(parse_effect_json(
-                row.get::<_, Option<String>>("retry_policy_json")?
-                    .ok_or_else(|| {
-                        DatabaseError::CorruptEffectState(
-                            "backoff Condition lacks policy".to_string(),
-                        )
-                    })?,
-            )?),
-            other => {
-                return Err(DatabaseError::CorruptEffectState(format!(
-                    "unknown Condition retry kind {other}"
-                )));
-            }
-        };
-        conditions.push(EffectCondition {
-            identity: ora_effect::ConditionId::new(row.get::<_, String>("id")?),
-            owner: owner.clone(),
-            subject: parse_effect_json(row.get::<_, String>("subject_id")?)?,
-            code: StableConditionCode::parse(row.get::<_, String>("code")?)
-                .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
-            impact: match row.get::<_, String>("impact")?.as_str() {
-                "blocking" => ConditionImpact::Blocking,
-                "non_blocking" => ConditionImpact::NonBlocking,
-                other => {
-                    return Err(DatabaseError::CorruptEffectState(format!(
-                        "unknown Condition impact {other}"
-                    )));
-                }
-            },
-            retry,
-            generation: row
-                .get::<_, Option<i64>>("generation")?
-                .map(super::mapping::generation_from_sql)
-                .transpose()?
-                .map_or(ConditionGeneration::Unscoped, ConditionGeneration::At),
-            safe_details: parse_effect_json(row.get::<_, String>("safe_details_json")?)?,
-            first_observed_at: LocalTimestamp::from_millis(row.get::<_, i64>("first_observed_at")?),
-            last_observed_at: LocalTimestamp::from_millis(row.get::<_, i64>("last_observed_at")?),
-        });
-    }
-    Ok(conditions)
-}
-
-/// Maps a typed owner to its polymorphic table discriminator and identity.
-fn owner_parts(owner: &ConditionOwner) -> (&'static str, &str) {
-    match owner {
-        ConditionOwner::Target(target) => ("target", target.as_str()),
-        ConditionOwner::Resource(resource) => ("resource", resource.as_str()),
-    }
-}
-
-/// Stores the full typed subject in JSON while retaining an indexed discriminator.
-fn subject_parts(subject: &ConditionSubject) -> Result<(&'static str, String), DatabaseError> {
-    let kind = match subject {
-        ConditionSubject::Consumer(_) => "consumer",
-        ConditionSubject::Target(_) => "target",
-        ConditionSubject::DesiredEffect(_) => "desired_effect",
-        ConditionSubject::Resource(_) => "resource",
-        ConditionSubject::ManagedItem(_) => "managed_item",
-        ConditionSubject::Operation(_) => "operation",
-        ConditionSubject::Artifact(_) => "artifact",
-    };
-    Ok((kind, effect_json(subject)?))
-}
-
-/// Splits the retry union into constrained SQLite columns.
-fn retry_parts(
-    retry: &ConditionRetry,
-) -> Result<(&'static str, Option<i64>, Option<String>), DatabaseError> {
-    match retry {
-        ConditionRetry::OnChange => Ok(("on_change", None, None)),
-        ConditionRetry::Manual => Ok(("manual", None, None)),
-        ConditionRetry::Backoff(policy) => Ok(("backoff", Some(1), Some(effect_json(policy)?))),
-    }
-}
-
 /// Persists one Target status only through a validated domain snapshot.
 pub(super) fn save_target_status(
     transaction: &Transaction<'_>,
     status: &TargetStatus,
+    written_at: LocalTimestamp,
 ) -> Result<(), DatabaseError> {
     let progress = status.progress();
     let (phase, recovery) = target_phase_value(status.phase());
@@ -584,7 +393,7 @@ pub(super) fn save_target_status(
         "UPDATE effect_target_status SET
              desired_generation = ?2, observed_generation = ?3, applied_generation = ?4,
              ready_generation = ?5, phase = ?6, recovery_operation_id = ?7,
-             status_version = ?8, updated_at = ?9
+             status_version = ?8, updated_at = MAX(updated_at, ?9)
          WHERE target_id = ?1",
         params![
             status.target().as_str(),
@@ -595,7 +404,7 @@ pub(super) fn save_target_status(
             phase,
             recovery,
             status_version_to_sql(status.version())?,
-            status.updated_at().millis(),
+            written_at.millis(),
         ],
     )?;
     Ok(())
@@ -605,12 +414,13 @@ pub(super) fn save_target_status(
 pub(super) fn save_resource_status(
     transaction: &Transaction<'_>,
     status: &ResourceStatus,
+    written_at: LocalTimestamp,
 ) -> Result<(), DatabaseError> {
     let (phase, recovery) = resource_phase_value(status.phase());
     transaction.execute(
         "UPDATE effect_resource_status SET
              desired_generation = ?2, observed_generation = ?3, applied_generation = ?4,
-             phase = ?5, recovery_operation_id = ?6, status_version = ?7, updated_at = ?8
+             phase = ?5, recovery_operation_id = ?6, status_version = ?7, updated_at = MAX(updated_at, ?8)
          WHERE resource_id = ?1",
         params![
             status.resource().as_str(),
@@ -620,7 +430,7 @@ pub(super) fn save_resource_status(
             phase,
             recovery,
             status_version_to_sql(status.version())?,
-            status.updated_at().millis(),
+            written_at.millis(),
         ],
     )?;
     Ok(())

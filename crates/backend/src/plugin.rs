@@ -28,7 +28,7 @@ use ora_db::{
     SqliteSkillRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::{PluginId, PluginNamespace};
-use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest, LocalTimestamp};
+use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
@@ -606,7 +606,6 @@ impl PluginApi {
                 registered.remove(&plugin_id);
             }
         }
-        let timestamp = self.clock.now_timestamp_millis();
         if let Some(declaration) = declaration {
             let workspaces = self
                 .workspace_repository
@@ -615,11 +614,7 @@ impl PluginApi {
                     BackendError::internal("failed to list Effect Workspaces", error)
                 })?;
             self.effect_repository
-                .declare_consumer(
-                    &declaration,
-                    &workspaces,
-                    LocalTimestamp::from_millis(timestamp),
-                )
+                .declare_consumer(&declaration, &workspaces)
                 .map_err(|error| {
                     BackendError::internal("failed to persist Agent Effect declaration", error)
                 })?;
@@ -630,7 +625,7 @@ impl PluginApi {
                         BackendError::internal("invalid Agent Effect identity", error)
                     })?;
             self.effect_repository
-                .retire_consumer(&consumer, LocalTimestamp::from_millis(timestamp))
+                .retire_consumer(&consumer)
                 .map_err(|error| {
                     BackendError::internal("failed to retire Agent Effect Consumer", error)
                 })?;

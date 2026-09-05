@@ -31,7 +31,9 @@ pub use guard::LoggingGuard;
 pub use init::init_logging;
 pub use initialized::InitializedLogging;
 pub use level_control::LogLevelControl;
-pub use test_support::{test_log_level_control, with_recorded_trace_logging, with_trace_logging};
+pub use test_support::{
+    initialize_test_clock, test_log_level_control, with_recorded_trace_logging, with_trace_logging,
+};
 
 #[cfg(test)]
 pub(crate) use init::build_dispatch;

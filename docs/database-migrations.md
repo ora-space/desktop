@@ -26,6 +26,7 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0007`  | Immutable marketplace-source namespace bindings keyed by canonical Git URL.                                                                                                                                    |
 | `0008`  | Per-source `enabled` flag so a marketplace URL can be disabled without deleting its identity.                                                                                                                  |
 | `0009`  | Source-scoped tagged artifact retrieval configuration with Direct HTTPS as the migration default.                                                                                                              |
+| `0010`  | Independent Effect recovery detection time; Scope initialization moves into Workspace repository transactions.                                                                                                 |
 
 `default_migration_catalog()` returns all migrations with every version as the active target and
 the empty public first-install SQL list.
@@ -80,3 +81,14 @@ plugin marketplace schema remains intact.
 - Failures log at `ERROR` with `error.kind` and `error.message` before the original `DatabaseError` is returned to the caller.
 
 The JSON envelope and sink behavior are owned by `ora-logging`; `ora-db` only emits events. See [Runtime Logging](runtime-logging.md) and [Database Repositories](database-repositories.md).
+
+## Effect time migration
+
+Migration `0010` adds `effect_operations.detected_at`, backfills recovery rows from their legacy
+`updated_at`, and validates the phase/detection relationship on insert and update. It does not
+rebuild Effect business tables. It also removes the Scope creation trigger; current repositories
+create Scope and Desired state atomically with the Workspace using their injected write clock.
+
+Downgrading restores detection to the legacy column and reinstalls the trigger. Existing journals,
+claims, revisions, and ownership survive both directions. Historical audit times are retained on
+upgrade because their original write instants cannot be reconstructed.

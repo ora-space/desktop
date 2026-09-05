@@ -74,6 +74,6 @@ SQLite execution, query, and row-mapping failures are wrapped in the shared appl
 
 Skill import reuses `SqliteSkillRepository` for record reads and writes. Cross-filesystem package promotion, compensation, and per-skill atomicity are application-owned in the filesystem skill storage adapter; SQLite never holds a transaction open while a source archive is copied.
 
-Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Entity `created_at`/`updated_at` values are supplied from above through the application `Clock`, not generated inside the repositories.
+Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Catalog entity `created_at`/`updated_at` values remain supplied through the application `Clock`. Effect repositories instead sample their injected `TimestampSource` after acquiring a write transaction, preserve each row's timestamp lower bounds, and keep domain status evidence separate from audit metadata. Their default `LocalTimestampSource` uses Ora's configured local clock; tests inject independent clocks. Migration tooling retains its pre-logging system clock.
 
 See [Application and Contracts Boundary](application-contracts-boundary.md) and [Database Migrations](database-migrations.md).

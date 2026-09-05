@@ -118,7 +118,7 @@ impl TaskGitResourceCleaner for ScriptedCleaner {
 /// Builds an isolated SQLite pool for one worker test.
 fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let pool = DatabaseBootstrapper::system()
+    let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
             &default_migration_catalog().expect("catalog"),

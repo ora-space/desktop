@@ -75,7 +75,7 @@ mod tests {
     fn repository() -> (TempDir, SqliteUserConfigRepository) {
         let temporary = TempDir::new().expect("create user-config temp directory");
         let database_path = temporary.path().join("ora.sqlite3");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock::new(1))
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(database_path),
                 &default_migration_catalog().unwrap(),

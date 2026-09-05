@@ -115,22 +115,16 @@ pub struct TargetStatus {
     progress: TargetProgress,
     phase: TargetPhase,
     version: StatusVersion,
-    updated_at: LocalTimestamp,
 }
 
 impl TargetStatus {
     /// Creates the initial pending status for a newly declared Target.
-    pub fn pending(
-        target: EffectTargetId,
-        desired: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Self {
+    pub fn pending(target: EffectTargetId, desired: Generation) -> Self {
         Self {
             target,
             progress: TargetProgress::pending(desired),
             phase: TargetPhase::Pending,
             version: StatusVersion::initial(),
-            updated_at,
         }
     }
 
@@ -140,14 +134,12 @@ impl TargetStatus {
         progress: TargetProgress,
         phase: TargetPhase,
         version: StatusVersion,
-        updated_at: LocalTimestamp,
     ) -> Self {
         Self {
             target,
             progress,
             phase,
             version,
-            updated_at,
         }
     }
 
@@ -167,50 +159,37 @@ impl TargetStatus {
         self.version
     }
 
-    pub fn updated_at(&self) -> LocalTimestamp {
-        self.updated_at
-    }
-
     /// Raises Desired without manufacturing observation, application, or readiness evidence.
     pub fn request_generation(
         &mut self,
         generation: Generation,
-        updated_at: LocalTimestamp,
     ) -> Result<(), StatusTransitionError> {
         if generation < self.progress.desired {
             return Err(StatusTransitionError::GenerationRegression);
         }
         self.progress.desired = generation;
         self.phase = TargetPhase::Pending;
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Records that planning evaluated the complete Desired snapshot for this generation.
-    pub fn record_observed(
-        &mut self,
-        generation: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Result<(), StatusTransitionError> {
+    pub fn record_observed(&mut self, generation: Generation) -> Result<(), StatusTransitionError> {
         if generation < self.progress.observed || generation > self.progress.desired {
             return Err(StatusTransitionError::InvalidObservedGeneration);
         }
         self.progress.observed = generation;
         self.phase = TargetPhase::Reconciling(ReconcileStage::Planning);
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Records that every Resource required by the Target projection was verified.
-    pub fn record_applied(
-        &mut self,
-        generation: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Result<(), StatusTransitionError> {
+    pub fn record_applied(&mut self, generation: Generation) -> Result<(), StatusTransitionError> {
         if generation < self.progress.applied || generation > self.progress.observed {
             return Err(StatusTransitionError::InvalidAppliedGeneration);
         }
         self.progress.applied = generation;
         self.phase = TargetPhase::Reconciling(ReconcileStage::Activating);
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Advances readiness only with a receipt matching the exact Target projection inputs.
@@ -220,7 +199,6 @@ impl TargetStatus {
         expected_consumer_revision: &ConsumerRevisionId,
         expected_projection: &ProjectionDigest,
         issue_state: TargetIssueState,
-        updated_at: LocalTimestamp,
     ) -> Result<(), StatusTransitionError> {
         if receipt.target != self.target
             || receipt.consumer_revision != *expected_consumer_revision
@@ -235,23 +213,21 @@ impl TargetStatus {
             TargetIssueState::Clear => TargetPhase::Current,
             TargetIssueState::HasNonBlockingIssues => TargetPhase::CurrentWithIssues,
         };
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Moves the Target into explicit manual recovery without erasing its proven watermarks.
     pub fn require_recovery(
         &mut self,
         operation: EffectOperationId,
-        updated_at: LocalTimestamp,
     ) -> Result<(), StatusTransitionError> {
         self.phase = TargetPhase::RecoveryRequired(operation);
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Advances optimistic status version with every atomic domain transition.
-    fn advance_version(&mut self, updated_at: LocalTimestamp) -> Result<(), StatusTransitionError> {
+    fn advance_version(&mut self) -> Result<(), StatusTransitionError> {
         self.version = self.version.next()?;
-        self.updated_at = updated_at;
         Ok(())
     }
 }
@@ -276,16 +252,11 @@ pub struct ResourceStatus {
     applied: Generation,
     phase: ResourcePhase,
     version: StatusVersion,
-    updated_at: LocalTimestamp,
 }
 
 impl ResourceStatus {
     /// Creates the initial status without pretending the Resource has been observed.
-    pub fn pending(
-        resource: EffectResourceId,
-        desired: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Self {
+    pub fn pending(resource: EffectResourceId, desired: Generation) -> Self {
         Self {
             resource,
             desired,
@@ -293,7 +264,6 @@ impl ResourceStatus {
             applied: Generation::default(),
             phase: ResourcePhase::Pending,
             version: StatusVersion::initial(),
-            updated_at,
         }
     }
 
@@ -305,7 +275,6 @@ impl ResourceStatus {
         applied: Generation,
         phase: ResourcePhase,
         version: StatusVersion,
-        updated_at: LocalTimestamp,
     ) -> Result<Self, StatusTransitionError> {
         if applied > observed || observed > desired {
             return Err(StatusTransitionError::InvalidResourceWatermarks);
@@ -317,7 +286,6 @@ impl ResourceStatus {
             applied,
             phase,
             version,
-            updated_at,
         })
     }
 
@@ -345,66 +313,51 @@ impl ResourceStatus {
         self.version
     }
 
-    pub fn updated_at(&self) -> LocalTimestamp {
-        self.updated_at
-    }
-
     /// Raises the Resource Desired watermark without changing observed or applied evidence.
     pub fn request_generation(
         &mut self,
         generation: Generation,
-        updated_at: LocalTimestamp,
     ) -> Result<(), StatusTransitionError> {
         if generation < self.desired {
             return Err(StatusTransitionError::GenerationRegression);
         }
         self.desired = generation;
         self.phase = ResourcePhase::Pending;
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Records a complete adapter observation used to plan this generation.
-    pub fn record_observed(
-        &mut self,
-        generation: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Result<(), StatusTransitionError> {
+    pub fn record_observed(&mut self, generation: Generation) -> Result<(), StatusTransitionError> {
         if generation < self.observed || generation > self.desired {
             return Err(StatusTransitionError::InvalidObservedGeneration);
         }
         self.observed = generation;
         self.phase = ResourcePhase::Reconciling;
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Records exact verification of the complete Resource projection.
-    pub fn record_applied(
-        &mut self,
-        generation: Generation,
-        updated_at: LocalTimestamp,
-    ) -> Result<(), StatusTransitionError> {
+    pub fn record_applied(&mut self, generation: Generation) -> Result<(), StatusTransitionError> {
         if generation < self.applied || generation > self.observed {
             return Err(StatusTransitionError::InvalidAppliedGeneration);
         }
         self.applied = generation;
         self.phase = ResourcePhase::Current;
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Preserves manual recovery authority without changing proven watermarks.
     pub fn require_recovery(
         &mut self,
         operation: EffectOperationId,
-        updated_at: LocalTimestamp,
     ) -> Result<(), StatusTransitionError> {
         self.phase = ResourcePhase::RecoveryRequired(operation);
-        self.advance_version(updated_at)
+        self.advance_version()
     }
 
     /// Advances optimistic Resource status version with one atomic domain transition.
-    fn advance_version(&mut self, updated_at: LocalTimestamp) -> Result<(), StatusTransitionError> {
+    fn advance_version(&mut self) -> Result<(), StatusTransitionError> {
         self.version = self.version.next()?;
-        self.updated_at = updated_at;
         Ok(())
     }
 }

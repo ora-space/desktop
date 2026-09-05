@@ -1,8 +1,10 @@
+use super::EffectWriteContext;
 use super::SqliteEffectRepository;
 use super::claims::{
     claim_is_valid, load_managed, load_related_target_ids, release_resource_claims, verify_claim,
     verify_resource_claims,
 };
+use super::conditions::replace_conditions;
 use super::ledger_validation::validate_projection_managed_transition;
 use super::mapping::{
     effect_json, generation_from_sql, load_consumer_revision, load_desired_state, load_resource,
@@ -14,9 +16,10 @@ use super::persistence::{
     save_current_state,
 };
 use super::projection_persistence::save_projections;
-use super::store::{replace_conditions, save_resource_status, save_target_status};
+use super::store::{save_resource_status, save_target_status};
 use super::validation::{validate_current_state_scope, validate_projection_scope};
 use crate::DatabaseError;
+use crate::TimestampSource;
 use ora_effect::{
     ConditionOwner, ConditionProposal, EffectResourceId, EffectTargetId, FencingToken,
     LocalTimestamp, ProjectionCommit, ReconcileClaim, ReconcileRequest, ReconcileRequestState,
@@ -26,8 +29,8 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Claims due Target requests under a monotonically increasing fencing token.
-pub(super) fn claim_due_targets(
-    repository: &SqliteEffectRepository,
+pub(super) fn claim_due_targets<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     worker: &WorkerIdentity,
     now: LocalTimestamp,
     lease_until: LocalTimestamp,
@@ -35,6 +38,7 @@ pub(super) fn claim_due_targets(
 ) -> Result<Vec<(EffectTargetId, ReconcileClaim)>, DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         let limit = i64::try_from(limit).map_err(|_| {
             DatabaseError::CorruptEffectState(
                 "Effect claim limit exceeds SQLite INTEGER".to_string(),
@@ -64,9 +68,9 @@ pub(super) fn claim_due_targets(
         let mut claimed = Vec::new();
         for target_id in target_ids {
             let fence_updated = transaction.execute(
-                "UPDATE effect_targets SET claim_fence = claim_fence + 1, updated_at = ?2
+                "UPDATE effect_targets SET claim_fence = claim_fence + 1, updated_at = MAX(updated_at, ?2)
                  WHERE id = ?1",
-                params![&target_id, now.millis()],
+                params![&target_id, written_at.millis()],
             )?;
             if fence_updated == 0 {
                 continue;
@@ -80,17 +84,18 @@ pub(super) fn claim_due_targets(
                 "UPDATE effect_reconcile_requests
                  SET state = 'claimed', claim_token = ?2, claim_worker = ?3, lease_until = ?4,
                      retry_attempt = NULL, not_before = NULL, blocked_conditions_json = NULL,
-                     resume_trigger_version = NULL, resume_trigger_json = NULL, updated_at = ?5
+                     resume_trigger_version = NULL, resume_trigger_json = NULL, updated_at = MAX(updated_at, ?5)
                  WHERE target_id = ?1 AND (
                      state = 'pending'
-                     OR (state = 'retry_scheduled' AND not_before <= ?5)
-                     OR (state = 'claimed' AND lease_until <= ?5)
+                     OR (state = 'retry_scheduled' AND not_before <= ?6)
+                     OR (state = 'claimed' AND lease_until <= ?6)
                  )",
                 params![
                     &target_id,
                     token,
                     worker.as_str(),
                     lease_until.millis(),
+                    written_at.millis(),
                     now.millis(),
                 ],
             )?;
@@ -116,8 +121,8 @@ pub(super) fn claim_due_targets(
 }
 
 /// Reloads all Target, shared Resource, capability, ownership, and status facts after claim.
-pub(super) fn load_reconcile_snapshot(
-    repository: &SqliteEffectRepository,
+pub(super) fn load_reconcile_snapshot<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     target_id: &EffectTargetId,
     claim: &ReconcileClaim,
 ) -> Result<ReconcileSnapshot, DatabaseError> {
@@ -226,8 +231,8 @@ pub(super) fn load_reconcile_snapshot(
 }
 
 /// Acquires independently fenced Resource leases in stable identity order or none at all.
-pub(super) fn claim_resources(
-    repository: &SqliteEffectRepository,
+pub(super) fn claim_resources<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     target: &EffectTargetId,
     claim: &ReconcileClaim,
     resources: &[EffectResourceId],
@@ -236,6 +241,7 @@ pub(super) fn claim_resources(
 ) -> Result<Option<Vec<ResourceClaim>>, DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, target, claim)?;
         let scope_id = transaction.query_row(
             "SELECT scope_id FROM effect_targets WHERE id = ?1",
@@ -271,9 +277,9 @@ pub(super) fn claim_resources(
                 return Ok(None);
             }
             let fence_updated = transaction.execute(
-                "UPDATE effect_resources SET claim_fence = claim_fence + 1, updated_at = ?2
+                "UPDATE effect_resources SET claim_fence = claim_fence + 1, updated_at = MAX(updated_at, ?2)
                  WHERE id = ?1 AND scope_id = ?3",
-                params![resource.as_str(), now.millis(), &scope_id],
+                params![resource.as_str(), written_at.millis(), &scope_id],
             )?;
             if fence_updated != 1 {
                 return Err(DatabaseError::CorruptEffectState(format!(
@@ -296,7 +302,7 @@ pub(super) fn claim_resources(
                      target_claim_token = excluded.target_claim_token,
                      resource_fence = excluded.resource_fence,
                      worker = excluded.worker, lease_until = excluded.lease_until,
-                     updated_at = excluded.updated_at",
+                     updated_at = MAX(effect_resource_claims.updated_at, excluded.updated_at)",
                 params![
                     resource.as_str(),
                     &scope_id,
@@ -309,7 +315,7 @@ pub(super) fn claim_resources(
                     next_fence,
                     claim.worker.as_str(),
                     lease_until.millis(),
-                    now.millis(),
+                    written_at.millis(),
                 ],
             )?;
             acquired.push(ResourceClaim {
@@ -330,17 +336,17 @@ pub(super) fn claim_resources(
 }
 
 /// Persists structured blocking facts and releases the Target claim into Blocked state.
-pub(super) fn block_target(
-    repository: &SqliteEffectRepository,
+pub(super) fn block_target<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     target: &EffectTargetId,
     claim: &ReconcileClaim,
     target_status: ora_effect::TargetStatus,
     resource_statuses: Vec<ResourceStatus>,
     conditions: Vec<ConditionProposal>,
-    updated_at: LocalTimestamp,
 ) -> Result<(), DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, target, claim)?;
         let status_resources = resource_statuses
             .iter()
@@ -358,9 +364,9 @@ pub(super) fn block_target(
             &conditions,
         )?;
         verify_resource_claims(&transaction, target, claim, &status_resources)?;
-        save_target_status(&transaction, &target_status)?;
+        save_target_status(&transaction, &target_status, written_at)?;
         for status in &resource_statuses {
-            save_resource_status(&transaction, status)?;
+            save_resource_status(&transaction, status, written_at)?;
         }
         let mut condition_ids = Vec::new();
         let grouped = group_conditions(conditions);
@@ -369,7 +375,7 @@ pub(super) fn block_target(
                 &transaction,
                 owner,
                 proposals,
-                updated_at,
+                written_at,
             )?);
         }
         if !grouped.contains_key(&ConditionOwner::Target(target.clone())) {
@@ -377,7 +383,7 @@ pub(super) fn block_target(
                 &transaction,
                 &ConditionOwner::Target(target.clone()),
                 &[],
-                updated_at,
+                written_at,
             )?;
         }
         let condition_json = effect_json(&condition_ids)?;
@@ -386,7 +392,7 @@ pub(super) fn block_target(
              SET state = 'blocked', claim_token = NULL, claim_worker = NULL, lease_until = NULL,
                  retry_attempt = NULL, not_before = NULL, blocked_conditions_json = ?3,
                  resume_trigger_version = 1, resume_trigger_json = '{\"kind\":\"condition_change\"}',
-                 updated_at = ?4
+                 updated_at = MAX(updated_at, ?4)
              WHERE target_id = ?1 AND state = 'claimed' AND claim_token = ?2",
             params![
                 target.as_str(),
@@ -396,7 +402,7 @@ pub(super) fn block_target(
                     )
                 })?,
                 condition_json,
-                updated_at.millis(),
+                written_at.millis(),
             ],
         )?;
         release_resource_claims(&transaction, target, claim)?;
@@ -406,13 +412,14 @@ pub(super) fn block_target(
 }
 
 /// Atomically commits a projection that required no external mutation.
-pub(super) fn commit_projection(
-    repository: &SqliteEffectRepository,
+pub(super) fn commit_projection<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     claim: &ReconcileClaim,
     commit: ProjectionCommit,
 ) -> Result<(), DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, commit.target_status.target(), claim)?;
         let generation = commit.target_status.progress().ready();
         let projected_resources = validate_projection_scope(
@@ -483,7 +490,7 @@ pub(super) fn commit_projection(
             &transaction,
             &commit.target_projections,
             &commit.resource_projections,
-            commit.target_status.updated_at(),
+            written_at,
         )?;
         save_current_state(
             &transaction,
@@ -492,17 +499,17 @@ pub(super) fn commit_projection(
             std::slice::from_ref(&commit.target_status),
             &commit.resource_statuses,
             &commit.conditions,
-            commit.target_status.updated_at(),
+            written_at,
         )?;
         if let Some(readiness) = &commit.readiness {
-            insert_readiness(&transaction, readiness, commit.target_status.updated_at())?;
+            insert_readiness(&transaction, readiness, written_at)?;
         }
         complete_request(
             &transaction,
             commit.target_status.target(),
             claim,
             commit.target_status.progress().ready(),
-            commit.target_status.updated_at(),
+            written_at,
         )?;
         release_resource_claims(&transaction, commit.target_status.target(), claim)?;
         finish_retiring_target(&transaction, commit.target_status.target())?;
@@ -512,20 +519,21 @@ pub(super) fn commit_projection(
 }
 
 /// Releases a failed Target claim into a counted durable retry without losing newer generations.
-pub(super) fn schedule_retry(
-    repository: &SqliteEffectRepository,
+pub(super) fn schedule_retry<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     target: &EffectTargetId,
     claim: &ReconcileClaim,
     not_before: LocalTimestamp,
-    updated_at: LocalTimestamp,
+    scheduled_at: LocalTimestamp,
 ) -> Result<Option<ora_effect::RetryAttempt>, DatabaseError> {
-    if not_before < updated_at {
+    if not_before < scheduled_at {
         return Err(DatabaseError::CorruptEffectState(
             "Effect retry cannot be scheduled in the past".to_string(),
         ));
     }
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         if !claim_is_valid(&transaction, target, claim)? {
             transaction.commit()?;
             return Ok(None);
@@ -548,7 +556,7 @@ pub(super) fn schedule_retry(
              SET state = 'retry_scheduled', wake_reasons_json = json_array('retry_due'),
                  retry_count = ?3, claim_token = NULL, claim_worker = NULL, lease_until = NULL,
                  retry_attempt = ?3, not_before = ?4, blocked_conditions_json = NULL,
-                 resume_trigger_version = NULL, resume_trigger_json = NULL, updated_at = ?5
+                 resume_trigger_version = NULL, resume_trigger_json = NULL, updated_at = MAX(updated_at, ?5)
              WHERE target_id = ?1 AND state = 'claimed' AND claim_token = ?2",
             params![
                 target.as_str(),
@@ -559,7 +567,7 @@ pub(super) fn schedule_retry(
                 })?,
                 retry_count,
                 not_before.millis(),
-                updated_at.millis(),
+                written_at.millis(),
             ],
         )?;
         if request_updated != 1 {

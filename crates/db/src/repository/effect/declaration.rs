@@ -1,24 +1,24 @@
+use super::EffectWriteContext;
 use super::SqliteEffectRepository;
 use super::mapping::{effect_json, generation_from_sql, generation_to_sql};
 use super::source::{advance_changed_scopes, seed_scope_sources};
 use crate::DatabaseError;
+use crate::TimestampSource;
 use ora_domain::{Workspace, WorkspaceLocation};
 use ora_effect::{
     ConsumerDeclaration, ConsumerIdentity, ConsumerRevisionId, Digest, EffectResourceId,
     EffectScopeId, EffectTargetId, FilesystemDirectoryDescriptor, FilesystemFileDescriptor,
-    LocalTimestamp, ResourceAdapterIdentity, TargetDeclaration, TargetResourceBinding,
-    VersionedResourceDescriptor,
+    ResourceAdapterIdentity, TargetDeclaration, TargetResourceBinding, VersionedResourceDescriptor,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 
-impl SqliteEffectRepository {
+impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
     /// Declares one stable Consumer Revision and pairs it with every eligible existing Workspace.
     pub fn declare_consumer(
         &self,
         declaration: &ConsumerDeclaration,
         workspaces: &[Workspace],
-        updated_at: LocalTimestamp,
     ) -> Result<ConsumerRevisionId, DatabaseError> {
         declaration
             .validate()
@@ -26,8 +26,9 @@ impl SqliteEffectRepository {
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let written_at = EffectWriteContext::new(&transaction, &self.clock).timestamp();
             let (consumer_id, revision_id, revision_changed) =
-                upsert_consumer_revision(&transaction, declaration, updated_at.millis())?;
+                upsert_consumer_revision(&transaction, declaration, written_at.millis())?;
             let mut changed_scopes = BTreeSet::new();
             for workspace in workspaces {
                 let WorkspaceLocation::LocalFilesystem { path } = &workspace.location else {
@@ -37,7 +38,7 @@ impl SqliteEffectRepository {
                 seed_scope_sources(
                     &transaction,
                     &scope,
-                    updated_at.millis(),
+                    written_at.millis(),
                     &mut changed_scopes,
                 )?;
                 upsert_workspace_target(
@@ -48,29 +49,26 @@ impl SqliteEffectRepository {
                     &revision_id,
                     declaration,
                     revision_changed,
-                    updated_at.millis(),
+                    written_at.millis(),
                 )?;
             }
-            advance_changed_scopes(&transaction, &changed_scopes, updated_at.millis())?;
+            advance_changed_scopes(&transaction, &changed_scopes, written_at.millis())?;
             transaction.commit()?;
             Ok(revision_id)
         })
     }
 
     /// Marks a Consumer and all of its Targets Retiring while retaining cleanup bindings.
-    pub fn retire_consumer(
-        &self,
-        consumer: &ConsumerIdentity,
-        updated_at: LocalTimestamp,
-    ) -> Result<bool, DatabaseError> {
+    pub fn retire_consumer(&self, consumer: &ConsumerIdentity) -> Result<bool, DatabaseError> {
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let written_at = EffectWriteContext::new(&transaction, &self.clock).timestamp();
             let consumer_id = consumer.storage_key();
             let changed = transaction.execute(
-                "UPDATE effect_consumers SET lifecycle = 'retiring', updated_at = ?2
+                "UPDATE effect_consumers SET lifecycle = 'retiring', updated_at = MAX(updated_at, ?2)
                  WHERE id = ?1 AND lifecycle = 'declared'",
-                params![&consumer_id, updated_at.millis()],
+                params![&consumer_id, written_at.millis()],
             )?;
             if changed == 0 {
                 transaction.commit()?;
@@ -94,23 +92,17 @@ impl SqliteEffectRepository {
             drop(statement);
             for (target_id, scope_id, generation) in targets {
                 transaction.execute(
-                    "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = ?2
+                    "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = MAX(updated_at, ?2)
                      WHERE id = ?1",
-                    params![&target_id, updated_at.millis()],
+                    params![&target_id, written_at.millis()],
                 )?;
                 transaction.execute(
                     "UPDATE effect_target_status
-                     SET phase = 'retiring', status_version = status_version + 1, updated_at = ?2
+                     SET phase = 'retiring', status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
                      WHERE target_id = ?1",
-                    params![&target_id, updated_at.millis()],
+                    params![&target_id, written_at.millis()],
                 )?;
-                upsert_target_wakeup(
-                    &transaction,
-                    &target_id,
-                    generation_from_sql(generation)?,
-                    updated_at.millis(),
-                    "target_retiring",
-                )?;
+                upsert_target_wakeup(&transaction, &target_id, generation_from_sql(generation)?, written_at.millis(), "target_retiring", written_at.millis())?;
                 let _ = scope_id;
             }
             transaction.commit()?;
@@ -162,7 +154,7 @@ fn upsert_consumer_revision(
          ) VALUES (?1, ?2, ?3, ?4, ?5, 'declared', ?6, ?6)
          ON CONFLICT(id) DO UPDATE SET adapter_id = excluded.adapter_id,
              current_revision_id = excluded.current_revision_id,
-             lifecycle = 'declared', updated_at = excluded.updated_at",
+             lifecycle = 'declared', updated_at = MAX(effect_consumers.updated_at, excluded.updated_at)",
         params![
             &consumer_id,
             declaration.consumer.kind.as_str(),
@@ -238,7 +230,7 @@ fn upsert_workspace_target(
              id, scope_id, consumer_id, consumer_revision_id, lifecycle, created_at, updated_at
          ) VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)
          ON CONFLICT(id) DO UPDATE SET consumer_revision_id = excluded.consumer_revision_id,
-             updated_at = excluded.updated_at",
+             updated_at = MAX(effect_targets.updated_at, excluded.updated_at)",
         params![
             target_id.as_str(),
             &scope_id,
@@ -282,7 +274,7 @@ fn upsert_workspace_target(
          ON CONFLICT(target_id) DO UPDATE SET
              consumer_revision_id = excluded.consumer_revision_id,
              declaration_json = excluded.declaration_json, digest = excluded.digest,
-             updated_at = excluded.updated_at",
+             updated_at = MAX(effect_target_declarations.updated_at, excluded.updated_at)",
         params![
             target_id.as_str(),
             revision_id.as_str(),
@@ -300,7 +292,7 @@ fn upsert_workspace_target(
          ON CONFLICT(target_id) DO UPDATE SET
              desired_generation = MAX(desired_generation, excluded.desired_generation),
              phase = CASE WHEN phase = 'recovery_required' THEN phase ELSE 'pending' END,
-             status_version = status_version + 1, updated_at = excluded.updated_at",
+             status_version = status_version + 1, updated_at = MAX(effect_target_status.updated_at, excluded.updated_at)",
         params![
             target_id.as_str(),
             generation_to_sql(generation)?,
@@ -313,6 +305,7 @@ fn upsert_workspace_target(
         generation,
         updated_at,
         "declaration_changed",
+        updated_at,
     )?;
     Ok(())
 }
@@ -450,12 +443,12 @@ fn retire_target(
     updated_at: i64,
 ) -> Result<(), DatabaseError> {
     transaction.execute(
-        "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = ?2 WHERE id = ?1",
+        "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = MAX(updated_at, ?2) WHERE id = ?1",
         params![target_id, updated_at],
     )?;
     transaction.execute(
         "UPDATE effect_target_status
-         SET phase = 'retiring', status_version = status_version + 1, updated_at = ?2
+         SET phase = 'retiring', status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
          WHERE target_id = ?1",
         params![target_id, updated_at],
     )?;
@@ -465,6 +458,7 @@ fn retire_target(
         generation,
         updated_at,
         "target_retiring",
+        updated_at,
     )
 }
 
@@ -473,8 +467,9 @@ pub(super) fn upsert_target_wakeup(
     transaction: &Connection,
     target_id: &str,
     generation: ora_effect::Generation,
-    updated_at: i64,
+    requested_at: i64,
     reason: &str,
+    written_at: i64,
 ) -> Result<(), DatabaseError> {
     transaction.execute(
         "INSERT INTO effect_reconcile_requests (
@@ -483,7 +478,7 @@ pub(super) fn upsert_target_wakeup(
              blocked_conditions_json, resume_trigger_version, resume_trigger_json,
              requested_at, updated_at
          ) VALUES (?1, ?2, 'pending', json_array(?4), 0,
-                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?3, ?3)
+                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?3, MAX(?3, ?5))
          ON CONFLICT(target_id) DO UPDATE SET
              requested_generation = MAX(requested_generation, excluded.requested_generation),
              state = CASE
@@ -526,12 +521,13 @@ pub(super) fn upsert_target_wakeup(
                        AND operation.phase = 'recovery_required'
                  ) THEN resume_trigger_json ELSE NULL
              END,
-             requested_at = excluded.requested_at, updated_at = excluded.updated_at",
+             requested_at = excluded.requested_at, updated_at = MAX(effect_reconcile_requests.updated_at, excluded.updated_at)",
         params![
             target_id,
             generation_to_sql(generation)?,
-            updated_at,
+            requested_at,
             reason,
+            written_at,
         ],
     )?;
     Ok(())

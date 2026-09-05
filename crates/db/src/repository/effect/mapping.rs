@@ -4,9 +4,9 @@ use ora_effect::{
     ConsumerIdentity, ConsumerKind, ConsumerRevision, ConsumerRevisionId, DesiredEffect,
     DesiredEffectIdentity, DesiredState, Digest, EffectMutation, EffectResource, EffectResourceId,
     EffectRevision, EffectRevisionId, EffectScopeId, EffectTarget, EffectTargetId, Generation,
-    LocalTimestamp, ResourceAdapterIdentity, ResourceKey, ResourceLifecycle, ResourcePhase,
-    ResourceStatus, RevisionAvailability, StableReason, StatusVersion, TargetDeclaration,
-    TargetLifecycle, TargetPhase, TargetProgress, TargetStatus, ValidatedEffectDefinition,
+    ResourceAdapterIdentity, ResourceKey, ResourceLifecycle, ResourcePhase, ResourceStatus,
+    RevisionAvailability, StableReason, StatusVersion, TargetDeclaration, TargetLifecycle,
+    TargetPhase, TargetProgress, TargetStatus, ValidatedEffectDefinition,
     ValidatedEffectParameters, VersionedResourceDescriptor,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -304,7 +304,7 @@ pub(super) fn load_target_status(
     let row = connection
         .query_row(
             "SELECT desired_generation, observed_generation, applied_generation,
-                    ready_generation, phase, recovery_operation_id, status_version, updated_at
+                    ready_generation, phase, recovery_operation_id, status_version
              FROM effect_target_status WHERE target_id = ?1",
             params![target_id.as_str()],
             |row| {
@@ -316,13 +316,12 @@ pub(super) fn load_target_status(
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
                 ))
             },
         )
         .optional()?;
     row.map(
-        |(desired, observed, applied, ready, phase, recovery, version, updated_at)| {
+        |(desired, observed, applied, ready, phase, recovery, version)| {
             Ok(TargetStatus::restore(
                 target_id.clone(),
                 TargetProgress::restore(
@@ -337,7 +336,6 @@ pub(super) fn load_target_status(
                     DatabaseError::CorruptEffectState("negative Target status version".to_string())
                 })?)
                 .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
-                LocalTimestamp::from_millis(updated_at),
             ))
         },
     )
@@ -352,7 +350,7 @@ pub(super) fn load_resource_status(
     let row = connection
         .query_row(
             "SELECT desired_generation, observed_generation, applied_generation, phase,
-                    recovery_operation_id, status_version, updated_at
+                    recovery_operation_id, status_version
              FROM effect_resource_status WHERE resource_id = ?1",
             params![resource_id.as_str()],
             |row| {
@@ -363,30 +361,24 @@ pub(super) fn load_resource_status(
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, i64>(5)?,
-                    row.get::<_, i64>(6)?,
                 ))
             },
         )
         .optional()?;
-    row.map(
-        |(desired, observed, applied, phase, recovery, version, updated_at)| {
-            ResourceStatus::restore(
-                resource_id.clone(),
-                generation_from_sql(desired)?,
-                generation_from_sql(observed)?,
-                generation_from_sql(applied)?,
-                parse_resource_phase(&phase, recovery)?,
-                StatusVersion::new(u64::try_from(version).map_err(|_| {
-                    DatabaseError::CorruptEffectState(
-                        "negative Resource status version".to_string(),
-                    )
-                })?)
-                .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
-                LocalTimestamp::from_millis(updated_at),
-            )
-            .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))
-        },
-    )
+    row.map(|(desired, observed, applied, phase, recovery, version)| {
+        ResourceStatus::restore(
+            resource_id.clone(),
+            generation_from_sql(desired)?,
+            generation_from_sql(observed)?,
+            generation_from_sql(applied)?,
+            parse_resource_phase(&phase, recovery)?,
+            StatusVersion::new(u64::try_from(version).map_err(|_| {
+                DatabaseError::CorruptEffectState("negative Resource status version".to_string())
+            })?)
+            .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
+        )
+        .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))
+    })
     .transpose()
 }
 

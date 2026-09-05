@@ -18,7 +18,8 @@ use zip::write::SimpleFileOptions;
 
 /// Opens a throwaway SQLite pool under `root` for PluginApi tests.
 fn test_pool(root: &Path) -> RepositoryPool {
-    DatabaseBootstrapper::system()
+    ora_logging::initialize_test_clock();
+    DatabaseBootstrapper::new(crate::test_clock::TestClock)
         .bootstrap_repository_pool(
             &DatabaseLocation::path(root.join("test.sqlite")),
             &default_migration_catalog().expect("build migration catalog"),

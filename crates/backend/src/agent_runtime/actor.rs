@@ -1046,7 +1046,7 @@ mod tests {
 
     /// Opens one migrated pool for the plugin host's database-backed collaborators.
     fn test_repository_pool(root: &Path) -> RepositoryPool {
-        DatabaseBootstrapper::system()
+        DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(root.join("test.sqlite")),
                 &default_migration_catalog().expect("build migration catalog"),

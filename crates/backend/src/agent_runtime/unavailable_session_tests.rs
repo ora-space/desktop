@@ -29,7 +29,7 @@ const MISSING_AGENT: &str = "ora-space.opencode";
 
 /// Opens a migrated repository used by the runtime and plugin host.
 fn test_pool(root: &Path) -> RepositoryPool {
-    DatabaseBootstrapper::system()
+    DatabaseBootstrapper::new(crate::test_clock::TestClock)
         .bootstrap_repository_pool(
             &DatabaseLocation::path(root.join("test.sqlite")),
             &default_migration_catalog().expect("build migration catalog"),
@@ -68,7 +68,7 @@ fn test_manager(root: &Path, pool: &RepositoryPool, scheduler: Scheduler) -> Age
 fn seed_session(root: &Path, pool: &RepositoryPool) {
     let workspace_path = root.join("project");
     std::fs::create_dir_all(&workspace_path).expect("create project directory");
-    SqliteProjectRepository::new(pool.clone())
+    SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock)
         .create_project(
             Project::new(
                 ProjectId::new("project-1"),

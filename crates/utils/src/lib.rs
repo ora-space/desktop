@@ -8,6 +8,7 @@
 #[cfg(feature = "archive")]
 pub mod archive;
 pub mod atomic;
+pub mod clock;
 #[cfg(feature = "validation")]
 pub mod directory;
 pub mod fs;

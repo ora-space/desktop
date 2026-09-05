@@ -315,7 +315,7 @@ mod tests {
 
     fn open_pool(temp: &TempDir) -> RepositoryPool {
         let database_path = temp.path().join("ora.sqlite3");
-        DatabaseBootstrapper::system()
+        DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&database_path),
                 &default_migration_catalog().expect("build migration catalog"),

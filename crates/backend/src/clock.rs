@@ -14,3 +14,10 @@ impl Clock for SystemClock {
         }
     }
 }
+
+impl ora_utils::clock::TimestampSource for SystemClock {
+    /// Uses Ora's configured local clock for Effect business-stage timestamps.
+    fn current_timestamp_millis(&self) -> i64 {
+        ora_logging::clock::now_millis()
+    }
+}

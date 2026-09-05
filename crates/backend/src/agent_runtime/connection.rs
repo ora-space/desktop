@@ -988,7 +988,7 @@ mod tests {
     #[tokio::test]
     async fn supervises_a_package_that_appears_after_startup() {
         let temporary = TempDir::new().expect("create supervisor test directory");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
                 &default_migration_catalog().expect("build migration catalog"),

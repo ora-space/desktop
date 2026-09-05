@@ -1,3 +1,5 @@
+use super::effect::EffectWriteContext;
+use crate::{LocalTimestampSource, TimestampSource};
 use ora_application::{RepositoryError, TaskWorkspaceCommit, WorkspaceCommitOutcome};
 use ora_domain::{
     Task, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
@@ -19,17 +21,28 @@ use crate::repository::connection::bool_to_sqlite;
 /// fails with `ProjectNotVisible` and the caller compensates the provisioned
 /// Git resources itself.
 #[derive(Clone, Debug)]
-pub struct SqliteTaskWorkspaceRepository {
+pub struct SqliteTaskWorkspaceRepository<Clock = LocalTimestampSource> {
     pool: RepositoryPool,
+    clock: Clock,
 }
 
 impl SqliteTaskWorkspaceRepository {
     pub fn new(pool: RepositoryPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            clock: LocalTimestampSource,
+        }
     }
 }
 
-impl TaskWorkspaceCommit for SqliteTaskWorkspaceRepository {
+impl<Clock: TimestampSource> SqliteTaskWorkspaceRepository<Clock> {
+    /// Injects the audit clock used after acquiring Effect write transactions.
+    pub fn with_clock(pool: RepositoryPool, clock: Clock) -> Self {
+        Self { pool, clock }
+    }
+}
+
+impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceRepository<Clock> {
     /// Atomically persists a worktree-backed task and releases its provisioning lease.
     fn commit_worktree_task(
         &self,
@@ -40,6 +53,7 @@ impl TaskWorkspaceCommit for SqliteTaskWorkspaceRepository {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                let write = EffectWriteContext::new(&transaction, &self.clock);
                 if !project_visible(&transaction, task.project_id.as_ref())? {
                     return Ok(WorkspaceCommitOutcome::ProjectNotVisible);
                 }
@@ -56,7 +70,7 @@ impl TaskWorkspaceCommit for SqliteTaskWorkspaceRepository {
                     WorkspaceLifecycle::Active,
                     task.audit_fields.clone(),
                 );
-                insert_workspace(&transaction, &workspace)?;
+                insert_workspace(&transaction, &workspace, &write)?;
                 insert_provisioning(&transaction, &workspace)?;
                 insert_worktree(&transaction, worktree)?;
                 insert_task(&transaction, task)?;
@@ -128,6 +142,7 @@ fn insert_worktree(
 fn insert_workspace(
     transaction: &Transaction<'_>,
     workspace: &Workspace,
+    write: &EffectWriteContext,
 ) -> Result<(), crate::DatabaseError> {
     let location_id = format!("{}-location", workspace.id);
     let locator = match &workspace.location {
@@ -173,17 +188,18 @@ fn insert_workspace(
             bool_to_sqlite(workspace.audit_fields.is_deleted),
         ],
     )?;
+    write.create_scope(transaction, &EffectScopeId::Workspace(workspace.id.clone()))?;
     let mut changed_scopes = BTreeSet::new();
     super::effect::seed_scope_sources(
         transaction,
         &EffectScopeId::Workspace(workspace.id.clone()),
-        workspace.audit_fields.updated_at,
+        write.timestamp().millis(),
         &mut changed_scopes,
     )?;
     super::effect::advance_changed_scopes(
         transaction,
         &changed_scopes,
-        workspace.audit_fields.updated_at,
+        write.timestamp().millis(),
     )?;
     Ok(())
 }

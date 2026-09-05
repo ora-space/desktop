@@ -7,7 +7,7 @@ Targets bind to independently observable and mutable `EffectResource` values, an
 may contribute to the same physical Resource.
 
 The current architectural decision and its rationale are recorded in
-[`00000000-effect-system-foundation.md`](../specs/decisions/desktop/core/effect/00000000-effect-system-foundation.md);
+[`0-effect-system-foundation.md`](../specs/decisions/desktop/core/effect/0-effect-system-foundation.md);
 the implementation and this state description are updated together when that decision changes.
 
 ## State and identity
@@ -52,9 +52,28 @@ An unchanged Consumer declaration does not touch Target status or requests. New 
 paired with existing Workspaces immediately, while every worker pass converges existing Consumer
 declarations into Workspaces created later.
 
-Agent startup and the Effect worker can persist the same Consumer declaration in a different
-order from their sampled timestamps. Replaying an unchanged declaration preserves the latest
-Consumer audit timestamp so startup cannot fail the database's timestamp ordering constraint.
+## Audit and business time
+
+Effect repositories own row audit time. They sample an injected `TimestampSource` after acquiring
+the write transaction and reuse that sample throughout the transaction. Each row independently
+preserves its existing `updated_at` and any CHECK-required business timestamp lower bound; new rows
+use the write sample for `created_at` and `updated_at`. A wall-clock correction may make audit times
+equal but cannot regress a row or confer generation/fencing authority.
+
+Local Skill `updated_at` remains its revision key and package-journal version. Publishing an old
+Skill into a newer Scope or Target uses the Effect write clock for audit fields, without changing
+the Skill version. An unchanged publication does not create a revision or advance generation.
+
+The reconciler samples business time at preparation, after apply, and after readiness. Operations
+in one Attempt share preparation time; later phase times preserve their own preceding phase lower
+bound. Recovery stores an independent `detected_at`. Worker claims, recovery scans, and retry
+scheduling take fresh samples; retry delay starts when failure is handled. Receipt `received_at`
+means local durable reception. Conditions preserve their identity and first observation and never
+regress their last observation. Target status reads return audit metadata alongside domain evidence
+and Conditions from one database snapshot.
+
+The decision is recorded in
+[Effect audit and business time](../specs/decisions/desktop/core/effect/20260905-separate-audit-and-business-time.md).
 
 ## Filesystem safety and recovery
 
@@ -88,3 +107,10 @@ Resource adapter.
 Plugin registration exposes `effectResources`. Agent Consumers implement `effect/coordinate`,
 `effect/reactivate`, and `effect/verify_ready`; those versioned payloads remain behind the
 `ConsumerAdapter` boundary and do not add Agent-specific phases to Effect Core.
+
+Migration `0010` separates recovery detection from row audit time and removes the Workspace insert
+trigger that inherited historical catalog timestamps. Project and task Workspace repositories now
+create the Scope, seed Desired, and record wakeups within the Workspace transaction. Existing
+Effect identities, ownership, journals, requests, and historical audit values are retained.
+Rollback writes recovery detection back to the legacy column and restores the trigger before an
+older application runs; the next upgrade reconstructs detection evidence again.

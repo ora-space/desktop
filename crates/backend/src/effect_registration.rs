@@ -3,7 +3,7 @@
 use crate::error::BackendError;
 use ora_db::SqliteEffectRepository;
 use ora_domain::Workspace;
-use ora_effect::{ConsumerDeclaration, LocalTimestamp};
+use ora_effect::ConsumerDeclaration;
 
 /// Re-declares every current Consumer against the complete current Workspace snapshot.
 ///
@@ -13,11 +13,10 @@ pub(crate) fn converge_workspace_targets(
     repository: &SqliteEffectRepository,
     workspaces: &[Workspace],
     declarations: &[ConsumerDeclaration],
-    now: i64,
 ) -> Result<usize, BackendError> {
     for declaration in declarations {
         repository
-            .declare_consumer(declaration, workspaces, LocalTimestamp::from_millis(now))
+            .declare_consumer(declaration, workspaces)
             .map_err(|error| {
                 BackendError::internal("failed to converge Effect Target declarations", error)
             })?;

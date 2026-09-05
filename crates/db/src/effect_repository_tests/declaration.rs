@@ -1,6 +1,5 @@
 use super::{declaration, fixture};
 use crate::SqliteEffectRepository;
-use ora_effect::LocalTimestamp;
 use pretty_assertions::assert_eq;
 use rusqlite::params;
 
@@ -9,23 +8,21 @@ use rusqlite::params;
 fn unchanged_declarations_preserve_consumer_timestamps_when_committed_out_of_order()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let clock = crate::test_clock::TestClock::new(30);
+    let repository = SqliteEffectRepository::with_clock(pool.clone(), clock.clone());
 
     // Startup can race before any Workspace exists, or after Targets have already been paired.
     for (identity, workspaces) in [
         ("official/no-workspace", &[][..]),
         ("official/with-workspace", std::slice::from_ref(&workspace)),
     ] {
+        clock.set(20);
         let consumer = declaration(identity);
-        let revision =
-            repository.declare_consumer(&consumer, workspaces, LocalTimestamp::from_millis(20))?;
+        let revision = repository.declare_consumer(&consumer, workspaces)?;
         for timestamp in [30, 10, 25] {
+            clock.set(timestamp);
             assert_eq!(
-                repository.declare_consumer(
-                    &consumer,
-                    workspaces,
-                    LocalTimestamp::from_millis(timestamp),
-                )?,
+                repository.declare_consumer(&consumer, workspaces,)?,
                 revision,
             );
         }

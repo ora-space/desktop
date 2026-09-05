@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 /// rather than `official`.
 #[tokio::test]
 async fn locally_built_opencode_and_claude_packages_import_together() {
+    ora_logging::initialize_test_clock();
     let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)

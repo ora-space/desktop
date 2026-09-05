@@ -371,6 +371,7 @@ mod tests {
 
     /// Opens one isolated backend whose worktrees stay inside the test fixture.
     fn open_backend(temporary: &TempDir) -> Backend {
+        ora_logging::initialize_test_clock();
         Backend::open(BackendPaths {
             app_data_directory: temporary.path().to_path_buf(),
             home_directory: temporary.path().to_path_buf(),

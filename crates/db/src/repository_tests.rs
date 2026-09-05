@@ -37,7 +37,8 @@ impl TimestampSource for FixedTimestampSource {
 #[test]
 fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     let (temp_dir, pool) = bootstrapped_pool();
-    let repository = SqliteSkillRepository::new(pool.clone());
+    let repository =
+        SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let plugin_id = PluginId::new("official", "review-pack").unwrap();
     let package_root = temp_dir.path().join("plugins/review-pack/review");
     std::fs::create_dir_all(&package_root).unwrap();
@@ -73,7 +74,8 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     );
 
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     project_repository
         .create_project(
             Project::new(
@@ -137,7 +139,8 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
 fn project_creation_creates_main_workspace() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     let project = Project::new(
         ProjectId::new("project-1"),
@@ -175,7 +178,8 @@ fn project_creation_creates_main_workspace() {
 fn project_creation_keeps_missing_main_workspace_in_provisioning() {
     let (temp_dir, pool) = bootstrapped_pool();
     let missing_path = temp_dir.path().join("missing-repository");
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     project_repository
         .create_project(
@@ -200,7 +204,8 @@ fn project_creation_keeps_missing_main_workspace_in_provisioning() {
 fn session_round_trip_uses_workspace_id() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool);
     project_repository
@@ -245,7 +250,8 @@ fn session_round_trip_uses_workspace_id() {
 fn standalone_session_list_excludes_workflow_node_sessions() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -368,7 +374,8 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
 fn workflow_run_round_trip_uses_workspace_id() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool);
@@ -455,7 +462,8 @@ fn workflow_run_round_trip_uses_workspace_id() {
 fn restart_resets_variable_values_and_keeps_the_catalog() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
@@ -577,7 +585,8 @@ fn restart_resets_variable_values_and_keeps_the_catalog() {
 fn deleting_workflow_run_does_not_delete_workspace_or_session() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -762,7 +771,8 @@ fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
 /// Seeds a created-but-never-started Pending run for deletion-policy fixtures.
 fn seed_pending_run(temp_dir: &TempDir, pool: &RepositoryPool) -> WorkflowRunId {
     let workspace_path = existing_workspace_path(temp_dir);
-    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());

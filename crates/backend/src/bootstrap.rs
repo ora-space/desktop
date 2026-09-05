@@ -141,7 +141,7 @@ impl Backend {
                 default_worktree_root
             }
         };
-        crate::skill_reconciliation::reconcile_skill_storage(&pool, &skills_root)
+        crate::skill_reconciliation::reconcile_skill_storage(&pool, &skills_root, &SystemClock)
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         crate::skill_reconciliation::cleanup_import_temp_sessions()
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
@@ -1628,6 +1628,7 @@ mod tests {
 
     /// Builds Backend paths with independently selectable application-data and Ora-home roots.
     fn backend_paths(app_data_directory: &Path, home_directory: &Path) -> BackendPaths {
+        ora_logging::initialize_test_clock();
         BackendPaths {
             app_data_directory: app_data_directory.to_path_buf(),
             home_directory: home_directory.to_path_buf(),

@@ -402,13 +402,13 @@ mod tests {
         let project_root = temp_dir.path().join("project-root");
         fs::create_dir_all(&project_root).expect("create project root");
         let database_path = temp_dir.path().join("ora.sqlite3");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&database_path),
                 &default_migration_catalog().expect("create migration catalog"),
             )
             .expect("bootstrap repository pool");
-        SqliteProjectRepository::new(pool.clone())
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock)
             .create_project(
                 Project::new(
                     ProjectId::new("project-1"),

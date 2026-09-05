@@ -208,7 +208,7 @@ mod tests {
 
     fn bootstrap() -> (TempDir, RepositoryPool) {
         let temp = TempDir::new().unwrap();
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&temp.path().join("repository.sqlite3")),
                 &default_migration_catalog().expect("create migration catalog"),
@@ -226,7 +226,8 @@ mod tests {
     ) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
         let workspace_path = temp.path().join("fixture-project");
         std::fs::create_dir_all(&workspace_path).unwrap();
-        let project = SqliteProjectRepository::new(pool.clone());
+        let project =
+            SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
         project
             .create_project(
                 Project::new(

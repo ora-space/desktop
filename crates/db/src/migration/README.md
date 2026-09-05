@@ -7,7 +7,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains nine dependency-ordered modules: workspace core and application configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, Workspace Effect state, durable plugin marketplace source configuration, the immutable marketplace-source namespace bindings, the per-source marketplace enabled flag, and source-scoped artifact retrieval configuration.
+- The default catalog contains ten dependency-ordered modules: workspace core and application
+  configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, marketplace source
+  configuration, Generic Effect persistence, immutable marketplace-source namespace bindings,
+  marketplace enabled flags, artifact retrieval configuration, and independent Effect audit time.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
@@ -15,12 +18,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - The default catalog carries a separate first-install SQL statement list. Public builds keep the
   list empty; distribution patches may populate it without changing any versioned migration
   snapshot. Its contents are omitted from `MigrationCatalog` debug output.
-- Migration `0005` is the Effect v2 model: stable Sources, immutable Revisions and explicit Heads;
-  normalized Workspace Desired items; Surface and Consumer declarations/status; Managed ownership;
-  current Conditions; durable reconcile/propagation requests; mutation Operations and recovery
-  Artifacts; and append-only Audit events.
-- Migration `0006` stores plugin marketplace source configuration in SQLite: the duplicate-free
-  URL, tracked branch, per-source `use_proxy` policy, and stable precedence position.
+- Migration `0005` stores plugin marketplace source configuration.
+- Migration `0006` stores Generic Effect Scopes, Sources/Revisions, complete Desired State,
+  Consumer/Target declarations, shared Resources, projections, ownership, statuses, Conditions,
+  fenced requests/claims, Attempts, operation journals, receipts, and audit history.
 - Migration `0007` records the namespace bound to each marketplace source's canonical URL. It is a
   table of its own rather than a column on the source row because the binding outlives the
   configuration: once a plugin from that source is installed, the namespace is frozen into its
@@ -34,17 +35,14 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - Migration `0009` adds the tagged `artifact_retrieval` JSON configuration. Existing sources
   default to Direct HTTPS; the S3 SigV4 variant keeps endpoint, bucket, region, and the credential
   pair together instead of spreading them across nullable columns.
-- A reconcile request carries its own scheduling state: `pending`, `claimed`, `blocked`, or
-  `retry_scheduled`, plus the lease that proves who currently owns the surface and the
-  `request_token` that fences that owner's writes. Only one worker can hold a surface, an expired
-  lease makes it claimable again so a crashed worker cannot strand it, and the retry delay lives in
-  the row so a restart cannot turn a backing-off surface back into an immediate retry.
-- Every Workspace has exactly one Effect aggregate. The first release installs every active Skill
-  Source by default: publishing a new local or plugin Skill adds it to all existing Workspaces, and
-  the Workspace insert trigger selects all active Skill Heads for a newly created Workspace.
-- Local Skill Sources use namespace `local`. Plugin Skill Sources use the owning plugin's canonical
-  `<plugin_namespace>/<plugin_identifier>` identity. Installed plugin Sources are always available;
-  Workspace selection remains independent of whether a plugin process is currently running.
+- Migration `0010` separates recovery `detected_at` from row `updated_at` and removes the Scope
+  insert trigger. Project and task Workspace repositories create and seed the Scope within their
+  write transaction using an injected audit clock. Existing Effect rows and authority are retained.
+  Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
+- Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
+  establish authority; audit time never grants a claim or changes retry eligibility.
+- Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
+  Workspace seeds its new Scope from published Sources in the same transaction.
 
 ## Application bootstrap
 
@@ -81,6 +79,6 @@ migration history.
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 
-Rolling back `0005` removes only Workspace Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
+Rolling back `0006` removes only Generic Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).

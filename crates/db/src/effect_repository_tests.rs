@@ -1,4 +1,8 @@
 mod declaration;
+mod scope_initialization;
+mod time;
+mod time_migration;
+mod time_queue;
 
 use crate::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
@@ -69,7 +73,7 @@ impl ConsumerAdapter for ReadyConsumer {
 
 /// Publishes a newer Desired generation while an older projection is being verified.
 struct PublishSkillOnVerify {
-    repository: SqliteSkillRepository,
+    repository: SqliteSkillRepository<crate::test_clock::TestClock>,
     projection: PluginSkillProjection,
     published: Mutex<bool>,
 }
@@ -166,7 +170,9 @@ fn fixture() -> (TempDir, RepositoryPool, Workspace) {
         WorkspaceLifecycle::Active,
         AuditFields::new(1, 1, false),
     );
-    pool.with_connection(|connection| {
+    pool.with_connection_mut(|connection| {
+        let transaction = connection.transaction()?;
+        let connection = &transaction;
         connection.execute(
             "INSERT INTO projects (
                  id, name, repository_kind, created_at, updated_at, is_deleted
@@ -186,6 +192,8 @@ fn fixture() -> (TempDir, RepositoryPool, Workspace) {
              ) VALUES (?1, 'project-1', 'main', 'location-1', 'active', 1, 1, 0)",
             params![workspace.id.as_ref()],
         )?;
+        transaction.execute("INSERT INTO effect_scopes (id, scope_kind, workspace_id, lifecycle, generation, created_at, updated_at) VALUES (?1, 'workspace', ?2, 'active', 0, 1, 1)", params![EffectScopeId::Workspace(workspace.id.clone()).storage_key(), workspace.id.as_ref()])?;
+        transaction.commit()?;
         Ok(())
     })
     .unwrap_or_else(|error| panic!("insert Workspace fixture: {error}"));
@@ -229,19 +237,18 @@ fn declaration(stable_key: &str) -> ConsumerDeclaration {
 #[test]
 fn consumer_targets_share_one_resource_without_sharing_target_state() {
     let (_directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
         .declare_consumer(
             &declaration("official/codex"),
             std::slice::from_ref(&workspace),
-            LocalTimestamp::from_millis(10),
         )
         .unwrap_or_else(|error| panic!("declare first Consumer: {error}"));
     repository
         .declare_consumer(
             &declaration("official/opencode"),
             std::slice::from_ref(&workspace),
-            LocalTimestamp::from_millis(11),
         )
         .unwrap_or_else(|error| panic!("declare second Consumer: {error}"));
 
@@ -273,14 +280,11 @@ fn consumer_targets_share_one_resource_without_sharing_target_state() {
 #[test]
 fn unchanged_consumer_declaration_does_not_requeue_its_target() {
     let (_directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let consumer = declaration("official/codex");
     repository
-        .declare_consumer(
-            &consumer,
-            std::slice::from_ref(&workspace),
-            LocalTimestamp::from_millis(10),
-        )
+        .declare_consumer(&consumer, std::slice::from_ref(&workspace))
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let before = pool
         .with_connection(|connection| {
@@ -305,7 +309,7 @@ fn unchanged_consumer_declaration_does_not_requeue_its_target() {
         .unwrap_or_else(|error| panic!("load Target state: {error}"));
 
     repository
-        .declare_consumer(&consumer, &[workspace], LocalTimestamp::from_millis(20))
+        .declare_consumer(&consumer, &[workspace])
         .unwrap_or_else(|error| panic!("redeclare Consumer: {error}"));
     let after = pool
         .with_connection(|connection| {
@@ -335,13 +339,10 @@ fn unchanged_consumer_declaration_does_not_requeue_its_target() {
 #[test]
 fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
     let (directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
-        .declare_consumer(
-            &declaration("official/codex"),
-            &[workspace],
-            LocalTimestamp::from_millis(10),
-        )
+        .declare_consumer(&declaration("official/codex"), &[workspace])
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let worker = WorkerIdentity::parse("worker-1")
         .unwrap_or_else(|error| panic!("worker identity: {error}"));
@@ -361,7 +362,10 @@ fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
     std::fs::write(package_root.join("SKILL.md"), manifest)
         .unwrap_or_else(|error| panic!("write package: {error}"));
     let consumer = PublishSkillOnVerify {
-        repository: SqliteSkillRepository::new(pool.clone()),
+        repository: SqliteSkillRepository::with_clock(
+            pool.clone(),
+            crate::test_clock::TestClock::new(20),
+        ),
         projection: PluginSkillProjection {
             name: "review".to_string(),
             description: "Reviews changes".to_string(),
@@ -377,13 +381,9 @@ fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
         &SkillPlanner,
         &consumer,
         &SkillDirectoryResourceAdapter,
+        &FixedTimestamp,
     )
-    .reconcile(
-        &target,
-        &claim,
-        LocalTimestamp::from_millis(11),
-        LocalTimestamp::from_millis(100),
-    )
+    .reconcile(&target, &claim, LocalTimestamp::from_millis(100))
     .unwrap_or_else(|error| panic!("commit older projection: {error:?}"));
     let request = pool
         .with_connection(|connection| {
@@ -425,7 +425,8 @@ fn source_publication_changes_each_complete_scope_generation_once() {
         .unwrap_or_else(|error| panic!("create package: {error}"));
     std::fs::write(package_root.join("SKILL.md"), b"manifest")
         .unwrap_or_else(|error| panic!("write package: {error}"));
-    let repository = SqliteSkillRepository::new(pool.clone());
+    let repository =
+        SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let plugin_id =
         PluginId::new("official", "review").unwrap_or_else(|error| panic!("plugin id: {error}"));
     repository
@@ -443,7 +444,7 @@ fn source_publication_changes_each_complete_scope_generation_once() {
         )
         .unwrap_or_else(|error| panic!("publish plugin Skill: {error}"));
 
-    let state = SqliteEffectRepository::new(pool)
+    let state = SqliteEffectRepository::with_clock(pool, crate::test_clock::TestClock::new(1))
         .load_desired_state(&ora_effect::EffectScopeId::Workspace(workspace.id))
         .unwrap_or_else(|error| panic!("load Desired State: {error}"));
     assert_eq!(state.generation, ora_effect::Generation::new(1));
@@ -459,7 +460,7 @@ fn reconciler_materializes_and_finalizes_one_complete_target_generation() {
     let manifest = b"---\nname: review\ndescription: Reviews changes\n---\n";
     std::fs::write(package_root.join("SKILL.md"), manifest)
         .unwrap_or_else(|error| panic!("write package: {error}"));
-    SqliteSkillRepository::new(pool.clone())
+    SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1))
         .replace_plugin_skills(
             &PluginId::new("official", "review")
                 .unwrap_or_else(|error| panic!("plugin id: {error}")),
@@ -474,12 +475,12 @@ fn reconciler_materializes_and_finalizes_one_complete_target_generation() {
             10,
         )
         .unwrap_or_else(|error| panic!("publish plugin Skill: {error}"));
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
         .declare_consumer(
             &declaration("official/codex"),
             std::slice::from_ref(&workspace),
-            LocalTimestamp::from_millis(11),
         )
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let worker = WorkerIdentity::parse("worker-1")
@@ -495,14 +496,15 @@ fn reconciler_materializes_and_finalizes_one_complete_target_generation() {
         .remove(0);
     let planner = SkillPlanner;
     let filesystem = SkillDirectoryResourceAdapter;
-    let outcome = EffectReconciler::new(&repository, &planner, &ReadyConsumer, &filesystem)
-        .reconcile(
-            &target,
-            &claim,
-            LocalTimestamp::from_millis(13),
-            LocalTimestamp::from_millis(100),
-        )
-        .unwrap_or_else(|error| panic!("reconcile Target: {error}"));
+    let outcome = EffectReconciler::new(
+        &repository,
+        &planner,
+        &ReadyConsumer,
+        &filesystem,
+        &FixedTimestamp,
+    )
+    .reconcile(&target, &claim, LocalTimestamp::from_millis(100))
+    .unwrap_or_else(|error| panic!("reconcile Target: {error}"));
     let persisted = pool
         .with_connection(|connection| {
             connection
@@ -564,14 +566,15 @@ fn reconciler_materializes_and_finalizes_one_complete_target_generation() {
         )
         .unwrap_or_else(|error| panic!("reclaim Target: {error}"))
         .remove(0);
-    let replay = EffectReconciler::new(&repository, &planner, &ReadyConsumer, &filesystem)
-        .reconcile(
-            &target,
-            &second_claim,
-            LocalTimestamp::from_millis(15),
-            LocalTimestamp::from_millis(110),
-        )
-        .unwrap_or_else(|error| panic!("reconcile current Target: {error}"));
+    let replay = EffectReconciler::new(
+        &repository,
+        &planner,
+        &ReadyConsumer,
+        &filesystem,
+        &FixedTimestamp,
+    )
+    .reconcile(&target, &second_claim, LocalTimestamp::from_millis(110))
+    .unwrap_or_else(|error| panic!("reconcile current Target: {error}"));
     let operation_count = pool
         .with_connection(|connection| {
             connection
@@ -602,7 +605,7 @@ fn desired_replacement_uses_generation_cas_and_exact_no_op_semantics() {
         .unwrap_or_else(|error| panic!("create package: {error}"));
     std::fs::write(package_root.join("SKILL.md"), b"manifest")
         .unwrap_or_else(|error| panic!("write package: {error}"));
-    SqliteSkillRepository::new(pool.clone())
+    SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1))
         .replace_plugin_skills(
             &PluginId::new("official", "review")
                 .unwrap_or_else(|error| panic!("plugin id: {error}")),
@@ -617,7 +620,7 @@ fn desired_replacement_uses_generation_cas_and_exact_no_op_semantics() {
             10,
         )
         .unwrap_or_else(|error| panic!("publish plugin Skill: {error}"));
-    let repository = SqliteEffectRepository::new(pool);
+    let repository = SqliteEffectRepository::with_clock(pool, crate::test_clock::TestClock::new(1));
     let scope = ora_effect::EffectScopeId::Workspace(workspace.id);
     let current = repository
         .load_desired_state(&scope)
@@ -629,19 +632,13 @@ fn desired_replacement_uses_generation_cas_and_exact_no_op_semantics() {
                 &scope,
                 current.generation,
                 current.effects.values().cloned().collect(),
-                LocalTimestamp::from_millis(20),
             )
             .unwrap_or_else(|error| panic!("replace no-op: {error}")),
         ReplaceDesiredStateOutcome::Unchanged(current.clone())
     );
     assert_eq!(
         repository
-            .replace_desired_state(
-                &scope,
-                ora_effect::Generation::default(),
-                Vec::new(),
-                LocalTimestamp::from_millis(21),
-            )
+            .replace_desired_state(&scope, ora_effect::Generation::default(), Vec::new(),)
             .unwrap_or_else(|error| panic!("replace conflict: {error}")),
         ReplaceDesiredStateOutcome::Conflict {
             expected_generation: ora_effect::Generation::default(),
@@ -653,13 +650,10 @@ fn desired_replacement_uses_generation_cas_and_exact_no_op_semantics() {
 #[test]
 fn target_fencing_remains_monotonic_after_request_row_recreation() {
     let (_directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
-        .declare_consumer(
-            &declaration("official/codex"),
-            &[workspace],
-            LocalTimestamp::from_millis(10),
-        )
+        .declare_consumer(&declaration("official/codex"), &[workspace])
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let worker = WorkerIdentity::parse("worker-1")
         .unwrap_or_else(|error| panic!("worker identity: {error}"));
@@ -704,13 +698,10 @@ fn target_fencing_remains_monotonic_after_request_row_recreation() {
 #[test]
 fn transient_failures_keep_a_counted_durable_retry_schedule() {
     let (_directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
-        .declare_consumer(
-            &declaration("official/codex"),
-            &[workspace],
-            LocalTimestamp::from_millis(10),
-        )
+        .declare_consumer(&declaration("official/codex"), &[workspace])
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let worker = WorkerIdentity::parse("worker-1")
         .unwrap_or_else(|error| panic!("worker identity: {error}"));
@@ -788,16 +779,13 @@ fn transient_failures_keep_a_counted_durable_retry_schedule() {
     );
 }
 
-#[test]
-fn unfinished_operation_is_quarantined_with_target_and_resource_conditions() {
+/// Builds exact unfinished journal evidence shared by recovery and upgrade regression tests.
+fn unfinished_fixture() -> (TempDir, RepositoryPool, EffectTargetId, String) {
     let (directory, pool, workspace) = fixture();
-    let repository = SqliteEffectRepository::new(pool.clone());
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     repository
-        .declare_consumer(
-            &declaration("official/codex"),
-            &[workspace],
-            LocalTimestamp::from_millis(10),
-        )
+        .declare_consumer(&declaration("official/codex"), &[workspace])
         .unwrap_or_else(|error| panic!("declare Consumer: {error}"));
     let worker = WorkerIdentity::parse("worker-1")
         .unwrap_or_else(|error| panic!("worker identity: {error}"));
@@ -903,6 +891,14 @@ fn unfinished_operation_is_quarantined_with_target_and_resource_conditions() {
     })
     .unwrap_or_else(|error| panic!("insert unfinished journal: {error}"));
 
+    (directory, pool, target, resource)
+}
+
+#[test]
+fn unfinished_operation_is_quarantined_with_target_and_resource_conditions() {
+    let (_directory, pool, target, resource) = unfinished_fixture();
+    let repository =
+        SqliteEffectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
     let active_lease_quarantined = repository
         .quarantine_unfinished_operations(LocalTimestamp::from_millis(20))
         .unwrap_or_else(|error| panic!("check active journal: {error}"));

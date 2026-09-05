@@ -329,13 +329,14 @@ mod tests {
     fn stalled_package_promote_leaves_concurrent_catalog_writes_unblocked() {
         with_trace_logging(|| {
             let temp_dir = TempDir::new().unwrap();
-            let pool = DatabaseBootstrapper::system()
+            let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
                 .bootstrap_repository_pool(
                     &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
                     &default_migration_catalog().unwrap(),
                 )
                 .unwrap();
-            let skill_repository = SqliteSkillRepository::new(pool.clone());
+            let skill_repository =
+                SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
             let agent_repository = SqliteAgentDefinitionRepository::new(pool);
             let promote = Arc::new(Barrier::new(2));
             let handler = CreateSkillHandler::new(

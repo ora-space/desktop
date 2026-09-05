@@ -38,7 +38,7 @@ const PACKAGE_NAMESPACE: &str = "official";
 const INSTALLED_AGENT: &str = "ora-space.opencode";
 
 fn test_pool(root: &Path) -> RepositoryPool {
-    DatabaseBootstrapper::system()
+    DatabaseBootstrapper::new(crate::test_clock::TestClock)
         .bootstrap_repository_pool(
             &DatabaseLocation::path(root.join("test.sqlite")),
             &default_migration_catalog().expect("build migration catalog"),

@@ -218,39 +218,38 @@ pub(crate) fn advance_changed_scopes(
     updated_at: i64,
 ) -> Result<(), DatabaseError> {
     for scope_id in changed_scopes {
-        let (current, scope_updated_at) = connection.query_row(
-            "SELECT generation, updated_at FROM effect_scopes
+        let current = connection.query_row(
+            "SELECT generation FROM effect_scopes
              WHERE id = ?1 AND lifecycle = 'active'",
             params![scope_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| row.get::<_, i64>(0),
         )?;
         let generation = generation_from_sql(current)?
             .next()
             .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
         let generation_sql = generation_to_sql(generation)?;
-        // A replayed Source timestamp may predate a Scope that did not exist when the Source was
-        // created. Scope-local history begins no earlier than that Scope's current timestamp.
-        let scope_updated_at = scope_updated_at.max(updated_at);
+        // Each affected row preserves its own audit lower bound in SQL. The Scope timestamp
+        // cannot bound a Target created or updated later by an independent transaction.
         connection.execute(
-            "UPDATE effect_scopes SET generation = ?2, updated_at = ?3 WHERE id = ?1",
-            params![scope_id, generation_sql, scope_updated_at],
+            "UPDATE effect_scopes SET generation = ?2, updated_at = MAX(updated_at, ?3) WHERE id = ?1",
+            params![scope_id, generation_sql, updated_at],
         )?;
         connection.execute(
             "UPDATE effect_target_status
              SET desired_generation = MAX(desired_generation, ?2),
                  phase = CASE
                      WHEN phase IN ('retiring', 'recovery_required') THEN phase ELSE 'pending' END,
-                 status_version = status_version + 1, updated_at = ?3
+                 status_version = status_version + 1, updated_at = MAX(updated_at, ?3)
              WHERE target_id IN (
                  SELECT id FROM effect_targets WHERE scope_id = ?1 AND lifecycle = 'active'
              )",
-            params![scope_id, generation_sql, scope_updated_at],
+            params![scope_id, generation_sql, updated_at],
         )?;
         wake_scope_targets(
             connection,
             scope_id,
             generation,
-            scope_updated_at,
+            updated_at,
             "desired_changed",
         )?;
         connection.execute(
@@ -263,7 +262,7 @@ pub(crate) fn advance_changed_scopes(
                 Uuid::new_v4().to_string(),
                 scope_id,
                 generation_sql,
-                scope_updated_at,
+                updated_at,
             ],
         )?;
     }
@@ -288,7 +287,7 @@ pub(super) fn wake_scope_targets(
     drop(statement);
     for target in targets {
         super::declaration::upsert_target_wakeup(
-            connection, &target, generation, updated_at, reason,
+            connection, &target, generation, updated_at, reason, updated_at,
         )?;
     }
     Ok(())
@@ -304,17 +303,13 @@ pub(super) fn install_source_in_all_scopes(
 ) -> Result<(), DatabaseError> {
     let parameters = effect_json(&ValidatedEffectParameters::Skill(SkillParameters::default()))?;
     let selector = effect_json(&TargetSelector::default())?;
-    let mut statement = connection.prepare(
-        "SELECT id, updated_at FROM effect_scopes WHERE lifecycle = 'active' ORDER BY id",
-    )?;
+    let mut statement = connection
+        .prepare("SELECT id FROM effect_scopes WHERE lifecycle = 'active' ORDER BY id")?;
     let scopes = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
+        .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
-    for (scope_id, scope_updated_at) in scopes {
-        let desired_updated_at = scope_updated_at.max(updated_at);
+    for scope_id in scopes {
         connection.execute(
             "INSERT INTO effect_desired_effects (
                  id, scope_id, revision_id, parameters_kind, parameters_version,
@@ -326,7 +321,7 @@ pub(super) fn install_source_in_all_scopes(
                 revision_id,
                 &parameters,
                 &selector,
-                desired_updated_at,
+                updated_at,
             ],
         )?;
         changed_scopes.insert(scope_id);

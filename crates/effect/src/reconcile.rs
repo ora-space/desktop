@@ -8,6 +8,7 @@ use crate::{
     ResourceAdapterError, ResourcePlan, ResourcePlanningInput, SafeConditionDetails,
     StableConditionCode, StatusTransitionError, TargetIssueState, TargetPlanningInput,
 };
+use ora_utils::clock::TimestampSource;
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
@@ -31,11 +32,12 @@ pub enum ReconcileOutcome {
 }
 
 /// Durable Generic Target reconciler with statically dispatched planners and adapters.
-pub struct EffectReconciler<'a, Repository, Planner, Consumer, Resource> {
+pub struct EffectReconciler<'a, Repository, Planner, Consumer, Resource, Clock> {
     repository: &'a Repository,
     planner: &'a Planner,
     consumer_adapter: &'a Consumer,
     resource_adapter: &'a Resource,
+    clock: &'a Clock,
 }
 
 /// Complete mutation-path inputs grouped so the transition cannot receive mismatched fragments.
@@ -44,7 +46,6 @@ struct MutationPass {
     target_projection: crate::TargetProjection,
     contributor_projections: BTreeMap<EffectTargetId, crate::TargetProjection>,
     resource_plans: BTreeMap<EffectResourceId, ResourcePlan>,
-    now: LocalTimestamp,
 }
 
 /// Closed planning result keeps blocking facts separate from a complete mutation candidate.
@@ -53,29 +54,31 @@ enum SnapshotPlan {
     Blocked {
         snapshot: crate::ReconcileSnapshot,
         conditions: Vec<ConditionProposal>,
-        now: LocalTimestamp,
     },
 }
 
-impl<'a, Repository, Planner, Consumer, Resource>
-    EffectReconciler<'a, Repository, Planner, Consumer, Resource>
+impl<'a, Repository, Planner, Consumer, Resource, Clock>
+    EffectReconciler<'a, Repository, Planner, Consumer, Resource, Clock>
 where
     Repository: EffectRepository,
     Planner: EffectPlanner,
     Consumer: ConsumerAdapter,
     Resource: ResourceAdapter,
+    Clock: TimestampSource,
 {
     pub fn new(
         repository: &'a Repository,
         planner: &'a Planner,
         consumer_adapter: &'a Consumer,
         resource_adapter: &'a Resource,
+        clock: &'a Clock,
     ) -> Self {
         Self {
             repository,
             planner,
             consumer_adapter,
             resource_adapter,
+            clock,
         }
     }
 
@@ -84,9 +87,9 @@ where
         &self,
         target_id: &EffectTargetId,
         claim: &ReconcileClaim,
-        now: LocalTimestamp,
         resource_lease_until: LocalTimestamp,
     ) -> Result<ReconcileOutcome, ReconcileError> {
+        let now = LocalTimestamp::from_millis(self.clock.current_timestamp_millis());
         let mut snapshot = self.repository.load_reconcile_snapshot(target_id, claim)?;
         let resource_ids = snapshot
             .declaration
@@ -122,13 +125,12 @@ where
                 return Err(ReconcileError::ClaimedResourceSetChanged);
             }
         }
-        let pass = match self.plan_snapshot(snapshot, now)? {
+        let pass = match self.plan_snapshot(snapshot)? {
             SnapshotPlan::Ready(pass) => pass,
             SnapshotPlan::Blocked {
                 snapshot,
                 conditions,
-                now,
-            } => return self.commit_blocked(snapshot, conditions, claim, now),
+            } => return self.commit_blocked(snapshot, conditions, claim),
         };
         let mutation_count = pass
             .resource_plans
@@ -143,7 +145,6 @@ where
                 pass.contributor_projections,
                 pass.resource_plans,
                 claim,
-                now,
             );
         }
         self.apply_mutations(pass, claim)
@@ -153,11 +154,10 @@ where
     fn plan_snapshot(
         &self,
         mut snapshot: crate::ReconcileSnapshot,
-        now: LocalTimestamp,
     ) -> Result<SnapshotPlan, ReconcileError> {
         let generation = snapshot.desired.generation;
         if snapshot.target_status.progress().desired() < generation {
-            snapshot.target_status.request_generation(generation, now)?;
+            snapshot.target_status.request_generation(generation)?;
         }
         let target_projection = match self.planner.project_target(TargetPlanningInput {
             desired: &snapshot.desired,
@@ -172,11 +172,10 @@ where
                 return Ok(SnapshotPlan::Blocked {
                     snapshot,
                     conditions,
-                    now,
                 });
             }
         };
-        snapshot.target_status.record_observed(generation, now)?;
+        snapshot.target_status.record_observed(generation)?;
 
         let mut all_conditions = Vec::new();
         let mut contributor_projections =
@@ -236,9 +235,9 @@ where
                 .get_mut(resource_id)
                 .ok_or_else(|| ReconcileError::ResourceStatusMissing(resource_id.clone()))?;
             if status.desired() < generation {
-                status.request_generation(generation, now)?;
+                status.request_generation(generation)?;
             }
-            status.record_observed(generation, now)?;
+            status.record_observed(generation)?;
             let requirements = requirements_by_resource
                 .get(resource_id)
                 .map(Vec::as_slice)
@@ -267,7 +266,6 @@ where
             return Ok(SnapshotPlan::Blocked {
                 snapshot,
                 conditions: all_conditions,
-                now,
             });
         }
         Ok(SnapshotPlan::Ready(MutationPass {
@@ -275,7 +273,6 @@ where
             target_projection,
             contributor_projections,
             resource_plans,
-            now,
         }))
     }
 
@@ -285,7 +282,6 @@ where
         snapshot: crate::ReconcileSnapshot,
         conditions: Vec<ConditionProposal>,
         claim: &ReconcileClaim,
-        now: LocalTimestamp,
     ) -> Result<ReconcileOutcome, ReconcileError> {
         let target = snapshot.target.identity.clone();
         let generation = snapshot.desired.generation;
@@ -295,7 +291,6 @@ where
             snapshot.target_status,
             snapshot.resource_statuses.into_values().collect(),
             conditions.clone(),
-            now,
         )?;
         Ok(ReconcileOutcome::Blocked {
             target,
@@ -312,7 +307,6 @@ where
         contributor_projections: BTreeMap<EffectTargetId, crate::TargetProjection>,
         resource_plans: BTreeMap<EffectResourceId, ResourcePlan>,
         claim: &ReconcileClaim,
-        now: LocalTimestamp,
     ) -> Result<ReconcileOutcome, ReconcileError> {
         let generation = target_projection.generation;
         for resource_id in resource_plans.keys() {
@@ -320,9 +314,9 @@ where
                 .resource_statuses
                 .get_mut(resource_id)
                 .ok_or_else(|| ReconcileError::ResourceStatusMissing(resource_id.clone()))?
-                .record_applied(generation, now)?;
+                .record_applied(generation)?;
         }
-        snapshot.target_status.record_applied(generation, now)?;
+        snapshot.target_status.record_applied(generation)?;
         let readiness = self
             .consumer_adapter
             .verify_ready(&snapshot.target, &target_projection)?;
@@ -331,7 +325,6 @@ where
             &snapshot.consumer_revision.identity,
             &target_projection.digest,
             TargetIssueState::Clear,
-            now,
         )?;
         let managed = projected_managed(&resource_plans, generation);
         let projected_identities = managed
@@ -378,8 +371,8 @@ where
             target_projection,
             contributor_projections,
             resource_plans,
-            now,
         } = pass;
+        let prepared_at = LocalTimestamp::from_millis(self.clock.current_timestamp_millis());
         let generation = target_projection.generation;
 
         let resource_ids = resource_plans
@@ -411,7 +404,7 @@ where
                             generation,
                             sequence,
                             mutation.as_ref().clone(),
-                            now,
+                            prepared_at,
                         )?;
                         sequence = sequence
                             .checked_add(1)
@@ -476,17 +469,12 @@ where
             )?;
             receipts.push(receipt);
             coordinated_targets.insert(participant_id.clone());
-            self.repository.record_attempt_progress(
-                claim,
-                &attempt,
-                &operations,
-                &receipts,
-                now,
-            )?;
+            self.repository
+                .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
         }
         attempt.mark_coordinated()?;
         self.repository
-            .record_attempt_progress(claim, &attempt, &operations, &receipts, now)?;
+            .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
 
         for operation_index in 0..operations.len() {
             let apply_receipt = self.resource_adapter.apply(&operations[operation_index])?;
@@ -495,14 +483,11 @@ where
                     operations[operation_index].identity().clone(),
                 ));
             }
-            operations[operation_index].mark_applied(now)?;
-            self.repository.record_attempt_progress(
-                claim,
-                &attempt,
-                &operations,
-                &receipts,
-                now,
-            )?;
+            operations[operation_index].mark_applied(LocalTimestamp::from_millis(
+                self.clock.current_timestamp_millis(),
+            ))?;
+            self.repository
+                .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
             let verification = self.resource_adapter.verify(&operations[operation_index])?;
             if verification.operation != *operations[operation_index].identity() {
                 return Err(ReconcileError::MismatchedOperationReceipt(
@@ -512,10 +497,10 @@ where
         }
         attempt.mark_applied()?;
         self.repository
-            .record_attempt_progress(claim, &attempt, &operations, &receipts, now)?;
+            .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
         attempt.mark_verified()?;
         self.repository
-            .record_attempt_progress(claim, &attempt, &operations, &receipts, now)?;
+            .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
 
         for participant_id in coordinated_targets {
             let participant = snapshot
@@ -541,16 +526,16 @@ where
         // Attempt is still Verified would violate the repository's exact barrier invariant.
         attempt.mark_activated()?;
         self.repository
-            .record_attempt_progress(claim, &attempt, &operations, &receipts, now)?;
+            .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
 
         for resource_id in resource_plans.keys() {
             snapshot
                 .resource_statuses
                 .get_mut(resource_id)
                 .ok_or_else(|| ReconcileError::ResourceStatusMissing(resource_id.clone()))?
-                .record_applied(generation, now)?;
+                .record_applied(generation)?;
         }
-        snapshot.target_status.record_applied(generation, now)?;
+        snapshot.target_status.record_applied(generation)?;
         let readiness = self
             .consumer_adapter
             .verify_ready(&snapshot.target, &target_projection)?;
@@ -559,7 +544,6 @@ where
             &snapshot.consumer_revision.identity,
             &target_projection.digest,
             TargetIssueState::Clear,
-            now,
         )?;
         let managed = projected_managed(&resource_plans, generation);
         let projected_identities = managed
@@ -574,7 +558,9 @@ where
         removed_managed.sort();
         removed_managed.dedup();
         for operation in &mut operations {
-            operation.finalize(now)?;
+            operation.finalize(LocalTimestamp::from_millis(
+                self.clock.current_timestamp_millis(),
+            ))?;
         }
         attempt.finalize()?;
         self.repository.finalize_attempt(
@@ -599,8 +585,7 @@ where
                     .complete_artifact_cleanup(&artifact.identity, receipt)?,
                 Err(_) => {
                     artifact.state = ArtifactState::CleanupFailed;
-                    self.repository
-                        .mark_artifact_cleanup_failed(artifact, now)?;
+                    self.repository.mark_artifact_cleanup_failed(artifact)?;
                 }
             }
         }
