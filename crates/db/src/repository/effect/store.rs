@@ -381,7 +381,10 @@ fn parameters_kind(parameters: &ora_effect::ValidatedEffectParameters) -> &'stat
     }
 }
 
-/// Persists one Target status only through a validated domain snapshot.
+/// Merges fenced progress with intent that may have advanced while the adapter was running.
+///
+/// A wakeup keeps the claim valid so an old Attempt can finalize its external effects. It does
+/// not authorize that Attempt to replace newer Desired intent or retirement/recovery state.
 pub(super) fn save_target_status(
     transaction: &Transaction<'_>,
     status: &TargetStatus,
@@ -391,9 +394,31 @@ pub(super) fn save_target_status(
     let (phase, recovery) = target_phase_value(status.phase());
     transaction.execute(
         "UPDATE effect_target_status SET
-             desired_generation = ?2, observed_generation = ?3, applied_generation = ?4,
-             ready_generation = ?5, phase = ?6, recovery_operation_id = ?7,
-             status_version = ?8, updated_at = MAX(updated_at, ?9)
+             desired_generation = MAX(desired_generation, ?2),
+             observed_generation = MAX(observed_generation, ?3),
+             applied_generation = MAX(applied_generation, ?4),
+             ready_generation = MAX(ready_generation, ?5),
+             phase = CASE
+                 WHEN phase = 'recovery_required' THEN phase
+                 WHEN ?6 = 'recovery_required' THEN ?6
+                 WHEN phase = 'retiring' THEN phase
+                 WHEN ?6 = 'retiring' THEN ?6
+                 WHEN desired_generation > ?2 THEN 'pending'
+                 WHEN ?6 IN ('current', 'current_with_issues')
+                      AND MAX(desired_generation, ?2) > MAX(ready_generation, ?5)
+                     THEN 'pending'
+                 ELSE ?6
+             END,
+             recovery_operation_id = CASE
+                 WHEN phase = 'recovery_required' THEN recovery_operation_id ELSE ?7 END,
+             status_version = CASE
+                 WHEN desired_generation = ?2 AND observed_generation = ?3
+                      AND applied_generation = ?4 AND ready_generation = ?5
+                      AND phase = ?6 AND recovery_operation_id IS ?7
+                     THEN MAX(status_version, ?8)
+                 ELSE MAX(status_version + 1, ?8)
+             END,
+             updated_at = MAX(updated_at, ?9)
          WHERE target_id = ?1",
         params![
             status.target().as_str(),

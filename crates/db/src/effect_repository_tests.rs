@@ -1,5 +1,6 @@
 mod declaration;
 mod scope_initialization;
+mod stale_status;
 mod time;
 mod time_migration;
 mod time_queue;
@@ -75,11 +76,12 @@ impl ConsumerAdapter for ReadyConsumer {
 struct PublishSkillOnVerify {
     repository: SqliteSkillRepository<crate::test_clock::TestClock>,
     projection: PluginSkillProjection,
+    versions: Vec<&'static str>,
     published: Mutex<bool>,
 }
 
 impl ConsumerAdapter for PublishSkillOnVerify {
-    /// Delegates coordination because this probe exercises a no-mutation projection.
+    /// Uses the same coordination contract while interleaving publication at readiness.
     fn coordinate(
         &self,
         target: &EffectTarget,
@@ -88,7 +90,7 @@ impl ConsumerAdapter for PublishSkillOnVerify {
         ReadyConsumer.coordinate(target, plan)
     }
 
-    /// Delegates reactivation because this probe exercises a no-mutation projection.
+    /// Preserves the exact activation receipt before interleaving newer Desired intent.
     fn reactivate(
         &self,
         target: &EffectTarget,
@@ -108,15 +110,17 @@ impl ConsumerAdapter for PublishSkillOnVerify {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if !*published {
-            self.repository
-                .replace_plugin_skills(
-                    &PluginId::new("official", "review")
-                        .unwrap_or_else(|error| panic!("plugin id: {error}")),
-                    "1.0.0",
-                    std::slice::from_ref(&self.projection),
-                    /*updated_at*/ 20,
-                )
-                .unwrap_or_else(|error| panic!("publish newer Skill generation: {error}"));
+            for version in &self.versions {
+                self.repository
+                    .replace_plugin_skills(
+                        &PluginId::new("official", "review")
+                            .unwrap_or_else(|error| panic!("plugin id: {error}")),
+                        version,
+                        std::slice::from_ref(&self.projection),
+                        /*updated_at*/ 20,
+                    )
+                    .unwrap_or_else(|error| panic!("publish newer Skill generation: {error}"));
+            }
             *published = true;
         }
         ReadyConsumer.verify_ready(target, projection)
@@ -374,6 +378,7 @@ fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
             skill_md_digest: Digest::sha256(manifest),
         },
         published: Mutex::new(false),
+        versions: vec!["1.0.0"],
     };
 
     let outcome = EffectReconciler::new(
@@ -404,6 +409,27 @@ fn newer_wakeup_during_projection_commit_preserves_request_timestamp() {
                 .map_err(Into::into)
         })
         .unwrap_or_else(|error| panic!("load preserved request: {error}"));
+
+    // Core case: specs/test-cases/desktop/core/effect/convergence.md#older-completion-preserves-newer-target-intent
+    assert_eq!(
+        repository.load_target_status(&target).unwrap(),
+        Some(TargetStatusView {
+            status: TargetStatus::restore(
+                target.clone(),
+                TargetProgress::restore(
+                    Generation::new(1),
+                    Generation::default(),
+                    Generation::default(),
+                    Generation::default(),
+                )
+                .unwrap(),
+                TargetPhase::Pending,
+                StatusVersion::new(4).unwrap(),
+            ),
+            updated_at: LocalTimestamp::from_millis(20),
+            conditions: Vec::new(),
+        }),
+    );
 
     assert_eq!(
         (outcome, request),

@@ -72,6 +72,14 @@ means local durable reception. Conditions preserve their identity and first obse
 regress their last observation. Target status reads return audit metadata alongside domain evidence
 and Conditions from one database snapshot.
 
+A newer wakeup preserves an active claim so the older reconcile can finish its exact projection
+and any prepared filesystem operations. At commit, Target status merges the database's latest
+Desired watermark with the proven progress; an older completion cannot lower any watermark or
+report Current while newer Desired work remains. The newer request stays Pending for the next
+pass. Status versions preserve intervening updates and advance for changed status, while identical
+status replay does not manufacture a new version. Audit-time protection alone does not provide
+this business-state merge.
+
 The decision is recorded in
 [Effect audit and business time](../specs/decisions/desktop/core/effect/20260905-separate-audit-and-business-time.md).
 
