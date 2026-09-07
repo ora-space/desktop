@@ -13,13 +13,43 @@ use tauri::{AppHandle, Emitter, State};
 const PLUGIN_INSTALL_PROGRESS_EVENT: &str = "plugin-install-progress";
 const PLUGIN_PROGRESS_EVENT_INTERVAL: u64 = 1024 * 1024;
 
-/// Carries byte-level marketplace package progress to the plugin card that started the install.
+/// Carries byte-level marketplace package progress to the plugin card that started the operation.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginInstallProgressEvent {
     plugin_id: String,
     downloaded: u64,
     total: Option<u64>,
+}
+
+/// Builds the shared throttled event callback used by marketplace installs and updates.
+///
+/// Emission is throttled to whole intervals so a fast transfer cannot flood the webview, while
+/// the terminal snapshot always reaches the card that started the operation.
+fn plugin_transfer_progress(
+    app: AppHandle,
+    plugin_id: String,
+) -> ora_utils::http::ProgressCallback {
+    let last_emitted = Arc::new(AtomicU64::new(0));
+    Arc::new(move |progress: ora_utils::http::Progress| {
+        let previous = last_emitted.load(Ordering::Relaxed);
+        let complete = progress.total == Some(progress.bytes);
+        if previous != 0
+            && progress.bytes < previous.saturating_add(PLUGIN_PROGRESS_EVENT_INTERVAL)
+            && !complete
+        {
+            return;
+        }
+        last_emitted.store(progress.bytes, Ordering::Relaxed);
+        let event = PluginInstallProgressEvent {
+            plugin_id: plugin_id.clone(),
+            downloaded: progress.bytes,
+            total: progress.total,
+        };
+        if let Err(error) = app.emit(PLUGIN_INSTALL_PROGRESS_EVENT, event) {
+            ora_logging::ora_warn!(message = "Failed to emit plugin transfer progress", error = %error);
+        }
+    })
 }
 
 backend_command!(
@@ -135,27 +165,7 @@ pub async fn install_plugin(
     app: AppHandle,
     request: InstallPluginRequest,
 ) -> Result<InstallPluginResponse, CommandError> {
-    let plugin_id = request.plugin_id.clone();
-    let last_emitted = Arc::new(AtomicU64::new(0));
-    let progress = Arc::new(move |progress: ora_utils::http::Progress| {
-        let previous = last_emitted.load(Ordering::Relaxed);
-        let complete = progress.total == Some(progress.bytes);
-        if previous != 0
-            && progress.bytes < previous.saturating_add(PLUGIN_PROGRESS_EVENT_INTERVAL)
-            && !complete
-        {
-            return;
-        }
-        last_emitted.store(progress.bytes, Ordering::Relaxed);
-        let event = PluginInstallProgressEvent {
-            plugin_id: plugin_id.clone(),
-            downloaded: progress.bytes,
-            total: progress.total,
-        };
-        if let Err(error) = app.emit(PLUGIN_INSTALL_PROGRESS_EVENT, event) {
-            ora_logging::ora_warn!(message = "Failed to emit plugin install progress", error = %error);
-        }
-    });
+    let progress = plugin_transfer_progress(app, request.plugin_id.clone());
 
     run_async_backend(
         "install_plugin",
@@ -166,13 +176,25 @@ pub async fn install_plugin(
     )
     .await
 }
-async_backend_command!(
-    update_plugin,
-    UpdatePluginRequest,
-    UpdatePluginResponse,
-    plugins.update,
-    "Updates one installed plugin to the version its marketplace source publishes."
-);
+
+/// Updates one marketplace plugin and emits throttled byte-level download progress.
+#[tauri::command]
+pub async fn update_plugin(
+    state: State<'_, DesktopState>,
+    app: AppHandle,
+    request: UpdatePluginRequest,
+) -> Result<UpdatePluginResponse, CommandError> {
+    let progress = plugin_transfer_progress(app, request.plugin_id.clone());
+
+    run_async_backend(
+        "update_plugin",
+        state
+            .backend
+            .plugins()
+            .update_with_progress(request, progress),
+    )
+    .await
+}
 async_backend_command!(
     import_plugin,
     ImportPluginRequest,

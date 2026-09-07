@@ -1,12 +1,16 @@
 import { act, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createTestClient,
   type TestHandlers,
 } from "../../test/contracts-transport";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import "../../i18n/i18n-instance";
-import { renderHookWithClient } from "../../test/hook-harness";
+import {
+  createTestQueryClient,
+  renderHookWithClient,
+} from "../../test/hook-harness";
+import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { useUpdatePlugin } from "./use-update-plugin";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
@@ -22,6 +26,10 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...pluginHandlers(state),
   };
 }
+
+afterEach(() => {
+  act(() => usePluginOperationStore.setState({ activities: {} }));
+});
 
 describe("useUpdatePlugin", () => {
   it("updates an installed plugin and refreshes the installed surface", async () => {
@@ -70,5 +78,57 @@ describe("useUpdatePlugin", () => {
       id: "official/weather",
       version: "1.1.0",
     });
+  });
+
+  it("keeps update progress across unmount and rejects a duplicate start", async () => {
+    const state = createFixtureState();
+    const handlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(handlers);
+    let resolveUpdate: ((response: { pluginId: string }) => void) | undefined;
+    // The update stays in flight so the durable operation state, not the query cache, is what
+    // carries progress across the unmount below.
+    const update = vi.spyOn(handlers, "updatePlugin").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+    const queryClient = createTestQueryClient();
+    const first = renderHookWithClient(
+      () => useUpdatePlugin("official/weather"),
+      client,
+      queryClient,
+    );
+
+    act(() => first.result.current.mutate({}));
+    await waitFor(() => expect(update).toHaveBeenCalledOnce());
+    act(() => {
+      usePluginOperationStore.getState().reportTransferProgress({
+        pluginId: "official/weather",
+        downloaded: 4,
+        total: 10,
+      });
+    });
+    expect(first.result.current.progress).toEqual({
+      pluginId: "official/weather",
+      downloaded: 4,
+      total: 10,
+    });
+    first.unmount();
+
+    const second = renderHookWithClient(
+      () => useUpdatePlugin("official/weather"),
+      client,
+      queryClient,
+    );
+    expect(second.result.current.isPending).toBe(true);
+    expect(second.result.current.progress?.downloaded).toBe(4);
+    act(() => second.result.current.mutate({}));
+    expect(update).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveUpdate?.({ pluginId: "official/weather" });
+    });
+    await waitFor(() => expect(second.result.current.isPending).toBe(false));
   });
 });

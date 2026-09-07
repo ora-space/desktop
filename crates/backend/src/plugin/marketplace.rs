@@ -2,6 +2,7 @@
 //!
 //! Install and update share one release-resolution and installer-construction path so a source's
 //! namespace, proxy policy, and object-store scoping can never diverge between the two operations.
+//! Both expose an observed variant that forwards byte-level transfer progress to the host shell.
 
 use super::PluginApi;
 use crate::error::{BackendError, ErrorClassification};
@@ -100,6 +101,25 @@ impl PluginApi {
         &self,
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
+        self.update_package(request, /*progress*/ None).await
+    }
+
+    /// Updates a marketplace plugin and forwards network transfer progress to the host shell.
+    pub(crate) async fn update_with_progress(
+        &self,
+        request: UpdatePluginRequest,
+        progress: ProgressCallback,
+    ) -> Result<UpdatePluginResponse, BackendError> {
+        self.update_package(request, Some(progress)).await
+    }
+
+    /// Keeps release resolution, process stopping, and finalization identical for observed and
+    /// unobserved updates.
+    async fn update_package(
+        &self,
+        request: UpdatePluginRequest,
+        progress: Option<ProgressCallback>,
+    ) -> Result<UpdatePluginResponse, BackendError> {
         let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id)?;
         let release_source = self.select_marketplace_release(&manifest)?;
@@ -122,10 +142,26 @@ impl PluginApi {
             })
             .await
             .map_err(BackendError::from)?;
-        self.marketplace_installer(use_proxy, s3_config)?
-            .update(&manifest, &namespace, release_source, &self.home_directory)
-            .await
-            .map_err(|error| self.map_update_error("failed to update plugin", error))?;
+        let installer = self.marketplace_installer(use_proxy, s3_config)?;
+        match progress {
+            Some(progress) => {
+                installer
+                    .update_with_progress(
+                        &manifest,
+                        &namespace,
+                        release_source,
+                        &self.home_directory,
+                        progress,
+                    )
+                    .await
+            }
+            None => {
+                installer
+                    .update(&manifest, &namespace, release_source, &self.home_directory)
+                    .await
+            }
+        }
+        .map_err(|error| self.map_update_error("failed to update plugin", error))?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "updated marketplace plugin");
         Ok(UpdatePluginResponse {

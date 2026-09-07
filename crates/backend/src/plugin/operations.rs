@@ -199,6 +199,18 @@ impl Plugins {
         Ok(response)
     }
 
+    /// Updates one installed marketplace plugin while forwarding download progress to a host
+    /// callback, reconciling the agent set on the same terms as an unobserved update.
+    pub async fn update_with_progress(
+        &self,
+        request: UpdatePluginRequest,
+        progress: ProgressCallback,
+    ) -> Result<UpdatePluginResponse, BackendError> {
+        let response = self.host.update_with_progress(request, progress).await?;
+        self.agent_runtime.sync_plugin_agents();
+        Ok(response)
+    }
+
     /// Imports one local release archive and reconciles the agent set afterwards.
     ///
     /// The agent set is reconciled so the imported package supplies a reachable agent in this

@@ -13,7 +13,7 @@ export function PluginOperationEventBridge() {
     void pluginMarketplace
       .onInstallProgress((progress) => {
         if (!disposed) {
-          usePluginOperationStore.getState().reportInstallProgress(progress);
+          usePluginOperationStore.getState().reportTransferProgress(progress);
         }
       })
       .then((stop) => {

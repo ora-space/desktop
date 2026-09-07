@@ -249,6 +249,91 @@ it("shows marketplace plugin download progress", async () => {
   expect(document.querySelector('[data-slot="progress"]')).toBeNull();
 });
 
+/** Marketplace updates reuse the durable byte-progress presentation used by installs. */
+it("shows marketplace plugin update download progress", async () => {
+  const user = userEvent.setup();
+  const { state, client, handlers } = clientWithWeather();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    version: "1.1.0",
+  });
+  vi.spyOn(handlers, "updatePlugin").mockImplementation(
+    () => new Promise<never>(() => undefined),
+  );
+  let reportProgress:
+    | ((progress: {
+        pluginId: string;
+        downloaded: number;
+        total: number | null;
+      }) => void)
+    | undefined;
+  const platform: PlatformAdapter = {
+    ...createStubPlatform(),
+    pluginMarketplace: {
+      onInstallProgress: async (listener) => {
+        reportProgress = listener;
+        return () => undefined;
+      },
+    },
+  };
+  renderSettings(client, platform);
+
+  await user.click(await screen.findByRole("button", { name: /更新|Update/ }));
+  act(() => {
+    reportProgress?.({
+      pluginId: "official/weather",
+      downloaded: 3,
+      total: 4,
+    });
+  });
+
+  const progress = await screen.findByRole("progressbar", {
+    name: /插件下载进度|Plugin download progress/,
+  });
+  expect(progress).toHaveAttribute("aria-valuenow", "75");
+  const updateIcon = progress.querySelector(".tabler-icon-arrow-big-up-lines");
+  expect(updateIcon).toBeInTheDocument();
+  expect(updateIcon).not.toHaveClass("animate-bounce");
+});
+
+/** The installed-plugin update action stays visually light instead of drawing a box around it. */
+it("renders the managed plugin update action without an outline", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    version: "1.1.0",
+  });
+  renderSettings(client);
+
+  await openManagePlugins(user);
+
+  expect(
+    await screen.findByRole("button", { name: /更新|Update/ }),
+  ).not.toHaveClass("border-border");
+});
+
+/** The managed update action names the active operation instead of retaining its idle label. */
+it("labels a managed plugin update as updating while it downloads", async () => {
+  const user = userEvent.setup();
+  const { state, client, handlers } = clientWithWeather();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    version: "1.1.0",
+  });
+  vi.spyOn(handlers, "updatePlugin").mockImplementation(
+    () => new Promise<never>(() => undefined),
+  );
+  renderSettings(client);
+  await openManagePlugins(user);
+
+  await user.click(await screen.findByRole("button", { name: /更新|Update/ }));
+
+  expect(
+    await screen.findByRole("button", { name: /更新中|Updating/ }),
+  ).toBeDisabled();
+});
+
 /** A sync control pulls the marketplace source through the backend. */
 it("syncs the marketplace through the backend", async () => {
   const user = userEvent.setup();
