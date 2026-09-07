@@ -7,18 +7,8 @@
     },
     "crates/backend/src/agent_runtime.rs": {
       "owner": "ora-backend",
-      "lines": 1180,
-      "split_plan": "Extract durable session binding/history adoption and runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility."
-    },
-    "crates/backend/src/agent_runtime/actor.rs": {
-      "owner": "ora-backend",
-      "lines": 1007,
-      "split_plan": "Separate active-turn event settlement and idle control handling behind private actor operations. Keep one command channel and actor state machine; preserve cancellation, permission and history replay tests."
-    },
-    "crates/backend/src/agent_runtime/connection.rs": {
-      "owner": "ora-backend",
-      "lines": 804,
-      "split_plan": "Extract ACP handshake/authentication from connection supervision without duplicating cancellation or process ownership. Keep startup failure and reconnect/shutdown tests at the connection interface."
+      "lines": 1076,
+      "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Durable record ownership now lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
     },
     "crates/backend/src/plugin.rs": {
       "owner": "ora-backend",
