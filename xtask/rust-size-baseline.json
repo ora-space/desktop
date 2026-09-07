@@ -22,8 +22,8 @@
     },
     "crates/backend/src/plugin.rs": {
       "owner": "ora-backend",
-      "lines": 1053,
-      "split_plan": "Split private plugin-host configuration and gateway/projection responsibilities while retaining Plugins as the public operations interface. Preserve registry identity, runtime synchronization and Effect generation semantics."
+      "lines": 840,
+      "split_plan": "Marketplace release resolution and package transfer now live in plugin/marketplace.rs. Split the remaining private plugin-host configuration and gateway/projection responsibilities while retaining Plugins as the public operations interface. Preserve registry identity, runtime synchronization and Effect generation semantics."
     },
     "crates/backend/src/workflow/run/executor.rs": {
       "owner": "ora-backend",
