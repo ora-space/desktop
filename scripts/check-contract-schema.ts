@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** Returns generated text in its comparison form without masking non-newline changes. */
+export function normalizeGeneratedText(source: string): string {
+  return source.replaceAll("\r\n", "\n");
+}
+
 /** Checks the second generated layer in isolation so verification never repairs a stale checkout. */
 export async function checkContractSchema(): Promise<void> {
   const root = fileURLToPath(new URL("../", import.meta.url));
@@ -34,7 +39,7 @@ export async function checkContractSchema(): Promise<void> {
       readFile(output, "utf8"),
       readFile(path.join(sourceDirectory, "error.schema.ts"), "utf8"),
     ]);
-    if (current !== expected)
+    if (normalizeGeneratedText(current) !== normalizeGeneratedText(expected))
       throw new Error(
         "Generated error.schema.ts differs; run task export-contracts.",
       );

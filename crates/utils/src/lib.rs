@@ -27,6 +27,7 @@ pub mod rust_source;
 mod slug;
 #[cfg(feature = "validation")]
 pub mod svg;
+pub mod text;
 #[cfg(feature = "validation")]
 pub mod url;
 

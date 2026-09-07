@@ -55,6 +55,8 @@ See [AGENTS.md](AGENTS.md) for code conventions. Common commands:
   packages (long-running)
 - `task lint` — all lint tasks
 - `task export-contracts` — regenerate frontend contracts and plugin protocol bindings from Rust
+- `task check:contracts` — verify generated contracts without rewriting the checkout; LF and CRLF
+  line endings are treated as equivalent while other content changes still fail
 
 ## Toolchain versions
 

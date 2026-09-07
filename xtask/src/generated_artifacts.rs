@@ -4,6 +4,7 @@
 //! roots. Unknown files survive exports, and collisions fail before any output is changed.
 
 use ora_utils::path::{CanonicalPathRoot, canonicalize_longest_existing_prefix};
+use ora_utils::text::normalize_newlines;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,10 @@ pub(crate) fn check(workspace: &Path, staging: &Path) -> Result<(), Box<dyn std:
     let expected = snapshot(staging)?;
     let mut differences = Vec::new();
     for (path, content) in &expected {
-        if current.get(path) != Some(content) {
+        if current
+            .get(path)
+            .is_none_or(|current| normalize_newlines(current) != normalize_newlines(content))
+        {
             differences.push(format!("missing or changed: {}", path.display()));
         }
     }
@@ -127,7 +131,10 @@ pub(crate) fn publish(workspace: &Path, staging: &Path) -> Result<(), Box<dyn st
         }
     }
     for (relative, source) in &expected {
-        if current.get(relative) != Some(source) {
+        if current
+            .get(relative)
+            .is_none_or(|current| normalize_newlines(current) != normalize_newlines(source))
+        {
             let output = workspace.join(relative);
             if let Some(parent) = output.parent() {
                 fs::create_dir_all(parent)?;
@@ -201,6 +208,40 @@ mod tests {
                 .unwrap_or_else(|error| panic!("fixture operation failed: {error}")),
             snapshot(staging.path())
                 .unwrap_or_else(|error| panic!("fixture operation failed: {error}"))
+        );
+    }
+
+    /// Platform line endings do not make otherwise identical generated output stale.
+    #[test]
+    fn accepts_and_preserves_equivalent_lf_and_crlf_outputs() {
+        let workspace =
+            tempfile::tempdir().unwrap_or_else(|error| panic!("fixture operation failed: {error}"));
+        let staging =
+            tempfile::tempdir().unwrap_or_else(|error| panic!("fixture operation failed: {error}"));
+        let current = fixture(
+            workspace.path(),
+            "current.ts",
+            "export type Current = string;\n",
+        );
+        let source = fs::read_to_string(&current)
+            .unwrap_or_else(|error| panic!("fixture operation failed: {error}"));
+        fs::write(&current, source.replace('\n', "\r\n"))
+            .unwrap_or_else(|error| panic!("fixture operation failed: {error}"));
+        fixture(
+            staging.path(),
+            "current.ts",
+            "export type Current = string;\n",
+        );
+
+        check(workspace.path(), staging.path())
+            .unwrap_or_else(|error| panic!("equivalent line endings must pass: {error}"));
+        let before =
+            fs::read(&current).unwrap_or_else(|error| panic!("fixture operation failed: {error}"));
+        publish(workspace.path(), staging.path())
+            .unwrap_or_else(|error| panic!("equivalent line endings must publish: {error}"));
+        assert_eq!(
+            fs::read(&current).unwrap_or_else(|error| panic!("fixture operation failed: {error}")),
+            before
         );
     }
 
