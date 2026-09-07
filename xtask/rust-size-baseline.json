@@ -25,11 +25,6 @@
       "lines": 1053,
       "split_plan": "Split private plugin-host configuration and gateway/projection responsibilities while retaining Plugins as the public operations interface. Preserve registry identity, runtime synchronization and Effect generation semantics."
     },
-    "crates/backend/src/workflow/run/executor.rs": {
-      "owner": "ora-backend",
-      "lines": 838,
-      "split_plan": "Extract turn-output collection and baseline/file-change projection from node dispatch. Keep real session lifetime and completion callbacks together; move output/baseline tests alongside their implementation."
-    },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",
       "lines": 1051,

@@ -10,6 +10,7 @@ mod prompt;
 mod recovery;
 #[cfg(test)]
 mod test_fixture;
+mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;
 pub(crate) use operations::WorkflowRunSetup;

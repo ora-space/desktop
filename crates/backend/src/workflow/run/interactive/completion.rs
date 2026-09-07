@@ -4,9 +4,8 @@
 //! future agent/CLI path can reuse the same commit through the engine. The session stop and the
 //! engine commit are done by the caller around [`prepare_completion`].
 
-use super::super::executor::{
-    apply_output_contract, capture_worktree_snapshot, compute_file_changes, stop_reason_label,
-};
+use super::super::executor::{apply_output_contract, stop_reason_label};
+use super::super::worktree::{capture_worktree_snapshot, compute_file_changes};
 use super::CompletingNodeRuns;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::error::BackendError;
