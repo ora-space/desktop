@@ -1,3 +1,4 @@
+import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -24,13 +25,14 @@ import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
-import { useGraphWorkflowRunLive } from "../../state/hooks/use-graph-workflow-runs";
+import { useGraphWorkflowRunLive } from "../../state/data/mock-workflow-runs";
 import {
   useCancelWorkflowRun,
   useRealWorkflowRun,
   useRestartWorkflowRun,
   useStartWorkflowRun,
-} from "../../state/hooks/use-workflow-runs";
+  useUpdateWorkflowRunInput,
+} from "../../state/data/workflow-runs";
 import {
   resolveCompletionAdvanceNodeId,
   resolveStageFocusNodeId,
@@ -43,8 +45,9 @@ import {
 import { RunOverviewCanvas } from "./run-overview-canvas";
 import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
-import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
+import { runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
+import { WorkflowRunStartDialog } from "./workflow-run-start-dialog";
 import { LocationActionsButton } from "../workspace/location-actions-button";
 import {
   WorkspaceReviewLayout,
@@ -77,6 +80,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   // projection, so its generic project review surface has no task diff count.
   const changedFileCount = 0;
   const startRun = useStartWorkflowRun();
+  const updateRunInput = useUpdateWorkflowRunInput();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
 
@@ -90,6 +94,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const [completionAdvanceFromNodeId, setCompletionAdvanceFromNodeId] =
     useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
   /** One-shot: Overview node click should open Theater's act inspector. */
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] =
     useState(false);
@@ -157,6 +162,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setConversationNodeId(null);
     setCompletionAdvanceFromNodeId(null);
     setStopOpen(false);
+    setStartOpen(false);
     setOpenInspectorOnTheaterEnter(false);
     setReviewPanelOpen(false);
   }
@@ -350,9 +356,16 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     run !== null &&
     (run.status === "running" || run.status === "awaiting_input");
   const canRunAgain = run !== null && isTerminalRunStatus(run.status);
+  const startNode =
+    run?.definitionSnapshot.nodes.find((node) => node.data.kind === "start") ??
+    null;
+  const startVariables = startNode?.data.inputVariables ?? [];
   const runTone = run !== null ? runStatusTone(run.status) : null;
   const actionBusy =
-    startRun.isPending || cancelRun.isPending || rerun.isPending;
+    startRun.isPending ||
+    updateRunInput.isPending ||
+    cancelRun.isPending ||
+    rerun.isPending;
 
   // WorkflowRun has no implicit worktree Task. Its detail already carries the
   // project projection needed to scope the generic review surface.
@@ -422,30 +435,41 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setConversationNodeId(null);
   }
 
-  async function handleStart(): Promise<void> {
-    if (run === null || !canStart) {
+  /**
+   * Applies the Start dialog's submitted values to whichever action opened it.
+   *
+   * A fresh pending run starts; a terminal run edits its input and restarts in place with the new
+   * parameters. Restart keeps the run id, so the workspace selection must be preserved.
+   */
+  async function handleStartFromDialog(
+    initialPrompt: string,
+    variables: Record<string, unknown>,
+  ): Promise<void> {
+    if (run === null || (!canStart && !canRunAgain)) {
       return;
     }
     try {
-      await startRun.mutateAsync({
+      await updateRunInput.mutateAsync({
         runId: run.id,
+        input: initialPrompt,
+        variables,
       });
-      enterTheater();
+      if (canRunAgain) {
+        await rerun.mutateAsync({ runId: run.id });
+        selectWorkflowRun(run.id, run.projectId);
+      } else {
+        await startRun.mutateAsync({
+          runId: run.id,
+        });
+        enterTheater();
+      }
+      setStartOpen(false);
     } catch {
-      toast.error(t("workflowRun.startFailed"));
-    }
-  }
-
-  async function handleRunAgain(): Promise<void> {
-    if (run === null || !canRunAgain) {
-      return;
-    }
-    try {
-      // Restart re-runs the same run in place; the id is unchanged.
-      await rerun.mutateAsync({ runId: run.id });
-      selectWorkflowRun(run.id, run.projectId);
-    } catch {
-      toast.error(t("workflowRun.rerunFailed"));
+      toast.error(
+        canRunAgain
+          ? t("workflowRun.rerunFailed")
+          : t("workflowRun.startFailed"),
+      );
     }
   }
 
@@ -542,9 +566,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs"
               disabled={actionBusy}
-              onClick={() => {
-                void handleStart();
-              }}
+              onClick={() => setStartOpen(true)}
             >
               {startRun.isPending ? (
                 <Spinner className="size-3.5" />
@@ -573,9 +595,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs"
               disabled={actionBusy}
-              onClick={() => {
-                void handleRunAgain();
-              }}
+              onClick={() => setStartOpen(true)}
             >
               {rerun.isPending ? (
                 <Spinner className="size-3.5" />
@@ -675,6 +695,19 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {run !== null && (
+        <WorkflowRunStartDialog
+          open={startOpen}
+          runName={run.name}
+          initialPrompt={startNode?.data.input ?? run.kickoffInput ?? ""}
+          variables={startVariables}
+          busy={
+            updateRunInput.isPending || startRun.isPending || rerun.isPending
+          }
+          onOpenChange={setStartOpen}
+          onStart={handleStartFromDialog}
+        />
+      )}
     </main>
   );
 }

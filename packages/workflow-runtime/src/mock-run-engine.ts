@@ -134,17 +134,17 @@ function stubNodeInput(
 ): GraphWorkflowNodeIo {
   const node = run.definitionSnapshot.nodes.find((item) => item.id === nodeId);
   const title = node?.data.title ?? nodeId;
-  const instruction = node?.data.instruction ?? node?.data.agentConfig?.prompt;
+  const prompt = node?.data.agentConfig?.prompt;
   const kickoff = run.kickoffInput?.trim() ?? "";
-  if (kickoff !== "") {
+  if (node?.data.kind === "agent" && kickoff !== "") {
     return {
       summary: ioPreview(kickoff),
-      detail: instruction,
+      detail: prompt,
     };
   }
   return {
     summary: title,
-    detail: instruction,
+    detail: node?.data.kind === "agent" ? prompt : undefined,
   };
 }
 
@@ -159,18 +159,15 @@ function stubNodeOutput(
   if (kind === "output") {
     return {
       summary: `Report: ${title}`,
-      detail: node?.data.instruction,
     };
   }
   if (kind === "tool") {
     return {
       summary: `Tool finished: ${node?.data.tool ?? title}`,
-      detail: node?.data.instruction,
     };
   }
   return {
     summary: `Completed: ${title}`,
-    detail: node?.data.instruction,
   };
 }
 
@@ -685,7 +682,6 @@ export function createMockRunEngine(
 
     if (node?.data.kind === "agent" || node?.data.kind === "output") {
       const instruction =
-        node.data.instruction ??
         node.data.agentConfig?.prompt ??
         node.data.description ??
         "节点已完成。";

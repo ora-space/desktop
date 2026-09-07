@@ -37,7 +37,6 @@ describe("createMockWorkflowNode", () => {
             mcps: [],
             prompt: "",
             interactive: false,
-            outputPolicy: "none",
           },
         },
       },
@@ -49,11 +48,31 @@ describe("createMockWorkflowNode", () => {
           kind: "condition",
           title: "Condition 3",
           description: "Route execution based on rules",
-          instruction: "",
           condition: "Condition is met",
+          cases: [{ id: "case-1", logic: "and", conditions: [] }],
         },
       },
     ]);
+  });
+
+  it("creates Output nodes without an execution instruction", () => {
+    expect(
+      createMockWorkflowNode({
+        kind: "output",
+        sequence: 4,
+        position: { x: 480, y: 240 },
+        locale: "zh-CN",
+      }),
+    ).toEqual({
+      id: "output-4",
+      type: "workflow",
+      position: { x: 480, y: 240 },
+      data: {
+        kind: "output",
+        title: "输出 4",
+        description: "返回最终结果",
+      },
+    });
   });
 
   it("provides localized model and tool capabilities for the inspector", () => {
@@ -63,7 +82,7 @@ describe("createMockWorkflowNode", () => {
           kind: "start",
           label: "开始",
           description: "定义工作流输入",
-          configFields: ["instruction", "trigger"],
+          configFields: ["initialPrompt"],
         },
         {
           kind: "agent",
@@ -75,43 +94,13 @@ describe("createMockWorkflowNode", () => {
           kind: "condition",
           label: "条件分支",
           description: "根据规则选择路径",
-          configFields: ["condition", "instruction"],
-        },
-        {
-          kind: "tool",
-          label: "工具",
-          description: "调用终端或插件",
-          configFields: ["tool", "instruction"],
-        },
-        {
-          kind: "junction",
-          label: "汇合",
-          description: "等待多个执行分支完成",
-          configFields: ["instruction", "waitStrategy", "failureStrategy"],
-        },
-        {
-          kind: "human",
-          label: "人工确认",
-          description: "等待人工决策后继续",
-          configFields: ["instruction"],
-        },
-        {
-          kind: "loop",
-          label: "循环",
-          description: "重复执行直到满足条件",
-          configFields: ["instruction", "maxAttempts", "exitCondition"],
-        },
-        {
-          kind: "subflow",
-          label: "子流程",
-          description: "封装复杂业务步骤",
-          configFields: ["instruction"],
+          configFields: ["condition"],
         },
         {
           kind: "output",
           label: "输出",
           description: "返回最终结果",
-          configFields: ["instruction"],
+          configFields: [],
         },
       ],
       models: [
@@ -179,8 +168,8 @@ describe("createMockWorkflowNode", () => {
         { value: "not_contains", label: "不包含" },
         { value: "greater_than", label: "大于" },
         { value: "less_than", label: "小于" },
-        { value: "is_empty", label: "为空" },
-        { value: "is_not_empty", label: "不为空" },
+        { value: "empty", label: "为空" },
+        { value: "not_empty", label: "不为空" },
       ],
       toolOperations: {
         Terminal: [{ value: "run_command", label: "执行命令" }],
@@ -193,12 +182,6 @@ describe("createMockWorkflowNode", () => {
           { value: "merge_pr", label: "合并 Pull Request" },
         ],
       },
-      startTriggers: [
-        { value: "merge_request", label: "Merge Request" },
-        { value: "push", label: "Push" },
-        { value: "manual", label: "手动" },
-      ],
-      defaultTrigger: "merge_request",
       defaultModel: "GPT-5",
       defaultAgentConfig: {
         schemaVersion: 3,
@@ -208,7 +191,6 @@ describe("createMockWorkflowNode", () => {
         mcps: [],
         prompt: "",
         interactive: false,
-        outputPolicy: "none",
       },
       defaultTool: "Terminal",
     });

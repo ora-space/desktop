@@ -1,17 +1,24 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
-export type PromptTokenKind = "skill" | "command" | "role";
+export type PromptTokenKind = "skill" | "command" | "role" | "variable";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     promptToken: {
       /** Inserts a skill, slash-command, or role mention at the caret. */
-      setPromptToken: (kind: PromptTokenKind, name: string) => ReturnType;
+      setPromptToken: (
+        kind: PromptTokenKind,
+        name: string,
+        label?: string,
+        /** Opaque JSON payload a caller's NodeView can use to enrich rendering. */
+        meta?: string,
+      ) => ReturnType;
     };
   }
 }
 
 function tokenText(kind: PromptTokenKind, name: string): string {
+  if (kind === "variable") return `{{#${name}#}}`;
   if (kind === "command") return `/${name}`;
   if (kind === "role") return `@${name}`;
   return `$${name}`;
@@ -33,6 +40,8 @@ export const PromptToken = Node.create({
     return {
       kind: { default: "skill" },
       name: { default: "" },
+      label: { default: "" },
+      meta: { default: "", rendered: false },
     };
   },
 
@@ -43,6 +52,7 @@ export const PromptToken = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     const kind = node.attrs.kind as PromptTokenKind;
     const name = String(node.attrs.name);
+    const label = String(node.attrs.label);
     return [
       "span",
       mergeAttributes(HTMLAttributes, {
@@ -50,7 +60,7 @@ export const PromptToken = Node.create({
         class: "composer-mention",
         contenteditable: "false",
       }),
-      tokenText(kind, name),
+      kind === "variable" && label !== "" ? label : tokenText(kind, name),
     ];
   },
 
@@ -64,9 +74,12 @@ export const PromptToken = Node.create({
   addCommands() {
     return {
       setPromptToken:
-        (kind, name) =>
+        (kind, name, label = "", meta = "") =>
         ({ commands }) => {
-          const chip = { type: this.name, attrs: { kind, name } };
+          const chip = {
+            type: this.name,
+            attrs: { kind, name, label, meta },
+          };
           return commands.insertContent([chip, { type: "text", text: " " }]);
         },
     };

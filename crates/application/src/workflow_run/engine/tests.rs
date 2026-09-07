@@ -1,6 +1,7 @@
+use crate::workflow_run::engine::graph::StartInputFieldType;
 use crate::workflow_run::engine::{
-    AgentConfig, AgentExecutor, AgentSkill, GraphError, NodeType, OutputPolicy, UnknownNodeType,
-    WorkflowGraph, WorkflowGraphNode,
+    AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError, NodeType,
+    StructuredTextExposure, UnknownNodeType, WorkflowGraph, WorkflowGraphNode,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -10,6 +11,77 @@ use std::str::FromStr;
 /// Parses a JSON value as a frozen workflow graph, failing the test on error.
 fn parse(value: Value) -> Result<WorkflowGraph, GraphError> {
     WorkflowGraph::parse(&value.to_string())
+}
+
+/// Current Start controls retain their UI semantics while declaring matching pool types.
+#[test]
+fn parses_supported_start_field_types() {
+    let graph = parse(json!({
+        "nodes": [{
+            "id": "start",
+            "data": {
+                "kind": "start",
+                "inputVariables": [
+                    { "name": "title", "fieldType": "text-input", "valueType": "string" },
+                    { "name": "body", "fieldType": "paragraph", "valueType": "string" },
+                    { "name": "kind", "fieldType": "select", "valueType": "string", "options": ["a", "b"] },
+                    { "name": "score", "fieldType": "number", "valueType": "number" },
+                    { "name": "approved", "fieldType": "checkbox", "valueType": "boolean" },
+                    { "name": "source", "fieldType": "file", "valueType": "file" },
+                    { "name": "sources", "fieldType": "file-list", "valueType": "array[file]" },
+                    { "name": "metadata", "fieldType": "json", "valueType": "object" }
+                ]
+            }
+        }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(
+        graph
+            .start_node()
+            .unwrap()
+            .input_variables
+            .iter()
+            .map(|variable| variable.field_type)
+            .collect::<Vec<_>>(),
+        vec![
+            StartInputFieldType::TextInput,
+            StartInputFieldType::Paragraph,
+            StartInputFieldType::Select,
+            StartInputFieldType::Number,
+            StartInputFieldType::Checkbox,
+            StartInputFieldType::File,
+            StartInputFieldType::FileList,
+            StartInputFieldType::Json,
+        ]
+    );
+}
+
+/// A control cannot claim a pool type it does not produce.
+#[test]
+fn rejects_mismatched_start_field_value_type() {
+    assert_eq!(
+        parse(json!({
+            "nodes": [{
+                "id": "start",
+                "data": {
+                    "kind": "start",
+                    "inputVariables": [{
+                        "name": "approved",
+                        "fieldType": "checkbox",
+                        "valueType": "string"
+                    }]
+                }
+            }],
+            "edges": []
+        }))
+        .unwrap_err(),
+        GraphError::InvalidStartVariables {
+            node_id: "start".to_string(),
+            reason: "variable approved field type does not produce declared type string"
+                .to_string(),
+        }
+    );
 }
 
 /// A linear chain matching the demo shape: start → agent a → agent b → output-1.
@@ -88,6 +160,41 @@ fn parses_valid_envelope_with_metadata() {
     assert_eq!(ids(&graph.predecessors("output-1")), vec!["b"]);
 }
 
+/// The editor stores a Start node's initial prompt in `data.input`; parsing exposes it as the
+/// node instruction so it can seed the run input and the reserved `{start}.input` selector.
+#[test]
+fn start_node_input_parses_from_data_input() {
+    let graph = parse(json!({
+        "nodes": [{
+            "id": "start",
+            "data": { "kind": "start", "input": "检查当前工作区的未提交改动" }
+        }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(
+        graph.start_node().unwrap().instruction.as_deref(),
+        Some("检查当前工作区的未提交改动")
+    );
+}
+
+/// A legacy Start snapshot that predates `data.input` keeps parsing from `data.instruction`.
+#[test]
+fn start_node_instruction_falls_back_to_legacy_data_instruction() {
+    let graph = parse(json!({
+        "nodes": [{
+            "id": "start",
+            "data": { "kind": "start", "instruction": "legacy-prompt" }
+        }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(
+        graph.start_node().unwrap().instruction.as_deref(),
+        Some("legacy-prompt")
+    );
+}
+
 #[test]
 fn parses_agent_config_into_the_model() {
     let graph = parse(linear_chain()).unwrap();
@@ -97,6 +204,7 @@ fn parses_agent_config_into_the_model() {
         title: String::new(),
         description: String::new(),
         instruction: None,
+        input_variables: Vec::new(),
         agent_config: Some(AgentConfig {
             executor: AgentExecutor {
                 agent_cli: "open_code".to_string(),
@@ -110,9 +218,11 @@ fn parses_agent_config_into_the_model() {
             prompt: "do a".to_string(),
             // The linear_chain fixture omits `interactive`, so the default must be false.
             interactive: false,
-            // The linear_chain fixture omits `outputPolicy`, so the default must be `None`.
-            output_policy: OutputPolicy::None,
+            // The linear_chain fixture omits `outputContract`, so the default must be `None`.
+            output_contract: None,
         }),
+        condition_config: None,
+        output_config: None,
     };
     assert_eq!(*graph.node("a").unwrap(), expected);
 }
@@ -162,57 +272,78 @@ fn parses_interactive_agent_flag_with_a_default_of_false() {
 }
 
 #[test]
-fn parses_output_policy_with_a_default_of_none() {
-    let graph = parse(json!({
-        "nodes": [
-            { "id": "a", "data": { "kind": "agent", "agentConfig": {
-                "executor": { "agentCli": "open_code", "modelId": "m" },
-                "roleId": "R", "skills": [], "prompt": "a", "outputPolicy": "none"
-            } } },
-            { "id": "b", "data": { "kind": "agent", "agentConfig": {
-                "executor": { "agentCli": "open_code", "modelId": "m" },
-                "roleId": "R", "skills": [], "prompt": "b", "outputPolicy": "final_agent_response"
-            } } },
-            { "id": "c", "data": { "kind": "agent", "agentConfig": {
-                "executor": { "agentCli": "open_code", "modelId": "m" },
-                "roleId": "R", "skills": [], "prompt": "c"
-            } } }
-        ],
-        "edges": []
-    }))
-    .unwrap();
-    let policy = |id: &str| {
-        graph
-            .node(id)
-            .unwrap()
-            .agent_config
-            .as_ref()
-            .unwrap()
-            .output_policy
-    };
-    assert_eq!(policy("a"), OutputPolicy::None);
-    assert_eq!(policy("b"), OutputPolicy::FinalAgentResponse);
-    // Omitting `outputPolicy` defaults to `None`, so nodes withhold output unless opted in.
-    assert_eq!(policy("c"), OutputPolicy::None);
-}
-
-#[test]
-fn output_policy_apply_withholds_or_passes_output() {
-    assert_eq!(OutputPolicy::None.apply(Some("text".to_string())), None);
-    assert_eq!(OutputPolicy::None.apply(None), None);
-    assert_eq!(
-        OutputPolicy::FinalAgentResponse.apply(Some("text".to_string())),
-        Some("text".to_string())
-    );
-    assert_eq!(OutputPolicy::FinalAgentResponse.apply(None), None);
-}
-
-#[test]
 fn parses_empty_graph_as_legal() {
     let graph = parse(json!({ "nodes": [], "edges": [] })).unwrap();
     assert_eq!(graph.node_count(), 0);
     assert_eq!(graph.edge_count(), 0);
     assert_eq!(graph.start_node(), None);
+}
+
+#[test]
+fn rejects_user_global_without_an_initial_value() {
+    assert_eq!(
+        parse(json!({
+            "nodes": [],
+            "edges": [],
+            "globalVariables": [
+                { "name": "global.region", "valueType": "string" }
+            ]
+        }))
+        .unwrap_err(),
+        GraphError::InvalidGlobalVariables {
+            reason: "global variable global.region must have an initial value".to_string()
+        }
+    );
+}
+
+/// File values use the canonical durable representation before entering a run.
+#[test]
+fn normalizes_file_values_and_rejects_unsafe_global_paths() {
+    let graph = parse(json!({
+        "nodes": [{
+            "id": "start",
+            "data": {
+                "kind": "start",
+                "inputVariables": [
+                    { "name": "attachments", "valueType": "array[file]", "value": ["one.txt"] }
+                ]
+            }
+        }],
+        "edges": [],
+        "globalVariables": [
+            { "name": "global.template", "valueType": "file", "value": "docs/template.md" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        graph.start_node().unwrap().input_variables[0].value,
+        Some(json!([
+            { "kind": "workspace_file", "path": "one.txt" }
+        ]))
+    );
+    assert_eq!(
+        graph
+            .global_variables()
+            .iter()
+            .find(|variable| variable.name == "global.template")
+            .unwrap()
+            .value,
+        Some(json!({
+            "kind": "workspace_file",
+            "path": "docs/template.md"
+        }))
+    );
+
+    assert!(matches!(
+        parse(json!({
+            "nodes": [],
+            "edges": [],
+            "globalVariables": [
+                { "name": "global.template", "valueType": "file", "value": "../template.md" }
+            ]
+        })),
+        Err(GraphError::InvalidGlobalVariables { .. })
+    ));
 }
 
 // ── Parse: structural errors ──
@@ -360,6 +491,251 @@ fn rejects_duplicate_node_id() {
     );
 }
 
+// ── Branch-aware parsing ──
+
+/// Parses the `cases` wire array of a Condition node into its executable config.
+#[test]
+fn parses_condition_cases_into_the_model() {
+    let graph = parse(json!({
+        "nodes": [
+            { "id": "start", "data": { "kind": "start" } },
+            { "id": "c", "data": { "kind": "condition", "cases": [
+                {
+                    "id": "approved",
+                    "logic": "and",
+                    "conditions": [
+                        { "variableSelector": ["review", "structured_output", "approved"], "operator": "is", "value": true }
+                    ]
+                },
+                {
+                    "id": "score-hi",
+                    "logic": "or",
+                    "conditions": [
+                        { "variableSelector": ["review", "text"], "operator": "not_empty", "value": null },
+                        { "variableSelector": ["review", "structured_output", "score"], "operator": "greater_than", "value": 90 }
+                    ]
+                }
+            ] } }
+        ],
+        "edges": []
+    }))
+    .unwrap();
+    let config = graph.node("c").unwrap().condition_config.as_ref().unwrap();
+    assert_eq!(config.cases.len(), 2);
+    assert_eq!(config.cases[0].id, "approved");
+    assert_eq!(
+        config.cases[0].logic,
+        crate::workflow_run::engine::condition::ConditionLogic::And
+    );
+    assert_eq!(config.cases[0].conditions.len(), 1);
+    assert_eq!(config.cases[1].id, "score-hi");
+    assert_eq!(
+        config.cases[1].logic,
+        crate::workflow_run::engine::condition::ConditionLogic::Or
+    );
+    assert_eq!(
+        config.cases[0].conditions[0].variable_selector.qualified(),
+        "review.structured_output"
+    );
+}
+
+/// A Condition node without a `cases` array compiles to an always-else config.
+#[test]
+fn parses_a_condition_without_cases_as_always_else() {
+    let graph = parse(json!({
+        "nodes": [{ "id": "c", "data": { "kind": "condition" } }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(
+        graph
+            .node("c")
+            .unwrap()
+            .condition_config
+            .as_ref()
+            .unwrap()
+            .cases
+            .len(),
+        0
+    );
+}
+
+/// Rejects an unknown comparison operator inside a condition case.
+#[test]
+fn rejects_invalid_condition_operator() {
+    assert_eq!(
+        parse(json!({
+            "nodes": [
+                { "id": "c", "data": { "kind": "condition", "cases": [
+                    { "id": "a", "logic": "and", "conditions": [
+                        { "variableSelector": ["x", "y"], "operator": "bogus", "value": null }
+                    ] }
+                ] } }
+            ],
+            "edges": []
+        }))
+        .unwrap_err(),
+        GraphError::InvalidCondition {
+            node_id: "c".to_string(),
+            reason: "condition rule has unknown operator bogus".to_string(),
+        }
+    );
+}
+
+/// Parses the source port handle on each edge, which selects the Condition branch it feeds.
+#[test]
+fn parses_edge_source_handles() {
+    let graph = parse(json!({
+        "nodes": [
+            { "id": "c", "data": { "kind": "condition" } },
+            { "id": "ok", "data": { "kind": "output" } },
+            { "id": "no", "data": { "kind": "output" } }
+        ],
+        "edges": [
+            { "source": "c", "sourceHandle": "approved", "target": "ok" },
+            { "source": "c", "sourceHandle": "else", "target": "no" }
+        ]
+    }))
+    .unwrap();
+    let edges = graph.outgoing_edges("c");
+    assert_eq!(edges.len(), 2);
+    // Outgoing edges are sorted by target id, so the "no" else-branch edge comes first.
+    assert_eq!(edges[0].source_handle.as_deref(), Some("else"));
+    assert_eq!(edges[1].source_handle.as_deref(), Some("approved"));
+    assert_eq!(edges[0].target, "no");
+    assert_eq!(edges[1].target, "ok");
+    assert_eq!(
+        graph.incoming_edges("ok"),
+        vec![crate::workflow_run::engine::graph::WorkflowGraphEdge {
+            source: "c".to_string(),
+            target: "ok".to_string(),
+            source_handle: Some("approved".to_string()),
+        }]
+    );
+}
+
+// ── Structured output parsing ──
+
+/// Parses the agent `outputContract` wire field into the domain contract.
+#[test]
+fn parses_structured_output_contract_into_the_model() {
+    let schema = json!({ "type": "object", "properties": { "approved": { "type": "boolean" } }, "required": ["approved"] });
+    let graph = parse(json!({
+        "nodes": [
+            { "id": "start", "data": { "kind": "start" } },
+            { "id": "review", "data": { "kind": "agent", "agentConfig": {
+                "executor": { "agentCli": "open_code", "modelId": "m" },
+                "roleId": "R", "skills": [], "prompt": "review",
+                "outputContract": {
+                    "type": "structured",
+                    "textExposure": "includeFinalText",
+                    "schema": schema
+                }
+            } } }
+        ],
+        "edges": []
+    }))
+    .unwrap();
+    let contract = graph
+        .node("review")
+        .unwrap()
+        .agent_config
+        .as_ref()
+        .unwrap()
+        .output_contract
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        contract,
+        &AgentOutputContract::Structured {
+            schema,
+            text_exposure: StructuredTextExposure::IncludeFinalText,
+        }
+    );
+}
+
+/// Agent schemas are rejected at graph parsing instead of failing only after execution.
+#[test]
+fn rejects_invalid_structured_output_schema() {
+    assert!(matches!(
+        parse(json!({
+            "nodes": [{ "id": "review", "data": {
+                "kind": "agent",
+                "agentConfig": {
+                    "executor": { "agentCli": "open_code", "modelId": "m" },
+                    "prompt": "review",
+                    "outputContract": {
+                        "type": "structured",
+                        "schema": {
+                            "type": "object",
+                            "properties": { "created": { "type": "date" } }
+                        }
+                    }
+                }
+            } }],
+            "edges": []
+        })),
+        Err(GraphError::InvalidNode { .. })
+    ));
+}
+
+/// A missing structured-output setting leaves the node as raw-text-only.
+#[test]
+fn agent_without_output_contract_keeps_raw_text_only() {
+    let graph = parse(json!({
+        "nodes": [
+            { "id": "a", "data": { "kind": "agent", "agentConfig": {
+                "executor": { "agentCli": "open_code", "modelId": "m" },
+                "roleId": "R", "skills": [], "prompt": "a"
+            } } }
+        ],
+        "edges": []
+    }))
+    .unwrap();
+    let config = graph.node("a").unwrap().agent_config.as_ref().unwrap();
+    assert_eq!(config.output_contract, None);
+}
+
+// ── Output binding parsing ──
+
+/// Parses the output node's `data.outputs` bindings into named variable selectors.
+#[test]
+fn parses_output_bindings_into_the_model() {
+    let graph = parse(json!({
+        "nodes": [
+            { "id": "out", "data": { "kind": "output", "outputs": [
+                { "name": "approved", "variableSelector": ["review", "structured_output", "approved"] },
+                { "name": "summary", "variableSelector": ["writer", "text"] }
+            ] } }
+        ],
+        "edges": []
+    }))
+    .unwrap();
+    let config = graph.node("out").unwrap().output_config.as_ref().unwrap();
+    assert_eq!(config.outputs.len(), 2);
+    assert_eq!(config.outputs[0].name, "approved");
+    assert_eq!(
+        config.outputs[0].variable_selector.qualified(),
+        "review.structured_output"
+    );
+    assert_eq!(config.outputs[1].name, "summary");
+    assert_eq!(
+        config.outputs[1].variable_selector.qualified(),
+        "writer.text"
+    );
+}
+
+/// An output node without `outputs` keeps the legacy concatenated output.
+#[test]
+fn output_without_bindings_has_no_output_config() {
+    let graph = parse(json!({
+        "nodes": [{ "id": "out", "data": { "kind": "output" } }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(graph.node("out").unwrap().output_config, None);
+}
+
 // ── Topology ──
 
 #[test]
@@ -442,16 +818,16 @@ fn fan_in_is_not_ready_until_every_predecessor_completes() {
 }
 
 #[test]
-fn first_unsupported_node_reports_condition() {
+fn first_unsupported_node_reports_tool() {
     let graph = parse(json!({
         "nodes": [
             { "id": "start", "data": { "kind": "start" } },
-            { "id": "c", "data": { "kind": "condition", "condition": "x" } }
+            { "id": "t", "data": { "kind": "tool", "tool": "Terminal" } }
         ],
         "edges": []
     }))
     .unwrap();
-    assert_eq!(graph.first_unsupported_node().unwrap().id, "c");
+    assert_eq!(graph.first_unsupported_node().unwrap().id, "t");
 }
 
 #[test]
@@ -522,5 +898,5 @@ fn node_type_reports_the_v1_supported_set() {
     .filter(|node_type| node_type.supported())
     .map(|node_type| node_type.as_str())
     .collect();
-    assert_eq!(supported, vec!["start", "agent", "output"]);
+    assert_eq!(supported, vec!["start", "agent", "condition", "output"]);
 }

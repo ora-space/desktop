@@ -36,6 +36,8 @@ pub enum DownloadSource {
     Url(Url),
     /// A local path (`file://` semantics without a URL).
     Local(PathBuf),
+    /// An object-store key resolved by an S3-aware downloader against its configured bucket.
+    S3 { key: String },
 }
 
 /// One self-contained download operation.

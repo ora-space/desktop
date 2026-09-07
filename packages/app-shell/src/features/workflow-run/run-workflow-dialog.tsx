@@ -14,7 +14,7 @@ import {
   Spinner,
 } from "@ora/ui";
 import { localizeContractError } from "../../i18n/contract-error";
-import { useCreateWorkflowRun } from "../../state/hooks/use-workflow-runs";
+import { useCreateWorkflowRun } from "../../state/data/workflow-runs";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 

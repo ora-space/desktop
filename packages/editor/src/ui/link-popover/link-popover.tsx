@@ -2,30 +2,30 @@ import * as React from "react";
 import type { Editor } from "@tiptap/react";
 
 // --- Hooks ---
-import { useIsMobile } from "../../hooks/use-mobile";
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Icons ---
-import { CornerDownLeftIcon } from "../../icons/corner-down-left-icon";
-import { ExternalLinkIcon } from "../../icons/external-link-icon";
-import { LinkIcon } from "../../icons/link-icon";
-import { TrashIcon } from "../../icons/trash-icon";
+import { CornerDownLeftIcon } from "../../icons/corner-down-left-icon.tsx";
+import { ExternalLinkIcon } from "../../icons/external-link-icon.tsx";
+import { LinkIcon } from "../../icons/link-icon.tsx";
+import { TrashIcon } from "../../icons/trash-icon.tsx";
 
 // --- Tiptap UI ---
-import type { UseLinkPopoverConfig } from "../link-popover";
-import { useLinkPopover } from "../link-popover";
+import type { UseLinkPopoverConfig } from "./index.tsx";
+import { useLinkPopover } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button, ButtonGroup } from "../../primitive/button";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button, ButtonGroup } from "../../primitive/button/index.tsx";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "../../primitive/popover";
-import { Separator } from "../../primitive/separator";
-import { Card, CardBody, CardItemGroup } from "../../primitive/card";
-import { Input, InputGroup } from "../../primitive/input";
+} from "../../primitive/popover/index.tsx";
+import { Separator } from "../../primitive/separator/index.tsx";
+import { Card, CardBody, CardItemGroup } from "../../primitive/card/index.tsx";
+import { Input, InputGroup } from "../../primitive/input/index.tsx";
 
 export interface LinkMainProps {
   /**

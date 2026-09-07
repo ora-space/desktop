@@ -23,4 +23,10 @@ describe("queryStateFromText", () => {
   it("does not treat a mid-word slash as a command", () => {
     expect(queryStateFromText("foo/bar", "foo/bar").slashQuery).toBeNull();
   });
+
+  it("treats a slash after ordinary prompt text as an inline variable trigger", () => {
+    expect(
+      queryStateFromText("完整方案。/", "完整方案。/", "inline").slashQuery,
+    ).toBe("");
+  });
 });

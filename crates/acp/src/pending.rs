@@ -62,7 +62,8 @@ impl PendingRequests {
         }
     }
 
-    /// Returns the provider session associated with an active ordered response.
+    /// Returns the provider session associated with an active ordered response for debug tracing.
+    #[cfg(debug_assertions)]
     pub(super) fn session_id(&self, request_id: &RequestId) -> Option<&SessionId> {
         match self.active.get(request_id) {
             Some(PendingRequest::Session { session_id }) => Some(session_id),

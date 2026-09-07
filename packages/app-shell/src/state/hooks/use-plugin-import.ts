@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { invalidatePluginQueries } from "./plugin-invalidation";
+import { invalidatePluginQueries } from "../data/plugins";
 
 /**
  * Imports one local `.orax` plugin archive selected by the user and refreshes

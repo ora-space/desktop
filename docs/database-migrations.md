@@ -9,6 +9,9 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 - The runner creates the `migrations` bookkeeping table with `version`, `up_sql`, `down_sql`, and `executed_at` before loading history.
 - Ordered statement lists are trimmed and joined into executable SQL snapshots. Both directions are persisted so explicit development reconciliation can detect either direction changing.
 - `MigrationCatalog` validates these invariants when it is built, so a duplicate or out-of-order version fails before any statement runs.
+- A catalog may carry first-install SQL outside the versioned snapshots. The public default is an
+  empty statement list; an internal distribution can patch that list without rewriting migration
+  history.
 
 ## Shipped catalog
 
@@ -22,8 +25,11 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0006`  | Generic Effect Scopes, Sources/Revisions, Desired State, Consumers/Targets, shared Resources, projections, ownership, statuses, Conditions, claims, Attempts, operation journals, receipts, and audit history. |
 | `0007`  | Immutable marketplace-source namespace bindings keyed by canonical Git URL.                                                                                                                                    |
 | `0008`  | Per-source `enabled` flag so a marketplace URL can be disabled without deleting its identity.                                                                                                                  |
+| `0009`  | Source-scoped tagged artifact retrieval configuration with Direct HTTPS as the migration default.                                                                                                              |
+| `0010`  | Independent Effect recovery detection time; Scope initialization moves into Workspace repository transactions.                                                                                                 |
 
-`default_migration_catalog()` returns all migrations with every version as the active target.
+`default_migration_catalog()` returns all migrations with every version as the active target and
+the empty public first-install SQL list.
 
 ## Application startup
 
@@ -33,6 +39,12 @@ introduced by a newer application, it rolls that trailing suffix back in reverse
 `down_sql` stored by the newer version. It does not compare persisted SQL snapshots for shared
 versions, so packaged application startup cannot rebuild user data merely because an old migration
 definition changed.
+
+When the database had no migration rows before bootstrap and at least one target migration was
+applied, the runner executes first-install SQL after the target is complete. Those statements run
+in one separate transaction and are not recorded in `migrations`. Existing databases never receive
+them later. If their transaction fails, bootstrap fails while the schema migrations that already
+committed remain applied.
 
 ## Development reconciliation
 
@@ -44,6 +56,9 @@ A catalog carries the full migration list plus an **active target prefix**, whic
 - The runner then applies the current target suffix in ascending order and records fresh SQL snapshots and timestamps.
 - If content matches and the database is missing target versions, only the missing tail is applied. If the target is shorter, only the trailing applied versions are rolled back using their stored snapshots.
 - When versions and SQL snapshots already match the target, reconciliation is a no-op.
+
+Explicit development reconciliation follows the same first-install rule for a database with no
+applied migration history.
 
 `cargo xtask reconcile-migrations DATA_DIRECTORY` invokes this interface. `task run:desktop` runs
 that command against the repository `.data` directory immediately before starting Tauri, keeping
@@ -66,3 +81,14 @@ plugin marketplace schema remains intact.
 - Failures log at `ERROR` with `error.kind` and `error.message` before the original `DatabaseError` is returned to the caller.
 
 The JSON envelope and sink behavior are owned by `ora-logging`; `ora-db` only emits events. See [Runtime Logging](runtime-logging.md) and [Database Repositories](database-repositories.md).
+
+## Effect time migration
+
+Migration `0010` adds `effect_operations.detected_at`, backfills recovery rows from their legacy
+`updated_at`, and validates the phase/detection relationship on insert and update. It does not
+rebuild Effect business tables. It also removes the Scope creation trigger; current repositories
+create Scope and Desired state atomically with the Workspace using their injected write clock.
+
+Downgrading restores detection to the legacy column and reinstalls the trigger. Existing journals,
+claims, revisions, and ownership survive both directions. Historical audit times are retained on
+upgrade because their original write instants cannot be reconstructed.

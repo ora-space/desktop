@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { ContractsClient } from "@ora/contracts";
 import type { CurrentUser } from "../../lib/types";
-import { queryKeys } from "./query-keys";
+import { identityKeys } from "../data/identity";
 
 /**
  * Resolves the sidebar user from the host's global Git identity.
@@ -20,7 +20,7 @@ export function useGitIdentityUser(
 ): CurrentUser {
   const { t } = useTranslation();
   const { data } = useQuery({
-    queryKey: queryKeys.gitIdentity,
+    queryKey: identityKeys.gitIdentity,
     queryFn: () => client.gitIdentity.get({}),
     staleTime: Number.POSITIVE_INFINITY,
     enabled,

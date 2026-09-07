@@ -1,6 +1,6 @@
 //! Endpoint declarations for the task generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "task";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "create",
         request_type: "CreateTaskRequest",
         response_type: "CreateTaskResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getTask",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetTaskRequest",
         response_type: "GetTaskResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listTasks",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "list",
         request_type: "ListTasksRequest",
         response_type: "ListTasksResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateTask",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "update",
         request_type: "UpdateTaskRequest",
         response_type: "UpdateTaskResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteTask",
@@ -39,6 +43,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "delete",
         request_type: "DeleteTaskRequest",
         response_type: "DeleteTaskResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getTaskWorkspace",
@@ -46,5 +51,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "getWorkspace",
         request_type: "GetTaskWorkspaceRequest",
         response_type: "GetTaskWorkspaceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

@@ -161,6 +161,10 @@ export function ChatView({
   return (
     <main
       className={`flex min-h-0 flex-1 flex-col bg-background ${isEmpty ? "overflow-y-auto" : ""}`}
+      // Right-click stays inside Ora: suppress the browser/OS context menu (Refresh,
+      // Back, Inspect) across the whole pane. Per-item menus like the chat file link's
+      // are opened by their own inner triggers before this bubbles, so they keep working.
+      onContextMenu={(event) => event.preventDefault()}
     >
       {isEmpty ? (
         // `mt-auto` here and `mb-auto` on the composer slot split the free space

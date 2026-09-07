@@ -3,6 +3,7 @@
 
 mod enums;
 mod error;
+mod locator;
 mod manifest;
 mod name;
 mod sha256;
@@ -13,6 +14,7 @@ mod workbench;
 
 pub use enums::{PluginKind, PluginKindError};
 pub use error::{InvalidFieldReason, ManifestError, ManifestField, RuleField};
+pub use locator::{ObjectKey, ObjectKeyError, ReleaseLocator, ReleaseLocatorError};
 pub use manifest::{
     PluginArtifact, PluginDependencies, PluginHead, PluginManifest, PluginReleaseSource,
     PluginReleaseTarget,

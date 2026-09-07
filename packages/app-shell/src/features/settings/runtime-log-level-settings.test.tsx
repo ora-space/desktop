@@ -12,10 +12,28 @@ import {
   createTestQueryClient,
 } from "../../test/hook-harness";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createSettingsMemory,
+  settingsHandlers,
+} from "../../test/memory/settings";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createSettingsMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...settingsHandlers(state),
+  };
+}
 
 describe("RuntimeLogLevelSettings", () => {
   beforeEach(async () => {
@@ -23,8 +41,10 @@ describe("RuntimeLogLevelSettings", () => {
   });
 
   it("locks the selector while the initial authoritative state is loading", () => {
-    const client = createMockClient(createMockClientState());
-    client.runtimeLogLevel.get = vi.fn(
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.getRuntimeLogLevel = vi.fn(
       () => new Promise<RuntimeLogLevelStateResponse>(() => undefined),
     );
 
@@ -38,8 +58,9 @@ describe("RuntimeLogLevelSettings", () => {
     "applies a successful update through the %s contracts client",
     async () => {
       const user = userEvent.setup();
-      const state = createMockClientState();
-      const client = createMockClient(state);
+      const state = createFixtureState();
+      const clientHandlers: TestHandlers = createFixtureHandlers(state);
+      const client = createTestClient(clientHandlers);
       const setLevel = vi.spyOn(client.runtimeLogLevel, "set");
       renderSettings(client);
 
@@ -58,14 +79,14 @@ describe("RuntimeLogLevelSettings", () => {
   );
 
   it("displays an effective startup override as the selected level without exposing its source", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.runtimeLogLevel = {
       configuredLevel: "info",
       effectiveLevel: "trace",
       startupOverride: "trace",
     };
 
-    renderSettings(createMockClient(state));
+    renderSettings(createTestClient(createFixtureHandlers(state)));
 
     const selector = await screen.findByRole("combobox", { name: "Log level" });
     await waitFor(() =>
@@ -77,10 +98,12 @@ describe("RuntimeLogLevelSettings", () => {
 
   it("prevents duplicate submissions while an update is pending", async () => {
     const user = userEvent.setup();
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     let resolveUpdate:
       ((value: RuntimeLogLevelStateResponse) => void) | undefined;
-    client.runtimeLogLevel.set = vi.fn(
+    clientHandlers.setRuntimeLogLevel = vi.fn(
       () =>
         new Promise<RuntimeLogLevelStateResponse>((resolve) => {
           resolveUpdate = resolve;
@@ -95,7 +118,7 @@ describe("RuntimeLogLevelSettings", () => {
     await waitFor(() => expect(selector).toBeDisabled());
     expect(screen.getByRole("status")).toHaveTextContent("Applying log level…");
     await user.click(selector);
-    expect(client.runtimeLogLevel.set).toHaveBeenCalledTimes(1);
+    expect(clientHandlers.setRuntimeLogLevel).toHaveBeenCalledTimes(1);
 
     resolveUpdate?.({
       configuredLevel: "debug",
@@ -107,8 +130,10 @@ describe("RuntimeLogLevelSettings", () => {
 
   it("retains the last authoritative selection after an update fails", async () => {
     const user = userEvent.setup();
-    const client = createMockClient(createMockClientState());
-    client.runtimeLogLevel.set = vi
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.setRuntimeLogLevel = vi
       .fn()
       .mockRejectedValue(new Error("persistence failed"));
     renderSettings(client);

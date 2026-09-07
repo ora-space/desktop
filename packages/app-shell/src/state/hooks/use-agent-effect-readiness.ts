@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { effectKeys } from "../data/effects";
 
 export type AgentEffectReadiness = "ready" | "blocked" | "unknown";
 
@@ -13,7 +13,7 @@ export function useAgentEffectReadiness(
   const managedAgent =
     agentRef === "ora-space.opencode" || agentRef === "ora-space.claude";
   const query = useQuery({
-    queryKey: queryKeys.agentEffectStatus(workspaceId ?? "", agentRef ?? ""),
+    queryKey: effectKeys.agentEffectStatus(workspaceId ?? "", agentRef ?? ""),
     queryFn: () =>
       client.effect.getTargetStatus({
         selector: "workspace_agent",

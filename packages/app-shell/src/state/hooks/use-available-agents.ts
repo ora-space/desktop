@@ -1,8 +1,5 @@
 import { useMemo } from "react";
-import {
-  useAgentCatalog,
-  type AgentEntry,
-} from "../../features/chat/agent-catalog";
+import { useAgentCatalog, type AgentEntry } from "./use-agent-catalog";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
 /**

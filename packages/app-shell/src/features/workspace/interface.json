@@ -1,0 +1,34 @@
+{
+  "owner": "Workspace shell and review composition",
+  "modules": {
+    "./desktop-update-control": {
+      "exports": ["DesktopUpdateControl"],
+      "purpose": "Settings and workspace share the native update control and version stamp."
+    },
+    "./location-actions-button": {
+      "exports": ["LocationActionsButton"],
+      "purpose": "Workflow-run reuses explicit location actions for its workspace."
+    },
+    "./workspace-dialogs": {
+      "exports": ["WorkspaceDialogs"],
+      "purpose": "The shell mounts workspace-owned project and task dialogs."
+    },
+    "./workspace-review-layout": {
+      "exports": ["WorkspaceReviewContext", "WorkspaceReviewLayout"],
+      "purpose": "Conversation and run hosts reuse explicit Files/Changes review composition."
+    },
+    "./workspace-sidebar": {
+      "exports": ["WorkspaceSidebar"],
+      "purpose": "The shell mounts workspace navigation through its top-level view."
+    },
+    "./workspace-view": {
+      "exports": ["WorkspaceView"],
+      "purpose": "The shell hosts the selected workspace surface."
+    },
+    "./translations": {
+      "exports": ["workspaceTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

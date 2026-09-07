@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ProxySettings } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { settingsKeys } from "../data/settings";
 
 /** Loads and updates the host-level marketplace network proxy. */
 export function useProxySettings() {
@@ -10,20 +10,20 @@ export function useProxySettings() {
   const queryClient = useQueryClient();
   const submissionPending = useRef(false);
   const query = useQuery({
-    queryKey: queryKeys.proxySettings,
+    queryKey: settingsKeys.proxySettings,
     queryFn: () => client.proxy.get({}),
   });
   const mutation = useMutation({
     mutationFn: (settings: ProxySettings) => client.proxy.set({ settings }),
     onSuccess: (response) => {
       // The backend response is authoritative, including a null settings value.
-      queryClient.setQueryData(queryKeys.proxySettings, response);
+      queryClient.setQueryData(settingsKeys.proxySettings, response);
     },
   });
   const clearMutation = useMutation({
     mutationFn: () => client.proxy.clear({}),
     onSuccess: (response) => {
-      queryClient.setQueryData(queryKeys.proxySettings, response);
+      queryClient.setQueryData(settingsKeys.proxySettings, response);
     },
   });
   const checkMutation = useMutation({

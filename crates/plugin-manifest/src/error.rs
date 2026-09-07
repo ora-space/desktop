@@ -1,6 +1,7 @@
 use crate::{
     DownloadActionError, HookTargetError, MethodNameError, PathPrefixError, PluginKind,
-    PluginKindError, PluginNameError, Sha256DigestError, UrlError, WebviewUrlError,
+    PluginKindError, PluginNameError, ReleaseLocatorError, Sha256DigestError, UrlError,
+    WebviewUrlError,
 };
 use ora_utils::{GitBranchNameError, SlugError};
 use std::{fmt, ops::Range};
@@ -176,6 +177,8 @@ pub enum InvalidFieldReason {
     NonAscii,
     #[error(transparent)]
     InvalidUrl(#[from] UrlError),
+    #[error(transparent)]
+    InvalidReleaseLocator(#[from] ReleaseLocatorError),
     #[error(transparent)]
     InvalidSha256(#[from] Sha256DigestError),
     #[error(transparent)]

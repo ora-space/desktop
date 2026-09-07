@@ -24,7 +24,6 @@ dist-ssr
 *.sw?
 
 /target
-packages/contracts/.test-dist/
 /.data
 .tmp
 *.tsbuildinfo

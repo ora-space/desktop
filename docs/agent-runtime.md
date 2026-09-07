@@ -43,6 +43,8 @@ Pre-session models come from `agent/list_models`, called on demand with the Work
 
 The frontend query cache controls repeated discovery. A model selected before a session exists is local intent sent with `startSession` or `switchSessionAgent`; the backend applies it only when the newly-created session reports the exact value. The response always carries that session's authoritative configuration options.
 
+The frontend also remembers, per agent and in browser storage alone, the model last picked for a chat that had not started yet, so the next such chat on that agent opens on it instead of the agent's own default. A remembered model is offered only while the agent's current catalog still lists it, and a session that already exists ignores it entirely: an ongoing conversation follows the configuration options its agent reports for that session.
+
 ## Session History
 
 Ora records every conversation itself, in one append-only JSONL file per Session under the configured sessions root. This is what lets a conversation outlive one provider: it is replayed without asking the agent to recite it, and it can be handed to a different agent entirely. The file format, its ordering rules, and its failure semantics belong to [`ora-history`](../crates/history/README.md); this section covers only when the runtime uses them.

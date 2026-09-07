@@ -1,3 +1,5 @@
+use super::effect::EffectWriteContext;
+use crate::{LocalTimestampSource, TimestampSource};
 use ora_application::{LocalSkillSourceRevision, RepositoryError, SkillRepository};
 use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId};
 use ora_effect::{
@@ -27,14 +29,25 @@ pub struct PluginSkillProjection {
 
 /// Persists reusable skill definitions in SQLite.
 #[derive(Clone, Debug)]
-pub struct SqliteSkillRepository {
+pub struct SqliteSkillRepository<Clock = LocalTimestampSource> {
     pool: RepositoryPool,
+    clock: Clock,
 }
 
 impl SqliteSkillRepository {
     /// Builds a skill repository from the shared SQLite connection pool.
     pub fn new(pool: RepositoryPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            clock: LocalTimestampSource,
+        }
+    }
+}
+
+impl<Clock: TimestampSource> SqliteSkillRepository<Clock> {
+    /// Injects the audit clock used after acquiring Effect write transactions.
+    pub fn with_clock(pool: RepositoryPool, clock: Clock) -> Self {
+        Self { pool, clock }
     }
 
     /// Replaces the catalog projection owned by one installed Skill plugin.
@@ -49,6 +62,7 @@ impl SqliteSkillRepository {
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let write = EffectWriteContext::new(&transaction, &self.clock);
             let mut changed_scopes = BTreeSet::new();
             transaction.execute(
                 "UPDATE skills SET is_deleted = 1, updated_at = ?2
@@ -63,7 +77,7 @@ impl SqliteSkillRepository {
                 &transaction,
                 &plugin_id,
                 &provided_names,
-                updated_at,
+                write.timestamp().millis(),
                 &mut changed_scopes,
             )?;
 
@@ -104,11 +118,11 @@ impl SqliteSkillRepository {
                 publish_skill_revision(
                     &transaction,
                     &publication,
-                    updated_at,
+                    write.timestamp().millis(),
                     &mut changed_scopes,
                 )?;
             }
-            advance_changed_scopes(&transaction, &changed_scopes, updated_at)?;
+            advance_changed_scopes(&transaction, &changed_scopes, write.timestamp().millis())?;
             transaction.commit()?;
             Ok(())
         })
@@ -124,21 +138,27 @@ impl SqliteSkillRepository {
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let write = EffectWriteContext::new(&transaction, &self.clock);
             let mut changed_scopes = BTreeSet::new();
             transaction.execute(
                 "UPDATE skills SET is_deleted = 1, updated_at = ?2
                  WHERE namespace = ?1 COLLATE NOCASE AND is_deleted = 0",
                 params![&plugin_id, updated_at],
             )?;
-            retire_plugin_sources(&transaction, &plugin_id, updated_at, &mut changed_scopes)?;
-            advance_changed_scopes(&transaction, &changed_scopes, updated_at)?;
+            retire_plugin_sources(
+                &transaction,
+                &plugin_id,
+                write.timestamp().millis(),
+                &mut changed_scopes,
+            )?;
+            advance_changed_scopes(&transaction, &changed_scopes, write.timestamp().millis())?;
             transaction.commit()?;
             Ok(())
         })
     }
 }
 
-impl SkillRepository for SqliteSkillRepository {
+impl<Clock: TimestampSource> SkillRepository for SqliteSkillRepository<Clock> {
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         self.pool
             .with_connection(|connection| {
@@ -168,14 +188,17 @@ impl SkillRepository for SqliteSkillRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let write = EffectWriteContext::new(&transaction, &self.clock);
                 let mut changed_scopes = BTreeSet::new();
                 insert_skill(&transaction, &skill)?;
-                upsert_local_source(&transaction, &skill, &source, &mut changed_scopes)?;
-                advance_changed_scopes(
+                upsert_local_source(
                     &transaction,
-                    &changed_scopes,
-                    skill.audit_fields.updated_at,
+                    &skill,
+                    &source,
+                    write.timestamp().millis(),
+                    &mut changed_scopes,
                 )?;
+                advance_changed_scopes(&transaction, &changed_scopes, write.timestamp().millis())?;
                 transaction.commit()?;
                 Ok(skill)
             })
@@ -271,6 +294,7 @@ impl SkillRepository for SqliteSkillRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let write = EffectWriteContext::new(&transaction, &self.clock);
                 let mut changed_scopes = BTreeSet::new();
                 let previous = transaction
                     .query_row(
@@ -309,17 +333,19 @@ impl SkillRepository for SqliteSkillRepository {
                     retire_local_source(
                         &transaction,
                         &previous_name,
-                        skill.audit_fields.updated_at,
+                        write.timestamp().millis(),
                         &mut changed_scopes,
                     )?;
                 }
                 let _ = previous_namespace;
-                upsert_local_source(&transaction, &skill, &source, &mut changed_scopes)?;
-                advance_changed_scopes(
+                upsert_local_source(
                     &transaction,
-                    &changed_scopes,
-                    skill.audit_fields.updated_at,
+                    &skill,
+                    &source,
+                    write.timestamp().millis(),
+                    &mut changed_scopes,
                 )?;
+                advance_changed_scopes(&transaction, &changed_scopes, write.timestamp().millis())?;
                 transaction.commit()?;
                 Ok(skill)
             })
@@ -348,6 +374,7 @@ impl SkillRepository for SqliteSkillRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let write = EffectWriteContext::new(&transaction, &self.clock);
                 let mut changed_scopes = BTreeSet::new();
                 let selection = transaction
                     .query_row(
@@ -365,9 +392,14 @@ impl SkillRepository for SqliteSkillRepository {
                      WHERE id = ?1 AND is_deleted = 0",
                     params![skill_id.as_ref(), deleted_at],
                 )?;
-                retire_local_source(&transaction, &name, deleted_at, &mut changed_scopes)?;
+                retire_local_source(
+                    &transaction,
+                    &name,
+                    write.timestamp().millis(),
+                    &mut changed_scopes,
+                )?;
                 let _ = namespace;
-                advance_changed_scopes(&transaction, &changed_scopes, deleted_at)?;
+                advance_changed_scopes(&transaction, &changed_scopes, write.timestamp().millis())?;
                 transaction.commit()?;
                 Ok(true)
             })
@@ -402,6 +434,7 @@ fn upsert_local_source(
     connection: &rusqlite::Connection,
     skill: &Skill,
     source: &LocalSkillSourceRevision,
+    written_at: i64,
     changed_scopes: &mut BTreeSet<String>,
 ) -> Result<(), crate::DatabaseError> {
     let publication = PublishedSkillRevision {
@@ -416,13 +449,7 @@ fn upsert_local_source(
         package_fingerprint: source.package_fingerprint.clone(),
         package_root: source.package_root.clone(),
     };
-    publish_skill_revision(
-        connection,
-        &publication,
-        skill.audit_fields.updated_at,
-        changed_scopes,
-    )
-    .map(|_| ())
+    publish_skill_revision(connection, &publication, written_at, changed_scopes).map(|_| ())
 }
 
 /// Retires one Local source after the catalog row has been renamed or deleted.

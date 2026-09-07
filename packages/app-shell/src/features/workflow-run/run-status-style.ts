@@ -10,13 +10,6 @@ export function isNodeWorking(
   return status === "running" || status === "awaiting_input";
 }
 
-/** Run-level terminal statuses. */
-export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
-  return (
-    status === "succeeded" || status === "failed" || status === "cancelled"
-  );
-}
-
 /** Shared run/node status chrome —color is never the only signal (dot + label + tone). */
 export function runStatusTone(
   status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus,
@@ -81,6 +74,15 @@ export function runStatusTone(
         ring: "border-border ring-transparent",
         badge: "border-border bg-muted/60 text-muted-foreground",
         labelKey: "workflowRun.nodeStatus.idle",
+      };
+    case "inactive":
+      // A node behind a lost condition branch: never ran, never will. Dimmed so the active path
+      // reads clearly without implying failure.
+      return {
+        dot: "bg-muted-foreground/20",
+        ring: "border-transparent ring-transparent",
+        badge: "border-transparent bg-muted/30 text-muted-foreground/60",
+        labelKey: "workflowRun.nodeStatus.inactive",
       };
   }
 }

@@ -105,7 +105,7 @@ where
         let run_id = WorkflowRunId::new(&request.run_id);
         match self
             .engine
-            .update_run_input(&run_id, request.input)
+            .update_run_input(&run_id, request.input, request.variables)
             .map_err(ApplicationError::from_workflow_engine_error)?
         {
             UpdateWorkflowRunInputResult::Updated => {}
@@ -131,11 +131,19 @@ where
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: Option<String>,
         file_changes: Vec<FileChange>,
     ) -> Result<CompleteWorkflowNodeResponse, ApplicationError> {
         self.engine
-            .complete_node(run_id, node_run_id, output, stop_reason, file_changes)
+            .complete_node(
+                run_id,
+                node_run_id,
+                output,
+                structured_output,
+                stop_reason,
+                file_changes,
+            )
             .map_err(ApplicationError::from_workflow_engine_error)?;
         let run = self.find_run(run_id)?;
         Ok(CompleteWorkflowNodeResponse { run: map_run(run) })

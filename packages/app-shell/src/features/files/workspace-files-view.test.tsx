@@ -15,18 +15,41 @@ import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ContractsClientContext } from "../../contracts-client-context";
 import { PlatformProvider } from "../../platform";
-import { queryKeys } from "../../state/hooks/query-keys";
+import { workspaceKeys } from "../../state/data/workspace";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../test/memory/workspaces";
+import { emptyFilesHandlers } from "../../test/memory/files";
+import "../../i18n/i18n-instance";
 import { createStubPlatform } from "../../test/stub-platform";
 import { WorkspaceFilesView } from "./workspace-files-view";
 
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createWorkspaceMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workspaceHandlers(state),
+    ...emptyFilesHandlers(),
+  };
+}
+
 /** Renders Files with a chat-driven path that the workspace cannot resolve. */
 function renderMissingFile() {
-  const client = createMockClient(createMockClientState());
-  client.fileSystem.readWorkspaceFile = async () => {
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
+  clientHandlers.readWorkspaceFile = async () => {
     throw new RemoteContractError(
       {
         code: "file_system_path_not_found",
@@ -75,15 +98,17 @@ describe("WorkspaceFilesView missing files", () => {
 
 /** Renders Files with a readable chat-driven path and an optional line target. */
 function renderRequestedFile(path: string, line?: number, endLine?: number) {
-  const client = createMockClient(createMockClientState());
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
   const readWorkspaceFile = vi.fn(async (request: { path: string }) => ({
     path: request.path,
     content: 'fn main() {\n    println!("hi");\n}\n',
     version: "test",
     sizeBytes: 32,
   }));
-  client.fileSystem.readWorkspaceFile = readWorkspaceFile;
-  client.task.getWorkspace = async () => ({
+  clientHandlers.readWorkspaceFile = readWorkspaceFile;
+  clientHandlers.getTaskWorkspace = async () => ({
     workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
   });
   const queryClient = new QueryClient({
@@ -174,9 +199,11 @@ describe("WorkspaceFilesView file requests", () => {
   });
 
   it("refetches on a new chat request so a deleted file is not shown from cache", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     let missing = false;
-    client.fileSystem.readWorkspaceFile = async (request: { path: string }) => {
+    clientHandlers.readWorkspaceFile = async (request: { path: string }) => {
       if (missing) {
         throw new RemoteContractError(
           {
@@ -194,7 +221,7 @@ describe("WorkspaceFilesView file requests", () => {
         sizeBytes: 12,
       };
     };
-    client.task.getWorkspace = async () => ({
+    clientHandlers.getTaskWorkspace = async () => ({
       workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
     });
     const queryClient = new QueryClient({
@@ -242,10 +269,12 @@ describe("WorkspaceFilesView file requests", () => {
 
 describe("WorkspaceFilesView directory requests", () => {
   it("expands and selects an absolute directory without reading it as a file", async () => {
-    const client = createMockClient(createMockClientState());
-    const readWorkspaceFile = vi.fn(client.fileSystem.readWorkspaceFile);
-    client.fileSystem.readWorkspaceFile = readWorkspaceFile;
-    client.fileSystem.listWorkspaceDirectory = vi.fn(async (request) => ({
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    const readWorkspaceFile = vi.fn(clientHandlers.readWorkspaceFile!);
+    clientHandlers.readWorkspaceFile = readWorkspaceFile;
+    clientHandlers.listWorkspaceDirectory = vi.fn(async (request) => ({
       path: request.path ?? "",
       entries:
         request.path === undefined || request.path === ""
@@ -259,7 +288,7 @@ describe("WorkspaceFilesView directory requests", () => {
             ]
           : [],
     }));
-    client.task.getWorkspace = async () => ({
+    clientHandlers.getTaskWorkspace = async () => ({
       workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
     });
     const queryClient = new QueryClient({
@@ -289,15 +318,17 @@ describe("WorkspaceFilesView directory requests", () => {
 
 describe("WorkspaceFilesView artifact requests", () => {
   it("resolves unknown entries through the parent directory before navigating", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const readWorkspaceFile = vi.fn(async (request: { path: string }) => ({
       path: request.path,
       content: "#!/bin/sh\n",
       version: "test",
       sizeBytes: 10,
     }));
-    client.fileSystem.readWorkspaceFile = readWorkspaceFile;
-    client.fileSystem.listWorkspaceDirectory = vi.fn(async (request) => ({
+    clientHandlers.readWorkspaceFile = readWorkspaceFile;
+    clientHandlers.listWorkspaceDirectory = vi.fn(async (request) => ({
       path: request.path ?? "",
       entries: [
         {
@@ -314,7 +345,7 @@ describe("WorkspaceFilesView artifact requests", () => {
         },
       ],
     }));
-    client.task.getWorkspace = async () => ({
+    clientHandlers.getTaskWorkspace = async () => ({
       workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
     });
     const queryClient = new QueryClient({
@@ -368,7 +399,9 @@ describe("WorkspaceFilesView artifact requests", () => {
   });
 
   it("does not let an older artifact lookup overwrite a newer file request", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     let resolveDirectory!: (value: {
       path: string;
       entries: Array<{
@@ -378,13 +411,13 @@ describe("WorkspaceFilesView artifact requests", () => {
         isSymbolicLink: boolean;
       }>;
     }) => void;
-    client.fileSystem.listWorkspaceDirectory = vi.fn(
+    clientHandlers.listWorkspaceDirectory = vi.fn(
       () =>
         new Promise<ListWorkspaceDirectoryResponse>((resolve) => {
           resolveDirectory = resolve;
         }),
     );
-    client.fileSystem.readWorkspaceFile = vi.fn(async (request) => ({
+    clientHandlers.readWorkspaceFile = vi.fn(async (request) => ({
       path: request.path,
       content: "readme",
       version: "test",
@@ -437,8 +470,10 @@ describe("WorkspaceFilesView artifact requests", () => {
   });
 
   it("shows a localized missing message when the parent has no matching entry", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.listWorkspaceDirectory = vi.fn(async () => ({
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = vi.fn(async () => ({
       path: "",
       entries: [],
     }));
@@ -465,8 +500,10 @@ describe("WorkspaceFilesView artifact requests", () => {
   });
 
   it("shows the parent directory query error instead of staying in loading", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.listWorkspaceDirectory = vi.fn(async () => {
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = vi.fn(async () => {
       throw new RemoteContractError(
         {
           code: "file_system_path_not_found",
@@ -504,15 +541,17 @@ describe("WorkspaceFilesView artifact requests", () => {
 
 describe("WorkspaceFilesView project scope", () => {
   it("reads from the project checkout when no task is selected", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const readProjectFile = vi.fn(async (request: { path: string }) => ({
       path: request.path,
       content: "# Project\n",
       version: "test",
       sizeBytes: 10,
     }));
-    client.fileSystem.readProjectFile = readProjectFile;
-    client.project.list = async () => ({
+    clientHandlers.readProjectFile = readProjectFile;
+    clientHandlers.listProjects = async () => ({
       projects: [{ id: "project-1", name: "Ora" }],
     });
     const queryClient = new QueryClient({
@@ -546,7 +585,9 @@ describe("WorkspaceFilesView project scope", () => {
   });
 
   it("resolves an unknown project artifact without calling task APIs", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const listProjectDirectory = vi.fn(async () => ({
       path: "",
       entries: [
@@ -564,11 +605,11 @@ describe("WorkspaceFilesView project scope", () => {
       version: "test",
       sizeBytes: 15,
     }));
-    client.fileSystem.listProjectDirectory = listProjectDirectory;
-    client.fileSystem.readProjectFile = readProjectFile;
-    client.fileSystem.listWorkspaceDirectory = vi.fn();
-    client.fileSystem.readWorkspaceFile = vi.fn();
-    client.project.list = async () => ({
+    clientHandlers.listProjectDirectory = listProjectDirectory;
+    clientHandlers.readProjectFile = readProjectFile;
+    clientHandlers.listWorkspaceDirectory = vi.fn();
+    clientHandlers.readWorkspaceFile = vi.fn();
+    clientHandlers.listProjects = async () => ({
       projects: [{ id: "project-1", name: "Ora", rootPath: "C:/repo" }],
     });
     const queryClient = new QueryClient({
@@ -594,19 +635,21 @@ describe("WorkspaceFilesView project scope", () => {
       );
     });
     expect(listProjectDirectory).toHaveBeenCalled();
-    expect(client.fileSystem.listWorkspaceDirectory).not.toHaveBeenCalled();
-    expect(client.fileSystem.readWorkspaceFile).not.toHaveBeenCalled();
+    expect(clientHandlers.listWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(clientHandlers.readWorkspaceFile).not.toHaveBeenCalled();
   });
 
   it("opens a project watch stream when no task is selected", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const watchProject = vi.fn(() =>
       (async function* () {
         yield* [];
       })(),
     );
-    client.fileSystem.watchProject = watchProject;
-    client.project.list = async () => ({
+    clientHandlers.watchProject = watchProject;
+    clientHandlers.listProjects = async () => ({
       projects: [{ id: "project-1", name: "Ora" }],
     });
     const queryClient = new QueryClient({
@@ -636,7 +679,9 @@ describe("WorkspaceFilesView project scope", () => {
   });
 
   it("waits for the project root before stripping an absolute file request", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     let resolveWorkspaces!: (value: {
       workspaces: Array<{
         id: string;
@@ -661,8 +706,8 @@ describe("WorkspaceFilesView project scope", () => {
       version: "test",
       sizeBytes: 12,
     }));
-    client.fileSystem.readProjectFile = readProjectFile;
-    client.workspace.list = () => workspacesPromise;
+    clientHandlers.readProjectFile = readProjectFile;
+    clientHandlers.listWorkspaces = () => workspacesPromise;
     const platform = {
       ...createStubPlatform(),
       locationActions: {
@@ -716,15 +761,17 @@ describe("WorkspaceFilesView project scope", () => {
   });
 
   it("defers an absolute file request when the project list query errors", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const readProjectFile = vi.fn(async (request: { path: string }) => ({
       path: request.path,
       content: "fn main() {}\n",
       version: "test",
       sizeBytes: 12,
     }));
-    client.fileSystem.readProjectFile = readProjectFile;
-    client.workspace.list = async () => {
+    clientHandlers.readProjectFile = readProjectFile;
+    clientHandlers.listWorkspaces = async () => {
       throw new RemoteContractError(
         {
           code: "internal_error",
@@ -760,7 +807,7 @@ describe("WorkspaceFilesView project scope", () => {
     // A failed project list never yields a checkout root, so the absolute path
     // must stay deferred rather than flow unstripped to readProjectFile.
     await waitFor(() => {
-      expect(queryClient.getQueryState(queryKeys.workspaces)?.status).toBe(
+      expect(queryClient.getQueryState(workspaceKeys.workspaces)?.status).toBe(
         "error",
       );
     });

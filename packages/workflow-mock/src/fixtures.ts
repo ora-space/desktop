@@ -1,6 +1,10 @@
 import { DEMO_AGENT_REF } from "./agent-identity";
 import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
-import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
+import type {
+  WorkflowAgentConfig,
+  WorkflowGlobalVariable,
+  WorkflowNodeData,
+} from "./node-data";
 import type { WorkflowAnnotationNode } from "./annotation-data";
 import {
   WORKFLOW_NODE_INITIAL_HANDLES,
@@ -18,6 +22,8 @@ export interface DemoWorkflow extends ReactFlowJsonObject<
   updatedAt: string;
   /** Editor-only notes are persisted beside, never inside, executable nodes. */
   annotations?: WorkflowAnnotationNode[];
+  /** Workflow-wide variables are independent of Start and graph topology. */
+  globalVariables?: WorkflowGlobalVariable[];
 }
 
 /** Builds a stable Agent execution contract for fixtures and future persisted definitions. */
@@ -61,11 +67,10 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         kind: "start",
         title: "开始",
         description: "接收任务和当前工作区",
-        instruction: "从用户输入中提取审查范围。",
-        trigger: "merge_request",
+        input: "从用户输入中提取审查范围。",
         inputVariables: [
-          { name: "仓库", defaultValue: "{{repository}}" },
-          { name: "目标分支", defaultValue: "{{target_branch}}" },
+          { name: "仓库", valueType: "string" },
+          { name: "目标分支", valueType: "string" },
         ],
       },
     },
@@ -190,8 +195,7 @@ const ENGLISH_NODE_CONTENT: Record<
     WorkflowNodeData,
     | "title"
     | "description"
-    | "instruction"
-    | "trigger"
+    | "input"
     | "inputVariables"
     | "tool"
     | "condition"
@@ -203,11 +207,10 @@ const ENGLISH_NODE_CONTENT: Record<
   start: {
     title: "Start",
     description: "Receive the task and current workspace",
-    instruction: "Extract the review scope from the user input.",
-    trigger: "merge_request",
+    input: "Extract the review scope from the user input.",
     inputVariables: [
-      { name: "Repository", defaultValue: "{{repository}}" },
-      { name: "Target branch", defaultValue: "{{target_branch}}" },
+      { name: "Repository", valueType: "string" },
+      { name: "Target branch", valueType: "string" },
     ],
   },
   understand: {
@@ -217,7 +220,6 @@ const ENGLISH_NODE_CONTENT: Record<
   quality: {
     title: "Quality gate",
     description: "Decide whether validation is required",
-    instruction: "Choose the next path based on the type of change.",
     conditionBranches: [
       {
         conditions: [
@@ -233,8 +235,6 @@ const ENGLISH_NODE_CONTENT: Record<
   tests: {
     title: "Run checks",
     description: "Run formatting, type checks, and tests",
-    instruction:
-      "Run the smallest validation set that matches the change scope.",
     tool: "Terminal",
     operation: "run_command",
     toolParameters: [{ key: "command", value: "npm run test" }],
@@ -246,8 +246,6 @@ const ENGLISH_NODE_CONTENT: Record<
   output: {
     title: "Output report",
     description: "Generate a structured review result",
-    instruction:
-      "Return a summary, findings, validation results, and next steps.",
   },
 };
 
@@ -355,7 +353,7 @@ export function createParallelMockWorkflow(
           kind: "start",
           title: zh ? "开始" : "Start",
           description: zh ? "接收审查范围" : "Receive review scope",
-          instruction: zh
+          input: zh
             ? "解析用户输入中的目标路径。"
             : "Parse the target scope from user input.",
         },
@@ -370,7 +368,7 @@ export function createParallelMockWorkflow(
           description: zh
             ? "汇总改动与相关文件"
             : "Summarize changes and related files",
-          instruction: zh
+          input: zh
             ? "列出改动文件、模块边界和已知风险点。"
             : "List changed files, module boundaries, and known risks.",
         },
@@ -400,7 +398,7 @@ export function createParallelMockWorkflow(
           kind: "tool",
           title: zh ? "质量检查" : "Quality checks",
           description: zh ? "并行分支 · 质量" : "Parallel branch · quality",
-          instruction: zh
+          input: zh
             ? "运行格式化、类型检查与相关测试。"
             : "Run formatting, typecheck, and related tests.",
           tool: "Terminal",
@@ -546,9 +544,7 @@ export function createStaggeredParallelMockWorkflow(
           kind: "start",
           title: zh ? "开始" : "Start",
           description: zh ? "接收改动范围" : "Receive change scope",
-          instruction: zh
-            ? "解析目标仓库与分支。"
-            : "Parse target repo and branch.",
+          input: zh ? "解析目标仓库与分支。" : "Parse target repo and branch.",
           mockStepMs: 800,
         },
       },

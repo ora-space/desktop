@@ -1,7 +1,12 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ContractsClient } from "@ora/contracts";
+import type { ContractsClient, SkillImportSession } from "@ora/contracts";
+import {
+  createTestClient,
+  type OperationHandler,
+} from "../../test/contracts-transport";
+import "../../i18n/i18n-instance";
 import { ContractsClientContext } from "../../contracts-client-context";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
@@ -10,21 +15,25 @@ import { createSurfaceTestPlatform } from "../../test/surface-test-platform";
 import { SurfaceDownloadPrompt } from "./surface-download-prompt";
 
 /** A prepared import session with no candidates; enough for the review dialog to open. */
-const SESSION = {
+const SESSION: SkillImportSession = {
+  createdAt: 1n,
   sessionId: "session-1",
   status: "prepared" as const,
   candidates: [],
-  progress: { results: [] },
+  progress: { total: 0, processed: 0, results: [] },
 };
 
-/** Contracts client stub serving exactly the prepared session above. */
-function createClient() {
-  return {
-    skillImport: {
-      get: vi.fn(async () => ({ session: SESSION })),
-      cancel: vi.fn(async () => ({})),
-    },
-  } as unknown as ContractsClient;
+/** Prepared-import fixture checked against the production operation request and response types. */
+function createFixture() {
+  const handlers = {
+    getSkillImport: vi.fn<OperationHandler<"getSkillImport">>(async () => ({
+      session: SESSION,
+    })),
+    cancelSkillImport: vi.fn<OperationHandler<"cancelSkillImport">>(
+      async ({ sessionId }) => ({ sessionId, cancelled: true }),
+    ),
+  };
+  return { handlers, client: createTestClient(handlers) };
 }
 
 function choiceEvent(downloadId: number, fileName: string) {
@@ -70,7 +79,7 @@ describe("SurfaceDownloadPrompt", () => {
       action: "import_skill",
       importSessionId: "session-1",
     });
-    const client = createClient();
+    const { client, handlers } = createFixture();
     renderPrompt(host.platform, client);
 
     act(() =>
@@ -88,11 +97,11 @@ describe("SurfaceDownloadPrompt", () => {
     expect(host.surfaces.open).not.toHaveBeenCalled();
     expect({
       resolved: host.surfaces.resolveDownload.mock.calls,
-      fetched: (client.skillImport.get as ReturnType<typeof vi.fn>).mock.calls,
+      fetched: handlers.getSkillImport.mock.calls,
       prompts: useSurfaceStore.getState().downloadPrompts,
     }).toEqual({
       resolved: [[5, "import_skill"]],
-      fetched: [[{ sessionId: "session-1" }]],
+      fetched: [[{ sessionId: "session-1" }, undefined]],
       prompts: [],
     });
 
@@ -116,7 +125,7 @@ describe("SurfaceDownloadPrompt", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("/home/user/pack.zip");
     const platform = { ...host.platform, selectSavePath };
-    renderPrompt(platform, createClient());
+    renderPrompt(platform, createFixture().client);
 
     act(() =>
       useSurfaceStore.getState().applyEvent(choiceEvent(6, "pack.zip")),
@@ -144,7 +153,7 @@ describe("SurfaceDownloadPrompt", () => {
   it("discards a dismissed download and shows queued prompts one at a time", async () => {
     const user = userEvent.setup();
     const host = createSurfaceTestPlatform({ embedded: false });
-    renderPrompt(host.platform, createClient());
+    renderPrompt(host.platform, createFixture().client);
 
     act(() => {
       useSurfaceStore.getState().applyEvent(choiceEvent(7, "first.zip"));
@@ -175,7 +184,7 @@ describe("SurfaceDownloadPrompt", () => {
 
   it("opens the import review when an automatic import completes", async () => {
     const host = createSurfaceTestPlatform({ embedded: false });
-    const client = createClient();
+    const { client, handlers } = createFixture();
     renderPrompt(host.platform, client);
     // Let the event subscription settle before emitting.
     await act(async () => {
@@ -198,8 +207,8 @@ describe("SurfaceDownloadPrompt", () => {
     await waitFor(() =>
       expect(screen.getByText("导入技能")).toBeInTheDocument(),
     );
-    expect(
-      (client.skillImport.get as ReturnType<typeof vi.fn>).mock.calls,
-    ).toEqual([[{ sessionId: "session-1" }]]);
+    expect(handlers.getSkillImport.mock.calls).toEqual([
+      [{ sessionId: "session-1" }, undefined],
+    ]);
   });
 });

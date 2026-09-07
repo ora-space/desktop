@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { VideoComponent } from "./video-component";
+import { VideoComponent } from "./video-component.tsx";
 
 export type VideoAttributes = {
   src: string;

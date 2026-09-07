@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { agentRuntimeKeys } from "../data/agent-runtime";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
 /** Discovers one plugin-owned model catalog without creating an Ora provider session. */
@@ -15,7 +15,7 @@ export function useAgentModels(
   )?.status;
   const ready = runtimeStatus === "ready";
   const query = useQuery({
-    queryKey: queryKeys.agentModels(agentRef, workspaceId),
+    queryKey: agentRuntimeKeys.agentModels(agentRef, workspaceId),
     queryFn: () =>
       client.agentRuntime.listModels({
         agentRef: agentRef!,

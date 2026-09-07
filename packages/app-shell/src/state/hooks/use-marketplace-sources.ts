@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { UpdateMarketplaceSourceRequest } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { pluginKeys, invalidateMarketplaceSources } from "../data/plugins";
 
 /** Loads the user-configured marketplace source list. */
 export function useMarketplaceSources() {
   const client = useContractsClient();
   return useQuery({
-    queryKey: queryKeys.marketplaceSources,
+    queryKey: pluginKeys.marketplaceSources,
     queryFn: () => client.plugin.listSources({}),
   });
 }
@@ -28,8 +29,7 @@ export function useAddMarketplaceSource() {
       branch: string;
       useProxy: boolean;
     }) => client.plugin.addSource({ url, branch, useProxy }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
+    onSettled: () => invalidateMarketplaceSources(queryClient),
   });
 }
 
@@ -43,8 +43,7 @@ export function useDeleteMarketplaceSource() {
   return useMutation({
     mutationFn: ({ url }: { url: string }) =>
       client.plugin.deleteSource({ url }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
+    onSettled: () => invalidateMarketplaceSources(queryClient),
   });
 }
 
@@ -56,27 +55,8 @@ export function useUpdateMarketplaceSource() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      url,
-      newUrl,
-      branch,
-      useProxy,
-      enabled,
-    }: {
-      url: string;
-      newUrl: string;
-      branch: string;
-      useProxy: boolean;
-      enabled: boolean;
-    }) =>
-      client.plugin.updateSource({
-        url,
-        newUrl,
-        branch,
-        useProxy,
-        enabled,
-      }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.marketplaceSources }),
+    mutationFn: (request: UpdateMarketplaceSourceRequest) =>
+      client.plugin.updateSource(request),
+    onSettled: () => invalidateMarketplaceSources(queryClient),
   });
 }

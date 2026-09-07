@@ -10,9 +10,9 @@ import { AppI18nProvider } from "../../../i18n/i18n";
 import { appI18n } from "../../../i18n/i18n-instance";
 import { PlatformProvider } from "../../../platform";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../../test/contracts-transport";
 import { createStubPlatform } from "../../../test/stub-platform";
 import { TaskChangesNavigationProvider } from "../../diff/task-changes-navigation";
 import { MessageList } from "../message-list";
@@ -113,15 +113,14 @@ async function recordedTurns(records: RecordedLine[]): Promise<ChatTurn[]> {
       ? { type: "turn_ended", stopReason: record.stop_reason }
       : { type: "session_update", update: record.update },
   );
-  const client = createMockClient(createMockClientState()).session;
-  const conversation = await loadSessionConversation(
-    {
-      ...client,
-      load: async function* () {
-        for (const event of events) yield event;
-        yield { type: "completed" as const };
-      },
+  const client = createTestClient({
+    loadSession: async function* () {
+      for (const event of events) yield event;
+      yield { type: "completed" as const };
     },
+  });
+  const conversation = await loadSessionConversation(
+    client.session,
     "recorded-session",
   );
   return conversation.turns;
@@ -139,8 +138,9 @@ async function renderRecordedSession(recorded: RecordedCase) {
   const openWorkspaceFile = vi.fn();
   const openWorkspaceDirectory = vi.fn();
   const openWorkspaceArtifact = vi.fn();
-  const mockClient = createMockClient(createMockClientState());
-  mockClient.task.getWorkspace = vi.fn(async () => ({
+  const mockClientHandlers: TestHandlers = {};
+  const mockClient = createTestClient(mockClientHandlers);
+  mockClientHandlers.getTaskWorkspace = vi.fn(async () => ({
     workspace: { rootPath: recorded.workspaceRoot, branchName: "main" },
   }));
   render(

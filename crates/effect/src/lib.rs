@@ -43,7 +43,7 @@ pub use ports::{
     ApplyReceipt, AttemptFinalization, CleanupReceipt, ConsumerAdapter, ConsumerAdapterError,
     EffectRepository, PreparedOperation, ProjectionCommit, ReconcileSnapshot,
     RelatedTargetSnapshot, ReplaceDesiredStateOutcome, RepositoryError, ResourceAdapter,
-    ResourceAdapterError, VerificationReceipt,
+    ResourceAdapterError, TargetStatusView, VerificationReceipt,
 };
 pub use projection::{
     ManagedItem, ObservedItem, OwnershipEvidence, PreservedItem, ResolvedMaterialization,

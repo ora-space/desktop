@@ -47,8 +47,9 @@ jobs:
               - '.github/workflows/**'
               - 'scripts/**'
               - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
+              - 'deno.lock'
+              - 'deno.json'
+              - '.deno-version'
               - 'tsconfig*.json'
               - 'eslint.config.js'
               - 'Cargo.toml'
@@ -59,6 +60,8 @@ jobs:
               - 'crates/contracts/**'
               - 'xtask/**'
               - 'apps/desktop/web/**'
+              - 'apps/desktop/src-tauri/bindings.rs'
+              - 'apps/desktop/src-tauri/bindings/**'
               - 'apps/desktop/index.html'
               - 'apps/desktop/*.json'
               - 'apps/desktop/*.ts'
@@ -66,6 +69,9 @@ jobs:
             crates:
               - *shared
               - 'crates/**'
+              - 'xtask/**'
+              - 'apps/desktop/src-tauri/bindings.rs'
+              - 'apps/desktop/src-tauri/bindings/**'
             tauri:
               - *shared
               - 'crates/**'
@@ -84,21 +90,17 @@ jobs:
       - uses: arduino/setup-task@v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.5
-      # test:frontend regenerates TS contracts via `cargo xtask export-contracts`
+          deno-version-file: .deno-version
+          cache: true
+      # test:frontend verifies Rust-owned contract generation without modifying the checkout
       # and also runs the Desktop frontend tests.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: pnpm install --frozen-lockfile
+      - run: deno install --frozen
       - run: task test:frontend
 
   crates:
@@ -113,7 +115,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.5
+          deno-version-file: .deno-version
       # The root workspace now contains both shared crates and Tauri packages.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -126,7 +128,7 @@ jobs:
       # sidecar outside the repository and expose it through the job PATH.
       - name: Setup ripgrep
         run: |
-          node scripts/setup-binary.mjs rg
+          deno run -A scripts/setup-binary.ts rg
           mkdir -p "$RUNNER_TEMP/bin"
           mv apps/desktop/src-tauri/binaries/rg-x86_64-unknown-linux-gnu "$RUNNER_TEMP/bin/rg"
           chmod +x "$RUNNER_TEMP/bin/rg"
@@ -203,7 +205,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.5
+          deno-version-file: .deno-version
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target

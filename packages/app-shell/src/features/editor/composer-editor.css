@@ -471,6 +471,25 @@
   text-shadow: none;
 }
 
+.composer-mention[data-prompt-token="variable"] {
+  --composer-skill-ink: oklch(0.55 0.2 255);
+  --composer-skill-wash: oklch(0.96 0.035 255);
+}
+
+.dark .composer-mention[data-prompt-token="variable"] {
+  --composer-skill-ink: oklch(0.8 0.12 255);
+  --composer-skill-wash: oklch(0.3 0.06 255);
+}
+
+/* Rich workflow variables need their own inline box so icon and text sit in
+ * the visual center of the prompt line instead of inheriting text baseline drift. */
+.composer-mention[data-workflow-prompt-variable] {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  line-height: 1;
+}
+
 .composer-editor-shell .composer-mention::selection {
   background: transparent;
   color: inherit;

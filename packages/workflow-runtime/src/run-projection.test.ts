@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { projectNodeStatus, projectRunStatus } from "./run-projection";
+import {
+  isTerminalRunStatus,
+  projectNodeStatus,
+  projectRunStatus,
+} from "./run-projection";
 
 describe("run status projection", () => {
   it("projects a not-started pending run as pending", () => {
@@ -32,5 +36,16 @@ describe("node status projection", () => {
     expect(projectNodeStatus({ status: "succeeded" })).toBe("succeeded");
     expect(projectNodeStatus({ status: "failed" })).toBe("failed");
     expect(projectNodeStatus({ status: "cancelled" })).toBe("cancelled");
+  });
+});
+
+describe("isTerminalRunStatus", () => {
+  it("marks finished run statuses only", () => {
+    expect(isTerminalRunStatus("succeeded")).toBe(true);
+    expect(isTerminalRunStatus("failed")).toBe(true);
+    expect(isTerminalRunStatus("cancelled")).toBe(true);
+    expect(isTerminalRunStatus("running")).toBe(false);
+    expect(isTerminalRunStatus("awaiting_input")).toBe(false);
+    expect(isTerminalRunStatus("pending")).toBe(false);
   });
 });

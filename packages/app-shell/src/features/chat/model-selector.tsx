@@ -37,6 +37,7 @@ import {
   pendingModelKey,
   usePendingSwitch,
 } from "../../state/stores/pending-agent-store";
+import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentModels } from "../../state/hooks/use-agent-models";
@@ -51,6 +52,12 @@ import { useWorkspaces } from "../../state/hooks/use-workspaces";
  * whatever the chosen agent reported for this session, so the model list has three
  * states rather than two — still arriving, genuinely offering no choice, or a real
  * set to pick from.
+ *
+ * A chat that has not started yet opens on the model the user last picked for
+ * the agent it is pointed at, so the choice does not have to be repeated for
+ * every new chat. That memory belongs to unstarted chats alone: an ongoing
+ * conversation follows the configuration its own agent reports and is untouched
+ * by picks made anywhere else.
  *
  * With a session selected, choosing a different agent moves that conversation onto
  * it rather than only changing the default for the next one. Ora owns the
@@ -189,6 +196,17 @@ export function ModelSelector({
   const setPendingModel = usePendingAgentStore(
     (state) => state.setPendingModel,
   );
+  // Only a chat with no session behind it opens on a remembered preference. A
+  // session that exists — including one carrying a recorded agent move — is
+  // authoritative about the model it runs on, so it neither reads this nor
+  // writes to it, and a pick made on some other surface can never move it.
+  const isUnstartedChat = sessionId === undefined && boundSession === undefined;
+  const rememberedModel = useAgentModelPreferenceStore((state) =>
+    agentCli === null ? undefined : state.models[agentCli],
+  );
+  const rememberModel = useAgentModelPreferenceStore(
+    (state) => state.rememberModel,
+  );
   const modelValues = usesPersistedOptions
     ? modelOption
       ? selectableValues(modelOption).map((value) => ({
@@ -207,11 +225,22 @@ export function ModelSelector({
   const discoveredDefault =
     discoveredModels.find((model) => model.default)?.id ??
     discoveredModels[0]?.id;
+  // A remembered preference is only honoured while the agent still offers that
+  // model: catalogs move with plugin versions, and naming a model this agent no
+  // longer has would both mislabel the trigger and be dropped by the backend,
+  // which applies a model intent only when the new session reports that exact
+  // value. Falling through to the agent's own default keeps the label and the
+  // first send agreeing.
+  const preferredModel =
+    isUnstartedChat &&
+    discoveredModels.some((model) => model.id === rememberedModel)
+      ? rememberedModel
+      : undefined;
   const selectedValue = usesPersistedOptions
     ? modelOption?.type === "select"
       ? modelOption.currentValue
       : undefined
-    : (pendingModel ?? discoveredDefault);
+    : (pendingModel ?? preferredModel ?? discoveredDefault);
   // Three states rather than two, because "not answered yet" must not read as
   // "this agent offers no models". A persisted session has said nothing until
   // its conversation is loaded — and replay seeds empty options first, which is
@@ -275,6 +304,10 @@ export function ModelSelector({
   const selectModel = (value: string) => {
     if (!usesPersistedOptions) {
       if (intentKey !== null) setPendingModel(intentKey, value);
+      // Recorded alongside the surface-local intent rather than instead of it:
+      // the intent is consumed by this chat's first send, while the preference
+      // outlives it so the *next* new chat on this agent opens here too.
+      if (isUnstartedChat && agentCli !== null) rememberModel(agentCli, value);
       return;
     }
     if (activeSessionId !== null && modelOption !== null) {

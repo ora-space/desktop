@@ -1,0 +1,34 @@
+{
+  "owner": "Embedded surface lifecycle UI",
+  "modules": {
+    "./surface-download-prompt": {
+      "exports": ["SurfaceDownloadPrompt"],
+      "purpose": "The shell mounts the single host download decision surface."
+    },
+    "./surface-download-toaster": {
+      "exports": ["SurfaceDownloadToaster"],
+      "purpose": "The shell mounts notifications for surface-owned downloads."
+    },
+    "./surface-event-bridge": {
+      "exports": ["SurfaceEventBridge"],
+      "purpose": "The shell connects native surface events once per application lifetime."
+    },
+    "./surface-host": {
+      "exports": ["SurfaceHost"],
+      "purpose": "Workspace review reserves a host slot for the active native surface."
+    },
+    "./surface-launcher": {
+      "exports": ["SurfaceLauncher"],
+      "purpose": "Workspace launch UI opens available plugin surfaces through their owner."
+    },
+    "./surface-occlusion": {
+      "exports": ["useEmbeddedSurfaceVisible"],
+      "purpose": "The shell coordinates native surface visibility when shell dialogs occlude it."
+    },
+    "./translations": {
+      "exports": ["surfaceTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

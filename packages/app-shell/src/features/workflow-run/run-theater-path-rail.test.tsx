@@ -88,6 +88,68 @@ function waitingRun(): { run: GraphWorkflowRun; request: HitlRequest } {
 }
 
 describe("RunTheaterPathRail", () => {
+  it("removes inactive branch nodes from the live path and progress total", () => {
+    const definition = normalizeWorkflowDefinition(createMockWorkflow("zh-CN"));
+    const inactiveIds = new Set(["quality", "tests", "review"]);
+    const run: GraphWorkflowRun = {
+      id: "run-1",
+      projectId: "p1",
+      definitionId: definition.id,
+      definitionSnapshot: definition,
+      name: definition.name,
+      status: "running",
+      nodeStates: Object.fromEntries(
+        definition.nodes.map((node) => [
+          node.id,
+          {
+            status: inactiveIds.has(node.id)
+              ? ("inactive" as const)
+              : node.id === "output"
+                ? ("running" as const)
+                : ("succeeded" as const),
+          },
+        ]),
+      ),
+      openHitls: [],
+      createdAt: "2026-08-04T12:00:00+08:00",
+      updatedAt: "2026-08-04T12:00:00+08:00",
+    };
+    const undecidedRun: GraphWorkflowRun = {
+      ...run,
+      nodeStates: Object.fromEntries(
+        definition.nodes.map((node) => [node.id, { status: "idle" as const }]),
+      ),
+    };
+    const rail = (currentRun: GraphWorkflowRun) => (
+      <AppI18nProvider>
+        <RunTheaterPathRail
+          run={currentRun}
+          primaryId="output"
+          activeIds={["output"]}
+          openHitls={[]}
+          artifactCountByNode={{}}
+          showResultAct={false}
+          pathRailRef={createRef()}
+          onFocusNode={vi.fn()}
+          onExpandHitl={vi.fn()}
+        />
+      </AppI18nProvider>
+    );
+
+    const view = render(rail(undecidedRun));
+    expect(
+      within(screen.getByRole("list")).getAllByRole("button"),
+    ).toHaveLength(definition.nodes.length);
+
+    view.rerender(rail(run));
+
+    const chips = within(screen.getByRole("list"))
+      .getAllByRole("button")
+      .map((chip) => chip.getAttribute("data-path-node"));
+    expect(chips).toEqual(["start", "understand", "output"]);
+    expect(screen.getByText("2 / 3")).toBeInTheDocument();
+  });
+
   it("renders chips in path order when the snapshot array is reversed", () => {
     const definition = normalizeWorkflowDefinition(createMockWorkflow("zh-CN"));
     const reversed = {
@@ -118,7 +180,6 @@ describe("RunTheaterPathRail", () => {
           openHitls={[]}
           artifactCountByNode={{}}
           showResultAct={false}
-          progress={{ done: 0, total: reversed.nodes.length, percent: 0 }}
           pathRailRef={createRef()}
           onFocusNode={vi.fn()}
           onExpandHitl={vi.fn()}
@@ -154,7 +215,6 @@ describe("RunTheaterPathRail", () => {
           openHitls={[]}
           artifactCountByNode={{}}
           showResultAct
-          progress={{ done: nodeCount, total: nodeCount, percent: 100 }}
           pathRailRef={createRef()}
           onFocusNode={onFocusNode}
           onExpandHitl={vi.fn()}
@@ -186,11 +246,6 @@ describe("RunTheaterPathRail", () => {
           openHitls={[]}
           artifactCountByNode={{}}
           showResultAct={false}
-          progress={{
-            done: 1,
-            total: failed.definitionSnapshot.nodes.length,
-            percent: 20,
-          }}
           pathRailRef={createRef()}
           onFocusNode={vi.fn()}
           onExpandHitl={vi.fn()}
@@ -212,11 +267,6 @@ describe("RunTheaterPathRail", () => {
           openHitls={live.openHitls}
           artifactCountByNode={{}}
           showResultAct={false}
-          progress={{
-            done: 0,
-            total: live.definitionSnapshot.nodes.length,
-            percent: 0,
-          }}
           pathRailRef={createRef()}
           onFocusNode={vi.fn()}
           onExpandHitl={vi.fn()}
@@ -244,11 +294,6 @@ describe("RunTheaterPathRail", () => {
           openHitls={[request]}
           artifactCountByNode={{ understand: 2 }}
           showResultAct={false}
-          progress={{
-            done: 0,
-            total: run.definitionSnapshot.nodes.length,
-            percent: 0,
-          }}
           pathRailRef={createRef()}
           onFocusNode={onFocusNode}
           onExpandHitl={onExpandHitl}

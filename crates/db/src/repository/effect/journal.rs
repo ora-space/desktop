@@ -1,29 +1,32 @@
+use super::EffectWriteContext;
 use super::SqliteEffectRepository;
 use super::claims::{release_resource_claims, verify_claim, verify_resource_claims};
 use super::ledger_validation::{
     validate_attempt_managed_transition, validate_operation_managed_evidence,
 };
 use super::mapping::{effect_json, generation_to_sql};
+use super::operations::{insert_operation, update_operation};
 use super::persistence::{
     attempt_phase_value, attempt_progress_can_advance, complete_request, finish_retiring_target,
-    insert_artifact, insert_coordination_receipt, insert_operation, insert_readiness,
-    parse_attempt_phase, save_current_state, update_operation,
+    insert_artifact, insert_coordination_receipt, insert_readiness, parse_attempt_phase,
+    save_current_state,
 };
 use super::projection_persistence::save_projections;
 use super::validation::{validate_current_state_scope, validate_projection_scope};
 use crate::DatabaseError;
+use crate::TimestampSource;
 use ora_effect::{
     AttemptFinalization, CoordinationReceipt, CoordinationReceiptState, CoordinationRequirement,
-    EffectOperation, EffectResourceId, LocalTimestamp, OperationArtifact, OperationProgress,
-    ReconcileAttempt, ReconcileAttemptPhase, ReconcileClaim, TargetProjection,
+    EffectOperation, EffectResourceId, OperationArtifact, OperationProgress, ReconcileAttempt,
+    ReconcileAttemptPhase, ReconcileClaim, TargetProjection,
 };
 use rusqlite::{TransactionBehavior, params};
 use std::collections::BTreeSet;
 
 /// Persists immutable projections, Attempt, Operations, and Artifacts before external effects.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prepare_attempt(
-    repository: &SqliteEffectRepository,
+pub(super) fn prepare_attempt<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     claim: &ReconcileClaim,
     attempt: ReconcileAttempt,
     target_projections: Vec<TargetProjection>,
@@ -33,6 +36,7 @@ pub(super) fn prepare_attempt(
 ) -> Result<(), DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, attempt.target(), claim)?;
         let prepared_at = operations
             .first()
@@ -151,13 +155,13 @@ pub(super) fn prepare_attempt(
             &transaction,
             &target_projections,
             &resource_projections,
-            prepared_at,
+            written_at,
         )?;
         transaction.execute(
             "INSERT INTO effect_reconcile_attempts (
                  id, target_id, generation, consumer_revision_id, target_projection_digest,
                  coordination_plan_version, coordination_plan_json, phase, prepared_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'prepared', ?7, ?7)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'prepared', ?7, ?8)",
             params![
                 attempt.identity().as_str(),
                 attempt.target().as_str(),
@@ -166,6 +170,7 @@ pub(super) fn prepare_attempt(
                 attempt.target_projection().digest().as_str(),
                 effect_json(attempt.coordination())?,
                 prepared_at.millis(),
+                written_at.max(prepared_at).millis(),
             ],
         )?;
         let mut projection_digests = attempt.resource_projections().iter().collect::<Vec<_>>();
@@ -187,10 +192,10 @@ pub(super) fn prepare_attempt(
             )?;
         }
         for operation in &operations {
-            insert_operation(&transaction, operation)?;
+            insert_operation(&transaction, operation, written_at)?;
         }
         for artifact in &artifacts {
-            insert_artifact(&transaction, artifact, prepared_at)?;
+            insert_artifact(&transaction, artifact, written_at)?;
         }
         transaction.commit()?;
         Ok(())
@@ -198,16 +203,16 @@ pub(super) fn prepare_attempt(
 }
 
 /// Persists every externally proven attempt step so a crash never erases known progress.
-pub(super) fn record_attempt_progress(
-    repository: &SqliteEffectRepository,
+pub(super) fn record_attempt_progress<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     claim: &ReconcileClaim,
     attempt: &ReconcileAttempt,
     operations: &[EffectOperation],
     receipts: &[ora_effect::CoordinationReceipt],
-    updated_at: LocalTimestamp,
 ) -> Result<(), DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, attempt.target(), claim)?;
         let stored_phase = transaction.query_row(
             "SELECT phase FROM effect_reconcile_attempts WHERE id = ?1 AND target_id = ?2",
@@ -258,17 +263,17 @@ pub(super) fn record_attempt_progress(
         }
         validate_coordination_receipts(attempt, receipts)?;
         for operation in operations {
-            update_operation(&transaction, operation)?;
+            update_operation(&transaction, operation, written_at)?;
         }
         for receipt in receipts {
-            insert_coordination_receipt(&transaction, attempt, receipt, updated_at)?;
+            insert_coordination_receipt(&transaction, attempt, receipt, written_at)?;
         }
         transaction.execute(
-            "UPDATE effect_reconcile_attempts SET phase = ?2, updated_at = ?3 WHERE id = ?1",
+            "UPDATE effect_reconcile_attempts SET phase = ?2, updated_at = MAX(updated_at, ?3) WHERE id = ?1",
             params![
                 attempt.identity().as_str(),
                 attempt_phase_value(attempt.phase()),
-                updated_at.millis(),
+                written_at.millis(),
             ],
         )?;
         transaction.commit()?;
@@ -277,13 +282,14 @@ pub(super) fn record_attempt_progress(
 }
 
 /// Atomically finalizes journal phase, ledgers, receipts, statuses, and the Target request.
-pub(super) fn finalize_attempt(
-    repository: &SqliteEffectRepository,
+pub(super) fn finalize_attempt<Clock: TimestampSource>(
+    repository: &SqliteEffectRepository<Clock>,
     claim: &ReconcileClaim,
     finalization: AttemptFinalization,
 ) -> Result<(), DatabaseError> {
     repository.pool.with_connection_mut(|connection| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let written_at = EffectWriteContext::new(&transaction, &repository.clock).timestamp();
         verify_claim(&transaction, finalization.attempt.target(), claim)?;
         if finalization.attempt.phase() != ReconcileAttemptPhase::Finalized {
             return Err(DatabaseError::CorruptEffectState(
@@ -312,7 +318,7 @@ pub(super) fn finalize_attempt(
                 "Effect finalization lacks exact Target readiness evidence".to_string(),
             ));
         }
-        let finalized_at = target_status.updated_at();
+        let finalized_at = written_at;
         let expected_resources = {
             let mut statement = transaction.prepare(
                 "SELECT projection.resource_id
@@ -395,10 +401,10 @@ pub(super) fn finalize_attempt(
         }
         validate_coordination_receipts(&finalization.attempt, &finalization.coordination_receipts)?;
         for operation in &finalization.operations {
-            update_operation(&transaction, operation)?;
+            update_operation(&transaction, operation, written_at)?;
         }
         let attempt_updated = transaction.execute(
-            "UPDATE effect_reconcile_attempts SET phase = 'finalized', updated_at = ?2
+            "UPDATE effect_reconcile_attempts SET phase = 'finalized', updated_at = MAX(updated_at, ?2)
              WHERE id = ?1 AND phase = 'activated'",
             params![
                 finalization.attempt.identity().as_str(),
@@ -431,7 +437,7 @@ pub(super) fn finalize_attempt(
             insert_readiness(&transaction, readiness, finalized_at)?;
         }
         transaction.execute(
-            "UPDATE effect_operation_artifacts SET state = 'pending_cleanup', updated_at = ?2
+            "UPDATE effect_operation_artifacts SET state = 'pending_cleanup', updated_at = MAX(updated_at, ?2)
              WHERE operation_id IN (
                  SELECT id FROM effect_operations WHERE attempt_id = ?1
              )",
@@ -445,7 +451,7 @@ pub(super) fn finalize_attempt(
             finalization.attempt.target(),
             claim,
             target_status.progress().ready(),
-            target_status.updated_at(),
+            written_at,
         )?;
         release_resource_claims(&transaction, finalization.attempt.target(), claim)?;
         finish_retiring_target(&transaction, finalization.attempt.target())?;

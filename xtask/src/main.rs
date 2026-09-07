@@ -16,7 +16,7 @@ fn run() -> Result<(), String> {
     let mut arguments = std::env::args().skip(1);
     let Some(command) = arguments.next() else {
         return Err(
-            "usage: cargo xtask <export-contracts|reconcile-migrations DATA_DIRECTORY>".to_string(),
+            "usage: cargo xtask <export-contracts|check-contracts|check-rust-size|report-rust-size|reconcile-migrations DATA_DIRECTORY>".to_string(),
         );
     };
 
@@ -25,11 +25,28 @@ fn run() -> Result<(), String> {
         .ok_or_else(|| "failed to determine workspace root".to_string())?;
 
     match command.as_str() {
-        "export-contracts" => {
+        "check-rust-size" | "report-rust-size" => {
             if let Some(unexpected) = arguments.next() {
                 return Err(format!("unexpected argument `{unexpected}`"));
             }
-            xtask::run_export_contracts(workspace_root)
+            let operation = if command == "check-rust-size" {
+                xtask::check_rust_architecture
+            } else {
+                xtask::report_rust_architecture
+            };
+            operation(workspace_root)
+                .map_err(|error| format!("Rust architecture check failed: {error}"))
+        }
+        "export-contracts" | "check-contracts" => {
+            if let Some(unexpected) = arguments.next() {
+                return Err(format!("unexpected argument `{unexpected}`"));
+            }
+            let operation = if command == "check-contracts" {
+                xtask::check_export_contracts
+            } else {
+                xtask::run_export_contracts
+            };
+            operation(workspace_root)
                 .map_err(|error| format!("failed to export contracts: {error}"))
         }
         "reconcile-migrations" => {

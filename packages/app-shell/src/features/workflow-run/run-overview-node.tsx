@@ -15,6 +15,7 @@ import {
 } from "../workflow-node-chrome";
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
+import { resolveRunOverviewSourceHandleIds } from "./run-overview-handles";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
@@ -85,6 +86,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       ? formatRunClock(state.finishedAt, locale)
       : null;
   const hasTiming = startedLabel !== null || finishedLabel !== null;
+  const conditionSourceHandleIds = resolveRunOverviewSourceHandleIds(data);
 
   return (
     <WorkflowNodeCardShell
@@ -154,13 +156,31 @@ export const RunOverviewNode = memo(function RunOverviewNode({
         />
       }
       sourceHandle={
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!size-2 !border-0 !bg-transparent"
-          style={{ top: WORKFLOW_NODE_ANCHOR_Y * 0.92 }}
-          isConnectable={false}
-        />
+        conditionSourceHandleIds === null ? (
+          <Handle
+            type="source"
+            position={Position.Right}
+            className="!size-2 !border-0 !bg-transparent"
+            style={{ top: WORKFLOW_NODE_ANCHOR_Y * 0.92 }}
+            isConnectable={false}
+          />
+        ) : (
+          <>
+            {conditionSourceHandleIds.map((handleId, index) => (
+              <Handle
+                key={handleId}
+                id={handleId}
+                type="source"
+                position={Position.Right}
+                className="!size-2 !border-0 !bg-transparent"
+                style={{
+                  top: `${((index + 1) / (conditionSourceHandleIds.length + 1)) * 100}%`,
+                }}
+                isConnectable={false}
+              />
+            ))}
+          </>
+        )
       }
     />
   );

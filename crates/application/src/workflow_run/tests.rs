@@ -18,7 +18,7 @@ use ora_domain::{
 use pretty_assertions::assert_eq;
 use std::sync::{Arc, Mutex};
 
-const GRAPH: &str = r#"{"nodes":[],"edges":[]}"#;
+const GRAPH: &str = r#"{"nodes":[{"id":"start","type":"workflow","data":{"kind":"start","title":"开始","input":"Review the diff"}}],"edges":[]}"#;
 
 /// Uses a deterministic clock so run creation assertions compare complete values.
 #[derive(Clone, Copy)]
@@ -355,4 +355,21 @@ fn creates_run_directly_in_workspace() {
     assert_eq!(response.run.workspace_id, "workspace-1");
     assert_eq!(response.run.name, "Manual review");
     assert_eq!(stored[0].workspace_id, WorkspaceId::new("workspace-1"));
+
+    // The reserved `start.input` selector is declared and seeded with the run's kickoff text so a
+    // prompt can render it as a template variable.
+    let payload: super::WorkflowRunPayload =
+        serde_json::from_str(stored[0].payload.as_deref().expect("run payload")).unwrap();
+    assert_eq!(
+        payload
+            .variable_pool
+            .catalog
+            .get("start.input")
+            .map(|definition| (definition.value_type.as_str(), definition.writer.as_str())),
+        Some(("string", "start"))
+    );
+    assert_eq!(
+        payload.variable_pool.values.get("start.input"),
+        Some(&serde_json::Value::String("Inspect".to_string()))
+    );
 }

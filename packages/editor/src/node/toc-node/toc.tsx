@@ -7,8 +7,8 @@ import React, {
 } from "react";
 import { useCurrentEditor, Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
-import type { TOCItem } from "./toc-extension";
-import { getTOCItems } from "./toc-extension";
+import type { TOCItem } from "./toc-extension.ts";
+import { getTOCItems } from "./toc-extension.ts";
 import "./toc.scss";
 
 const DEFAULT_TOC_CLASS =

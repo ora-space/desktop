@@ -1,0 +1,39 @@
+{
+  "modules": {
+    "crates/application/src/workflow_run/engine/graph.rs": {
+      "owner": "ora-application",
+      "lines": 879,
+      "split_plan": "Extract graph parsing/validation and indexed traversal into private modules, keeping accepted graph schemas and readiness rules covered by their existing tests."
+    },
+    "crates/backend/src/agent_runtime.rs": {
+      "owner": "ora-backend",
+      "lines": 1180,
+      "split_plan": "Extract durable session binding/history adoption and runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility."
+    },
+    "crates/backend/src/agent_runtime/actor.rs": {
+      "owner": "ora-backend",
+      "lines": 1007,
+      "split_plan": "Separate active-turn event settlement and idle control handling behind private actor operations. Keep one command channel and actor state machine; preserve cancellation, permission and history replay tests."
+    },
+    "crates/backend/src/agent_runtime/connection.rs": {
+      "owner": "ora-backend",
+      "lines": 804,
+      "split_plan": "Extract ACP handshake/authentication from connection supervision without duplicating cancellation or process ownership. Keep startup failure and reconnect/shutdown tests at the connection interface."
+    },
+    "crates/backend/src/plugin.rs": {
+      "owner": "ora-backend",
+      "lines": 840,
+      "split_plan": "Marketplace release resolution and package transfer now live in plugin/marketplace.rs. Split the remaining private plugin-host configuration and gateway/projection responsibilities while retaining Plugins as the public operations interface. Preserve registry identity, runtime synchronization and Effect generation semantics."
+    },
+    "crates/backend/src/workflow/run/executor.rs": {
+      "owner": "ora-backend",
+      "lines": 838,
+      "split_plan": "Extract turn-output collection and baseline/file-change projection from node dispatch. Keep real session lifetime and completion callbacks together; move output/baseline tests alongside their implementation."
+    },
+    "crates/db/src/repository/workflow_run_engine.rs": {
+      "owner": "ora-db",
+      "lines": 1051,
+      "split_plan": "Group run-state transitions, node/history rows and artifact persistence into private repository modules. Preserve the existing transaction scopes and repository interface, with real SQLite transition tests accompanying extraction."
+    }
+  }
+}

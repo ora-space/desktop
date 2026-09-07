@@ -1,10 +1,10 @@
+use crate::BackendError;
 use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use ora_application::{
-    ApplicationError, CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage,
-    GetSkillHandler, ListSkillsHandler, SkillImportConfig, SkillImportProgressEvent,
-    SkillImportProgressPublisher, SkillImportService, UpdateSkillHandler, UuidSkillIdGenerator,
-    UuidSkillImportIdGenerator,
+    CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage, GetSkillHandler,
+    ListSkillsHandler, SkillImportConfig, SkillImportProgressEvent, SkillImportProgressPublisher,
+    SkillImportService, UpdateSkillHandler, UuidSkillIdGenerator, UuidSkillImportIdGenerator,
 };
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
@@ -16,8 +16,11 @@ use ora_contracts::{
 use ora_db::{RepositoryPool, SqliteSkillRepository};
 use std::path::PathBuf;
 
+#[cfg(test)]
+mod package_tests;
+
 /// Groups the concrete skill handlers and import service shared by runtime adapters.
-pub(crate) struct SkillApi {
+pub struct SkillApi {
     create: CreateSkillHandler<
         SqliteSkillRepository,
         FilesystemSkillStorage,
@@ -87,81 +90,66 @@ impl SkillApi {
     }
 
     /// Executes skill creation through the application handler.
-    pub(crate) fn create(
-        &self,
-        request: CreateSkillRequest,
-    ) -> Result<CreateSkillResponse, ApplicationError> {
+    pub fn create(&self, request: CreateSkillRequest) -> Result<CreateSkillResponse, BackendError> {
         let response = self.create.handle(request)?;
         self.effect_reconcile.notify();
         Ok(response)
     }
 
     /// Executes one skill lookup through the application handler.
-    pub(crate) fn get(
-        &self,
-        request: GetSkillRequest,
-    ) -> Result<GetSkillResponse, ApplicationError> {
-        self.get.handle(request)
+    pub fn get(&self, request: GetSkillRequest) -> Result<GetSkillResponse, BackendError> {
+        self.get.handle(request).map_err(BackendError::from)
     }
 
     /// Executes skill listing through the application handler.
-    pub(crate) fn list(
-        &self,
-        request: ListSkillsRequest,
-    ) -> Result<ListSkillsResponse, ApplicationError> {
-        self.list.handle(request)
+    pub fn list(&self, request: ListSkillsRequest) -> Result<ListSkillsResponse, BackendError> {
+        self.list.handle(request).map_err(BackendError::from)
     }
 
     /// Executes skill replacement through the application handler.
-    pub(crate) fn update(
-        &self,
-        request: UpdateSkillRequest,
-    ) -> Result<UpdateSkillResponse, ApplicationError> {
+    pub fn update(&self, request: UpdateSkillRequest) -> Result<UpdateSkillResponse, BackendError> {
         let response = self.update.handle(request)?;
         self.effect_reconcile.notify();
         Ok(response)
     }
 
     /// Executes skill deletion through the application handler.
-    pub(crate) fn delete(
-        &self,
-        request: DeleteSkillRequest,
-    ) -> Result<DeleteSkillResponse, ApplicationError> {
+    pub fn delete(&self, request: DeleteSkillRequest) -> Result<DeleteSkillResponse, BackendError> {
         let response = self.delete.handle(request)?;
         self.effect_reconcile.notify();
         Ok(response)
     }
 
     /// Prepares one import source into a previewed session.
-    pub(crate) fn prepare_import(
+    pub fn prepare_import(
         &self,
         request: PrepareSkillImportRequest,
-    ) -> Result<PrepareSkillImportResponse, ApplicationError> {
-        self.import.prepare(request)
+    ) -> Result<PrepareSkillImportResponse, BackendError> {
+        self.import.prepare(request).map_err(BackendError::from)
     }
 
     /// Returns one import session projection.
-    pub(crate) fn get_import(
+    pub fn get_import(
         &self,
         request: GetSkillImportSessionRequest,
-    ) -> Result<GetSkillImportSessionResponse, ApplicationError> {
-        self.import.get_session(request)
+    ) -> Result<GetSkillImportSessionResponse, BackendError> {
+        self.import.get_session(request).map_err(BackendError::from)
     }
 
     /// Accepts and freezes one import commit.
-    pub(crate) fn commit_import(
+    pub fn commit_import(
         &self,
         request: CommitSkillImportRequest,
-    ) -> Result<CommitSkillImportResponse, ApplicationError> {
-        self.import.commit(request)
+    ) -> Result<CommitSkillImportResponse, BackendError> {
+        self.import.commit(request).map_err(BackendError::from)
     }
 
     /// Cancels one prepared import session.
-    pub(crate) fn cancel_import(
+    pub fn cancel_import(
         &self,
         request: CancelSkillImportRequest,
-    ) -> Result<CancelSkillImportResponse, ApplicationError> {
-        self.import.cancel(request)
+    ) -> Result<CancelSkillImportResponse, BackendError> {
+        self.import.cancel(request).map_err(BackendError::from)
     }
 }
 
@@ -329,13 +317,14 @@ mod tests {
     fn stalled_package_promote_leaves_concurrent_catalog_writes_unblocked() {
         with_trace_logging(|| {
             let temp_dir = TempDir::new().unwrap();
-            let pool = DatabaseBootstrapper::system()
+            let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
                 .bootstrap_repository_pool(
                     &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
                     &default_migration_catalog().unwrap(),
                 )
                 .unwrap();
-            let skill_repository = SqliteSkillRepository::new(pool.clone());
+            let skill_repository =
+                SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
             let agent_repository = SqliteAgentDefinitionRepository::new(pool);
             let promote = Arc::new(Barrier::new(2));
             let handler = CreateSkillHandler::new(

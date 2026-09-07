@@ -15,11 +15,29 @@ import {
   createTestQueryClient,
 } from "../../test/hook-harness";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import "../../i18n/i18n-instance";
 import { RunTheaterActCard } from "./run-theater-act-card";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createPluginMemory(), ...createAgentMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+  };
+}
 
 const NODE_DATA: WorkflowNodeData = {
   kind: "agent",
@@ -90,7 +108,9 @@ function loadedConversation(): SessionConversation {
 
 /** Builds application providers around a loaded ordinary session. */
 function createSessionWrapper() {
-  const client = createMockClient(createMockClientState());
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
   const chatStore = createChatStore(client.session);
   chatStore.setState({
     conversations: { "session-1": loadedConversation() },
@@ -119,6 +139,57 @@ function renderSessionCard(onToggleInspector = vi.fn()) {
 }
 
 describe("RunTheaterActCard conversation", () => {
+  it("renders Output results without exposing an Agent session dock", () => {
+    render(
+      <RunTheaterActCard
+        data={{
+          kind: "output",
+          title: "Output",
+          description: "Return changed files",
+          outputs: [
+            {
+              name: "files",
+              variableSelector: ["agent-5", "structured_output", "files"],
+            },
+          ],
+        }}
+        state={{
+          status: "succeeded",
+          output: {
+            summary: JSON.stringify({
+              files: [
+                {
+                  file_path: "src/vs/base/common/numbers.ts",
+                  lines: [
+                    {
+                      symbol: "formatTokenCount",
+                      start_line: 15,
+                      end_line: 26,
+                    },
+                  ],
+                },
+              ],
+            }),
+          },
+        }}
+        live={false}
+        conversationOpen
+        onConversationOpenChange={vi.fn()}
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(
+      screen.queryByText(/Agent (正在处理|is working)/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /查看节点会话|View node session/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/src\/vs\/base\/common\/numbers\.ts/),
+    ).toHaveTextContent('"start_line": 15');
+  });
+
   it("marks automatic and interactive Agent nodes beside the title", () => {
     const automaticAgent = {
       schemaVersion: 3 as const,

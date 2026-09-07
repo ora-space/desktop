@@ -63,6 +63,7 @@ export interface WorkflowCanvasProps {
   inspectorCollapsed: boolean;
   inspectorAvailable: boolean;
   onExpandInspector: () => void;
+  onConfigureGlobalVariables: () => void;
   versionHistory: MockWorkflowVersion[];
   previewedVersion: MockWorkflowVersion | null;
   /** Version string of the workflow's currently active published snapshot, if any. */

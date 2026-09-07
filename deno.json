@@ -1,0 +1,15 @@
+{
+  "workspace": [
+    "apps/desktop",
+    "packages/app-shell",
+    "packages/chat",
+    "packages/contracts",
+    "packages/editor",
+    "packages/plugin-sdk",
+    "packages/ui",
+    "packages/workflow-mock",
+    "packages/workflow-runtime"
+  ],
+  "nodeModulesDir": "manual",
+  "allowScripts": []
+}

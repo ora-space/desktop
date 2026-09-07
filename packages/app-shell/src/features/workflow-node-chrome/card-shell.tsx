@@ -57,7 +57,7 @@ const DENSITY: Record<
     radius: "rounded-xl",
     iconBox: "size-8 rounded-lg",
     iconSize: "size-4",
-    title: "text-xs font-semibold",
+    title: "font-sans text-sm font-bold",
     description:
       "mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground",
     headerPad: "px-3 py-3",
@@ -67,7 +67,7 @@ const DENSITY: Record<
     radius: "rounded-xl",
     iconBox: "size-8 rounded-lg",
     iconSize: "size-4",
-    title: "text-xs font-semibold",
+    title: "font-sans text-xs font-semibold",
     description:
       "mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground",
     headerPad: "px-3 py-3",
@@ -77,7 +77,7 @@ const DENSITY: Record<
     radius: "rounded-2xl",
     iconBox: "size-12 rounded-xl",
     iconSize: "size-5",
-    title: "text-lg font-semibold tracking-[-0.02em]",
+    title: "font-sans text-lg font-semibold tracking-[-0.02em]",
     description: "mt-2 text-sm leading-6 text-muted-foreground",
     headerPad: "p-6 pb-0",
     gap: "gap-4",
@@ -86,7 +86,7 @@ const DENSITY: Record<
     radius: "rounded-xl",
     iconBox: "size-8 rounded-lg",
     iconSize: "size-3.5",
-    title: "text-sm font-semibold",
+    title: "font-sans text-sm font-semibold",
     description:
       "mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground",
     headerPad: "px-3.5 py-3",

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol_schema::v1::CLIENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::RequestId;
+#[cfg(debug_assertions)]
 use ora_logging::ora_trace;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;

@@ -1,4 +1,4 @@
-import isEqual from "lodash/isEqual";
+import isEqual from "lodash/isEqual.js";
 import { type JSONContent } from "@tiptap/react";
 
 export type DiffStatus = "added" | "removed" | undefined;

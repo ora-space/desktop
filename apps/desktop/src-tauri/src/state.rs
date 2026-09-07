@@ -2,11 +2,9 @@ use crate::surface::DesktopSurfaceService;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::{Backend, BackendPreferredLogLevelStore};
 use ora_runtime_settings::RuntimeLogLevelManager;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
 pub type DesktopRuntimeLogLevelManager =
     RuntimeLogLevelManager<ora_logging::LogLevelControl, BackendPreferredLogLevelStore>;
@@ -133,7 +131,7 @@ pub struct DesktopState {
     pub runtime_log_level: DesktopRuntimeLogLevelManager,
     pub workspace_files: Arc<WorkspaceFileApi>,
     pub binary_paths: BundledBinaryPaths,
-    pub stream_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    pub streams: crate::stream_registry::StreamRegistry,
     /// Plugin surface host: native webviews, download delivery, plugin process linkage.
     pub surfaces: Arc<DesktopSurfaceService>,
 }
@@ -181,7 +179,7 @@ impl DesktopState {
                 // Same execution path as the automatic disposition (`DownloadActionHost`), so
                 // prompt and auto can never drift apart in how an import is prepared.
                 let response = DownloadActionHost::prepare_skill_import(
-                    &self.backend,
+                    self.backend.skills().as_ref(),
                     &staged.path,
                     &staged.file_name,
                 );

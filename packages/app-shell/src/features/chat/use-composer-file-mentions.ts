@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "../../state/hooks/query-keys";
+import { fileKeys } from "../../state/data/files";
 import {
   type ComposerMentionEntry,
   mentionEntriesFromDirectoryListing,
@@ -135,8 +135,8 @@ export function useComposerFileMentions({
   const rootFilesQuery = useQuery({
     queryKey:
       scopeKind === "task"
-        ? queryKeys.workspaceDirectory(scopeId ?? "", "")
-        : queryKeys.projectDirectory(scopeId ?? "", ""),
+        ? fileKeys.workspaceDirectory(scopeId ?? "", "")
+        : fileKeys.projectDirectory(scopeId ?? "", ""),
     queryFn: ({ signal }) => {
       if (scopeKind === "task") {
         return client.fileSystem.listWorkspaceDirectory(
@@ -156,12 +156,12 @@ export function useComposerFileMentions({
   const fileSearchQuery = useQuery({
     queryKey:
       scopeKind === "task"
-        ? queryKeys.workspaceSearch(
+        ? fileKeys.workspaceSearch(
             scopeId ?? "",
             "files",
             debouncedAtQuery ?? "",
           )
-        : queryKeys.projectSearch(
+        : fileKeys.projectSearch(
             scopeId ?? "",
             "files",
             debouncedAtQuery ?? "",

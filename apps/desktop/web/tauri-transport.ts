@@ -1,3 +1,7 @@
+import {
+  tauriCommands,
+  isTauriStreamOperation,
+} from "./tauri-bindings.generated";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   LocalTransportError,
@@ -20,178 +24,6 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 
 const MAX_QUEUED_FRAMES = 256;
 
-type TauriStreamOperation =
-  | "loadSession"
-  | "promptSession"
-  | "watchAppEvents"
-  | "watchWorkspace"
-  | "watchProject";
-type SupportedTauriOperation = Exclude<EndpointOperation, TauriStreamOperation>;
-
-const tauriCommands = {
-  // =============================================================================
-  // project
-  // =============================================================================
-  createProject: "create_project",
-  getProject: "get_project",
-  listProjects: "list_projects",
-  listProjectBranches: "list_project_branches",
-  updateProject: "update_project",
-  deleteProject: "delete_project",
-
-  // =============================================================================
-  // workspace
-  // =============================================================================
-  listWorkspaces: "list_workspaces",
-  getWorkspaceDiff: "get_workspace_diff",
-  commitWorkspaceChanges: "commit_workspace_changes",
-  pushWorkspaceBranch: "push_workspace_branch",
-
-  // =============================================================================
-  // task
-  // =============================================================================
-  createTask: "create_task",
-  getTask: "get_task",
-  listTasks: "list_tasks",
-  updateTask: "update_task",
-  deleteTask: "delete_task",
-  getTaskWorkspace: "get_task_workspace",
-
-  // =============================================================================
-  // fileSystem
-  // =============================================================================
-  listWorkspaceDirectory: "list_workspace_directory",
-  readWorkspaceFile: "read_workspace_file",
-  searchWorkspace: "search_workspace",
-  listProjectDirectory: "list_project_directory",
-  readProjectFile: "read_project_file",
-  searchProject: "search_project",
-
-  // =============================================================================
-  // session
-  // =============================================================================
-  startSession: "start_session",
-  setSessionConfig: "set_session_config",
-  getSession: "get_session",
-  listSessions: "list_sessions",
-  switchSessionAgent: "switch_session_agent",
-  resumeSessionHistory: "resume_session_history",
-  respondToSessionPermission: "respond_to_session_permission",
-  cancelSessionPrompt: "cancel_session_prompt",
-  stopSession: "stop_session",
-  deleteSession: "delete_session",
-  renameSession: "rename_session",
-
-  // =============================================================================
-  // agentRuntime
-  // =============================================================================
-  getAgentRuntimeStatus: "get_agent_runtime_status",
-  listAgentModels: "list_agent_models",
-  // =============================================================================
-  // skill
-  // =============================================================================
-  createSkill: "create_skill",
-  getSkill: "get_skill",
-  listSkills: "list_skills",
-  updateSkill: "update_skill",
-  deleteSkill: "delete_skill",
-  // =============================================================================
-  // agent
-  // =============================================================================
-  prepareSkillImport: "prepare_skill_import",
-  getSkillImport: "get_skill_import",
-  commitSkillImport: "commit_skill_import",
-  cancelSkillImport: "cancel_skill_import",
-  prepareAgentImport: "prepare_agent_import",
-  commitAgentImport: "commit_agent_import",
-  createAgent: "create_agent",
-  getAgent: "get_agent",
-  listAgents: "list_agents",
-  updateAgent: "update_agent",
-  deleteAgent: "delete_agent",
-
-  // =============================================================================
-  // plugin
-  // =============================================================================
-  listAvailablePlugins: "list_available_plugins",
-  syncAvailablePlugins: "sync_available_plugins",
-  readPluginReadme: "read_plugin_readme",
-  listMarketplaceSources: "list_marketplace_sources",
-  addMarketplaceSource: "add_marketplace_source",
-  deleteMarketplaceSource: "delete_marketplace_source",
-  updateMarketplaceSource: "update_marketplace_source",
-  listInstalledPlugins: "list_installed_plugins",
-  getPluginConfiguration: "get_plugin_configuration",
-  getEffectTargetStatus: "get_effect_target_status",
-  savePluginConfiguration: "save_plugin_configuration",
-  resetPluginConfiguration: "reset_plugin_configuration",
-  scanPlugins: "scan_plugins",
-  activatePlugin: "activate_plugin",
-  stopPlugin: "stop_plugin",
-  uninstallPlugin: "uninstall_plugin",
-  installPlugin: "install_plugin",
-  updatePlugin: "update_plugin",
-  importPlugin: "import_plugin",
-
-  // =============================================================================
-  // gitIdentity
-  // =============================================================================
-  getGitIdentity: "get_git_identity",
-
-  // =============================================================================
-  // workflow
-  // =============================================================================
-  createWorkflow: "create_workflow",
-  getWorkflow: "get_workflow",
-  listWorkflows: "list_workflows",
-  updateWorkflow: "update_workflow",
-  deleteWorkflow: "delete_workflow",
-  getDraft: "get_workflow_draft",
-  updateDraft: "update_workflow_draft",
-  publishWorkflow: "publish_workflow",
-  rollbackWorkflow: "rollback_workflow",
-  activateWorkflow: "activate_workflow",
-  listVersions: "list_workflow_versions",
-  getVersion: "get_workflow_version",
-  deleteSnapshot: "delete_workflow_snapshot",
-  getWorkflowSnapshot: "get_workflow_snapshot",
-
-  // =============================================================================
-  // workflowRun
-  // =============================================================================
-  createWorkflowRun: "create_workflow_run",
-  getWorkflowRun: "get_workflow_run",
-  listWorkflowRuns: "list_workflow_runs",
-  listWorkflowRunsByWorkflow: "list_workflow_runs_by_workflow",
-  listWorkflowNodeRuns: "list_workflow_node_runs",
-  renameWorkflowRun: "rename_workflow_run",
-  deleteWorkflowRun: "delete_workflow_run",
-  startWorkflowRun: "start_workflow_run",
-  cancelWorkflowRun: "cancel_workflow_run",
-  restartWorkflowRun: "restart_workflow_run",
-  updateWorkflowRunInput: "update_workflow_run_input",
-  // =============================================================================
-  // developerMode
-  // =============================================================================
-  getDeveloperMode: "get_developer_mode",
-  setDeveloperMode: "set_developer_mode",
-
-  // =============================================================================
-  // runtimeLogLevel
-  // =============================================================================
-  getRuntimeLogLevel: "get_runtime_log_level",
-  setRuntimeLogLevel: "set_runtime_log_level",
-
-  // =============================================================================
-  // proxy
-  // =============================================================================
-  getProxySettings: "get_proxy_settings",
-  setProxySettings: "set_proxy_settings",
-  clearProxySettings: "clear_proxy_settings",
-  checkProxySettings: "check_proxy_settings",
-  completeWorkflowNode: "complete_workflow_node",
-} as const satisfies Record<SupportedTauriOperation, string>;
-
 /** Creates the Desktop contracts transport backed by unary commands and Tauri IPC channels. */
 export function createTauriTransport(
   invokeCommand: TauriInvoke = invoke,
@@ -210,6 +42,12 @@ export function createTauriTransport(
         );
       }
       const command = tauriCommands[operation];
+      if (!Object.hasOwn(tauriCommands, operation)) {
+        throw transportError(
+          "tauri_invoke_failure",
+          `Unknown unary operation ${operation}`,
+        );
+      }
 
       try {
         return await abortable(
@@ -253,19 +91,6 @@ export function createTauriTransport(
   };
 }
 
-/** Identifies operations that must use the shared Tauri channel stream command. */
-function isTauriStreamOperation(
-  operation: EndpointOperation,
-): operation is TauriStreamOperation {
-  return (
-    operation === "loadSession" ||
-    operation === "promptSession" ||
-    operation === "watchAppEvents" ||
-    operation === "watchWorkspace" ||
-    operation === "watchProject"
-  );
-}
-
 /** Starts one private channel stream and cancels its backend registration on every early exit. */
 async function* streamFromChannel<TEvent>(
   invokeCommand: TauriInvoke,
@@ -274,7 +99,12 @@ async function* streamFromChannel<TEvent>(
   options?: ContractCallOptions,
 ): AsyncGenerator<TEvent> {
   if (options?.signal?.aborted === true)
-    throw abortError(options.signal.reason);
+    throw transportError("cancelled", "Desktop stream was cancelled");
+  if (!isTauriStreamOperation(request.operationName))
+    throw transportError(
+      "tauri_invoke_failure",
+      `Unknown stream operation ${request.operationName}`,
+    );
   const streamCallId = crypto.randomUUID();
   const channel = createChannel<ContractStreamFrame<TEvent>>();
   const frames: ContractStreamFrame<TEvent>[] = [];
@@ -292,6 +122,10 @@ async function* streamFromChannel<TEvent>(
     wake = undefined;
   };
   const abort = () => {
+    // Signal creation too; finally repeats this after startup settles in case IPC delivery raced.
+    void invokeCommand<void>("cancel_contract_stream", { streamCallId }).catch(
+      () => undefined,
+    );
     wake?.();
     wake = undefined;
   };
@@ -338,6 +172,7 @@ async function* streamFromChannel<TEvent>(
     throw normalizeInvokeError(error);
   } finally {
     options?.signal?.removeEventListener("abort", abort);
+    channel.onmessage = () => undefined;
     await invokeCommand<void>("cancel_contract_stream", { streamCallId }).catch(
       () => undefined,
     );

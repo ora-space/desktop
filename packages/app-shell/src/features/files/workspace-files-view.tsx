@@ -43,17 +43,17 @@ import {
   WorkspaceFileIcon,
   workspaceFileVisual,
 } from "./workspace-file-visuals";
-import { watchWorkspaceContinuously } from "./workspace-watch";
+import { watchWorkspaceContinuously } from "../../state/data/file-watch";
 import {
   directoryQueryKey,
   fileQueryKey,
   filesScopeApi,
-  filesScopeQueryKey,
+  invalidateFilesScope,
   invalidateScopedFileQueries,
   resolveFilesScope,
   searchQueryKey,
   type FilesScope,
-} from "./files-scope";
+} from "../../state/data/files";
 
 interface WorkspaceFilesViewProps {
   projectId: string;
@@ -448,10 +448,7 @@ export function WorkspaceFilesView({
       return next;
     });
   };
-  const refresh = () =>
-    queryClient.invalidateQueries({
-      queryKey: filesScopeQueryKey(scope),
-    });
+  const refresh = () => invalidateFilesScope(queryClient, scope);
 
   const body = (
     <div className="min-h-0 flex-1">

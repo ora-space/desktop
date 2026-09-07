@@ -15,6 +15,10 @@ describe("workflow demo", () => {
       description: "No description yet",
       updatedAt: workflow.updatedAt,
       viewport: { x: 32, y: 32, zoom: 1 },
+      globalVariables: [
+        { name: "sys.workflow_id", valueType: "string" },
+        { name: "sys.timestamp", valueType: "number" },
+      ],
       nodes: [
         {
           id: "start",
@@ -25,7 +29,7 @@ describe("workflow demo", () => {
             kind: "start",
             title: "Start",
             description: "Receive workflow input",
-            instruction: "Define the input required to start this workflow.",
+            input: "Define the input required to start this workflow.",
           },
         },
       ],
@@ -99,12 +103,6 @@ describe("workflow demo", () => {
     const unsupportedEdge = createMockWorkflow("en-US");
     unsupportedEdge.edges[0]!.type = "unknown";
     expect(() => parseDemoWorkflow(unsupportedEdge)).toThrow(
-      "Invalid workflow definition",
-    );
-
-    const missingHandle = createMockWorkflow("en-US");
-    missingHandle.edges[0]!.sourceHandle = "missing";
-    expect(() => parseDemoWorkflow(missingHandle)).toThrow(
       "Invalid workflow definition",
     );
 

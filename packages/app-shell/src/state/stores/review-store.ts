@@ -3,7 +3,7 @@ import {
   DEFAULT_REVIEW_WIDTH,
   MAX_REVIEW_WIDTH,
   MIN_REVIEW_WIDTH,
-} from "../../features/workspace/workspace-review-layout-utils";
+} from "./review-layout";
 import { pathsMatchForWorkspace } from "../../lib/workspace-path";
 
 // The review rail no longer survives a restart (every launch opens it closed).

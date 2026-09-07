@@ -3,26 +3,26 @@ import type { Node } from "@tiptap/pm/model";
 import { TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import StarterKit from "@tiptap/starter-kit";
-import { HorizontalRule } from "../node/horizontal-rule-node/horizontal-rule-node-extension";
-import { ComposerCodeFence } from "./composer-code-fence";
-import { ComposerChipSelection } from "./composer-chip-selection";
-import { ComposerFile } from "./composer-file";
-import { ComposerHighlight } from "./composer-highlight";
-import { ComposerLink } from "./composer-link";
+import { HorizontalRule } from "../node/horizontal-rule-node/horizontal-rule-node-extension.ts";
+import { ComposerCodeFence } from "./composer-code-fence.ts";
+import { ComposerChipSelection } from "./composer-chip-selection.ts";
+import { ComposerFile } from "./composer-file.ts";
+import { ComposerHighlight } from "./composer-highlight.ts";
+import { ComposerLink } from "./composer-link.ts";
 import {
   ComposerBold,
   ComposerCode,
   ComposerItalic,
   ComposerStrike,
   ComposerUnderline,
-} from "./composer-marks";
-import { ComposerMarkStartTyping } from "./composer-mark-start";
-import { ComposerMarkdownBackfill } from "./composer-markdown-backfill";
-import { ComposerMarkdownPaste } from "./composer-markdown";
-import { ComposerMarkdownRevert } from "./composer-markdown-revert";
-import { ComposerNewline } from "./composer-newline";
-import { ComposerTaskItem } from "./composer-task-item";
-import { PromptToken } from "./prompt-token";
+} from "./composer-marks.ts";
+import { ComposerMarkStartTyping } from "./composer-mark-start.ts";
+import { ComposerMarkdownBackfill } from "./composer-markdown-backfill.ts";
+import { ComposerMarkdownPaste } from "./composer-markdown.ts";
+import { ComposerMarkdownRevert } from "./composer-markdown-revert.ts";
+import { ComposerNewline } from "./composer-newline.ts";
+import { ComposerTaskItem } from "./composer-task-item.ts";
+import { PromptToken } from "./prompt-token.ts";
 
 export interface ComposerPlaceholderProps {
   editor: Editor;

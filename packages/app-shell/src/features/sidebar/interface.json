@@ -1,0 +1,14 @@
+{
+  "owner": "Account presentation",
+  "modules": {
+    "./user-profile": {
+      "exports": ["UserProfile"],
+      "purpose": "Workspace sidebar composes account presentation without owning account UI."
+    },
+    "./translations": {
+      "exports": ["sidebarTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

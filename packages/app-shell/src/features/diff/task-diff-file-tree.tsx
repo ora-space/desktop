@@ -16,6 +16,7 @@ import {
   IconFolder,
   IconFolderOpen,
   IconJson,
+  IconLayoutSidebarRightCollapse,
   IconMarkdown,
   IconX,
 } from "@tabler/icons-react";
@@ -30,6 +31,8 @@ interface TaskDiffFileTreeProps {
   files: FileData[];
   selectedPath: string;
   onSelect: (path: string) => void;
+  /** Collapses the whole tree; the button sits at the right end of the header. */
+  onCollapse?: () => void;
 }
 
 /** Renders the changed files as a compact, collapsible IDE-style directory tree. */
@@ -37,6 +40,7 @@ export function TaskDiffFileTree({
   files,
   selectedPath,
   onSelect,
+  onCollapse,
 }: TaskDiffFileTreeProps) {
   const { t } = useTranslation();
   const [filterOpen, setFilterOpen] = useState(false);
@@ -73,6 +77,17 @@ export function TaskDiffFileTree({
         >
           <IconFilter className="size-3.5" />
         </button>
+        {onCollapse !== undefined && (
+          <button
+            type="button"
+            className="ml-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t("diff.toggleFileTree")}
+            title={t("diff.toggleFileTree")}
+            onClick={onCollapse}
+          >
+            <IconLayoutSidebarRightCollapse className="size-3.5" />
+          </button>
+        )}
       </div>
       {filterOpen && (
         <div className="relative shrink-0 border-b border-border p-2">

@@ -358,12 +358,14 @@ export function RunTheaterParallelStage({
                       live={live}
                       artifactCount={act.artifactCount}
                       conversation={act.conversation}
-                      conversationEnabled={act.nodeId === primaryId}
+                      conversationEnabled={
+                        act.nodeId === primaryId && act.data.kind === "agent"
+                      }
                       conversationOpen={
                         sessionConversationNodeId === act.nodeId
                       }
                       onConversationOpenChange={
-                        act.nodeId === primaryId
+                        act.nodeId === primaryId && act.data.kind === "agent"
                           ? (open) => {
                               onSessionConversationNodeIdChange?.(
                                 open ? act.nodeId : null,
@@ -424,7 +426,7 @@ export function RunTheaterParallelStage({
                 type="button"
                 onClick={() => slideTo(actIndex)}
                 className={cn(
-                  "max-w-[9rem] cursor-pointer truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition-[colors,box-shadow] duration-200",
+                  "max-w-[9rem] cursor-pointer truncate rounded-full border px-2.5 py-1 font-sans text-[11px] font-medium transition-[colors,box-shadow] duration-200",
                   selected && waiting
                     ? "border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
                     : selected

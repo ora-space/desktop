@@ -1,9 +1,9 @@
+import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import {
   workflowPathOrder,
   type GraphWorkflowNodeStatus,
   type GraphWorkflowRun,
 } from "@ora/workflow-runtime";
-import { isTerminalRunStatus } from "./run-status-style";
 
 const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
   "running",

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 /// rather than `official`.
 #[tokio::test]
 async fn locally_built_opencode_and_claude_packages_import_together() {
+    ora_logging::initialize_test_clock();
     let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -50,14 +51,16 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
     .expect("open backend");
     for (_, _, path) in &packages {
         backend
-            .import_plugin(ImportPluginRequest {
+            .plugins()
+            .import(ImportPluginRequest {
                 path: path.to_string_lossy().into_owned(),
             })
             .await
             .unwrap_or_else(|error| panic!("import {}: {error:?}", path.display()));
     }
     let installed = backend
-        .list_installed_plugins(ListInstalledPluginsRequest {})
+        .plugins()
+        .list_installed(ListInstalledPluginsRequest {})
         .expect("list imported Agents")
         .plugins;
     let actual = packages

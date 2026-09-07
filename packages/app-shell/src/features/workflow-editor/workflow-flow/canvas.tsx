@@ -29,7 +29,7 @@ import {
   DEFAULT_WORKFLOW_ZOOM,
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
-} from "./viewport";
+} from "../../workflow-node-chrome/viewport";
 import {
   WORKFLOW_FLOW_EDGE_TYPE,
   WORKFLOW_FLOW_NODE_TYPE,
@@ -200,6 +200,7 @@ function WorkflowCanvasInner({
   inspectorCollapsed,
   inspectorAvailable,
   onExpandInspector,
+  onConfigureGlobalVariables,
   versionHistory,
   previewedVersion,
   activeVersion,
@@ -639,6 +640,7 @@ function WorkflowCanvasInner({
           mode={interactionMode}
           readOnly={readOnly}
           onModeChange={setInteractionMode}
+          onConfigureGlobalVariables={onConfigureGlobalVariables}
           onAddAnnotation={addAnnotationAtViewportCenter}
           onOrganize={organizeAndFrameNodes}
         />

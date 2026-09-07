@@ -12,6 +12,8 @@ mod git_cleanup_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
+mod test_clock;
+#[cfg(test)]
 mod tests;
 
 pub use bootstrap::{DatabaseBootstrapper, reconcile_migration_history};
@@ -28,4 +30,4 @@ pub use repository::{
     SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
-pub use time::{SystemTimestampSource, TimestampSource};
+pub use time::{LocalTimestampSource, SystemTimestampSource, TimestampSource};

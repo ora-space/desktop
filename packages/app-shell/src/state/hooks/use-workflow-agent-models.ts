@@ -2,10 +2,10 @@ import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
-import type { AgentEntry } from "../../features/chat/agent-catalog";
+import type { AgentEntry } from "./use-agent-catalog";
 import { useAvailableAgents } from "./use-available-agents";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import { queryKeys } from "./query-keys";
+import { agentRuntimeKeys } from "../data/agent-runtime";
 import { useProjects } from "./use-projects";
 import { useTasks } from "./use-tasks";
 import { useWorkspaces } from "./use-workspaces";
@@ -58,7 +58,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 
   const modelQueries = useQueries({
     queries: agents.map((agent) => ({
-      queryKey: queryKeys.agentModels(agent.agentRef, workspaceId),
+      queryKey: agentRuntimeKeys.agentModels(agent.agentRef, workspaceId),
       enabled: workspaceId !== null,
       queryFn: () =>
         client.agentRuntime.listModels({

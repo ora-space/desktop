@@ -5,20 +5,20 @@ import { useHotkeys } from "react-hotkeys-hook";
 import type { Editor } from "@tiptap/react";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
-import { isMarkInSchema, isNodeTypeSelected } from "../../utils";
+import { isMarkInSchema, isNodeTypeSelected } from "../../utils.ts";
 
 // --- Icons ---
-import { BoldIcon } from "../../icons/bold-icon";
-import { Code2Icon } from "../../icons/code2-icon";
-import { ItalicIcon } from "../../icons/italic-icon";
-import { StrikeIcon } from "../../icons/strike-icon";
-import { SubscriptIcon } from "../../icons/subscript-icon";
-import { SuperscriptIcon } from "../../icons/superscript-icon";
-import { UnderlineIcon } from "../../icons/underline-icon";
+import { BoldIcon } from "../../icons/bold-icon.tsx";
+import { Code2Icon } from "../../icons/code2-icon.tsx";
+import { ItalicIcon } from "../../icons/italic-icon.tsx";
+import { StrikeIcon } from "../../icons/strike-icon.tsx";
+import { SubscriptIcon } from "../../icons/subscript-icon.tsx";
+import { SuperscriptIcon } from "../../icons/superscript-icon.tsx";
+import { UnderlineIcon } from "../../icons/underline-icon.tsx";
 
 export type Mark =
   | "bold"

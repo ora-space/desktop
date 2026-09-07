@@ -27,6 +27,7 @@ const NODE_DRAG_THRESHOLD = 4;
 const AVAILABLE_NODE_KINDS = new Set<WorkflowNodeKind>([
   "start",
   "agent",
+  "condition",
   "output",
 ]);
 

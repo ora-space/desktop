@@ -7,6 +7,9 @@ commands remain in their adapters and graph scheduling remains in `ora-applicati
 ## Responsibilities
 
 - `definition.rs` wires workflow definition, draft, publication, and version handlers to SQLite.
+  Its public `WorkflowApi` is reached through `Backend::workflows()`; construction and concrete
+  repositories stay private. It projects application errors before returning to adapters and
+  can be tested against SQLite without assembling any workflow execution runtime.
 - `run/` wires workflow-run CRUD, the production execution engine, agent-node execution, prompt
   assembly, deployment prerequisites, and interactive-node coordination.
 

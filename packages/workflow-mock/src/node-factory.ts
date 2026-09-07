@@ -46,10 +46,11 @@ function createMockNodeExecutionData(
 ): Pick<
   WorkflowNodeData,
   | "agentConfig"
+  | "input"
   | "instruction"
-  | "trigger"
   | "tool"
   | "condition"
+  | "cases"
   | "waitStrategy"
   | "failureStrategy"
   | "maxAttempts"
@@ -58,23 +59,29 @@ function createMockNodeExecutionData(
   const capabilities = createMockWorkflowCapabilities(locale);
   switch (kind) {
     case "start":
-      return { instruction: "", trigger: capabilities.defaultTrigger };
+      return { input: "" };
     case "output":
+      return {};
     case "human":
     case "subflow":
-      return { instruction: "" };
+      return {};
     case "agent":
-      return { agentConfig: structuredClone(agentConfig ?? capabilities.defaultAgentConfig) };
+      return {
+        agentConfig: structuredClone(
+          agentConfig ?? capabilities.defaultAgentConfig,
+        ),
+      };
     case "condition":
       return {
-        instruction: "",
         condition: locale === "zh-CN" ? "满足条件" : "Condition is met",
+        // Keeping the first IF branch explicit makes its output handle stable before rules exist.
+        cases: [{ id: "case-1", logic: "and", conditions: [] }],
       };
     case "tool":
-      return { instruction: "", tool: capabilities.defaultTool };
+      return { tool: capabilities.defaultTool };
     case "junction":
-      return { instruction: "", waitStrategy: "all", failureStrategy: "fail" };
+      return { waitStrategy: "all", failureStrategy: "fail" };
     case "loop":
-      return { instruction: "", maxAttempts: 3, exitCondition: "" };
+      return { maxAttempts: 3, exitCondition: "" };
   }
 }

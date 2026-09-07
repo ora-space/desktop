@@ -15,17 +15,7 @@ pub(crate) struct FrontendEndpoint {
     pub(crate) member_name: &'static str,
     pub(crate) request_type: &'static str,
     pub(crate) response_type: &'static str,
-}
-
-impl FrontendEndpoint {
-    /// Returns the stream mode owned by the operation catalog.
-    pub(crate) fn response_mode(&self) -> FrontendResponseMode {
-        match self.operation_name {
-            "loadSession" | "promptSession" | "watchWorkspace" | "watchProject"
-            | "watchAppEvents" => FrontendResponseMode::Stream,
-            _ => FrontendResponseMode::Unary,
-        }
-    }
+    pub(crate) response_mode: FrontendResponseMode,
 }
 
 /// Builds the generation-only operation catalog from its namespace modules.
@@ -57,6 +47,7 @@ mod tests {
                 member_name: "update",
                 request_type: "UpdateTaskRequest",
                 response_type: "UpdateTaskResponse",
+                response_mode: FrontendResponseMode::Unary,
             }
         );
     }
@@ -68,7 +59,7 @@ mod tests {
             frontend_endpoints()
                 .into_iter()
                 .find(|endpoint| endpoint.operation_name == "watchAppEvents")
-                .map(|endpoint| endpoint.response_mode()),
+                .map(|endpoint| endpoint.response_mode),
             Some(FrontendResponseMode::Stream)
         );
     }
@@ -131,6 +122,7 @@ mod tests {
                     member_name: "get",
                     request_type: "GetRuntimeLogLevelRequest",
                     response_type: "RuntimeLogLevelStateResponse",
+                    response_mode: FrontendResponseMode::Unary,
                 },
                 FrontendEndpoint {
                     operation_name: "setRuntimeLogLevel",
@@ -138,6 +130,7 @@ mod tests {
                     member_name: "set",
                     request_type: "SetRuntimeLogLevelRequest",
                     response_type: "RuntimeLogLevelStateResponse",
+                    response_mode: FrontendResponseMode::Unary,
                 },
             ]
         );
@@ -162,6 +155,7 @@ mod tests {
                     member_name: "get",
                     request_type: "GetDeveloperModeRequest",
                     response_type: "DeveloperModeResponse",
+                    response_mode: FrontendResponseMode::Unary,
                 },
                 FrontendEndpoint {
                     operation_name: "setDeveloperMode",
@@ -169,6 +163,7 @@ mod tests {
                     member_name: "set",
                     request_type: "SetDeveloperModeRequest",
                     response_type: "DeveloperModeResponse",
+                    response_mode: FrontendResponseMode::Unary,
                 },
             ]
         );

@@ -65,6 +65,14 @@ export type GetWorkflowRunResponse = {
   workspaceId: string;
   projectId: string;
   nodes: Array<WorkflowNodeRun>;
+  /**
+   * Typed variable-pool projection; persistence metadata remains internal.
+   */
+  variables: Array<WorkflowRunVariable>;
+  /**
+   * Condition decisions keyed by node id for branch-aware rendering.
+   */
+  conditionDecisions: { [key in string]: string };
 };
 
 /**
@@ -142,6 +150,10 @@ export type StartWorkflowRunResponse = { run: WorkflowRun };
 export type UpdateWorkflowRunInputRequest = {
   runId: string;
   input: string | null;
+  /**
+   * Start-variable values keyed by their declared short name; JSON null clears an assignment.
+   */
+  variables?: Record<string, unknown>;
 };
 
 /**
@@ -193,7 +205,6 @@ export type WorkflowRun = {
   input: string | null;
   output: string | null;
   error: string | null;
-  payload: string | null;
   startedAt: bigint | null;
   finishedAt: bigint | null;
   createdAt: bigint;
@@ -229,4 +240,14 @@ export type WorkflowRunSummary = {
   startedAt: bigint | null;
   finishedAt: bigint | null;
   createdAt: bigint;
+};
+
+/**
+ * One declared run variable and its optional current value.
+ */
+export type WorkflowRunVariable = {
+  selector: Array<string>;
+  valueType: string;
+  sourceNodeId: string;
+  value?: unknown;
 };

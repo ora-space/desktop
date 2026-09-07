@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { ContractError } from "./error.js";
-import { contractErrorSchema, publicErrorSchema } from "./error.schema.js";
+import type { ContractError } from "./error.ts";
+import { contractErrorSchema, publicErrorSchema } from "./error.schema.ts";
 
 export type ContractTransportRequest = {
   operationName: string;

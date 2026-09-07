@@ -1,6 +1,6 @@
 //! Endpoint declarations for the application-event stream namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "appEvents";
 
@@ -10,4 +10,5 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[FrontendEndpoint {
     member_name: "watch",
     request_type: "WatchAppEventsRequest",
     response_type: "AppEvent",
+    response_mode: FrontendResponseMode::Stream,
 }];

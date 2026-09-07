@@ -2,16 +2,37 @@ import { act, waitFor } from "@testing-library/react";
 import { useQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import "../../i18n/i18n-instance";
 import {
   createTestQueryClient,
   renderHookWithClient,
 } from "../../test/hook-harness";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
-import { queryKeys } from "./query-keys";
+import { agentRuntimeKeys } from "../data/agent-runtime";
 import { usePluginMutations } from "./use-plugin-mutations";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createAgentRuntimeMemory(), ...createPluginMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...agentRuntimeHandlers(state),
+    ...pluginHandlers(state),
+  };
+}
 
 const AGENT_REF = "ora-space.opencode";
 const PLUGIN_ID = `official/${AGENT_REF}`;
@@ -25,7 +46,7 @@ afterEach(() => {
 
 describe("usePluginMutations", () => {
   it("invalidates agent state and clears models after uninstall", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.installedPlugins = [
       {
         id: PLUGIN_ID,
@@ -44,30 +65,31 @@ describe("usePluginMutations", () => {
         runtime: "running",
       },
     ];
-    const baseClient = createMockClient(state);
-    const client = {
-      ...baseClient,
-      plugin: {
-        ...baseClient.plugin,
-        uninstall: async (
-          ...args: Parameters<typeof baseClient.plugin.uninstall>
-        ) => {
-          const response = await baseClient.plugin.uninstall(...args);
-          state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
-            (status) => status.agentRef !== AGENT_REF,
-          );
-          return response;
-        },
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
+    const client = createTestClient({
+      ...baseClientHandlers,
+      uninstallPlugin: async (
+        ...args: Parameters<typeof baseClient.plugin.uninstall>
+      ) => {
+        const response = await baseClient.plugin.uninstall(...args);
+        state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
+          (status) => status.agentRef !== AGENT_REF,
+        );
+        return response;
       },
-    };
+    });
     const queryClient = createTestQueryClient();
-    const queryKey = queryKeys.agentModels(AGENT_REF, TARGET.workspaceId);
+    const queryKey = agentRuntimeKeys.agentModels(
+      AGENT_REF,
+      TARGET.workspaceId,
+    );
     const loadModels = vi.fn(async () => ({ catalog: "current" }));
 
     const { result } = renderHookWithClient(
       () => ({
         runtime: useQuery({
-          queryKey: queryKeys.agentRuntimeStatus,
+          queryKey: agentRuntimeKeys.agentRuntimeStatus,
           queryFn: () =>
             client.agentRuntime
               .getStatus({})
@@ -101,18 +123,22 @@ describe("usePluginMutations", () => {
   });
 
   it("keeps uninstall pending across unmount and rejects a duplicate operation", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     let resolveUninstall:
       | ((
           response: Awaited<ReturnType<typeof client.plugin.uninstall>>,
         ) => void)
       | undefined;
-    const uninstall = vi.spyOn(client.plugin, "uninstall").mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveUninstall = resolve;
-        }),
-    );
+    const uninstall = vi
+      .spyOn(clientHandlers, "uninstallPlugin")
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveUninstall = resolve;
+          }),
+      );
     const stop = vi.spyOn(client.plugin, "stop");
     const queryClient = createTestQueryClient();
     const first = renderHookWithClient(

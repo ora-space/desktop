@@ -58,6 +58,8 @@ impl AcpError {
 pub(super) struct FakeAcpAgent {
     sessions: BTreeMap<String, FakeSession>,
     next_session_id: u64,
+    /// Held requests allow lifecycle tests to observe a real in-flight ACP cancellation.
+    pending_prompts: BTreeMap<String, Value>,
 }
 
 impl FakeAcpAgent {
@@ -71,12 +73,30 @@ impl FakeAcpAgent {
         };
         let params = object.get("params").cloned().unwrap_or(Value::Null);
         let Some(id) = object.get("id").cloned() else {
-            self.handle_notification(method, params);
-            return Vec::new();
+            return self.handle_notification(method, params);
         };
+
+        // This explicit fixture prompt emits its first update but settles only after ACP cancel.
+        // No timer or process-wide flag controls the race, so tests can synchronize on the update.
+        let held_session =
+            if method == AGENT_METHOD_NAMES.session_prompt {
+                serde_json::from_value::<PromptRequest>(params.clone())
+                    .ok()
+                    .and_then(|request| {
+                        request.prompt.iter().any(|block| matches!(block,
+                    ContentBlock::Text(text) if text.text.contains("[hold-for-cancel]")
+                )).then(|| request.session_id.to_string())
+                    })
+            } else {
+                None
+            };
 
         match self.handle_request(method, params) {
             Ok(mut call) => {
+                if let Some(session_id) = held_session {
+                    self.pending_prompts.insert(session_id, id);
+                    return call.notifications;
+                }
                 call.notifications.push(json!({
                     "jsonrpc": JSON_RPC_VERSION,
                     "id": id,
@@ -218,11 +238,19 @@ impl FakeAcpAgent {
         })
     }
 
-    /// Consumes supported ACP notifications; prompt cancellation is instantaneous in this fake.
-    fn handle_notification(&mut self, method: &str, params: Value) {
-        if method == AGENT_METHOD_NAMES.session_cancel {
-            let _ = parse_params::<CancelNotification>(method, params);
+    /// Settles a held prompt only when the host sends the corresponding ACP cancellation.
+    fn handle_notification(&mut self, method: &str, params: Value) -> Vec<Value> {
+        if method == AGENT_METHOD_NAMES.session_cancel
+            && let Ok(request) = parse_params::<CancelNotification>(method, params)
+            && let Some(id) = self.pending_prompts.remove(&request.session_id.to_string())
+        {
+            return vec![json!({
+                "jsonrpc": JSON_RPC_VERSION,
+                "id": id,
+                "result": PromptResponse::new(StopReason::Cancelled),
+            })];
         }
+        Vec::new()
     }
 
     /// Streams one deterministic assistant message before completing the prompt turn.

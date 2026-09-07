@@ -4,9 +4,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ContractsClientContext } from "../../contracts-client-context";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import "../../i18n/i18n-instance";
 import {
   MAX_COMPOSER_FILE_ACTIONS,
   takeComposerFilePaths,
@@ -18,7 +19,7 @@ import {
   useComposerFileMentions,
 } from "./use-composer-file-mentions";
 
-function createWrapper(client: ReturnType<typeof createMockClient>) {
+function createWrapper(client: ReturnType<typeof createTestClient>) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, staleTime: 0 },
@@ -75,8 +76,9 @@ describe("fileMention status helpers", () => {
 
 describe("useComposerFileMentions", () => {
   it("keeps prior hits during debounce with selection locked, without a spinner", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.listWorkspaceDirectory = async () => ({
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = async () => ({
       path: "",
       entries: [
         {
@@ -87,7 +89,7 @@ describe("useComposerFileMentions", () => {
         },
       ],
     });
-    client.fileSystem.searchWorkspace = async () => ({
+    clientHandlers.searchWorkspace = async () => ({
       results: [{ kind: "file", path: "src/app.ts" }],
       truncated: false,
     });
@@ -132,8 +134,9 @@ describe("useComposerFileMentions", () => {
   });
 
   it("includes root directories ahead of files", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.listWorkspaceDirectory = async () => ({
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = async () => ({
       path: "",
       entries: [
         {
@@ -175,7 +178,8 @@ describe("useComposerFileMentions", () => {
   });
 
   it("searches the project checkout when no task is selected", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
     const listProject = vi.fn(async () => ({
       path: "",
       entries: [
@@ -187,8 +191,8 @@ describe("useComposerFileMentions", () => {
         },
       ],
     }));
-    client.fileSystem.listProjectDirectory = listProject;
-    client.fileSystem.listWorkspaceDirectory = vi.fn(async () => ({
+    clientHandlers.listProjectDirectory = listProject;
+    clientHandlers.listWorkspaceDirectory = vi.fn(async () => ({
       path: "",
       entries: [],
     }));
@@ -211,15 +215,16 @@ describe("useComposerFileMentions", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(listProject).toHaveBeenCalled();
-    expect(client.fileSystem.listWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(clientHandlers.listWorkspaceDirectory).not.toHaveBeenCalled();
     expect(result.current.entries).toEqual([
       { path: "src", kind: "directory" },
     ]);
   });
 
   it("prefers the task worktree over the project checkout", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.listWorkspaceDirectory = async () => ({
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = async () => ({
       path: "",
       entries: [
         {
@@ -230,7 +235,7 @@ describe("useComposerFileMentions", () => {
         },
       ],
     });
-    client.fileSystem.listProjectDirectory = vi.fn(async () => ({
+    clientHandlers.listProjectDirectory = vi.fn(async () => ({
       path: "",
       entries: [
         {
@@ -259,15 +264,16 @@ describe("useComposerFileMentions", () => {
       );
     });
     await waitFor(() => expect(result.current.status).toBe("ready"));
-    expect(client.fileSystem.listProjectDirectory).not.toHaveBeenCalled();
+    expect(clientHandlers.listProjectDirectory).not.toHaveBeenCalled();
     expect(result.current.entries).toEqual([
       { path: "task-only.ts", kind: "file" },
     ]);
   });
 
   it("caps search hits at the menu limit even when the API returns more", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.searchWorkspace = async () => ({
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.searchWorkspace = async () => ({
       results: Array.from({ length: 40 }, (_, index) => ({
         kind: "file" as const,
         path: `pkg/file-${index}.ts`,
@@ -297,8 +303,9 @@ describe("useComposerFileMentions", () => {
   });
 
   it("reports error instead of an empty hit list when search fails", async () => {
-    const client = createMockClient(createMockClientState());
-    client.fileSystem.searchWorkspace = async () => {
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.searchWorkspace = async () => {
       throw new Error("search failed");
     };
 
@@ -323,7 +330,8 @@ describe("useComposerFileMentions", () => {
   });
 
   it("asks for a project when none is selected", () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
     const { result } = renderHook(
       () =>
         useComposerFileMentions({

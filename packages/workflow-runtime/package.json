@@ -13,12 +13,11 @@
     "format": "prettier --write . --ignore-path ../../.prettierignore",
     "format:check": "prettier --check . --ignore-path ../../.prettierignore",
     "lint": "tsc -p tsconfig.json --noEmit && eslint src tests --max-warnings 0",
-    "test": "node ../../scripts/run-with-clean-stderr.mjs \"vitest run\"",
+    "test": "deno run -A ../../scripts/run-with-clean-stderr.ts \"vitest run\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@ora/workflow-mock": "workspace:*",
-    "typescript": "~6.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.10"
   }
 }

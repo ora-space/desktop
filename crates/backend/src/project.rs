@@ -1,11 +1,14 @@
 use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
+use crate::git_cleanup::GitCleanupHandle;
+use crate::repository_work::spawn_repository_work;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ora_application::{
-    ApplicationError, BranchLister, BranchListingError, BranchReference, Clock,
-    CreateProjectHandler, GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler,
-    UpdateProjectHandler, UuidProjectIdGenerator,
+    BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
+    GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler, UpdateProjectHandler,
+    UuidProjectIdGenerator,
 };
 use ora_contracts::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
@@ -33,7 +36,7 @@ type ProjectBranchListHandler = ListProjectBranchesHandler<
 >;
 
 /// Groups the concrete project handlers shared by runtime adapters.
-pub(crate) struct ProjectApi {
+pub struct ProjectApi {
     pool: RepositoryPool,
     /// Where cascaded sessions' recorded conversations are removed from.
     sessions_root: PathBuf,
@@ -45,6 +48,7 @@ pub(crate) struct ProjectApi {
     clock: SystemClock,
     /// Wakes Effect convergence for the Workspace a new project brings with it.
     effect_reconcile: EffectWorkerHandle,
+    git_cleanup: GitCleanupHandle,
 }
 
 impl ProjectApi {
@@ -54,6 +58,7 @@ impl ProjectApi {
         sessions_root: PathBuf,
         clock: SystemClock,
         effect_reconcile: EffectWorkerHandle,
+        git_cleanup: GitCleanupHandle,
     ) -> Self {
         let repository = SqliteProjectRepository::new(pool.clone());
 
@@ -61,6 +66,7 @@ impl ProjectApi {
             pool: pool.clone(),
             sessions_root,
             effect_reconcile,
+            git_cleanup,
             create: CreateProjectHandler::new(
                 repository.clone(),
                 UuidProjectIdGenerator::new(),
@@ -86,49 +92,56 @@ impl ProjectApi {
     /// and no declaration will fire again on its own. Waking here is a latency optimization only:
     /// the worker converges the same Workspace within one scan interval regardless, so a wake lost
     /// to a crash costs a scan interval rather than the materialization.
-    pub(crate) fn create(
+    pub fn create(
         &self,
         request: CreateProjectRequest,
-    ) -> Result<CreateProjectResponse, ApplicationError> {
+    ) -> Result<CreateProjectResponse, BackendError> {
         let response = self.create.handle(request)?;
         self.effect_reconcile.notify();
         Ok(response)
     }
 
     /// Executes one project lookup through the application handler.
-    pub(crate) fn get(
-        &self,
-        request: GetProjectRequest,
-    ) -> Result<GetProjectResponse, ApplicationError> {
-        self.get.handle(request)
+    pub fn get(&self, request: GetProjectRequest) -> Result<GetProjectResponse, BackendError> {
+        self.get.handle(request).map_err(BackendError::from)
     }
 
     /// Executes project listing through the application handler.
-    pub(crate) fn list(
-        &self,
-        request: ListProjectsRequest,
-    ) -> Result<ListProjectsResponse, ApplicationError> {
-        self.list.handle(request)
+    pub fn list(&self, request: ListProjectsRequest) -> Result<ListProjectsResponse, BackendError> {
+        self.list.handle(request).map_err(BackendError::from)
     }
 
     /// Executes project branch listing through the application handler.
-    pub(crate) fn list_branches(
+    pub fn list_branches(
         &self,
         request: ListProjectBranchesRequest,
-    ) -> Result<ListProjectBranchesResponse, ApplicationError> {
-        self.list_branches.handle(request)
+    ) -> Result<ListProjectBranchesResponse, BackendError> {
+        self.list_branches
+            .handle(request)
+            .map_err(BackendError::from)
     }
 
     /// Executes project replacement through the application handler.
-    pub(crate) fn update(
+    pub fn update(
         &self,
         request: UpdateProjectRequest,
-    ) -> Result<UpdateProjectResponse, ApplicationError> {
-        self.update.handle(request)
+    ) -> Result<UpdateProjectResponse, BackendError> {
+        self.update.handle(request).map_err(BackendError::from)
     }
 
-    /// Executes project deletion through the application handler.
-    pub(crate) fn delete(
+    /// Runs the whole cascade off the async worker and wakes cleanup only after it commits.
+    pub async fn delete(
+        self: &Arc<Self>,
+        request: DeleteProjectRequest,
+    ) -> Result<DeleteProjectResponse, BackendError> {
+        let project = self.clone();
+        let response = spawn_repository_work(move || project.delete_persisted(request)).await?;
+        self.git_cleanup.notify();
+        Ok(response)
+    }
+
+    /// Keeps database cascades, active-session refusal, and history cleanup in one owned use case.
+    fn delete_persisted(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {

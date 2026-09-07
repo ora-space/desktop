@@ -1,19 +1,19 @@
 import * as React from "react";
 
 // --- Tiptap UI ---
-import type { UseBlockquoteConfig } from "../blockquote-button";
-import { BLOCKQUOTE_SHORTCUT_KEY, useBlockquote } from "../blockquote-button";
+import type { UseBlockquoteConfig } from "./index.tsx";
+import { BLOCKQUOTE_SHORTCUT_KEY, useBlockquote } from "./index.tsx";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Lib ---
-import { parseShortcutKeys } from "../../utils";
+import { parseShortcutKeys } from "../../utils.ts";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button } from "../../primitive/button";
-import { Badge } from "../../primitive/badge";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button } from "../../primitive/button/index.tsx";
+import { Badge } from "../../primitive/badge/index.tsx";
 
 export interface BlockquoteButtonProps
   extends Omit<ButtonProps, "type">, UseBlockquoteConfig {

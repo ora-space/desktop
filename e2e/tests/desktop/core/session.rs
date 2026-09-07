@@ -1,6 +1,8 @@
 //! Integration coverage for lazy session creation and plugin-owned model discovery.
 
 mod tests {
+    mod lifecycle;
+
     use crate::setup::DesktopTestSetup;
     use agent_client_protocol_schema::v1::{SessionConfigKind, SessionConfigOption};
     use ora_backend::Backend;
@@ -50,14 +52,14 @@ mod tests {
         let backend = open_ready_backend(&setup)?;
         let workspace = setup.root().join("workspace");
         fs::create_dir_all(&workspace)?;
-        backend.create_project(CreateProjectRequest {
+        backend.projects().create(CreateProjectRequest {
             name: "Session E2E".to_string(),
             main_workspace_path: workspace.to_string_lossy().into_owned(),
         })?;
         let workspace_id = main_workspace_id(&backend)?;
 
         let runtime = current_thread_runtime()?;
-        let models = runtime.block_on(backend.list_agent_models(ListAgentModelsRequest {
+        let models = runtime.block_on(backend.agent_runtime().models(ListAgentModelsRequest {
             agent_ref: agent_ref(),
             workspace_id,
         }))?;
@@ -72,7 +74,7 @@ mod tests {
             "discovery must be asked exactly once, against the Workspace's own directory",
         );
         assert_eq!(
-            backend.list_sessions(ListSessionsRequest {})?.sessions,
+            backend.sessions().list(ListSessionsRequest {})?.sessions,
             Vec::new(),
             "listing models must not leave a session behind",
         );
@@ -90,14 +92,14 @@ mod tests {
         let backend = open_ready_backend(&setup)?;
         let workspace = setup.root().join("workspace");
         fs::create_dir_all(&workspace)?;
-        backend.create_project(CreateProjectRequest {
+        backend.projects().create(CreateProjectRequest {
             name: "Session E2E".to_string(),
             main_workspace_path: workspace.to_string_lossy().into_owned(),
         })?;
         let workspace_id = main_workspace_id(&backend)?;
         let runtime = current_thread_runtime()?;
         let chosen = runtime
-            .block_on(backend.list_agent_models(ListAgentModelsRequest {
+            .block_on(backend.agent_runtime().models(ListAgentModelsRequest {
                 agent_ref: agent_ref(),
                 workspace_id: workspace_id.clone(),
             }))?
@@ -107,7 +109,7 @@ mod tests {
             .ok_or("the fake agent offers a model other than its default")?
             .id;
 
-        let started = runtime.block_on(backend.start_session(StartSessionRequest {
+        let started = runtime.block_on(backend.sessions().start(StartSessionRequest {
             workspace_id: workspace_id.clone(),
             agent_ref: agent_ref(),
             model: Some(chosen.clone()),
@@ -121,7 +123,8 @@ mod tests {
         );
         assert_eq!(
             backend
-                .list_sessions(ListSessionsRequest {})?
+                .sessions()
+                .list(ListSessionsRequest {})?
                 .sessions
                 .into_iter()
                 .map(|session| session.id)
@@ -158,7 +161,8 @@ mod tests {
     /// Resolves the main Workspace the project checkout created.
     fn main_workspace_id(backend: &Backend) -> Result<String, Box<dyn std::error::Error>> {
         Ok(backend
-            .list_workspaces(ListWorkspacesRequest {})?
+            .workspaces()
+            .list(ListWorkspacesRequest {})?
             .workspaces
             .into_iter()
             .find(|workspace| workspace.kind == WorkspaceKind::Main)
@@ -174,7 +178,8 @@ mod tests {
         let expected = agent_ref();
         wait_until("fake OpenCode agent did not become ready", || {
             backend
-                .get_agent_runtime_status(GetAgentRuntimeStatusRequest {})
+                .agent_runtime()
+                .status(GetAgentRuntimeStatusRequest {})
                 .is_ok_and(|response| {
                     response.statuses.iter().any(|runtime| {
                         runtime.agent_ref == expected && runtime.status == AgentStatus::Ready

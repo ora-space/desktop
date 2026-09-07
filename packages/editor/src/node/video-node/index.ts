@@ -1,2 +1,2 @@
-export * from "./video-extension";
-export * from "./video-component";
+export * from "./video-extension.ts";
+export * from "./video-component.tsx";

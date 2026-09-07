@@ -1,5 +1,6 @@
 import type {
   WorkflowDefinition,
+  WorkflowGlobalVariable,
   WorkflowNodeData,
   WorkflowPosition,
   WorkflowViewport,
@@ -33,6 +34,8 @@ export interface WorkflowDefinitionInputEdge {
   type?: string;
   label?: unknown;
   data?: Record<string, unknown>;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
 }
 
 /** Editor-facing shape accepted at the deploy boundary before normalization. */
@@ -42,6 +45,7 @@ export interface WorkflowDefinitionInput {
   description: string;
   updatedAt: string;
   viewport: WorkflowViewport;
+  globalVariables?: readonly WorkflowGlobalVariable[];
   nodes: readonly WorkflowDefinitionInputNode[];
   edges: readonly WorkflowDefinitionInputEdge[];
 }
@@ -56,11 +60,14 @@ export function normalizeWorkflowDefinition(
     description: input.description,
     updatedAt: input.updatedAt,
     viewport: { ...input.viewport },
+    ...(input.globalVariables === undefined
+      ? {}
+      : { globalVariables: structuredClone([...input.globalVariables]) }),
     nodes: input.nodes.map((node) => ({
       id: node.id,
       type: "workflow",
       position: { ...node.position },
-      data: structuredClone(node.data),
+      data: normalizeWorkflowNodeData(node.data),
       ...(node.deletable === undefined ? {} : { deletable: node.deletable }),
       ...(node.initialWidth === undefined
         ? {}
@@ -76,10 +83,30 @@ export function normalizeWorkflowDefinition(
       ...(edge.type === "workflow" ? { type: "workflow" as const } : {}),
       ...(typeof edge.label === "string" ? { label: edge.label } : {}),
       ...(edge.data === undefined ? {} : { data: structuredClone(edge.data) }),
+      ...(typeof edge.sourceHandle === "string"
+        ? { sourceHandle: edge.sourceHandle }
+        : {}),
+      ...(typeof edge.targetHandle === "string"
+        ? { targetHandle: edge.targetHandle }
+        : {}),
     })),
   };
   validateWorkflowDefinition(definition);
   return definition;
+}
+
+/** Migrates deprecated Start instruction data while preserving all other node configuration. */
+function normalizeWorkflowNodeData(data: WorkflowNodeData): WorkflowNodeData {
+  const cloned = structuredClone(data);
+  if (
+    cloned.kind === "start" &&
+    cloned.input === undefined &&
+    cloned.instruction !== undefined
+  ) {
+    const { instruction, ...startData } = cloned;
+    return { ...startData, input: instruction };
+  }
+  return cloned;
 }
 
 /**

@@ -9,9 +9,11 @@ import { createChatStore } from "@ora/chat";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -23,11 +25,26 @@ import {
   SkillsSettings,
 } from "./atoms-settings";
 
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createAgentMemory(), ...createSkillMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...agentHandlers(state),
+    ...skillHandlers(state),
+  };
+}
+
 function renderSettings(
   kind: "agent" | "skill",
-  configure?: (client: ReturnType<typeof createMockClient>) => void,
+  configure?: (handlers: TestHandlers) => void,
 ) {
-  const state = createMockClientState();
+  const state = createFixtureState();
   if (kind === "agent") {
     state.agents = [
       {
@@ -49,20 +66,21 @@ function renderSettings(
       },
     ];
   }
-  const client = createMockClient(state);
-  client.agent.get = async ({ agentId }) => ({
+  const clientHandlers: TestHandlers = createFixtureHandlers(state);
+  const client = createTestClient(clientHandlers);
+  clientHandlers.getAgent = async ({ agentId }) => ({
     agent: {
       ...state.agents.find((agent) => agent.id === agentId)!,
       content: "**Agent instructions**",
     },
   });
-  client.skill.get = async ({ skillId }) => ({
+  clientHandlers.getSkill = async ({ skillId }) => ({
     skill: {
       ...state.skills.find((skill) => skill.id === skillId)!,
       content: "## Skill instructions",
     },
   });
-  configure?.(client);
+  configure?.(clientHandlers);
   const Wrapper = createHookWrapper(
     client,
     createTestQueryClient(),
@@ -93,8 +111,8 @@ describe("atom settings content", () => {
         description: "Reviews changes",
       },
     }));
-    renderSettings("agent", (client) => {
-      client.agent.update = update;
+    renderSettings("agent", (handlers) => {
+      handlers.updateAgent = update;
     });
 
     await user.click(await screen.findByRole("button", { name: "编辑" }));
@@ -107,20 +125,23 @@ describe("atom settings content", () => {
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith({
-        agentId: "agent-1",
-        name: "review-agent",
-        description: "Reviews changes",
-        content: "# Updated agent",
-      }),
+      expect(update).toHaveBeenCalledWith(
+        {
+          agentId: "agent-1",
+          name: "review-agent",
+          description: "Reviews changes",
+          content: "# Updated agent",
+        },
+        undefined,
+      ),
     );
   });
 
   it("collapses long plugin sources to an icon and reveals the full id on hover", async () => {
     const user = userEvent.setup();
     const pluginId = "official/review-pack-with-a-name-that-does-not-fit";
-    renderSettings("skill", (client) => {
-      client.skill.list = async () => ({
+    renderSettings("skill", (handlers) => {
+      handlers.listSkills = async () => ({
         skills: [
           {
             id: "plugin:" + pluginId + ":review",
@@ -132,7 +153,7 @@ describe("atom settings content", () => {
           },
         ],
       });
-      client.plugin.listInstalled = async () => ({ plugins: [] });
+      handlers.listInstalledPlugins = async () => ({ plugins: [] });
     });
 
     const item = await screen.findByRole("listitem");
@@ -162,8 +183,8 @@ describe("atom settings content", () => {
         availability: "available" as const,
       },
     }));
-    renderSettings("skill", (client) => {
-      client.skill.update = update;
+    renderSettings("skill", (handlers) => {
+      handlers.updateSkill = update;
     });
 
     const importButton = await screen.findByRole("button", {
@@ -183,12 +204,15 @@ describe("atom settings content", () => {
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith({
-        skillId: "skill-1",
-        name: "review-skill",
-        description: "Reviews changes",
-        content: "",
-      }),
+      expect(update).toHaveBeenCalledWith(
+        {
+          skillId: "skill-1",
+          name: "review-skill",
+          description: "Reviews changes",
+          content: "",
+        },
+        undefined,
+      ),
     );
   });
 
@@ -244,9 +268,9 @@ describe("atom settings content", () => {
         }),
       );
       const create = kind === "agent" ? createAgent : createSkill;
-      renderSettings(kind, (client) => {
-        if (kind === "agent") client.agent.create = createAgent;
-        else client.skill.create = createSkill;
+      renderSettings(kind, (handlers) => {
+        if (kind === "agent") handlers.createAgent = createAgent;
+        else handlers.createSkill = createSkill;
       });
 
       await user.click(await screen.findByRole("button", { name: buttonName }));
@@ -258,15 +282,18 @@ describe("atom settings content", () => {
       await user.click(screen.getByRole("button", { name: "保存" }));
 
       await waitFor(() =>
-        expect(create).toHaveBeenCalledWith({ name, description, content }),
+        expect(create).toHaveBeenCalledWith(
+          { name, description, content },
+          undefined,
+        ),
       );
     },
   );
 
   it("shows the Role name conflict returned by the backend", async () => {
     const user = userEvent.setup();
-    renderSettings("agent", (client) => {
-      client.agent.create = async () => {
+    renderSettings("agent", (handlers) => {
+      handlers.createAgent = async () => {
         throw new RemoteContractError(
           {
             code: "agent_name_conflict",
@@ -289,8 +316,8 @@ describe("atom settings content", () => {
   it("blocks saving while Agent content is loading or failed", async () => {
     const user = userEvent.setup();
     let rejectLoad: ((reason?: unknown) => void) | undefined;
-    renderSettings("agent", (client) => {
-      client.agent.get = () =>
+    renderSettings("agent", (handlers) => {
+      handlers.getAgent = () =>
         new Promise((_resolve, reject) => {
           rejectLoad = reject;
         });
@@ -307,7 +334,7 @@ describe("atom settings content", () => {
 
   it("offers delete or re-upload when a skill package is unavailable", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.skills = [
       {
         id: "skill-1",
@@ -318,8 +345,9 @@ describe("atom settings content", () => {
         availability: "unavailable",
       },
     ];
-    const client = createMockClient(state);
-    client.skill.get = async ({ skillId }) => ({
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    clientHandlers.getSkill = async ({ skillId }) => ({
       skill: {
         ...state.skills.find((skill) => skill.id === skillId)!,
         content: "",
@@ -388,9 +416,9 @@ describe("atom settings content", () => {
         description: "Imported review agent",
       },
     }));
-    renderSettings("agent", (client) => {
-      client.agentImport.prepare = prepare;
-      client.agentImport.commit = commit;
+    renderSettings("agent", (handlers) => {
+      handlers.prepareAgentImport = prepare;
+      handlers.commitAgentImport = commit;
     });
 
     const importButton = await screen.findByRole("button", {
@@ -417,14 +445,17 @@ describe("atom settings content", () => {
     await user.click(within(dialog).getByRole("button", { name: "确认导入" }));
 
     await waitFor(() =>
-      expect(commit).toHaveBeenCalledWith({
-        content: markdown,
-        decision: "overwrite",
-        expectedAgentId: "agent-1",
-        expectedUpdatedAt: 42,
-      }),
+      expect(commit).toHaveBeenCalledWith(
+        {
+          content: markdown,
+          decision: "overwrite",
+          expectedAgentId: "agent-1",
+          expectedUpdatedAt: 42,
+        },
+        undefined,
+      ),
     );
-    expect(prepare).toHaveBeenCalledWith({ content: markdown });
+    expect(prepare).toHaveBeenCalledWith({ content: markdown }, undefined);
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -460,9 +491,9 @@ describe("atom settings content", () => {
           },
         },
       });
-    renderSettings("agent", (client) => {
-      client.agentImport.prepare = prepare;
-      client.agentImport.commit = async () => ({
+    renderSettings("agent", (handlers) => {
+      handlers.prepareAgentImport = prepare;
+      handlers.commitAgentImport = async () => ({
         status: "stale_conflict",
         agent: null,
       });
@@ -728,8 +759,10 @@ function renderSkillImportDialog(
   session: SkillImportSession,
   extras?: { restoreName?: string },
 ) {
-  const client = createMockClient(createMockClientState());
-  client.skillImport.get = async () => ({ session });
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
+  clientHandlers.getSkillImport = async () => ({ session });
   const Wrapper = createHookWrapper(
     client,
     createTestQueryClient(),
@@ -754,8 +787,10 @@ function renderSkillImportDialog(
 
 /** Keeps restoreName in React state so successful restore can drop the name constraint. */
 function renderRestoreImportDialog(session: SkillImportSession) {
-  const client = createMockClient(createMockClientState());
-  client.skillImport.get = async () => ({ session });
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
+  clientHandlers.getSkillImport = async () => ({ session });
   const Wrapper = createHookWrapper(
     client,
     createTestQueryClient(),

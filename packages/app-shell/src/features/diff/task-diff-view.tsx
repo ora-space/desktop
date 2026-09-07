@@ -1,5 +1,4 @@
 import {
-  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,13 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Decoration,
-  Diff,
-  Hunk,
-  getChangeKey,
-  type FileData,
-} from "react-diff-view";
+import { type FileData } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
 import type { WorkspaceDiffScope } from "@ora/contracts";
@@ -40,9 +33,7 @@ import {
   SelectTrigger,
 } from "@ora/ui";
 import {
-  IconChevronDown,
   IconCode,
-  IconFileDiff,
   IconGitBranch,
   IconRefresh,
   IconUpload,
@@ -50,17 +41,19 @@ import {
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
-import { queryKeys } from "../../state/hooks/query-keys";
+import { invalidateWorkspaceDiffs } from "../../state/data/diff";
 import { useWorkspaceDiff } from "../../state/hooks/use-workspace-diff";
 import {
-  buildCollapsedDiffSegments,
-  findDiffLineTargets,
-} from "./task-diff-collapse";
-import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
+  countChanges,
+  DEFER_PARSE_PATCH_CHARS,
+  parseTaskDiffSegment,
+  splitPatchSegments,
+} from "./task-diff-data";
 import { diffFilePath } from "./task-diff-file-tree-utils";
+import { MemoizedTaskDiffFile, type TaskDiffFileProps } from "./task-diff-file";
 import { TaskDiffFileTree } from "./task-diff-file-tree";
-import { useTaskDiffQuoteGutter } from "./task-diff-quote-gutter";
 import { TaskGitActions } from "./task-git-actions";
+import { TaskDiffFocusBody } from "./task-diff-focus-view";
 import {
   animatePanelWidth,
   cancelPanelWidthAnimation,
@@ -70,11 +63,12 @@ import {
   fileNavigationLocation,
   type FileNavigationLocation,
 } from "./task-changes-navigation-context";
-import { diffLineScrollTop, isDiffScrollAtEnd } from "./task-diff-scroll";
+import { isDiffScrollAtEnd } from "./task-diff-scroll";
 import {
   runDiffFileScroll,
   type DiffFileScrollRunHandle,
 } from "./task-diff-scroll-run";
+import { TaskDiffScrollArea } from "./task-diff-scroll-area";
 
 /** Matches the changes-panel slide so the file tree toggle feels consistent. */
 const FILE_TREE_SLIDE_MS = 180;
@@ -82,6 +76,16 @@ const FILE_TREE_WIDTH = 240;
 /** Narrowest tree width a user resize settles on; below it the tree collapses. */
 const FILE_TREE_MIN_WIDTH = 180;
 const FILE_TREE_COLLAPSE_THRESHOLD = FILE_TREE_MIN_WIDTH / 2;
+
+/**
+ * Parsed `FileData` keyed by the per-file patch slice, so a live-sync
+ * invalidation that rewrites only a few files returns the same `FileData`
+ * reference for unchanged slices and the sibling `memo` comparison skips them
+ * on re-render. Module-level (not a ref) because it is read during render; the
+ * patch slices it keys are already retained by the react-query cache, so its
+ * growth is bounded by the patches the session has loaded.
+ */
+const segmentFileCache = new Map<string, FileData>();
 
 interface TaskDiffViewProps {
   workspaceId: string;
@@ -112,6 +116,25 @@ export interface TaskDiffFileRequest {
   /** Patch side the line numbers belong to; omitted for new-side chat links. */
   side?: "old" | "new";
 }
+
+/**
+ * A single file with this many changed lines switches to the row-windowed body
+ * (see `task-diff-virtualized-file.tsx`), which only runs under the single-file
+ * focus body. Auto-focus therefore also triggers when any one file reaches this
+ * size, so a lone huge change-set is focused and windowed rather than rendered
+ * as one long native table.
+ */
+const ROW_VIRTUALIZE_MIN_CHANGES = 400;
+/**
+ * Auto-selects the focused (single-file) body above these sizes. The scroll
+ * body maps every file into one DOM list, so a high file count, a large
+ * change-set, or a single file big enough to row-window (above
+ * `ROW_VIRTUALIZE_MIN_CHANGES`) is what makes the single-file body worth it. A
+ * manual toggle sticks for the component lifetime, so `auto` or `scroll` only
+ * flips until the user picks; it is not re-evaluated on file count changes.
+ */
+const FOCUS_MODE_FILE_COUNT = 25;
+const FOCUS_MODE_TOTAL_CHANGES = 2000;
 
 /** Renders a task worktree patch. */
 export function TaskDiffView({
@@ -149,6 +172,37 @@ export function TaskDiffView({
   const jumpHighlightDismissed =
     fileRequest !== undefined &&
     fileRequest.requestId === dismissedJumpRequestId;
+  /**
+   * Shared jump-wash dismissal: a left-click on a non-cited, non-chrome region
+   * clears the highlighted jump so the next chat citation can repaint. Used by
+   * both the continuous scroll body and the single-file focus body (windowed),
+   * so clicking elsewhere in the diff always dismisses the highlight.
+   */
+  const dismissJumpHighlight = useCallback(
+    (event: React.MouseEvent) => {
+      if (
+        event.button !== 0 ||
+        jumpHighlightDismissed ||
+        fileRequest?.line === undefined ||
+        !(event.target instanceof Element)
+      ) {
+        return;
+      }
+      const onCitedRow =
+        event.target.closest(".diff-code-selected, .diff-selected") !== null;
+      const onChrome = event.target.closest("button") !== null;
+      if (!onCitedRow && !onChrome) {
+        setDismissedJumpRequestId(fileRequest.requestId);
+      }
+    },
+    [fileRequest, jumpHighlightDismissed],
+  );
+  // Stable so passing it into `MemoizedTaskDiffFile` does not defeat its memo:
+  // an inline arrow would change identity on every render and force every
+  // mounted file to re-render its expensive `<Diff>` subtree.
+  const openFileTree = useCallback(() => {
+    onFileTreeOpenChange(true);
+  }, [onFileTreeOpenChange]);
   // Last tree-click flash. It is never cleared by a timer: the overlay fades
   // to transparent via `animation-fill-mode`, and re-clicking re-keys it to
   // replay — so a click on an already-visible file still gets feedback.
@@ -188,13 +242,38 @@ export function TaskDiffView({
     onPreviewPathChangeRef.current?.(path);
   }, []);
 
-  const files = useMemo(
-    () =>
-      diffQuery.data === undefined
-        ? []
-        : parseTaskDiffPatch(diffQuery.data.patch),
-    [diffQuery.data],
+  /**
+   * Two-step parse (A1): a patch above `DEFER_PARSE_PATCH_CHARS` returns an
+   * empty list on the first render and lets the session page paint, then a
+   * post-paint macro-task parses. Mount-only — a refetch never re-defers.
+   */
+  const patch = diffQuery.data?.patch ?? "";
+  const [parseDeferred, setParseDeferred] = useState(
+    () => patch.length > DEFER_PARSE_PATCH_CHARS,
   );
+  useEffect(() => {
+    if (!parseDeferred) return;
+    const timer = setTimeout(() => setParseDeferred(false), 0);
+    return () => clearTimeout(timer);
+  }, [parseDeferred]);
+
+  const files = useMemo(() => {
+    if (patch.length === 0 || parseDeferred) return [];
+    const parsed: FileData[] = [];
+    for (const segment of splitPatchSegments(patch)) {
+      const cached = segmentFileCache.get(segment);
+      if (cached !== undefined) {
+        parsed.push(cached);
+        continue;
+      }
+      const file = parseTaskDiffSegment(segment);
+      if (file !== undefined) {
+        segmentFileCache.set(segment, file);
+        parsed.push(file);
+      }
+    }
+    return parsed;
+  }, [patch, parseDeferred]);
   const filePaths = useMemo(() => files.map(diffFilePath), [files]);
   const stats = useMemo(() => countChanges(files), [files]);
   const changedFilesLabel = t("diff.changedFilesLabel", {
@@ -208,9 +287,45 @@ export function TaskDiffView({
         ? selectedFilePath!
         : filePaths[0]!;
 
+  /**
+   * View mode is driven entirely by the diff size: a large change-set (many
+   * files, many changed lines, or one file big enough to row-window) uses the
+   * single-file focus body, otherwise the continuous scroll body. The focus
+   * body windows a huge file into native chunk hunks, so it is the only layout
+   * that stays fast for a big diff; the scroll body mounts every file as one
+   * full table and cannot window per-file. Derived (not ref-stored) so the
+   * deferred parse flip below also gates the mode correctly.
+   */
+  const largestFileChanges = useMemo(
+    () =>
+      files.reduce(
+        (max, file) =>
+          Math.max(
+            max,
+            file.hunks.reduce((total, hunk) => total + hunk.changes.length, 0),
+          ),
+        0,
+      ),
+    [files],
+  );
+  const autoFocus =
+    files.length > FOCUS_MODE_FILE_COUNT ||
+    stats.additions + stats.deletions > FOCUS_MODE_TOTAL_CHANGES ||
+    largestFileChanges > ROW_VIRTUALIZE_MIN_CHANGES;
+  const isFocusMode = autoFocus;
+  const focusFile =
+    isFocusMode && activeFilePath !== ""
+      ? (files.find((file) => diffFilePath(file) === activeFilePath) ?? null)
+      : null;
+
+  // Deferring the parse leaves `filePaths` empty for one render. Do not mark
+  // the request applied yet, or `onFileNotFound` (a chat jump that could not
+  // resolve a path) fires while the patch is still parsing and yanks the
+  // layout into the Files panel. Once the parse lands the block re-runs.
   if (
     fileRequest !== undefined &&
     !diffQuery.isLoading &&
+    !parseDeferred &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
     setAppliedFileRequestId(fileRequest.requestId);
@@ -268,18 +383,19 @@ export function TaskDiffView({
   // A run outliving this panel must not keep scrolling against detached nodes.
   useEffect(() => () => activeScrollRunRef.current?.cancel(), []);
 
-  /** Selects a changed file and aligns its header with the top of the Diff viewport. */
+  /** Selects a changed file; in scroll mode also aligns its header with the top. */
   const selectFile = useCallback(
     (path: string) => {
       setSelectedFilePath(path);
       notifyPreviewPath(path);
-      startScrollRun(path);
+      if (!isFocusMode) startScrollRun(path);
       setFileFlash((current) => ({ path, seq: (current?.seq ?? 0) + 1 }));
     },
-    [notifyPreviewPath, startScrollRun],
+    [isFocusMode, notifyPreviewPath, startScrollRun],
   );
 
   useLayoutEffect(() => {
+    if (isFocusMode) return;
     if (fileRequest === undefined || diffQuery.isLoading) return;
     if (fileRequest.requestId !== appliedFileRequestId) return;
     // One jump per request: the run itself owns retries, so selection changes
@@ -299,12 +415,15 @@ export function TaskDiffView({
     diffQuery.isLoading,
     filePaths,
     fileRequest,
+    isFocusMode,
     selectedFilePath,
     startScrollRun,
   ]);
 
   useEffect(() => {
-    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest === undefined || diffQuery.isLoading || parseDeferred) {
+      return;
+    }
     if (fileRequest.requestId !== appliedFileRequestId) return;
     const matchingPath = filePaths.find((path) =>
       pathsMatchForWorkspace(fileRequest.path, path),
@@ -325,6 +444,7 @@ export function TaskDiffView({
     filePaths,
     diffQuery.isLoading,
     onFileNotFound,
+    parseDeferred,
   ]);
 
   useEffect(() => {
@@ -357,6 +477,7 @@ export function TaskDiffView({
   }, []);
 
   useEffect(() => {
+    if (isFocusMode) return;
     const root = scrollContainerRef.current;
     if (root === null || filePaths.length === 0) return;
     let frame: number | null = null;
@@ -397,7 +518,7 @@ export function TaskDiffView({
       root.removeEventListener("scroll", updateActiveFile);
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [filePaths, notifyPreviewPath]);
+  }, [filePaths, isFocusMode, notifyPreviewPath]);
 
   const commitChanges = useMutation({
     mutationFn: (message: string) =>
@@ -409,9 +530,7 @@ export function TaskDiffView({
       // A baseline-less workspace has no fixed "committed" comparison to show;
       // its remaining uncommitted changes are still the most useful view.
       setScope(hasBaseline ? "committed" : "unstaged");
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.workspaceDiffs(workspaceId),
-      });
+      await invalidateWorkspaceDiffs(queryClient, workspaceId);
     },
   });
   const pushBranch = useMutation({
@@ -560,7 +679,7 @@ export function TaskDiffView({
           </Button>
         </div>
         <div className="flex-1" />
-        <div className="ora-diff-toolbar__view-controls shrink-0">
+        <div className="ora-diff-toolbar__view-controls flex min-w-0 shrink items-center gap-0.5">
           {toolbar}
         </div>
       </header>
@@ -596,10 +715,14 @@ export function TaskDiffView({
         }`}
       >
         {files.length === 0 ? (
-          <DiffMessage
-            title={t("diff.noChanges")}
-            detail={t("diff.noChangesDetail")}
-          />
+          parseDeferred ? (
+            <DiffLoadingState />
+          ) : (
+            <DiffMessage
+              title={t("diff.noChanges")}
+              detail={t("diff.noChangesDetail")}
+            />
+          )
         ) : (
           <ResizablePanelGroup
             orientation="horizontal"
@@ -613,81 +736,111 @@ export function TaskDiffView({
               style={{ height: "100%", overflow: "hidden" }}
               minSize={280}
             >
-              <div
-                ref={scrollContainerRef}
-                className="ora-scroll-region ora-diff-scroll-region h-full min-w-0 overflow-auto bg-background"
-                onMouseDown={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    jumpHighlightDismissed ||
-                    fileRequest?.line === undefined ||
-                    !(event.target instanceof Element)
-                  ) {
-                    return;
+              {isFocusMode ? (
+                <TaskDiffFocusBody
+                  file={focusFile}
+                  viewType={viewType}
+                  fileTreeOpen={fileTreeOpen}
+                  onExpandFileTree={openFileTree}
+                  onDismissJumpHighlight={dismissJumpHighlight}
+                  fileFlash={
+                    fileFlash?.path === activeFilePath ? fileFlash : null
                   }
-                  const onCitedRow =
-                    event.target.closest(
-                      ".diff-code-selected, .diff-selected",
-                    ) !== null;
-                  const onChrome = event.target.closest("button") !== null;
-                  if (!onCitedRow && !onChrome) {
-                    setDismissedJumpRequestId(fileRequest.requestId);
+                  targetLine={
+                    !jumpHighlightDismissed &&
+                    fileRequest !== undefined &&
+                    focusFile !== null &&
+                    pathsMatchForWorkspace(
+                      fileRequest.path,
+                      diffFilePath(focusFile),
+                    )
+                      ? fileRequest.line
+                      : undefined
                   }
-                }}
-              >
-                <div className="flex w-full flex-col pb-6 pl-4">
-                  {files.map((file, fileIndex) => {
-                    const path = diffFilePath(file);
-                    return (
-                      <div
-                        key={`${file.oldPath}-${file.newPath}-${fileIndex}`}
-                        ref={(element) => {
-                          if (element === null)
-                            fileElementsRef.current.delete(path);
-                          else fileElementsRef.current.set(path, element);
-                        }}
-                        data-diff-path={path}
-                        className="relative scroll-mt-0"
-                      >
-                        <TaskDiffFileViewport
-                          file={file}
-                          viewType={viewType}
-                          targetLine={
-                            !jumpHighlightDismissed &&
-                            fileRequest !== undefined &&
-                            pathsMatchForWorkspace(fileRequest.path, path)
-                              ? fileRequest.line
-                              : undefined
-                          }
-                          targetEndLine={
-                            !jumpHighlightDismissed &&
-                            fileRequest !== undefined &&
-                            pathsMatchForWorkspace(fileRequest.path, path)
-                              ? fileRequest.endLine
-                              : undefined
-                          }
-                          targetSide={
-                            !jumpHighlightDismissed &&
-                            fileRequest !== undefined &&
-                            pathsMatchForWorkspace(fileRequest.path, path)
-                              ? fileRequest.side
-                              : undefined
-                          }
-                          rootRef={scrollContainerRef}
-                          forceRender={activeFilePath === path}
-                        />
-                        {fileFlash?.path === path && (
-                          <div
-                            key={fileFlash.seq}
-                            aria-hidden="true"
-                            className="ora-diff-file-flash"
+                  targetEndLine={
+                    !jumpHighlightDismissed &&
+                    fileRequest !== undefined &&
+                    focusFile !== null &&
+                    pathsMatchForWorkspace(
+                      fileRequest.path,
+                      diffFilePath(focusFile),
+                    )
+                      ? fileRequest.endLine
+                      : undefined
+                  }
+                  targetSide={
+                    !jumpHighlightDismissed &&
+                    fileRequest !== undefined &&
+                    focusFile !== null &&
+                    pathsMatchForWorkspace(
+                      fileRequest.path,
+                      diffFilePath(focusFile),
+                    )
+                      ? fileRequest.side
+                      : undefined
+                  }
+                />
+              ) : (
+                <TaskDiffScrollArea
+                  viewportRef={scrollContainerRef}
+                  onMouseDown={dismissJumpHighlight}
+                >
+                  <div className="flex w-full flex-col pb-6 pl-4">
+                    {files.map((file, fileIndex) => {
+                      const path = diffFilePath(file);
+                      return (
+                        <div
+                          key={`${file.oldPath}-${file.newPath}-${fileIndex}`}
+                          ref={(element) => {
+                            if (element === null)
+                              fileElementsRef.current.delete(path);
+                            else fileElementsRef.current.set(path, element);
+                          }}
+                          data-diff-path={path}
+                          className="relative scroll-mt-0"
+                        >
+                          <TaskDiffFileViewport
+                            file={file}
+                            viewType={viewType}
+                            fileTreeOpen={fileTreeOpen}
+                            onExpandFileTree={openFileTree}
+                            targetLine={
+                              !jumpHighlightDismissed &&
+                              fileRequest !== undefined &&
+                              pathsMatchForWorkspace(fileRequest.path, path)
+                                ? fileRequest.line
+                                : undefined
+                            }
+                            targetEndLine={
+                              !jumpHighlightDismissed &&
+                              fileRequest !== undefined &&
+                              pathsMatchForWorkspace(fileRequest.path, path)
+                                ? fileRequest.endLine
+                                : undefined
+                            }
+                            targetSide={
+                              !jumpHighlightDismissed &&
+                              fileRequest !== undefined &&
+                              pathsMatchForWorkspace(fileRequest.path, path)
+                                ? fileRequest.side
+                                : undefined
+                            }
+                            rootRef={scrollContainerRef}
+                            forceRender={activeFilePath === path}
                           />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                          {fileFlash?.path === path && (
+                            <div
+                              key={fileFlash.seq}
+                              aria-hidden="true"
+                              className="ora-diff-file-flash"
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </TaskDiffScrollArea>
+              )}
             </ResizablePanel>
             <ResizableHandle
               withHandle
@@ -727,6 +880,7 @@ export function TaskDiffView({
                   files={files}
                   selectedPath={activeFilePath}
                   onSelect={selectFile}
+                  onCollapse={() => onFileTreeOpenChange(false)}
                 />
               )}
             </ResizablePanel>
@@ -792,208 +946,18 @@ function PushBranchDialog({
   );
 }
 
-interface TaskDiffFileProps {
-  file: FileData;
-  viewType: TaskDiffViewType;
-  targetLine?: number;
-  targetEndLine?: number;
-  targetSide?: "old" | "new";
-}
-
-/** Renders one parsed patch file. */
-function TaskDiffFile({
-  file,
-  viewType,
-  targetLine,
-  targetEndLine,
-  targetSide = "new",
-}: TaskDiffFileProps) {
-  const { t } = useTranslation();
-  const fileRootRef = useRef<HTMLElement | null>(null);
-  const [expanded, setExpanded] = useState(true);
-  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const { renderGutter, quoteRootRef } = useTaskDiffQuoteGutter(file, viewType);
-  const fileStats = useMemo(() => countChanges([file]), [file]);
-  const jumpTargets = useMemo(
-    () =>
-      targetLine === undefined
-        ? []
-        : findDiffLineTargets(
-            file.hunks,
-            targetLine,
-            targetEndLine ?? targetLine,
-            targetSide,
-          ),
-    [file.hunks, targetEndLine, targetLine, targetSide],
-  );
-  const selectedChanges = useMemo(
-    () => jumpTargets.map((target) => getChangeKey(target.change)),
-    [jumpTargets],
-  );
-  const jumpScrollKey = selectedChanges[0] ?? null;
-  if (targetLine !== undefined && !expanded) {
-    setExpanded(true);
-  }
-  const collapsedKeysToExpand = jumpTargets
-    .map((target) => target.collapsedKey)
-    .filter((key): key is string => key !== null && !expandedBlocks.has(key));
-  if (collapsedKeysToExpand.length > 0) {
-    const next = new Set(expandedBlocks);
-    for (const key of collapsedKeysToExpand) next.add(key);
-    setExpandedBlocks(next);
-  }
-  const renderSegments = useMemo(
-    () => buildCollapsedDiffSegments(file.hunks, expandedBlocks),
-    [expandedBlocks, file.hunks],
-  );
-
-  useLayoutEffect(() => {
-    if (jumpScrollKey === null) return;
-    const selected = fileRootRef.current?.querySelector<HTMLElement>(
-      ".diff-code-selected, .diff-selected",
-    );
-    if (selected === null || selected === undefined) return;
-    const region = selected.closest<HTMLElement>(".ora-diff-scroll-region");
-    if (region === null) return;
-    if (typeof region.scrollTo !== "function") return;
-    // The effect also re-runs when the user expands or collapses unrelated
-    // blocks (renderSegments changes). Re-centering then would yank them back
-    // to the cited line while they read elsewhere, so only scroll when the
-    // highlighted row is not already fully inside the viewport — which is
-    // exactly the expand-then-reveal case the re-run exists for.
-    const row = selected.getBoundingClientRect();
-    const viewport = region.getBoundingClientRect();
-    if (row.top >= viewport.top && row.bottom <= viewport.bottom) return;
-    const top = diffLineScrollTop(region, selected);
-    if (top === null) return;
-    // Scroll only vertically (block: center) while persisting scrollLeft, so a
-    // jump to a long line never yanks the whole diff sideways.
-    region.scrollTo({ top, left: region.scrollLeft });
-  }, [jumpScrollKey, renderSegments]);
-
-  return (
-    <article ref={fileRootRef} className="bg-background">
-      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/95 backdrop-blur">
-        <button
-          type="button"
-          className="flex min-h-10 w-full items-center gap-2 px-2 py-2 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          aria-expanded={expanded}
-          aria-label={t(expanded ? "diff.collapseFile" : "diff.expandFile", {
-            path: displayPath(file),
-          })}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          <IconChevronDown
-            className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`}
-            aria-hidden="true"
-          />
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-violet-500/12 text-violet-700 ring-1 ring-inset ring-violet-500/15 dark:text-violet-300">
-            <IconFileDiff className="size-3.5" />
-          </span>
-          <span
-            className="min-w-0 flex-1 truncate font-mono text-xs"
-            title={displayPath(file)}
-          >
-            {displayPath(file)}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-emerald-600">
-            +{fileStats.additions}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-red-600">
-            −{fileStats.deletions}
-          </span>
-        </button>
-      </header>
-      {expanded &&
-        (file.hunks.length === 0 ? (
-          <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-            {file.isBinary ? t("diff.binary") : t("diff.metadataOnly")}
-          </div>
-        ) : (
-          <div
-            ref={(node) => {
-              quoteRootRef.current = node;
-            }}
-            data-quote-root
-            className={`ora-task-diff ora-task-diff--${viewType} ora-task-diff--${file.type} overflow-x-auto`}
-          >
-            {viewType === "split" && (
-              <div className="ora-diff-version-headings" aria-hidden="true">
-                <span>{t("diff.modifiedFile")}</span>
-                <span>{t("diff.originalFile")}</span>
-              </div>
-            )}
-            <Diff
-              viewType={viewType}
-              diffType={file.type}
-              hunks={file.hunks}
-              selectedChanges={selectedChanges}
-              renderGutter={renderGutter}
-              optimizeSelection
-            >
-              {() =>
-                renderSegments.map((segment) =>
-                  segment.kind === "hunk" ? (
-                    <Hunk key={segment.key} hunk={segment.hunk} />
-                  ) : (
-                    <Decoration
-                      key={segment.key}
-                      className="ora-diff-collapsed"
-                      contentClassName="ora-diff-collapsed-cell"
-                    >
-                      <button
-                        type="button"
-                        className="group flex h-8 w-full items-center justify-center gap-2 text-[11px] text-muted-foreground outline-none transition-colors hover:bg-violet-500/8 hover:text-foreground focus-visible:bg-violet-500/10 focus-visible:text-foreground"
-                        aria-label={t("diff.expandUnchanged", {
-                          count: segment.lineCount,
-                        })}
-                        onClick={() => {
-                          setExpandedBlocks((current) => {
-                            const next = new Set(current);
-                            next.add(segment.key);
-                            return next;
-                          });
-                        }}
-                      >
-                        <span className="flex size-5 items-center justify-center rounded-md bg-violet-500/10 text-violet-700 transition-colors group-hover:bg-violet-500/15 dark:text-violet-300">
-                          <IconChevronDown className="size-3.5" />
-                        </span>
-                        {t("diff.unchangedLinesHidden", {
-                          count: segment.lineCount,
-                        })}
-                      </button>
-                    </Decoration>
-                  ),
-                )
-              }
-            </Diff>
-          </div>
-        ))}
-    </article>
-  );
-}
-
-/** Compares one file's render inputs so sibling files can skip work. */
-function areTaskDiffFilePropsEqual(
-  previous: TaskDiffFileProps,
-  next: TaskDiffFileProps,
-): boolean {
-  return (
-    previous.file === next.file &&
-    previous.viewType === next.viewType &&
-    previous.targetLine === next.targetLine &&
-    previous.targetEndLine === next.targetEndLine &&
-    previous.targetSide === next.targetSide
-  );
-}
-
-const MemoizedTaskDiffFile = memo(TaskDiffFile, areTaskDiffFilePropsEqual);
-
 interface TaskDiffFileViewportProps extends TaskDiffFileProps {
   rootRef: RefObject<HTMLDivElement | null>;
   forceRender: boolean;
+}
+
+/** Placeholder height for a not-yet-rendered diff, close enough to avoid scroll jumps. */
+function diffFileEstimatedHeight(file: FileData): number {
+  return Math.max(
+    72,
+    48 +
+      file.hunks.reduce((total, hunk) => total + hunk.changes.length, 0) * 24,
+  );
 }
 
 /** Mounts nearby diff files on demand so large patches do not create one large DOM tree at once. */
@@ -1010,16 +974,7 @@ function TaskDiffFileViewport({
     () => forceRender || !supportsIntersectionObserver,
   );
   const shouldRender = forceRender || isNearViewport;
-  const estimatedHeight = useMemo(
-    () =>
-      Math.max(
-        72,
-        48 +
-          file.hunks.reduce((total, hunk) => total + hunk.changes.length, 0) *
-            24,
-      ),
-    [file.hunks],
-  );
+  const estimatedHeight = useMemo(() => diffFileEstimatedHeight(file), [file]);
 
   useEffect(() => {
     if (shouldRender) return;
@@ -1118,9 +1073,4 @@ function DiffMessage({ title, detail, action }: DiffMessageProps) {
       </div>
     </div>
   );
-}
-
-/** Chooses the path users expect for added, deleted, and renamed files. */
-function displayPath(file: FileData): string {
-  return file.type === "delete" ? file.oldPath : file.newPath;
 }

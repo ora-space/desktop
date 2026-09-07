@@ -3,6 +3,103 @@ import { LocalTransportError, RemoteContractError } from "@ora/contracts";
 import { createTauriTransport } from "./tauri-transport";
 
 describe("createTauriTransport", () => {
+  it("rejects unknown operations without invoking a command", async () => {
+    const invoke = vi.fn();
+    const transport = createTauriTransport(invoke);
+    const request = { operationName: "notDeclared", request: {} };
+    await expect(transport.send(request)).rejects.toBeInstanceOf(
+      LocalTransportError,
+    );
+    await expect(
+      transport.stream(request)[Symbol.asyncIterator]().next(),
+    ).rejects.toBeInstanceOf(LocalTransportError);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("does not create a pre-cancelled stream", async () => {
+    const invoke = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    const stream = createTauriTransport(invoke).stream(
+      { operationName: "watchAppEvents", request: {} },
+      { signal: controller.signal },
+    );
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      kind: "cancelled",
+    });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("signals cancellation while startup is pending and settles without yielding late data", async () => {
+    let resolveStartup!: () => void;
+    const startup = new Promise<void>((resolve) => {
+      resolveStartup = resolve;
+    });
+    const channel: { onmessage: (frame: unknown) => void } = {
+      onmessage: () => undefined,
+    };
+    const invoke = vi.fn().mockImplementation(async (command: string) => {
+      if (command === "stream_contract") await startup;
+    });
+    const controller = new AbortController();
+    const stream = createTauriTransport(invoke, () => channel).stream(
+      { operationName: "watchAppEvents", request: {} },
+      { signal: controller.signal },
+    );
+    const pending = stream[Symbol.asyncIterator]().next();
+    const rejected = expect(pending).rejects.toMatchObject({
+      kind: "cancelled",
+    });
+    controller.abort();
+    const id = invoke.mock.calls[0]?.[1]?.streamCallId;
+    expect(id).toEqual(expect.any(String));
+    expect(invoke).toHaveBeenCalledWith("cancel_contract_stream", {
+      streamCallId: id,
+    });
+    channel.onmessage({ type: "data", data: "late" });
+    resolveStartup();
+    await rejected;
+    expect(invoke).toHaveBeenLastCalledWith("cancel_contract_stream", {
+      streamCallId: id,
+    });
+  });
+
+  it("preserves the request id on a terminal stream failure and releases the stream", async () => {
+    const payload = {
+      code: "internal_error",
+      params: {},
+      requestId: "550e8400-e29b-41d4-a716-446655440000",
+    };
+    const invoke = vi
+      .fn()
+      .mockImplementation(
+        async (command: string, args: Record<string, unknown>) => {
+          if (command === "stream_contract") {
+            const channel = args.onEvent as {
+              onmessage: (frame: unknown) => void;
+            };
+            channel.onmessage({ type: "error", error: payload });
+            channel.onmessage({ type: "end" });
+          }
+        },
+      );
+    const stream = createTauriTransport(invoke, () => ({
+      onmessage: () => undefined,
+    })).stream({ operationName: "watchAppEvents", request: {} });
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).rejects.toMatchObject({
+      rawPayload: payload,
+    });
+    await expect(iterator.next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "cancel_contract_stream",
+      expect.any(Object),
+    );
+  });
+
   it("maps supported operations and forwards the complete request", async () => {
     const invoke = vi.fn().mockResolvedValue({ projects: [] });
     const transport = createTauriTransport(invoke, () => ({

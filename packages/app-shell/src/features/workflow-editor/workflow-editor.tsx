@@ -52,10 +52,13 @@ import { useUiStore } from "../../state/stores/ui-store";
 import {
   createMockWorkflowCapabilities,
   createMockWorkflowNode,
+  deriveWorkflowVariableCatalog,
+  normalizeWorkflowGlobalVariables,
   normalizeWorkflowNodeAgentConfigs,
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
+  type WorkflowGlobalVariable,
   type WorkflowAnnotationData,
   type WorkflowAnnotationNode,
   type WorkflowNodeData,
@@ -67,6 +70,7 @@ import {
   serializeWorkflowGraph,
   workflowTimestampToIso,
 } from "@ora/workflow-runtime";
+import type { EditorWorkflowVariable } from "./workflow-variable-display";
 import { usePlatform } from "../../platform";
 import { useContractsClient } from "../../contracts-client-context";
 import { useAgents } from "../../state/hooks/use-agents";
@@ -77,6 +81,7 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { organizeWorkflowNodes } from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
+import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { MCP_CATALOG } from "./mcp-catalog";
 import {
   useWorkflowEditorStore,
@@ -94,7 +99,7 @@ import {
   useWorkflowDraft,
   useWorkflowLibrary,
   useWorkflowVersions,
-} from "./workflow-definitions";
+} from "../../state/data/workflows";
 import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
 import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import { useWorkflowHistory } from "./use-workflow-history";
@@ -371,6 +376,8 @@ function WorkflowEditorContent({
   const [previewedVersion, setPreviewedVersion] =
     useState<MockWorkflowVersion | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [globalVariablesDialogOpen, setGlobalVariablesDialogOpen] =
+    useState(false);
   const [publishVersionName, setPublishVersionName] = useState("");
   const inspectorPanelRef = useRef<ResizablePanelHandle | null>(null);
   const inspectorAnimationRef = useRef<number | null>(null);
@@ -523,6 +530,9 @@ function WorkflowEditorContent({
       nodes,
       edges: envelope.edges,
       annotations: envelope.annotations,
+      globalVariables: normalizeWorkflowGlobalVariables(
+        envelope.globalVariables,
+      ),
     };
     setWorkflow(hydratedWorkflow);
     setHydratedWorkflowId(draftQuery.data.workflow.id);
@@ -600,6 +610,36 @@ function WorkflowEditorContent({
     [previewedVersion, workflow],
   );
   const inspectorAvailable = selectedNode !== null;
+  const variableCatalog = useMemo(
+    () =>
+      workflow === null
+        ? []
+        : (() => {
+            const globalVariables = normalizeWorkflowGlobalVariables(
+              workflow.globalVariables,
+            );
+            const globalSelectors = new Set(
+              globalVariables.map((variable) => variable.name),
+            );
+            const nodeInfo = new Map(
+              workflow.nodes.map((node) => [node.id, node.data]),
+            );
+            return deriveWorkflowVariableCatalog(
+              workflow.nodes,
+              workflow.edges,
+              selectedNode?.id,
+              globalVariables,
+            ).map<EditorWorkflowVariable>((variable) => ({
+              ...variable,
+              scope: globalSelectors.has(variable.selector.join("."))
+                ? "global"
+                : "node",
+              sourceNodeTitle: nodeInfo.get(variable.sourceNodeId)?.title,
+              sourceNodeKind: nodeInfo.get(variable.sourceNodeId)?.kind,
+            }));
+          })(),
+    [selectedNode?.id, workflow],
+  );
 
   useEffect(
     () => () => {
@@ -738,6 +778,9 @@ function WorkflowEditorContent({
         viewport: snapshot.viewport,
         nodes: snapshot.nodes,
         edges: snapshot.edges,
+        globalVariables: normalizeWorkflowGlobalVariables(
+          snapshot.globalVariables,
+        ),
       });
       await updateDraftMutation.mutateAsync({
         workflowId: snapshot.id,
@@ -746,6 +789,7 @@ function WorkflowEditorContent({
           edges: definition.edges,
           viewport: definition.viewport,
           annotations: snapshot.annotations ?? [],
+          globalVariables: definition.globalVariables,
           description: definition.description,
         }),
       });
@@ -1036,6 +1080,9 @@ function WorkflowEditorContent({
         viewport: imported.viewport,
         nodes: imported.nodes,
         edges: imported.edges,
+        globalVariables: normalizeWorkflowGlobalVariables(
+          imported.globalVariables,
+        ),
       });
       const result = await createWorkflowMutation.mutateAsync({
         name,
@@ -1044,6 +1091,7 @@ function WorkflowEditorContent({
           edges: definition.edges,
           viewport: definition.viewport,
           annotations: imported.annotations ?? [],
+          globalVariables: definition.globalVariables,
           description: definition.description,
         }),
       });
@@ -1116,6 +1164,9 @@ function WorkflowEditorContent({
           edges: envelope.edges,
           viewport: envelope.viewport,
           annotations: envelope.annotations,
+          globalVariables: normalizeWorkflowGlobalVariables(
+            envelope.globalVariables,
+          ),
         },
       });
     } catch (cause) {
@@ -1768,6 +1819,9 @@ function WorkflowEditorContent({
                 inspectorCollapsed={inspectorCollapsed}
                 inspectorAvailable={inspectorAvailable}
                 onExpandInspector={expandInspector}
+                onConfigureGlobalVariables={() =>
+                  setGlobalVariablesDialogOpen(true)
+                }
                 versionHistory={versionHistory}
                 previewedVersion={previewedVersion}
                 activeVersion={draftQuery.data?.published?.version ?? null}
@@ -1861,6 +1915,7 @@ function WorkflowEditorContent({
               <WorkflowInspector
                 node={selectedNode}
                 capabilities={capabilities}
+                variableCatalog={variableCatalog}
                 agentModelsLoading={agentModelsLoading}
                 agentModelsError={agentModelsError}
                 onRetryAgentModels={agentModelsCatalog.refetch}
@@ -1904,6 +1959,23 @@ function WorkflowEditorContent({
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      {globalVariablesDialogOpen && (
+        <WorkflowGlobalVariablesDialog
+          open
+          variables={normalizeWorkflowGlobalVariables(
+            workflow?.globalVariables,
+          )}
+          onOpenChange={setGlobalVariablesDialogOpen}
+          onSave={(globalVariables: WorkflowGlobalVariable[]) =>
+            updateWorkflow((current) => ({ ...current, globalVariables }), {
+              history: {
+                event: "workflow.variables",
+                meta: { subject: t("settings.workflow.globalVariables") },
+              },
+            })
+          }
+        />
+      )}
       <AlertDialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

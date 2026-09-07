@@ -1,6 +1,6 @@
 //! Endpoint declarations for the skill generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "skill";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "create",
         request_type: "CreateSkillRequest",
         response_type: "CreateSkillResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getSkill",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetSkillRequest",
         response_type: "GetSkillResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listSkills",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "list",
         request_type: "ListSkillsRequest",
         response_type: "ListSkillsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateSkill",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "update",
         request_type: "UpdateSkillRequest",
         response_type: "UpdateSkillResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteSkill",
@@ -39,5 +43,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "delete",
         request_type: "DeleteSkillRequest",
         response_type: "DeleteSkillResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

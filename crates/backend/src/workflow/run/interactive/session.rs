@@ -141,360 +141,164 @@ fn repository_error(source: RepositoryError) -> BackendError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_application::{
-        Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
-        WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine,
-        WorkflowRunRepository,
-    };
-    use ora_db::{
-        DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteSessionRepository,
-        SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
-        default_migration_catalog,
-    };
-    use ora_domain::{
-        AgentRef, AuditFields, Namespace, Project, ProjectId, Session, SessionId, SessionStatus,
-        Workflow, WorkflowId, WorkflowNodeRun, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
-        WorkflowSnapshot, WorkflowSnapshotId, WorkspaceLocation,
-    };
+    use crate::workflow::run::test_fixture::*;
+    use ora_application::{WorkflowRunEngine, WorkflowRunRepository};
+    use ora_db::SqliteWorkflowRunRepository;
     use pretty_assertions::assert_eq;
-    use std::cell::Cell;
-    use std::collections::HashSet;
-    use tempfile::TempDir;
-
-    const AGENT_GRAPH: &str = r#"{"nodes":[
-        {"id":"start","data":{"kind":"start"}},
-        {"id":"agent","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do"}}}
-    ],"edges":[{"source":"start","target":"agent"}]}"#;
-
-    const TWO_AGENT_GRAPH: &str = r#"{"nodes":[
-        {"id":"start","data":{"kind":"start"}},
-        {"id":"l","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"l"}}},
-        {"id":"r","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"r"}}}
-    ],"edges":[{"source":"start","target":"l"},{"source":"start","target":"r"}]}"#;
-
-    struct NoopExecutor;
-
-    impl NodeExecutor for NoopExecutor {
-        fn dispatch(
-            &self,
-            _node_run_id: &WorkflowNodeRunId,
-            _node: &WorkflowGraphNode,
-            _context: &ExecutionContext,
-        ) {
-        }
-    }
-
-    #[derive(Default)]
-    struct SeqGen {
-        next: Cell<u64>,
-    }
-
-    impl WorkflowNodeRunIdGenerator for SeqGen {
-        fn generate_node_run_id(&self) -> WorkflowNodeRunId {
-            let current = self.next.get();
-            self.next.set(current + 1);
-            WorkflowNodeRunId::new(format!("node-{current}"))
-        }
-    }
-
-    #[derive(Clone, Copy)]
-    struct ClockAt(i64);
-
-    impl Clock for ClockAt {
-        fn now_timestamp_millis(&self) -> i64 {
-            self.0
-        }
-    }
-
-    fn bootstrap() -> (TempDir, RepositoryPool) {
-        let temp = TempDir::new().unwrap();
-        let pool = DatabaseBootstrapper::system()
-            .bootstrap_repository_pool(
-                &DatabaseLocation::path(&temp.path().join("repository.sqlite3")),
-                &default_migration_catalog().expect("create migration catalog"),
-            )
-            .expect("bootstrap repository pool");
-        (temp, pool)
-    }
-
-    /// Seeds a project, workflow, snapshot, and pending run, then starts it so the agent nodes are
-    /// `Running`. Returns the run id and the started run's node runs.
-    fn started_run(
-        temp: &TempDir,
-        pool: &RepositoryPool,
-        graph: &str,
-    ) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
-        let workspace_path = temp.path().join("fixture-project");
-        std::fs::create_dir_all(&workspace_path).unwrap();
-        let project = SqliteProjectRepository::new(pool.clone());
-        project
-            .create_project(
-                Project::new(
-                    ProjectId::new("project-1"),
-                    "Fixture project",
-                    AuditFields::new(1, 1, false),
-                ),
-                WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
-            )
-            .unwrap();
-        let workflow_repo = SqliteWorkflowRepository::new(pool.clone());
-        let workflow = Workflow::new(
-            WorkflowId::new("workflow-1"),
-            Namespace::local(),
-            "Workflow".to_string(),
-            /*published_snapshot_id*/ None,
-            AuditFields::new(10, 10, false),
-        )
-        .unwrap();
-        let draft = WorkflowSnapshot::new(
-            WorkflowSnapshotId::new("draft"),
-            workflow.id.clone(),
-            "draft",
-            graph,
-            10,
-            Some(10),
-            false,
-        );
-        workflow_repo
-            .create_workflow(workflow.clone(), draft.clone())
-            .unwrap();
-        let snapshot = WorkflowSnapshot::new(
-            WorkflowSnapshotId::new("snapshot-1"),
-            workflow.id.clone(),
-            "v1",
-            graph,
-            20,
-            None,
-            false,
-        );
-        workflow_repo
-            .publish_snapshot(
-                &workflow.id,
-                snapshot.id.clone(),
-                snapshot.version.clone(),
-                snapshot.created_at,
-            )
-            .unwrap();
-
-        let workspace = SqliteWorkspaceRepository::new(pool.clone())
-            .find_main_workspace(&ProjectId::new("project-1"))
-            .unwrap()
-            .unwrap();
-        SqliteSessionRepository::new(pool.clone())
-            .create_session(Session::new(
-                SessionId::new("session-1"),
-                workspace.id.clone(),
-                AgentRef::parse("ora-space.opencode").unwrap(),
-                "provider-session-1",
-                SessionStatus::Stopped,
-                AuditFields::new(25, 25, false),
-            ))
-            .unwrap();
-        let run_id = WorkflowRunId::new("run-1");
-        let run = WorkflowRun::new(
-            run_id.clone(),
-            workspace.id,
-            workflow.id,
-            snapshot.id,
-            "Workflow run",
-            WorkflowRunStatus::Pending,
-            Some("{\"current_nodes\":[]}".to_string()),
-            Some("kickoff".to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            AuditFields::new(30, 30, false),
-        );
-        SqliteWorkflowRunRepository::new(pool.clone())
-            .create_run(run)
-            .unwrap();
-
-        let engine = WorkflowRunEngine::new(
-            SqliteWorkflowRunEngineRepository::new(pool.clone()),
-            NoopExecutor,
-            SeqGen::default(),
-            ClockAt(40),
-        );
-        engine.start(&run_id).unwrap();
-
-        let node_runs = SqliteWorkflowRunRepository::new(pool.clone())
-            .list_node_runs(&run_id)
-            .unwrap();
-        (run_id, node_runs)
-    }
-
-    fn locks() -> (Arc<KeyedResourceLocks>, Arc<CompletingNodeRuns>) {
-        (
-            KeyedResourceLocks::new(),
-            Arc::new(std::sync::Mutex::new(HashSet::new())),
-        )
-    }
-
-    /// Binds a session to an agent node and parks it at `Pending`, returning the node id.
-    fn bind_and_park(
-        pool: &RepositoryPool,
-        node_run: &WorkflowNodeRun,
-    ) -> (SessionId, WorkflowNodeRunId) {
-        let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
-        let session_id = SessionId::new("session-1");
-        repository
-            .bind_node_run_session(&node_run.id, &session_id, 50)
-            .unwrap();
-        repository
-            .transition_node_run_status(
-                &node_run.id,
-                WorkflowNodeStatus::Running,
-                WorkflowNodeStatus::Pending,
-                50,
-            )
-            .unwrap();
-        (session_id, node_run.id.clone())
-    }
-
     /// A session not bound to any workflow node is an ordinary session prompt.
-    #[tokio::test]
-    async fn session_without_bound_node_is_an_ordinary_prompt() {
-        let (_temp, pool) = bootstrap();
-        let (run_locks, completing) = locks();
-        let result = begin_human_turn(&pool, &run_locks, &completing, "unbound-session")
-            .await
-            .unwrap();
-        assert_eq!(result, None);
+    #[test]
+    fn session_without_bound_node_is_an_ordinary_prompt() {
+        run_test(async {
+            let (_temp, pool) = bootstrap();
+            let (run_locks, completing) = locks();
+            let result = begin_human_turn(&pool, &run_locks, &completing, "unbound-session")
+                .await
+                .unwrap();
+            assert_eq!(result, None);
+        });
     }
 
     /// A session bound to a terminal node rejects the prompt instead of proceeding as ordinary.
-    #[tokio::test]
-    async fn terminal_node_rejects_prompt() {
-        let (temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
-        let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
-        let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
-        let session_id = SessionId::new("session-1");
-        repository
-            .bind_node_run_session(&agent.id, &session_id, 50)
-            .unwrap();
-        repository
-            .transition_node_run_status(
-                &agent.id,
-                WorkflowNodeStatus::Running,
-                WorkflowNodeStatus::Succeeded,
-                50,
-            )
-            .unwrap();
+    #[test]
+    fn terminal_node_rejects_prompt() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+            let session_id = SessionId::new("session-1");
+            repository
+                .bind_node_run_session(&agent.id, &session_id, 50)
+                .unwrap();
+            repository
+                .transition_node_run_status(
+                    &agent.id,
+                    WorkflowNodeStatus::Running,
+                    WorkflowNodeStatus::Succeeded,
+                    50,
+                )
+                .unwrap();
 
-        let (run_locks, completing) = locks();
-        assert!(
-            begin_human_turn(&pool, &run_locks, &completing, "session-1")
-                .await
-                .is_err(),
-            "a terminal node must reject the prompt"
-        );
+            let (run_locks, completing) = locks();
+            assert!(
+                begin_human_turn(&pool, &run_locks, &completing, "session-1")
+                    .await
+                    .is_err(),
+                "a terminal node must reject the prompt"
+            );
+        });
     }
 
     /// A node being manually completed rejects a concurrent prompt.
-    #[tokio::test]
-    async fn completing_node_rejects_prompt() {
-        let (temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
-        let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
-        let (session_id, node_run_id) = bind_and_park(&pool, agent);
+    #[test]
+    fn completing_node_rejects_prompt() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let (session_id, node_run_id) = bind_and_park(&pool, agent);
 
-        let (run_locks, completing) = locks();
-        completing.lock().unwrap().insert(node_run_id);
+            let (run_locks, completing) = locks();
+            completing.lock().unwrap().insert(node_run_id);
 
-        assert!(
-            begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-                .await
-                .is_err(),
-            "a completing node must reject the prompt"
-        );
+            assert!(
+                begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
+                    .await
+                    .is_err(),
+                "a completing node must reject the prompt"
+            );
+        });
     }
 
     /// An awaiting node flips to `Running` and admits the prompt.
-    #[tokio::test]
-    async fn awaiting_node_flips_to_running() {
-        let (temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
-        let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
-        let (session_id, _node_run_id) = bind_and_park(&pool, agent);
+    #[test]
+    fn awaiting_node_flips_to_running() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let (session_id, _node_run_id) = bind_and_park(&pool, agent);
 
-        let (run_locks, completing) = locks();
-        let result = begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-            .await
-            .unwrap();
-        assert!(result.is_some());
+            let (run_locks, completing) = locks();
+            let result = begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
+                .await
+                .unwrap();
+            assert!(result.is_some());
 
-        let node_runs = SqliteWorkflowRunRepository::new(pool)
-            .list_node_runs(&_run_id)
-            .unwrap();
-        let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
-        assert_eq!(agent.status, WorkflowNodeStatus::Running);
+            let node_runs = SqliteWorkflowRunRepository::new(pool)
+                .list_node_runs(&_run_id)
+                .unwrap();
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            assert_eq!(agent.status, WorkflowNodeStatus::Running);
+        });
     }
 
     /// A `Pending` node in a failed run rejects the prompt (the run is no longer executing).
-    #[tokio::test]
-    async fn non_running_run_rejects_prompt() {
-        let (temp, pool) = bootstrap();
-        let (run_id, node_runs) = started_run(&temp, &pool, TWO_AGENT_GRAPH);
-        let left = node_runs.iter().find(|n| n.node_id == "l").unwrap();
-        let right = node_runs.iter().find(|n| n.node_id == "r").unwrap();
-        let (session_id, _node_run_id) = bind_and_park(&pool, left);
+    #[test]
+    fn non_running_run_rejects_prompt() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, TWO_AGENT_GRAPH);
+            let left = node_runs.iter().find(|n| n.node_id == "l").unwrap();
+            let right = node_runs.iter().find(|n| n.node_id == "r").unwrap();
+            let (session_id, _node_run_id) = bind_and_park(&pool, left);
 
-        // Failing the sibling node fails the run but leaves the parked node `Pending`.
-        let engine = WorkflowRunEngine::new(
-            SqliteWorkflowRunEngineRepository::new(pool.clone()),
-            NoopExecutor,
-            SeqGen::default(),
-            ClockAt(40),
-        );
-        engine
-            .fail_node(&right.id, "boom".to_string(), None)
-            .unwrap();
+            // Failing the sibling node fails the run but leaves the parked node `Pending`.
+            let engine = WorkflowRunEngine::new(
+                SqliteWorkflowRunEngineRepository::new(pool.clone()),
+                NoopExecutor,
+                SeqGen::default(),
+                ClockAt(40),
+            );
+            engine
+                .fail_node(&right.id, "boom".to_string(), None)
+                .unwrap();
 
-        let (run_locks, completing) = locks();
-        assert!(
-            begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-                .await
-                .is_err(),
-            "a node in a non-running run must reject the prompt"
-        );
-        assert_ne!(run_id.as_ref(), "");
+            let (run_locks, completing) = locks();
+            assert!(
+                begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
+                    .await
+                    .is_err(),
+                "a node in a non-running run must reject the prompt"
+            );
+            assert_ne!(run_id.as_ref(), "");
+        });
     }
 
     /// A second completion claim against the same awaiting node is rejected, so two concurrent
     /// completes cannot both prepare against one node.
     #[test]
     fn second_completion_claim_is_rejected() {
-        let (temp, pool) = bootstrap();
-        let (run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
-        let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
-        let (_session_id, _node_run_id) = bind_and_park(&pool, agent);
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let (_session_id, _node_run_id) = bind_and_park(&pool, agent);
 
-        let (run_locks, completing) = locks();
+            let (run_locks, completing) = locks();
 
-        assert!(
-            super::super::completion::claim_node_for_completion(
-                &pool,
-                &run_locks,
-                &completing,
-                &run_id,
-                "agent",
-            )
-            .is_ok()
-        );
+            assert!(
+                super::super::completion::claim_node_for_completion(
+                    &pool,
+                    &run_locks,
+                    &completing,
+                    &run_id,
+                    "agent",
+                )
+                .is_ok()
+            );
 
-        assert!(
-            super::super::completion::claim_node_for_completion(
-                &pool,
-                &run_locks,
-                &completing,
-                &run_id,
-                "agent",
-            )
-            .is_err(),
-            "a second claim against the same awaiting node must be rejected"
-        );
+            assert!(
+                super::super::completion::claim_node_for_completion(
+                    &pool,
+                    &run_locks,
+                    &completing,
+                    &run_id,
+                    "agent",
+                )
+                .is_err(),
+                "a second claim against the same awaiting node must be rejected"
+            );
+        });
     }
 }

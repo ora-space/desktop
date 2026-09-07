@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
-import { useSubmitGraphWorkflowHitl } from "../../state/hooks/use-graph-workflow-runs";
+import { useSubmitGraphWorkflowHitl } from "../../state/data/mock-workflow-runs";
 import { RunHitlComposer } from "./run-hitl-composer";
 import {
   findOpenHitlForNode,

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { cn } from "../../utils";
+import { cn } from "../../utils.ts";
 import "./input.scss";
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {

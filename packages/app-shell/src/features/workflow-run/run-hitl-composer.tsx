@@ -321,7 +321,7 @@ export function RunHitlComposer({
             <IconHandClick className="size-3.5" aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-foreground">
+            <p className="truncate font-sans text-sm font-medium text-foreground">
               {collapsedSummary}
             </p>
             <p className="truncate text-xs text-muted-foreground">
@@ -416,7 +416,7 @@ export function RunHitlComposer({
             ) : (
               <>
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <p className="truncate text-sm font-medium tracking-tight text-foreground">
+                  <p className="truncate font-sans text-sm font-medium tracking-tight text-foreground">
                     {waitingNodeTitle}
                   </p>
                   <span className="rounded-full border border-border/80 bg-background/80 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">

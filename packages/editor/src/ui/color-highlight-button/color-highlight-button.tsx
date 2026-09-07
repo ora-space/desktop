@@ -3,22 +3,19 @@
 import * as React from "react";
 
 // --- Lib ---
-import { parseShortcutKeys } from "../../utils";
+import { parseShortcutKeys } from "../../utils.ts";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Tiptap UI ---
-import type { UseColorHighlightConfig } from "../color-highlight-button";
-import {
-  COLOR_HIGHLIGHT_SHORTCUT_KEY,
-  useColorHighlight,
-} from "../color-highlight-button";
+import type { UseColorHighlightConfig } from "./index.tsx";
+import { COLOR_HIGHLIGHT_SHORTCUT_KEY, useColorHighlight } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button } from "../../primitive/button";
-import { Badge } from "../../primitive/badge";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button } from "../../primitive/button/index.tsx";
+import { Badge } from "../../primitive/badge/index.tsx";
 
 // --- Styles ---
 import "./color-highlight-button.scss";

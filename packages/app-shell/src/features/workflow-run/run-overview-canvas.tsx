@@ -20,7 +20,7 @@ import {
 import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
-} from "../workflow-editor/workflow-flow/viewport";
+} from "../workflow-node-chrome/viewport";
 import { resolveOverviewFocusedId, resolveTheaterFocus } from "./run-focus";
 import {
   RunOverviewNode,

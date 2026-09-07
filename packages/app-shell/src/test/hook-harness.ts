@@ -7,7 +7,7 @@ import { ContractsClientContext } from "../contracts-client-context";
 import { ChatStoreContext } from "../chat-store-context";
 import type { WorkflowRuntime } from "@ora/workflow-runtime";
 import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
-import { WorkflowRuntimeProvider } from "../features/workflow-run/workflow-runtime-context";
+import { WorkflowRuntimeProvider } from "../workflow-runtime-provider";
 import { AppI18nProvider } from "../i18n/i18n";
 
 /** Builds a QueryClient with retries disabled so tests fail fast on transport errors. */

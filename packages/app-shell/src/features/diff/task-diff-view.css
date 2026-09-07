@@ -77,6 +77,22 @@
   border-collapse: collapse;
 }
 
+/* Row-windowed diff body (focus mode): the file is split into fixed-size
+   native `react-diff-view` hunks, each still a real `<table>`/`<Hunk>` so all
+   gutter/tint/collapse styling is native. The virtualizer only mounts the
+   visible chunk window; these rules give the chunk list a stable vertical
+   track and let each native table fill the width. */
+.ora-diff-window {
+  position: relative;
+}
+
+.ora-diff-window .ora-diff-window-chunk {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+}
+
 .ora-task-diff--unified .diff-unified {
   width: max-content;
   min-width: 100%;
@@ -94,21 +110,27 @@
 .ora-diff-quote-gutter {
   position: absolute;
   inset: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.05rem minmax(0, 1fr);
+  column-gap: 2px;
   align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
   padding-inline: 2px 4px;
 }
 
 .ora-diff-quote-gutter--plain {
   cursor: default;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ora-diff-quote-gutter--plain .ora-diff-quote-number {
+  grid-column: 1;
 }
 
 .ora-diff-quote-number {
-  min-width: 1.75rem;
-  padding-left: 1.15rem;
+  grid-column: 2;
+  min-width: 0;
   text-align: right;
+  white-space: nowrap;
 }
 
 .ora-task-diff .diff-code {
@@ -143,7 +165,7 @@
 .ora-task-diff--split.ora-task-diff--modify .diff-line {
   display: grid;
   width: 100%;
-  grid-template-columns: 7ch minmax(0, 1fr) 7ch minmax(0, 1fr);
+  grid-template-columns: 9ch minmax(0, 1fr) 9ch minmax(0, 1fr);
 }
 
 .ora-task-diff--split.ora-task-diff--modify .diff-split,
@@ -276,6 +298,72 @@
   border-width: 1px;
 }
 
+/* Windows Chromium intentionally snaps a native thumb back when the pointer
+   leaves its horizontal tolerance. Keep the real viewport and native
+   horizontal scrollbar, but reserve a separate non-overlapping column for the
+   pointer-captured vertical control. */
+.ora-diff-scroll-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.ora-diff-scroll-region--custom-vertical {
+  grid-column: 1;
+  grid-row: 1;
+  scrollbar-color: auto;
+  scrollbar-gutter: auto;
+  scrollbar-width: auto;
+}
+
+.ora-diff-scroll-region--custom-vertical::-webkit-scrollbar {
+  width: 0;
+  height: 10px;
+}
+
+.ora-diff-scroll-content {
+  min-width: 0;
+}
+
+[data-diff-scrollbar="vertical"] {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+  margin-block: 40px 10px;
+  touch-action: none;
+  user-select: none;
+  background: color-mix(in oklab, var(--muted) 30%, transparent);
+  outline: none;
+}
+
+[data-diff-scrollbar="vertical"][data-scrollbar-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+[data-diff-scrollbar="vertical"]:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+[data-diff-scrollbar-thumb] {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 3px;
+  min-height: 28px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted-foreground) 48%, transparent);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+
+[data-diff-scrollbar="vertical"]:hover [data-diff-scrollbar-thumb],
+[data-diff-scrollbar="vertical"][data-dragging="true"]
+  [data-diff-scrollbar-thumb] {
+  background: color-mix(in oklab, var(--muted-foreground) 68%, transparent);
+}
+
 @keyframes ora-diff-progress {
   from {
     transform: translateX(-110%);
@@ -315,8 +403,21 @@
   }
 }
 
-@container diff-toolbar (max-width: 360px) {
+/*
+ * The commit / scope summary may compress, but the view-controls buttons (view
+ * split, file tree, expand, panel switch) are functional controls and must not
+ * vanish. When the toolbar is narrow, let the controls scroll horizontally
+ * instead of hiding them, so every button stays reachable.
+ */
+@container diff-toolbar (max-width: 520px) {
   .ora-diff-toolbar__view-controls {
+    flex: 0 0 auto;
+    max-width: 50%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ora-diff-toolbar__view-controls::-webkit-scrollbar {
     display: none;
   }
 }

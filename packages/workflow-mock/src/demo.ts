@@ -2,6 +2,7 @@ import type { Edge, Node } from "@xyflow/react";
 import type { DemoWorkflow } from "./fixtures";
 import type { WorkflowNodeData } from "./node-data";
 import { isDemoWorkflow } from "./validation";
+import { normalizeWorkflowGlobalVariables } from "./variable-catalog";
 
 /** Creates a session workflow whose graph already uses React Flow element types. */
 export function createDemoWorkflow(
@@ -18,10 +19,12 @@ export function createDemoWorkflow(
       data: {
         kind: "start",
         title: locale === "zh-CN" ? "开始" : "Start",
-        description: locale === "zh-CN" ? "接收工作流输入" : "Receive workflow input",
-        instruction: locale === "zh-CN"
-          ? "定义工作流启动时需要的输入。"
-          : "Define the input required to start this workflow.",
+        description:
+          locale === "zh-CN" ? "接收工作流输入" : "Receive workflow input",
+        input:
+          locale === "zh-CN"
+            ? "定义工作流启动时需要的输入。"
+            : "Define the input required to start this workflow.",
       },
     },
   ];
@@ -34,6 +37,7 @@ export function createDemoWorkflow(
     viewport: { x: 32, y: 32, zoom: 1 },
     nodes,
     edges,
+    globalVariables: normalizeWorkflowGlobalVariables(undefined),
   };
 }
 

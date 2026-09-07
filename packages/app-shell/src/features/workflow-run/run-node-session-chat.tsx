@@ -13,7 +13,7 @@ import {
 import type { GraphWorkflowNodeStatus } from "@ora/workflow-runtime";
 import { useChatStore } from "../../chat-store-context";
 import { useContractsClient } from "../../contracts-client-context";
-import { useCompleteWorkflowNode } from "../../state/hooks/use-workflow-runs";
+import { useCompleteWorkflowNode } from "../../state/data/workflow-runs";
 import { useAgents } from "../../state/hooks/use-agents";
 import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";

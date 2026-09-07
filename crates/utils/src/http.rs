@@ -12,6 +12,7 @@ mod error;
 mod local;
 mod progress;
 mod proxy;
+mod s3;
 mod target;
 mod types;
 
@@ -28,6 +29,9 @@ pub use progress::Progress;
 pub use proxy::{Proxy, ProxyAuth, ProxyBypass, ProxyConfig, resolve_proxy};
 #[cfg(feature = "http-reqwest")]
 pub use reqwest::ReqwestDownloader;
+#[cfg(feature = "http-reqwest")]
+pub use s3::S3AwareDownloader;
+pub use s3::{S3Config, SigningTime, path_style_object_key, path_style_object_url, sign_get};
 pub use types::{
     Checksum, DownloadOptions, DownloadOutcome, DownloadRequest, DownloadSource, HashAlgorithm,
     HttpDownload, ProgressCallback,

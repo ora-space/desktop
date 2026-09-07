@@ -6,15 +6,15 @@ import { type Editor } from "@tiptap/react";
 import "@tiptap/extensions";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
-import { isNodeTypeSelected } from "../../utils";
+import { isNodeTypeSelected } from "../../utils.ts";
 
 // --- Icons ---
-import { Redo2Icon } from "../../icons/redo2-icon";
-import { Undo2Icon } from "../../icons/undo2-icon";
+import { Redo2Icon } from "../../icons/redo2-icon.tsx";
+import { Undo2Icon } from "../../icons/undo2-icon.tsx";
 
 export type UndoRedoAction = "undo" | "redo";
 

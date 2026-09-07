@@ -3,9 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { createChatStore } from "@ora/chat";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -14,6 +17,26 @@ import { appI18n } from "../../i18n/i18n-instance";
 import { RunActInspector } from "./run-act-inspector";
 import type { WorkflowNodeData } from "@ora/workflow-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return {
+    ...createPluginMemory(),
+    ...createAgentMemory(),
+    ...createSkillMemory(),
+  };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+    ...skillHandlers(state),
+  };
+}
 
 const AGENT_DATA: WorkflowNodeData = {
   kind: "agent",
@@ -37,7 +60,7 @@ const AGENT_DATA: WorkflowNodeData = {
 
 /** Mounts the act inspector with catalog-backed Agent/Skill names. */
 function renderInspector() {
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.agents = [
     {
       id: "ag-researcher",
@@ -64,7 +87,8 @@ function renderInspector() {
       availability: "available",
     },
   ];
-  const client = createMockClient(state);
+  const clientHandlers: TestHandlers = createFixtureHandlers(state);
+  const client = createTestClient(clientHandlers);
   const queryClient = createTestQueryClient();
   const Wrapper = createHookWrapper(
     client,

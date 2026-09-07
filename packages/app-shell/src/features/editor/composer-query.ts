@@ -4,6 +4,11 @@ export const AT_TRIGGER_PATTERN = /(?<=^|\s)@([^\s]*)$/;
 /** Matches a `/` command token ending at the cursor, including after existing text. */
 export const SLASH_TRIGGER_PATTERN = /(?<=^|\s)\/([^\s]*)$/;
 
+/** Matches a slash token anywhere before the caret for inline variable insertion. */
+export const INLINE_SLASH_TRIGGER_PATTERN = /\/([^\s/]*)$/;
+
+export type SlashQueryMode = "command" | "inline";
+
 export interface ComposerQueryState {
   isBlank: boolean;
   slashQuery: string | null;
@@ -22,9 +27,14 @@ export const EMPTY_COMPOSER_QUERY: ComposerQueryState = {
 export function queryStateFromText(
   text: string,
   textBeforeCursor: string,
+  slashQueryMode: SlashQueryMode = "command",
 ): ComposerQueryState {
   const atMatch = textBeforeCursor.match(AT_TRIGGER_PATTERN);
-  const slashMatch = textBeforeCursor.match(SLASH_TRIGGER_PATTERN);
+  const slashMatch = textBeforeCursor.match(
+    slashQueryMode === "inline"
+      ? INLINE_SLASH_TRIGGER_PATTERN
+      : SLASH_TRIGGER_PATTERN,
+  );
   return {
     isBlank: text.trim().length === 0,
     slashQuery: slashMatch?.[1] ?? null,

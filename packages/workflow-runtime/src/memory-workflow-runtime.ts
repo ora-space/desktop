@@ -343,6 +343,9 @@ export function createMemoryWorkflowRuntime(
       if (patch.description !== undefined) {
         nextData.description = patch.description;
       }
+      if (patch.input !== undefined) {
+        nextData.input = patch.input;
+      }
       if (patch.instruction !== undefined) {
         nextData.instruction = patch.instruction;
       }

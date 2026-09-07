@@ -1,41 +1,28 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Project, Session, Task, Workspace } from "@ora/contracts";
+import type { Project, Task } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import {
+  cacheCreatedProject,
+  cacheUpdatedProject,
+  cacheDeletedProject,
+  invalidateCreatedTask,
+  cacheUpdatedTask,
+  cacheDeletedTask,
+  findSessionPlacement,
+} from "../data/workspace";
+import {
+  cacheResumedSession,
+  cacheDeletedSession,
+  cacheRenamedSession,
+  invalidateSessions,
+  type WorkspaceListSync,
+} from "../data/sessions";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { useUiStore } from "../stores/ui-store";
 import { useComposerInputStore } from "../stores/composer-input-store";
 import { useDraftSessionsStore } from "../stores/draft-sessions-store";
 import { startSessionDraft } from "../session-drafts";
 import { useChatStore } from "../../chat-store-context";
-
-type QueryClient = ReturnType<typeof useQueryClient>;
-
-/**
- * How list caches should sync after a mutation.
- *
- * - `immediate`: patch and mark the list stale with an active refetch — use for
- *   standalone deletes the user just confirmed.
- * - `defer`: patch only; a parent cascade will invalidate once at the end so
- *   N child deletes do not thrash the sidebar N times.
- */
-export type WorkspaceListSync = "immediate" | "defer";
-
-/** Reads the cached projects, tasks, or sessions, returning [] while data is absent. */
-function readCache<T>(queryClient: QueryClient, key: readonly string[]): T[] {
-  return (queryClient.getQueryData(key) as T[] | undefined) ?? [];
-}
-
-/** Marks list queries stale; `none` skips the active refetch that rebuilds every subscriber. */
-function invalidateWorkspaceLists(
-  queryClient: QueryClient,
-  keys: readonly (readonly string[])[],
-  refetchType: "active" | "none" = "active",
-): void {
-  for (const queryKey of keys) {
-    void queryClient.invalidateQueries({ queryKey, refetchType });
-  }
-}
 
 /** Creates a project and selects it once the backend confirms the id. */
 export function useCreateProject() {
@@ -53,12 +40,7 @@ export function useCreateProject() {
         .create({ name, mainWorkspacePath })
         .then((response) => response.project),
     onSuccess: (project) => {
-      queryClient.setQueryData<Project[]>(queryKeys.projects, (current) => [
-        ...(current ?? []).filter((candidate) => candidate.id !== project.id),
-        project,
-      ]);
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
+      cacheCreatedProject(queryClient, project);
       startSessionDraft({ projectId: project.id, taskId: null });
     },
   });
@@ -74,17 +56,7 @@ export function useUpdateProject() {
         .update({ projectId: project.id, name })
         .then((response) => response.project),
     onSuccess: (project) => {
-      queryClient.setQueryData<Project[]>(queryKeys.projects, (current) =>
-        (current ?? []).map((candidate) =>
-          candidate.id === project.id ? { ...project } : candidate,
-        ),
-      );
-      // Response already applied; mark stale without refetching every subscriber.
-      invalidateWorkspaceLists(
-        queryClient,
-        [queryKeys.projects],
-        /*refetchType*/ "none",
-      );
+      cacheUpdatedProject(queryClient, project);
     },
   });
 }
@@ -97,47 +69,10 @@ export function useDeleteProject() {
     mutationFn: ({ projectId }: { projectId: string }) =>
       client.project.delete({ projectId }),
     onSuccess: (_void, { projectId }) => {
-      const tasks = readCache<Task>(queryClient, queryKeys.tasks);
-      const taskIds = new Set(
-        tasks
-          .filter((task) => task.projectId === projectId)
-          .map((task) => task.id),
-      );
-      const workspaces = readCache<Workspace>(
+      const { taskIds, sessionIds, nextProjectId } = cacheDeletedProject(
         queryClient,
-        queryKeys.workspaces,
+        projectId,
       );
-      const workspaceIds = new Set([
-        ...workspaces
-          .filter((workspace) => workspace.projectId === projectId)
-          .map((workspace) => workspace.id),
-        ...tasks
-          .filter((task) => task.projectId === projectId)
-          .map((task) => task.workspaceId),
-      ]);
-      const sessions = readCache<Session>(queryClient, queryKeys.sessions);
-      const sessionIds = sessions
-        .filter((session) => workspaceIds.has(session.workspaceId))
-        .map((session) => session.id);
-
-      // Optimistic scrub so the sidebar drops the branch before refetch settles.
-      queryClient.setQueryData<Project[]>(queryKeys.projects, (current) =>
-        (current ?? []).filter((project) => project.id !== projectId),
-      );
-      queryClient.setQueryData<Task[]>(queryKeys.tasks, (current) =>
-        (current ?? []).filter((task) => task.projectId !== projectId),
-      );
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-        (current ?? []).filter(
-          (session) => !workspaceIds.has(session.workspaceId),
-        ),
-      );
-      invalidateWorkspaceLists(queryClient, [
-        queryKeys.projects,
-        queryKeys.workspaces,
-        queryKeys.tasks,
-        queryKeys.sessions,
-      ]);
 
       useComposerInputStore
         .getState()
@@ -150,13 +85,11 @@ export function useDeleteProject() {
       const store = useWorkspaceSelectionStore.getState();
       const selection = store.selection;
       if (selection.projectId === projectId) {
-        const projects = readCache<Project>(queryClient, queryKeys.projects);
-        const next = projects.find((project) => project.id !== projectId);
         // setProject resyncs createFocus to the new selection. Preserve a
         // create-focus the user pointed at a different surviving project so New
         // chat still follows their last click, matching applyRestoredSelection.
         const focusBefore = store.createFocus;
-        store.setProject(next?.id ?? null);
+        store.setProject(nextProjectId);
         if (focusBefore !== null && focusBefore.projectId !== projectId) {
           store.setCreateFocus(focusBefore);
         }
@@ -185,12 +118,7 @@ export function useCreateTask() {
         .create({ projectId, title, baseBranch })
         .then((response) => response.task),
     onSuccess: (task) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
-      // The backend created a new Ora branch, so the next worktree dialog must
-      // refetch before offering base branches.
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.projectBranches(task.projectId),
-      });
+      invalidateCreatedTask(queryClient, task);
       startSessionDraft({ projectId: task.projectId, taskId: task.id });
       // Reveal the new row. Expanding here rather than reacting to the selection
       // keeps a plain row click free to collapse what it just selected.
@@ -209,16 +137,7 @@ export function useUpdateTask() {
         .update({ taskId: task.id, title })
         .then((response) => response.task),
     onSuccess: (task) => {
-      queryClient.setQueryData<Task[]>(queryKeys.tasks, (current) =>
-        (current ?? []).map((candidate) =>
-          candidate.id === task.id ? { ...task } : candidate,
-        ),
-      );
-      invalidateWorkspaceLists(
-        queryClient,
-        [queryKeys.tasks],
-        /*refetchType*/ "none",
-      );
+      cacheUpdatedTask(queryClient, task);
     },
   });
 }
@@ -231,24 +150,7 @@ export function useDeleteTask() {
     mutationFn: ({ taskId }: { taskId: string }) =>
       client.task.delete({ taskId }),
     onSuccess: ({ workspaceId }, { taskId }) => {
-      const sessions = readCache<Session>(queryClient, queryKeys.sessions);
-      const sessionIds = sessions
-        .filter((session) => session.workspaceId === workspaceId)
-        .map((session) => session.id);
-
-      queryClient.setQueryData<Task[]>(queryKeys.tasks, (current) =>
-        (current ?? []).filter((task) => task.id !== taskId),
-      );
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-        (current ?? []).filter(
-          (session) => session.workspaceId !== workspaceId,
-        ),
-      );
-      invalidateWorkspaceLists(queryClient, [
-        queryKeys.workspaces,
-        queryKeys.tasks,
-        queryKeys.sessions,
-      ]);
+      const sessionIds = cacheDeletedTask(queryClient, taskId, workspaceId);
 
       useComposerInputStore
         .getState()
@@ -304,18 +206,10 @@ export function useCreateSession() {
       // A just-created provider session has no history to replay. Register an
       // empty loaded conversation so WorkspaceView does not issue session/load.
       chatStore.getState().initializeSession(session.id);
-      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      void invalidateSessions(queryClient);
       // Recover project/task projection only for tree placement; persistence still
       // owns this session through its Workspace id.
-      const tasks = readCache<Task>(queryClient, queryKeys.tasks);
-      const task = tasks.find(
-        (candidate) => candidate.workspaceId === session.workspaceId,
-      );
-      const workspace = readCache<Workspace>(
-        queryClient,
-        queryKeys.workspaces,
-      ).find((candidate) => candidate.id === session.workspaceId);
-      const projectId = workspace?.projectId ?? task?.projectId;
+      const { task, projectId } = findSessionPlacement(queryClient, session);
       if (projectId !== undefined) {
         if (task) {
           useWorkspaceSelectionStore
@@ -350,12 +244,7 @@ export function useResumeSessionHistory() {
         .resumeHistory({ sessionId })
         .then((response) => response.session),
     onSuccess: (session) => {
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-        (current ?? []).map((candidate) =>
-          candidate.id === session.id ? session : candidate,
-        ),
-      );
-      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      cacheResumedSession(queryClient, session);
     },
   });
 }
@@ -373,12 +262,7 @@ export function useDeleteSession() {
       listSync?: WorkspaceListSync;
     }) => client.session.delete({ sessionId }),
     onSuccess: (_void, { sessionId, listSync = "immediate" }) => {
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-        (current ?? []).filter((session) => session.id !== sessionId),
-      );
-      if (listSync === "immediate") {
-        invalidateWorkspaceLists(queryClient, [queryKeys.sessions]);
-      }
+      cacheDeletedSession(queryClient, sessionId, listSync);
       useComposerInputStore.getState().clear(sessionId);
       useDraftSessionsStore.getState().clearReturnToForSessions([sessionId]);
       useDraftSessionsStore.getState().removeForSessions([sessionId]);
@@ -400,18 +284,7 @@ export function useRenameSession() {
         .rename({ sessionId, title })
         .then((response) => response.session),
     onSuccess: (session) => {
-      // Replace with a new object so React Query cannot structural-share the
-      // previous cache entry when the transport returns the same session reference.
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-        (current ?? []).map((candidate) =>
-          candidate.id === session.id ? { ...session } : candidate,
-        ),
-      );
-      invalidateWorkspaceLists(
-        queryClient,
-        [queryKeys.sessions],
-        /*refetchType*/ "none",
-      );
+      cacheRenamedSession(queryClient, session);
     },
   });
 }

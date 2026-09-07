@@ -13,9 +13,14 @@ nodes, connections, and viewport use React Flow's native persistence shape.
 Nodes use `@xyflow/react`'s `Node<TData>` directly and connections use `Edge`.
 Editor annotations use a separate `annotations` collection so they can share
 React Flow geometry and selection behavior without becoming executable steps.
-Executable fields (`instruction`, `model`, `tool`, and `condition`) live in the
-official `Node.data` extension point. There is no parallel workflow node, edge,
-or position DTO and no adapter layer.
+Node-specific settings — the Start node's initial prompt, Agent configuration
+and prompt, tool selection and parameters, condition cases, and control-flow
+settings — live in the official `Node.data` extension point. The Human node's
+`instruction` value is its reviewer-facing approval prompt; it is not a generic
+execution instruction.
+Fixture-only `mockStepMs` remains available to deterministic demo tests but is
+not editor-configurable workflow data. There is no parallel workflow node,
+edge, or position DTO and no adapter layer.
 
 Agent nodes use a versioned `agentConfig` object rather than an unstructured
 model label. It records the CLI/model pair, Role ID, configured Skills with an

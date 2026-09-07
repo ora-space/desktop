@@ -8,7 +8,10 @@ import {
   IconPlus,
 } from "@tabler/icons-react";
 import { Button } from "@ora/ui";
-import { MAX_WORKFLOW_ZOOM, MIN_WORKFLOW_ZOOM } from "./viewport";
+import {
+  MAX_WORKFLOW_ZOOM,
+  MIN_WORKFLOW_ZOOM,
+} from "../../workflow-node-chrome/viewport";
 
 interface WorkflowCanvasControlsProps {
   defaultViewport: { x: number; y: number; zoom: number };

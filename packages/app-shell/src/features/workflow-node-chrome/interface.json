@@ -1,0 +1,35 @@
+{
+  "owner": "Shared workflow node presentation",
+  "modules": {
+    "./index": {
+      "exports": [
+        "WorkflowNodeCardShell",
+        "AgentExecutionModeMark",
+        "WorkflowNodeCardDensity",
+        "WorkflowNodeCardShellProps",
+        "getNodeMetadata",
+        "WorkflowNodeMetadata",
+        "conditionBranchesSummary",
+        "createWorkflowSummaryLabels",
+        "junctionFailureStrategyLabel",
+        "junctionWaitStrategyLabel",
+        "WorkflowSummaryLabels"
+      ],
+      "purpose": "Editing and run views share node presentation vocabulary through the existing named interface."
+    },
+    "./viewport": {
+      "exports": [
+        "MAX_WORKFLOW_ZOOM",
+        "MIN_WORKFLOW_ZOOM",
+        "DEFAULT_WORKFLOW_ZOOM",
+        "DEFAULT_WORKFLOW_PAN"
+      ],
+      "purpose": "Editor and run overview share visual zoom constraints, not editor-private state."
+    },
+    "./translations": {
+      "exports": ["workflowNodeTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

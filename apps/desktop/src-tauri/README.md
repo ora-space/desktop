@@ -45,19 +45,23 @@ opens as its own window and `surface_capabilities` reports `embedded: false`.
 
 Ripgrep and Deno are bundled as Tauri sidecars under `binaries/rg` and
 `binaries/deno` for release builds. Their platform-specific executables are
-downloaded by `scripts/setup-binary.mjs` during the desktop build and are
+downloaded by `scripts/setup-binary.ts` during the desktop build and are
 intentionally excluded from version control. The script accepts `deno` or `rg`
 as an optional argument to install only that sidecar; without an argument it
-installs both. The packaging workflow adds the sidecars to Tauri's configuration
+installs both. If the target-qualified executable already exists in `binaries/`,
+the script reuses it; pass `--force` to download it again. The packaging workflow
+adds the sidecars to Tauri's configuration
 in its checkout immediately before building;
 the checked-in configuration keeps `externalBin` empty so `tauri dev` does not
 depend on that directory.
 
 The Rust-owned `ora-reaper` sidecar is built locally rather than downloaded. `run:desktop` builds
-its debug executable first, while `build:desktop` and the packaging workflow build its release
-executable. The build helper copies it into `binaries/ora-reaper-<target-triple>` so Tauri can
-package it using the same external-binary convention. Debug Desktop starts that target-qualified
-file directly; packaged builds resolve Tauri's installed `ora-reaper` executable beside Ora.
+its debug executable first, while the internal `build:desktop` base task and the packaging workflow
+build its release executable. Use `task package:desktop` for a complete local installer; the base
+task does not configure the downloaded release sidecars by itself. The build helper copies it into
+`binaries/ora-reaper-<target-triple>` so Tauri can package it using the same external-binary
+convention. Debug Desktop starts that target-qualified file directly; packaged builds resolve
+Tauri's installed `ora-reaper` executable beside Ora.
 The generated `binaries` directory is excluded from Tauri's development watcher because sidecar
 installation is not a Rust source change and must not restart a freshly launched application.
 

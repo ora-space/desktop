@@ -1,6 +1,6 @@
 //! Endpoint declarations for the fileSystem generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "fileSystem";
 
@@ -12,6 +12,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
 
         request_type: "ListWorkspaceDirectoryRequest",
         response_type: "ListWorkspaceDirectoryResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "readWorkspaceFile",
@@ -19,6 +20,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "readWorkspaceFile",
         request_type: "ReadWorkspaceFileRequest",
         response_type: "ReadWorkspaceFileResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "searchWorkspace",
@@ -26,6 +28,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "searchWorkspace",
         request_type: "SearchWorkspaceRequest",
         response_type: "SearchWorkspaceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "watchWorkspace",
@@ -33,6 +36,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "watchWorkspace",
         request_type: "WatchWorkspaceRequest",
         response_type: "WorkspaceFileEventBatch",
+        response_mode: FrontendResponseMode::Stream,
     },
     FrontendEndpoint {
         operation_name: "listProjectDirectory",
@@ -40,6 +44,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "listProjectDirectory",
         request_type: "ListProjectDirectoryRequest",
         response_type: "ListWorkspaceDirectoryResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "readProjectFile",
@@ -47,6 +52,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "readProjectFile",
         request_type: "ReadProjectFileRequest",
         response_type: "ReadWorkspaceFileResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "searchProject",
@@ -54,6 +60,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "searchProject",
         request_type: "SearchProjectRequest",
         response_type: "SearchWorkspaceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "watchProject",
@@ -61,5 +68,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "watchProject",
         request_type: "WatchProjectRequest",
         response_type: "WorkspaceFileEventBatch",
+        response_mode: FrontendResponseMode::Stream,
     },
 ];

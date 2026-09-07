@@ -3,7 +3,7 @@ export {
   currentValueName,
   findModelOption,
   selectableValues,
-} from "./model-option.js";
+} from "./model-option.ts";
 export {
   createChatStore,
   loadSessionConversation,
@@ -24,4 +24,4 @@ export {
   type ChatStoreOptions,
   type SendMessageRequest,
   type SessionConversation,
-} from "./store.js";
+} from "./store.ts";

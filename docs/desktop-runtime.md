@@ -1,8 +1,25 @@
 # Desktop Runtime
 
+Desktop command implementations live in `apps/desktop/src-tauri/src/commands/` by owning domain.
+`commands.rs` contains only explicit module composition, command macros, and the shared synchronous
+and asynchronous request execution mechanisms. Filesystem reads inject their Backend/file-reader
+pair into the same executor; task and settings commands do not maintain private copies of that
+lifecycle. Workspace listing, diff, and location operations share the workspace command module,
+while Effect status belongs to its own module rather than plugin command implementation.
+
 `apps/desktop/src-tauri` is the root Cargo workspace member that hosts Ora's persisted operations and ACP streaming capabilities through Tauri commands.
 
 ## Shared Backend and Commands
+
+Desktop owns the build-time catalog in `apps/desktop/src-tauri/bindings.rs` and its
+domain-scoped `bindings/` files. Each unary binding names one logical operation, its Rust
+handler, and an explicit Webview permission. Streams name their domain startup handler;
+the shared stream/cancel commands and platform-only commands have separate native bindings.
+`task export-contracts` joins this catalog with the transport-neutral operation catalog and
+generates the private TypeScript map, typed stream decoder/dispatcher, `app_commands.rs`, and
+permission TOML files. The main and plugin Webview grants remain separate. Ordinary Tauri
+builds consume these checked-in files and retain the existing handler/permission build check;
+they never run xtask recursively. `task check:contracts` rejects drift and invalid bindings.
 
 Desktop constructs one cloneable `ora-backend::Backend`. A shared command wrapper assigns a canonical
 request id, opens the request span, invokes unary business logic, projects any backend error, and
@@ -10,11 +27,61 @@ records at most one completion event. Session load, prompt, and `watchAppEvents`
 forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an
 `AbortSignal` to cancel only that stream, while one separate request id correlates the complete stream.
 
+The stream registry claims the call id before domain startup and retains it until its owning
+registration is dropped. Cancellation signals that owner instead of freeing the id for reuse.
+Startup already in progress is allowed to settle, because abandoning arbitrary domain work
+could orphan actor side effects; a resource created after cancellation is immediately dropped.
+The frontend signals cancellation even while startup is pending and repeats cleanup after it
+settles. Application exit cancels all starting/running registrations and refuses new ones.
+Domain modules supply event sources; they do not duplicate forwarding or request completion.
+
+Agent-definition, Skill, and workflow-definition commands capture their corresponding Backend
+domain handle for blocking execution. Their command declarations name the owning domain and
+use case; neither the command executor nor root Backend gains a new forwarding method for each
+operation. Prompted and automatic surface download imports both use the Skill interface.
+
+Project and task commands use the same domain-handle path. Their aggregate deletes now enter the
+shared async request executor as well: successful deletes and failures both complete the correlated
+request once. Blocking cascades and post-commit cleanup notification are owned by their Backend
+domain module, not sequenced by Desktop.
+
+Workspace commands and file adapters capture `backend.workspaces()`. The handle owns workspace
+queries, live path resolution, worktree-root persistence, and Git review; the generic filesystem
+implementation remains in Desktop/`ora-fs`. A clone shares the existing root lock and Git cleanup
+use leases, so readers and configuration changes still observe the same application state.
+
+Plugin commands capture `backend.plugins()`, whose operations include the agent-set reconciliation
+required after discovery or package mutations. The progress callback stays transport-owned, and
+the surface host obtains its restricted gateway through `backend.plugins().gateway()`. Desktop
+never coordinates a plugin mutation and a separate runtime sync itself.
+
+Workflow-run commands capture `backend.workflow_runs()`. Start/restart/input mutations and
+manual completion share the callback's run gate; terminal transitions commit before best-effort
+session cleanup. Cancel and complete commands now use the same async request lifecycle wrapper
+as other operations, including successful completion records. Startup recovery remains Backend-
+composed but its implementation belongs to the workflow-run module.
+
+Session commands and prompt/history stream startup capture `backend.sessions()`. Session title
+edits commit before best-effort actor adoption and application invalidation. Workflow-owned prompt
+admission and drop cleanup are injected into that interface as a restricted capability, so Desktop
+never sequences workflow state transitions itself. App-event startup subscribes through
+`backend.app_events()` without gaining a publisher.
+
+Runtime readiness/model discovery and Effect status use their own handles as well. Git identity
+uses the stateless Backend export through the same blocking request executor, without capturing
+Desktop state. The command macros only support domain-owned operations; the transitional root
+forwarding arms have been removed.
+
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Backend failures use the direct `{ code, params, requestId }` payload without a public message or outer envelope. Local Tauri invocation failures never invent a request id.
 
 Task workspace lookup is part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch. `watchAppEvents` uses the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams.
 
 Developer preferences use four unary commands in a separate settings command module: `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. They use the same lifecycle and error projection as other Desktop commands; no HTTP endpoint is involved.
+
+Settings commands clone `backend.settings()` rather than the entire Backend. The same narrow
+interface supplies the updater's configured proxy and the persisted startup logging preference;
+the runtime log-level manager receives only its restricted preferred-level store. SQLite handles
+and worktree-root persistence are not part of the public settings interface.
 
 Backend construction immediately attempts one supervised connection per installed agent plugin; there is no other source of agents. Plugin processes are started and stopped by the plugin lifecycle, which the agent runtime attaches to rather than spawning its own. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another agent and `resume_session_history` recovers one whose history writes failed. Each agent retries independently; failures leave the Desktop shell and healthy agents available, while operations targeting an unavailable agent report `agent_runtime_unavailable`. Agent process discovery is owned entirely by each plugin — see [ACP Agent Runtime](agent-runtime.md).
 
@@ -45,6 +112,25 @@ A package that has already been downloaded stays installable: a later check that
 and leaves the `Ready` status in place, because the verified bytes are still on disk. `Failed` is
 therefore only reported when nothing was installable to begin with, and a failed installation
 restores `Ready` so the user can retry.
+
+## Plugin marketplace artifact retrieval
+
+Each configured plugin marketplace source independently selects how its `.orax` release artifacts
+are retrieved. `Direct HTTPS` fetches an absolute HTTPS locator without request signing. `S3 SigV4`
+accepts an object key, or a path-style HTTPS locator belonging to the configured endpoint and
+bucket, and signs the request with that source's region and static credential pair. An S3 source
+rejects foreign HTTPS locators instead of falling back to unsigned retrieval.
+
+The source editor exposes the modes as “HTTPS 直接获取” and “S3 签名获取”. S3 endpoint, bucket,
+region, Access Key ID, and Secret Access Key are one complete configuration; existing credentials
+are write-only and can be preserved or atomically replaced, but are never returned by the source
+query contract or rendered in debug output. The current implementation stores this pair in the
+local SQLite database as plaintext configuration. It does not yet provide OS-keychain encryption,
+temporary credentials, or a provider credential chain.
+
+Both modes keep the source's proxy selection and the common download pipeline. SigV4 authenticates
+the request but does not establish package integrity: every artifact must still pass the release
+manifest's SHA-256 before installation.
 
 The static manifest advertises an AppImage for Linux, which the updater can only install into an
 AppImage installation. A `deb` or `rpm` installation, or a build running as a bare executable, is

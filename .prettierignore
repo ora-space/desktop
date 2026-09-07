@@ -5,7 +5,8 @@ target
 .data
 .tmp
 packages/contracts
+apps/desktop/web/tauri-bindings.generated.ts
 # The Deno SDK uses deno fmt as its canonical formatter.
 packages/plugin-sdk
 *.tsbuildinfo
-pnpm-lock.yaml
+deno.lock

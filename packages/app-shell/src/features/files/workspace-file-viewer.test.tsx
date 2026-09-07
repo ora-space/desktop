@@ -2,20 +2,41 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
 import { WorkspaceFileViewer } from "./workspace-file-viewer";
-import { utf8ByteColumnToStringIndex } from "./workspace-file-viewer-utils";
+import {
+  lineDisplayColumns,
+  utf8ByteColumnToStringIndex,
+} from "./workspace-file-viewer-utils";
 
-vi.mock("../chat/add-composer-file-selection", () => ({
+vi.mock("../../state/actions/add-composer-file-selection", () => ({
   addComposerFileSelections: vi.fn(),
 }));
 
 const addComposerFileSelections = vi.mocked(
-  await import("../chat/add-composer-file-selection"),
+  await import("../../state/actions/add-composer-file-selection"),
 ).addComposerFileSelections;
 
 afterEach(() => {
   vi.restoreAllMocks();
   addComposerFileSelections.mockClear();
 });
+
+/** Builds a file with one stable, unique line per row above the virtualize threshold. */
+const linesContent = (count: number): string =>
+  Array.from({ length: count }, (_line, index) => `body ${index + 1}`).join(
+    "\n",
+  );
+
+/**
+ * Gives the virtualizer a viewport size in jsdom. jsdom performs no layout,
+ * so every element reports a zero offsetHeight and the window would compute
+ * as empty; the virtualizer reads offsetWidth/offsetHeight for its rect.
+ */
+const mockViewportSize = (height: number) => {
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
+    height,
+  );
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800);
+};
 
 describe("WorkspaceFileViewer", () => {
   it("converts UTF-8 byte columns before locating a browser string index", () => {
@@ -469,5 +490,180 @@ describe("WorkspaceFileViewer", () => {
     expect(lineButton.contains(quoteButton)).toBe(false);
     expect(quoteButton.parentElement).toBe(lineButton.parentElement);
     expect(container.querySelector("[data-quote-button] svg")).toBeNull();
+  });
+
+  it("mounts only a window of rows above the virtualize threshold", async () => {
+    mockViewportSize(600);
+    const { container } = render(
+      <WorkspaceFileViewer
+        content={linesContent(500)}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-line-number="1"]')).not.toBeNull(),
+    );
+    // A 600px viewport shows ~30 rows plus overscan — far fewer than the
+    // file's 500 lines.
+    const mountedRows = container.querySelectorAll("[data-line-number]");
+    expect(mountedRows.length).toBeGreaterThan(0);
+    expect(mountedRows.length).toBeLessThan(100);
+    expect(container.querySelector('[data-line-number="500"]')).toBeNull();
+    // 500 lines is well under the defer threshold: no loading overlay.
+    expect(container.querySelector("[data-deferred-loading]")).toBeNull();
+  });
+
+  it("never falls back to mounting every row when the viewport is unavailable", async () => {
+    // Regression guard for the session-switch stall: a windowed file whose
+    // viewport cannot be resolved must render the loading state, not all rows.
+    vi.spyOn(HTMLPreElement.prototype, "closest").mockReturnValue(null);
+    const { container } = render(
+      <WorkspaceFileViewer
+        content={linesContent(500)}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    // The virtualizer's own mount/observe update lands after this synchronous
+    // render; awaiting it inside `act` keeps that update from escaping the test
+    // and tripping the clean-stderr gate.
+    await waitFor(() =>
+      expect(container.querySelector("[data-deferred-loading]")).not.toBeNull(),
+    );
+    expect(container.querySelectorAll("[data-line-number]")).toHaveLength(0);
+  });
+
+  it("shows a loading overlay for oversized files and brings content in after the first paint", async () => {
+    mockViewportSize(600);
+    const { container } = render(
+      <WorkspaceFileViewer
+        content={linesContent(70_000)}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    // First commit: overlay only — the split/scan passes have not run.
+    expect(container.querySelector("[data-deferred-loading]")).not.toBeNull();
+    expect(container.querySelector("[data-line-number]")).toBeNull();
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-line-number="1"]')).not.toBeNull(),
+    );
+    expect(container.querySelector("[data-deferred-loading]")).toBeNull();
+  });
+
+  it("does not flash the loading overlay when an already-mounted file refetches", async () => {
+    mockViewportSize(600);
+    const content = linesContent(70_000);
+    const { container, rerender } = render(
+      <WorkspaceFileViewer content={content} path="big.log" target={null} />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-line-number="1"]')).not.toBeNull(),
+    );
+    rerender(
+      <WorkspaceFileViewer
+        content={`${content}\nextra tail`}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    expect(container.querySelector("[data-deferred-loading]")).toBeNull();
+    expect(container.querySelector('[data-line-number="1"]')).not.toBeNull();
+  });
+
+  it("quotes a rendered line while the large file is windowed", async () => {
+    mockViewportSize(600);
+    render(
+      <WorkspaceFileViewer
+        content={linesContent(500)}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: appI18n.t("files.quoteLineToChat", { line: 2 }),
+        }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: appI18n.t("files.quoteLineToChat", { line: 2 }),
+      }),
+    );
+
+    expect(addComposerFileSelections).toHaveBeenCalledWith([
+      { path: "big.log", startLine: 2, endLine: 2 },
+    ]);
+  });
+
+  it("keeps the pin wash on rendered rows after a window shift", async () => {
+    mockViewportSize(600);
+    const { container, rerender } = render(
+      <WorkspaceFileViewer
+        content={linesContent(500)}
+        path="big.log"
+        target={null}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: appI18n.t("files.selectLine", { line: 2 }),
+        }),
+      ).toBeInTheDocument(),
+    );
+    const clickNumber = (line: number, shiftKey = false) => {
+      const number = screen.getByRole("button", {
+        name: appI18n.t("files.selectLine", { line }),
+      });
+      fireEvent.mouseDown(number, { button: 0 });
+      fireEvent.mouseUp(number);
+      fireEvent.click(number, { shiftKey });
+    };
+    clickNumber(2);
+    clickNumber(4, true);
+    expect(container.querySelectorAll("[data-quote-pinned]")).toHaveLength(3);
+
+    // The next render (e.g. a scroll-driven window shift) re-applies the pin
+    // declaratively instead of relying on the click-time imperative paint.
+    rerender(
+      <WorkspaceFileViewer
+        content={linesContent(500)}
+        path="big.log"
+        target={null}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll("[data-quote-pinned]")].map((node) =>
+        node.getAttribute("data-line-number"),
+      ),
+    ).toEqual(["2", "3", "4"]);
+  });
+});
+
+describe("lineDisplayColumns", () => {
+  it("counts plain characters as one column each", () => {
+    expect(lineDisplayColumns("const x = 1;")).toBe(12);
+    expect(lineDisplayColumns("")).toBe(0);
+  });
+
+  it("advances tabs to the next multiple of eight", () => {
+    expect(lineDisplayColumns("\t")).toBe(8);
+    expect(lineDisplayColumns("a\tb")).toBe(9);
+  });
+
+  it("counts wide characters as two columns", () => {
+    expect(lineDisplayColumns("中文")).toBe(4);
   });
 });

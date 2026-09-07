@@ -4,6 +4,7 @@ import {
   HandIcon,
   MousePointer2Icon,
   StickyNotePlusIcon,
+  VariableIcon,
 } from "./canvas-tool-icons";
 import { Button } from "@ora/ui";
 
@@ -13,6 +14,7 @@ interface WorkflowCanvasToolsProps {
   mode: CanvasInteractionMode;
   readOnly: boolean;
   onModeChange: (mode: CanvasInteractionMode) => void;
+  onConfigureGlobalVariables: () => void;
   onAddAnnotation: () => void;
   onOrganize: () => void;
 }
@@ -22,6 +24,7 @@ export function WorkflowCanvasTools({
   mode,
   readOnly,
   onModeChange,
+  onConfigureGlobalVariables,
   onAddAnnotation,
   onOrganize,
 }: WorkflowCanvasToolsProps) {
@@ -34,6 +37,17 @@ export function WorkflowCanvasTools({
       aria-orientation="vertical"
       role="toolbar"
     >
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="size-8 rounded-lg"
+        aria-label={t("settings.workflow.globalVariables")}
+        title={t("settings.workflow.globalVariables")}
+        disabled={readOnly}
+        onClick={onConfigureGlobalVariables}
+      >
+        <VariableIcon />
+      </Button>
       <Button
         variant="ghost"
         size="icon-sm"

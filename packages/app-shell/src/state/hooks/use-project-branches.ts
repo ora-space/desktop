@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { workspaceKeys } from "../data/workspace";
 
 /**
  * Soft freshness window for branch lists.
@@ -13,7 +13,7 @@ const PROJECT_BRANCHES_STALE_MS = 60_000;
 export function useProjectBranches(projectId: string | null) {
   const client = useContractsClient();
   return useQuery({
-    queryKey: queryKeys.projectBranches(projectId ?? ""),
+    queryKey: workspaceKeys.projectBranches(projectId ?? ""),
     queryFn: () =>
       client.project
         .listBranches({ projectId: projectId! })

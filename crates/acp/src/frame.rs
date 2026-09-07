@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[cfg(debug_assertions)]
 use ora_logging::ora_trace;
 use serde_json::Value;
 

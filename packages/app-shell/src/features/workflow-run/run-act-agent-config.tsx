@@ -3,7 +3,7 @@ import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
 import { IconRobot } from "@tabler/icons-react";
 import { PluginLogoMark } from "../settings/plugin-logo";
-import { useAgentCatalog } from "../chat/agent-catalog";
+import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useSkills } from "../../state/hooks/use-skills";
 import { formatAgentExecutorLabel } from "./agent-config-display";
@@ -62,6 +62,27 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
             {modelLabel}
           </span>
         </div>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-[11px] text-muted-foreground">
+          {t("settings.workflow.field.prompt")}
+        </p>
+        {shouldPreviewBrief(prompt) ? (
+          <RunBriefPopover
+            title={t("settings.workflow.field.prompt")}
+            body={prompt}
+            openLabel={t("workflowRun.inspector.textOpen", {
+              field: t("settings.workflow.field.prompt"),
+            })}
+          >
+            <span className="line-clamp-4 whitespace-pre-wrap text-xs leading-5">
+              {prompt}
+            </span>
+          </RunBriefPopover>
+        ) : (
+          <StaticValue value={prompt} multiline />
+        )}
       </div>
 
       <div className="space-y-1">
@@ -143,27 +164,6 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
           </ul>
         </div>
       )}
-
-      <div className="space-y-1">
-        <p className="text-[11px] text-muted-foreground">
-          {t("settings.workflow.field.prompt")}
-        </p>
-        {shouldPreviewBrief(prompt) ? (
-          <RunBriefPopover
-            title={t("settings.workflow.field.prompt")}
-            body={prompt}
-            openLabel={t("workflowRun.inspector.textOpen", {
-              field: t("settings.workflow.field.prompt"),
-            })}
-          >
-            <span className="line-clamp-4 whitespace-pre-wrap text-xs leading-5">
-              {prompt}
-            </span>
-          </RunBriefPopover>
-        ) : (
-          <StaticValue value={prompt} multiline />
-        )}
-      </div>
     </>
   );
 }

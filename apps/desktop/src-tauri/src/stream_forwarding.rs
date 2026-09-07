@@ -11,30 +11,24 @@
 //! rather than rewriting it as a cancellation. The recorded outcome therefore describes how the
 //! backend stream ended, not whether the webview observed its final frame.
 
+use crate::stream_registry::StreamRegistration;
 use crate::workspace_files::workspace_file_backend_error;
 use ora_backend::{BackendError, RequestLifecycle};
 use ora_contracts::{WorkspaceFileChange, WorkspaceFileEventBatch};
 use serde::Serialize;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tokio_util::sync::CancellationToken;
-
-/// Holds the cancellation token of every stream currently registered by the command seam.
-type StreamRegistry = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
 /// Forwards ordered data/error/end frames and drops the backend stream on channel failure.
 pub(crate) async fn forward_contract_stream<Event>(
     mut stream: ora_backend::SessionEventStream<Event>,
-    cancellation: CancellationToken,
-    stream_call_id: String,
-    registry: StreamRegistry,
+    registration: StreamRegistration,
     on_event: Channel<serde_json::Value>,
     lifecycle: RequestLifecycle,
 ) where
     Event: Serialize + Send + 'static,
 {
+    let cancellation = registration.cancellation().clone();
     loop {
         tokio::select! {
             () = cancellation.cancelled() => {
@@ -71,18 +65,17 @@ pub(crate) async fn forward_contract_stream<Event>(
             }
         }
     }
-    unregister(&registry, &stream_call_id);
+    drop(registration);
 }
 
 /// Forwards debounced native workspace changes until the Desktop stream is cancelled.
 pub(crate) async fn forward_workspace_watch(
     watcher: ora_fs::WorkspaceWatcher,
-    cancellation: CancellationToken,
-    stream_call_id: String,
-    registry: StreamRegistry,
+    registration: StreamRegistration,
     on_event: Channel<serde_json::Value>,
     lifecycle: RequestLifecycle,
 ) {
+    let cancellation = registration.cancellation().clone();
     let watch_cancellation = cancellation.clone();
     let terminal_channel = on_event.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -137,23 +130,13 @@ pub(crate) async fn forward_workspace_watch(
             }
         }
     }
-    unregister(&registry, &stream_call_id);
+    drop(registration);
 }
 
 /// Distinguishes the two reasons the blocking watch loop stops before cancellation.
 enum WatchStop {
     ChannelClosed,
     Watcher(ora_fs::WorkspaceFileSystemError),
-}
-
-/// Releases the private stream id so a later call may reuse it.
-///
-/// A poisoned registry is ignored: the process is already failing, and leaving the entry behind
-/// only blocks reuse of one opaque id rather than affecting the stream that just finished.
-fn unregister(registry: &StreamRegistry, stream_call_id: &str) {
-    if let Ok(mut registrations) = registry.lock() {
-        registrations.remove(stream_call_id);
-    }
 }
 
 /// Converts native watcher events to the shared file-change contract.
@@ -174,16 +157,15 @@ fn to_contract_change(change: ora_fs::WorkspaceChange) -> WorkspaceFileChange {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamRegistry, forward_contract_stream, forward_workspace_watch};
+    use super::{forward_contract_stream, forward_workspace_watch};
+    use crate::stream_registry::StreamRegistry;
     use ora_backend::{AppEventHub, RequestLifecycle, UuidRequestIdGenerator};
     use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tauri::ipc::Channel;
-    use tokio_util::sync::CancellationToken;
     use tracing::field::{Field, Visit};
     use tracing_subscriber::layer::{Context, Layer};
 
@@ -199,12 +181,10 @@ mod tests {
     #[test]
     fn channel_disconnect_on_a_data_frame_completes_the_request_as_cancelled() {
         let recorder = OutcomeRecorder::default();
-        let registry: StreamRegistry = Arc::new(Mutex::new(HashMap::new()));
-        let cancellation = CancellationToken::new();
-        registry
-            .lock()
-            .unwrap()
-            .insert(STREAM_CALL_ID.to_string(), cancellation.clone());
+        let registry = StreamRegistry::default();
+        let registration = registry
+            .register(STREAM_CALL_ID.to_string())
+            .expect("register stream");
         let send_attempts = Arc::new(AtomicUsize::new(0));
 
         with_recorded_trace_logging(recorder.layer(), || {
@@ -214,9 +194,7 @@ mod tests {
                 let stream = AppEventHub::new().subscribe();
                 forward_contract_stream(
                     stream,
-                    cancellation,
-                    STREAM_CALL_ID.to_string(),
-                    registry.clone(),
+                    registration,
                     disconnected_channel(send_attempts.clone()),
                     RequestLifecycle::start("test_stream", &UuidRequestIdGenerator),
                 )
@@ -226,7 +204,7 @@ mod tests {
 
         assert_eq!(send_attempts.load(Ordering::SeqCst), 1);
         assert_eq!(recorder.outcomes(), vec!["cancelled".to_string()]);
-        assert_eq!(registry.lock().unwrap().keys().count(), 0);
+        assert!(registry.register(STREAM_CALL_ID.to_string()).is_ok());
     }
 
     /// Cancelling a live stream records exactly one cancellation and releases its registration.
@@ -236,22 +214,18 @@ mod tests {
     #[test]
     fn cancellation_completes_the_request_once_and_releases_the_registration() {
         let recorder = OutcomeRecorder::default();
-        let registry: StreamRegistry = Arc::new(Mutex::new(HashMap::new()));
-        let cancellation = CancellationToken::new();
-        registry
-            .lock()
-            .unwrap()
-            .insert(STREAM_CALL_ID.to_string(), cancellation.clone());
-        cancellation.cancel();
+        let registry = StreamRegistry::default();
+        let registration = registry
+            .register(STREAM_CALL_ID.to_string())
+            .expect("register stream");
+        registry.cancel(STREAM_CALL_ID).expect("cancel stream");
 
         with_recorded_trace_logging(recorder.layer(), || {
             runtime().block_on(async {
                 let stream = AppEventHub::new().subscribe();
                 forward_contract_stream(
                     stream,
-                    cancellation,
-                    STREAM_CALL_ID.to_string(),
-                    registry.clone(),
+                    registration,
                     connected_channel(),
                     RequestLifecycle::start("test_stream", &UuidRequestIdGenerator),
                 )
@@ -260,7 +234,7 @@ mod tests {
         });
 
         assert_eq!(recorder.outcomes(), vec!["cancelled".to_string()]);
-        assert_eq!(registry.lock().unwrap().keys().count(), 0);
+        assert!(registry.register(STREAM_CALL_ID.to_string()).is_ok());
     }
 
     /// A watch stream whose frontend Channel disconnects completes as cancelled, not success.
@@ -271,19 +245,17 @@ mod tests {
     #[test]
     fn watch_channel_disconnect_completes_the_request_as_cancelled() {
         let recorder = OutcomeRecorder::default();
-        let registry: StreamRegistry = Arc::new(Mutex::new(HashMap::new()));
-        let cancellation = CancellationToken::new();
-        registry
-            .lock()
-            .unwrap()
-            .insert(STREAM_CALL_ID.to_string(), cancellation.clone());
+        let registry = StreamRegistry::default();
+        let registration = registry
+            .register(STREAM_CALL_ID.to_string())
+            .expect("register stream");
         let workspace = tempfile::TempDir::new().unwrap();
         let watcher = ora_fs::WorkspaceWatcher::start(workspace.path()).unwrap();
         // The watcher is already running, so this change is queued before forwarding starts and
         // the loop's first batch is the data frame whose send must fail.
         std::fs::write(workspace.path().join("watched.txt"), "changed").unwrap();
         let send_attempts = Arc::new(AtomicUsize::new(0));
-        let timeout_guard = cancellation.clone();
+        let timeout_guard = registration.cancellation().clone();
         std::thread::spawn(move || {
             std::thread::sleep(NATIVE_EVENT_TIMEOUT);
             timeout_guard.cancel();
@@ -292,9 +264,7 @@ mod tests {
         with_recorded_trace_logging(recorder.layer(), || {
             runtime().block_on(forward_workspace_watch(
                 watcher,
-                cancellation,
-                STREAM_CALL_ID.to_string(),
-                registry.clone(),
+                registration,
                 disconnected_channel(send_attempts.clone()),
                 RequestLifecycle::start("test_watch_stream", &UuidRequestIdGenerator),
             ));
@@ -304,7 +274,7 @@ mod tests {
         // which would make the expected outcome pass for the wrong reason.
         assert_eq!(send_attempts.load(Ordering::SeqCst), 1);
         assert_eq!(recorder.outcomes(), vec!["cancelled".to_string()]);
-        assert_eq!(registry.lock().unwrap().keys().count(), 0);
+        assert!(registry.register(STREAM_CALL_ID.to_string()).is_ok());
     }
 
     /// Builds the current-thread runtime that keeps the scoped subscriber on the test thread.

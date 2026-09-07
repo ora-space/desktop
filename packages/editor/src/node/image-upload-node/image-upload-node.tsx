@@ -3,10 +3,10 @@
 import * as React from "react";
 import type { NodeViewProps } from "@tiptap/react";
 import { NodeViewWrapper } from "@tiptap/react";
-import { Button } from "../../primitive/button";
-import { CloseIcon } from "../../icons/close-icon";
+import { Button } from "../../primitive/button/index.tsx";
+import { CloseIcon } from "../../icons/close-icon.tsx";
 import "./image-upload-node.scss";
-import { isValidPosition } from "../../utils";
+import { isValidPosition } from "../../utils.ts";
 
 export interface FileItem {
   /**

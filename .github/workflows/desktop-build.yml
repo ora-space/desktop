@@ -55,11 +55,10 @@ jobs:
       - uses: arduino/setup-task@v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: denoland/setup-deno@v2
         with:
-          node-version: 24
-          cache: pnpm
+          deno-version-file: .deno-version
+          cache: true
       # Installs the toolchain pinned by rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
@@ -88,8 +87,11 @@ jobs:
             pkg-config \
             patchelf \
             build-essential
-      - run: pnpm install --frozen-lockfile
-      # scripts/package-desktop.mjs is the single source of truth for turning
+      - run: deno install --frozen
+      # Exercise the frontend tools and native npm dependencies on every bundle
+      # platform before starting the expensive Rust release build.
+      - run: task test:frontend
+      # scripts/package-desktop.ts is the single source of truth for turning
       # the checked-in config (no sidecars, so `tauri dev` resolves rg/deno
       # from PATH) into a packaged build: it enables the downloaded sidecars,
       # turns on updater artifacts when a signing key is present, and applies
@@ -100,12 +102,11 @@ jobs:
       - name: Build desktop bundle(s)
         shell: bash
         env:
-          DENO_VERSION: v2.9.5
           RG_VERSION: 15.2.0
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VERSION_TAG: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) && (inputs.tag || github.ref_name) || '' }}
-        run: node scripts/package-desktop.mjs ${VERSION_TAG:+--tag "$VERSION_TAG"}
+        run: deno run -A scripts/package-desktop.ts ${VERSION_TAG:+--tag "$VERSION_TAG"}
       # Each platform produces only the bundle types valid for its OS
       # (macOS=dmg, Windows=nsis, Linux=appimage+deb). Listing all four
       # globs is safe: upload-artifact combines them into one search and
@@ -135,6 +136,9 @@ jobs:
       # The manifest generator is checked into the repository and is not part
       # of the downloaded bundle artifacts, so this job needs its own checkout.
       - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .deno-version
       # Manual dispatch with release=true must name the tag explicitly; tag
       # pushes carry it in the ref.
       - name: Validate release tag input
@@ -162,7 +166,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: node scripts/create-desktop-update-manifest.mjs bundles
+        run: deno run -A scripts/create-desktop-update-manifest.ts bundles
       # Draft on purpose: releases get a manual check before publish.
       - uses: softprops/action-gh-release@v3
         with:

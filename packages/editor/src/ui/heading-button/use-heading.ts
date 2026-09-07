@@ -6,8 +6,8 @@ import { type Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
 import {
@@ -15,15 +15,15 @@ import {
   isNodeInSchema,
   isNodeTypeSelected,
   isValidPosition,
-} from "../../utils";
+} from "../../utils.ts";
 
 // --- Icons ---
-import { HeadingOneIcon } from "../../icons/heading-one-icon";
-import { HeadingTwoIcon } from "../../icons/heading-two-icon";
-import { HeadingThreeIcon } from "../../icons/heading-three-icon";
-import { HeadingFourIcon } from "../../icons/heading-four-icon";
-import { HeadingFiveIcon } from "../../icons/heading-five-icon";
-import { HeadingSixIcon } from "../../icons/heading-six-icon";
+import { HeadingOneIcon } from "../../icons/heading-one-icon.tsx";
+import { HeadingTwoIcon } from "../../icons/heading-two-icon.tsx";
+import { HeadingThreeIcon } from "../../icons/heading-three-icon.tsx";
+import { HeadingFourIcon } from "../../icons/heading-four-icon.tsx";
+import { HeadingFiveIcon } from "../../icons/heading-five-icon.tsx";
+import { HeadingSixIcon } from "../../icons/heading-six-icon.tsx";
 
 export type Level = 1 | 2 | 3 | 4 | 5 | 6;
 

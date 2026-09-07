@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RuntimeLogLevel } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { settingsKeys } from "../data/settings";
 
 /** Loads and updates the process-wide runtime log level through the shared contracts client. */
 export function useRuntimeLogLevel() {
@@ -10,7 +10,7 @@ export function useRuntimeLogLevel() {
   const queryClient = useQueryClient();
   const submissionPending = useRef(false);
   const query = useQuery({
-    queryKey: queryKeys.runtimeLogLevel,
+    queryKey: settingsKeys.runtimeLogLevel,
     queryFn: () => client.runtimeLogLevel.get({}),
   });
   const mutation = useMutation({
@@ -18,7 +18,7 @@ export function useRuntimeLogLevel() {
       client.runtimeLogLevel.set({ level }),
     onSuccess: (response) => {
       // Only a backend response may replace the authoritative cache entry.
-      queryClient.setQueryData(queryKeys.runtimeLogLevel, response);
+      queryClient.setQueryData(settingsKeys.runtimeLogLevel, response);
     },
   });
   const submitLevel = useCallback(

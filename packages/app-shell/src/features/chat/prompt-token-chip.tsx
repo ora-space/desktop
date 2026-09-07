@@ -13,6 +13,13 @@ interface PromptTokenChipProps {
  * marquee highlight).
  */
 export function PromptTokenChip({ kind, name }: PromptTokenChipProps) {
+  if (kind === "variable") {
+    return (
+      <span className="composer-mention" data-prompt-token={kind}>
+        {name}
+      </span>
+    );
+  }
   const prefix = kind === "command" ? "/" : kind === "role" ? "@" : "$";
   return (
     <span className="composer-mention" data-prompt-token={kind}>

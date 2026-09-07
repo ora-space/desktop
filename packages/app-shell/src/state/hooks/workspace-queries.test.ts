@@ -3,38 +3,42 @@ import { waitFor } from "@testing-library/react";
 import { useProjects } from "./use-projects";
 import { useTasks } from "./use-tasks";
 import { useSessions } from "./use-sessions";
+import { createTestClient } from "../../test/contracts-transport";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../test/memory/workspaces";
+import {
+  createSessionMemory,
+  sessionHandlers,
+} from "../../test/memory/sessions";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { AGENT_REF } from "../../test/agent-identity";
 
 describe("useProjects", () => {
   it("returns the project list from the client", async () => {
-    const state = createMockClientState();
+    const state = createWorkspaceMemory();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const client = createTestClient(workspaceHandlers(state));
     const { result } = renderHookWithClient(() => useProjects(), client);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([{ id: "p1", name: "Ora" }]);
   });
 
   it("starts pending with no data", () => {
-    const state = createMockClientState();
-    const client = createMockClient(state);
+    const state = createWorkspaceMemory();
+    const client = createTestClient(workspaceHandlers(state));
     const { result } = renderHookWithClient(() => useProjects(), client);
     expect(result.current.isPending).toBe(true);
     expect(result.current.data).toBeUndefined();
   });
 
   it("surfaces transport errors as isError", async () => {
-    const state = createMockClientState();
-    const client = createMockClient(state);
-    (client.project as unknown as { list: () => Promise<never> }).list =
-      async () => {
+    const client = createTestClient({
+      listProjects: async () => {
         throw new Error("boom");
-      };
+      },
+    });
     const { result } = renderHookWithClient(() => useProjects(), client);
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(Error);
@@ -43,7 +47,7 @@ describe("useProjects", () => {
 
 describe("useTasks", () => {
   it("returns the task list from the client", async () => {
-    const state = createMockClientState();
+    const state = createWorkspaceMemory();
     state.tasks = [
       {
         id: "t1",
@@ -52,7 +56,7 @@ describe("useTasks", () => {
         title: "Refactor",
       },
     ];
-    const client = createMockClient(state);
+    const client = createTestClient(workspaceHandlers(state));
     const { result } = renderHookWithClient(() => useTasks(), client);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([
@@ -68,7 +72,7 @@ describe("useTasks", () => {
 
 describe("useSessions", () => {
   it("returns the session list from the client", async () => {
-    const state = createMockClientState();
+    const state = createSessionMemory();
     state.sessions = [
       {
         id: "s1",
@@ -79,7 +83,7 @@ describe("useSessions", () => {
         historyState: { type: "writable" },
       },
     ];
-    const client = createMockClient(state);
+    const client = createTestClient(sessionHandlers(state));
     const { result } = renderHookWithClient(() => useSessions(), client);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([

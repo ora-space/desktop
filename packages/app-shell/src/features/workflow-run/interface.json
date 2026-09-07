@@ -1,0 +1,18 @@
+{
+  "owner": "Workflow execution UI",
+  "modules": {
+    "./run-workflow-dialog": {
+      "exports": ["RunWorkflowDialog"],
+      "purpose": "Workspace dialogs compose the run launch interaction."
+    },
+    "./workflow-run-workspace": {
+      "exports": ["WorkflowRunWorkspace"],
+      "purpose": "Workspace hosts run execution through its top-level view."
+    },
+    "./translations": {
+      "exports": ["workflowRunTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

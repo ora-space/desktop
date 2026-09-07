@@ -849,7 +849,7 @@ mod tests {
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
     use crate::plugin::PluginApi;
-    use crate::user_config::UserConfigApi;
+    use crate::settings::Settings;
     use ora_contracts::{PublicError, ScanPluginsRequest};
     use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
     use ora_domain::{AgentRef, PluginId};
@@ -988,7 +988,7 @@ mod tests {
     #[tokio::test]
     async fn supervises_a_package_that_appears_after_startup() {
         let temporary = TempDir::new().expect("create supervisor test directory");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
                 &default_migration_catalog().expect("build migration catalog"),
@@ -1001,7 +1001,7 @@ mod tests {
                 PathBuf::from("deno"),
                 SystemClock,
                 AppEventHub::new().publisher(),
-                Arc::new(UserConfigApi::new(pool.clone())),
+                Arc::new(Settings::new(pool.clone())),
             )
             .expect("open plugin host"),
         );

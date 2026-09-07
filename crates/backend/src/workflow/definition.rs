@@ -1,9 +1,10 @@
+use crate::BackendError;
 use crate::clock::SystemClock;
 use ora_application::{
-    ActivateWorkflowHandler, ApplicationError, CreateWorkflowHandler, DeleteSnapshotHandler,
-    DeleteWorkflowHandler, GetDraftHandler, GetVersionHandler, GetWorkflowHandler,
-    GetWorkflowSnapshotHandler, ListVersionsHandler, ListWorkflowsHandler, PublishWorkflowHandler,
-    RollbackWorkflowHandler, UpdateDraftHandler, UpdateWorkflowHandler, UuidWorkflowIdGenerator,
+    ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler, DeleteWorkflowHandler,
+    GetDraftHandler, GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
+    ListVersionsHandler, ListWorkflowsHandler, PublishWorkflowHandler, RollbackWorkflowHandler,
+    UpdateDraftHandler, UpdateWorkflowHandler, UuidWorkflowIdGenerator,
 };
 use ora_contracts::{
     ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest,
@@ -19,7 +20,7 @@ use ora_db::{RepositoryPool, SqliteWorkflowRepository};
 use std::sync::Arc;
 
 /// Groups the concrete workflow handlers shared by runtime adapters.
-pub(crate) struct WorkflowApi {
+pub struct WorkflowApi {
     create: CreateWorkflowHandler<SqliteWorkflowRepository, UuidWorkflowIdGenerator, SystemClock>,
     get: GetWorkflowHandler<SqliteWorkflowRepository>,
     list: ListWorkflowsHandler<SqliteWorkflowRepository>,
@@ -60,101 +61,120 @@ impl WorkflowApi {
         }
     }
 
-    pub(crate) fn create(
+    /// Creates a definition and its draft without starting a workflow run.
+    pub fn create(
         &self,
         request: CreateWorkflowRequest,
-    ) -> Result<CreateWorkflowResponse, ApplicationError> {
-        self.create.handle(request)
+    ) -> Result<CreateWorkflowResponse, BackendError> {
+        self.create.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn get(
-        &self,
-        request: GetWorkflowRequest,
-    ) -> Result<GetWorkflowResponse, ApplicationError> {
-        self.get.handle(request)
+    /// Loads a visible definition while preserving the application not-found semantics.
+    pub fn get(&self, request: GetWorkflowRequest) -> Result<GetWorkflowResponse, BackendError> {
+        self.get.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn list(
+    /// Lists visible definitions without loading execution state.
+    pub fn list(
         &self,
         request: ListWorkflowsRequest,
-    ) -> Result<ListWorkflowsResponse, ApplicationError> {
-        self.list.handle(request)
+    ) -> Result<ListWorkflowsResponse, BackendError> {
+        self.list.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn update(
+    /// Updates definition metadata while leaving snapshot identity under application control.
+    pub fn update(
         &self,
         request: UpdateWorkflowRequest,
-    ) -> Result<UpdateWorkflowResponse, ApplicationError> {
-        self.update.handle(request)
+    ) -> Result<UpdateWorkflowResponse, BackendError> {
+        self.update.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn delete(
+    /// Deletes a definition with its application-owned reference checks.
+    pub fn delete(
         &self,
         request: DeleteWorkflowRequest,
-    ) -> Result<DeleteWorkflowResponse, ApplicationError> {
-        self.delete.handle(request)
+    ) -> Result<DeleteWorkflowResponse, BackendError> {
+        self.delete.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn get_draft(
-        &self,
-        request: GetDraftRequest,
-    ) -> Result<GetDraftResponse, ApplicationError> {
-        self.get_draft.handle(request)
+    /// Loads the mutable draft separately from immutable published versions.
+    pub fn get_draft(&self, request: GetDraftRequest) -> Result<GetDraftResponse, BackendError> {
+        self.get_draft.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn update_draft(
+    /// Replaces draft graph content under the existing graph-validation rules.
+    pub fn update_draft(
         &self,
         request: UpdateDraftRequest,
-    ) -> Result<UpdateDraftResponse, ApplicationError> {
-        self.update_draft.handle(request)
+    ) -> Result<UpdateDraftResponse, BackendError> {
+        self.update_draft
+            .handle(request)
+            .map_err(BackendError::from)
     }
 
-    pub(crate) fn publish(
+    /// Validates the draft and creates the next immutable published snapshot.
+    pub fn publish(
         &self,
         request: PublishWorkflowRequest,
-    ) -> Result<PublishWorkflowResponse, ApplicationError> {
-        self.publish.handle(request)
+    ) -> Result<PublishWorkflowResponse, BackendError> {
+        self.publish.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn rollback(
+    /// Restores a selected version into the editable draft.
+    pub fn rollback(
         &self,
         request: RollbackWorkflowRequest,
-    ) -> Result<RollbackWorkflowResponse, ApplicationError> {
-        self.rollback.handle(request)
+    ) -> Result<RollbackWorkflowResponse, BackendError> {
+        self.rollback.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn activate(
+    /// Selects the published version used by future runs without rewriting existing runs.
+    pub fn activate(
         &self,
         request: ActivateWorkflowRequest,
-    ) -> Result<ActivateWorkflowResponse, ApplicationError> {
-        self.activate.handle(request)
+    ) -> Result<ActivateWorkflowResponse, BackendError> {
+        self.activate.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn list_versions(
+    /// Lists immutable published snapshots belonging to one definition.
+    pub fn list_versions(
         &self,
         request: ListVersionsRequest,
-    ) -> Result<ListVersionsResponse, ApplicationError> {
-        self.list_versions.handle(request)
+    ) -> Result<ListVersionsResponse, BackendError> {
+        self.list_versions
+            .handle(request)
+            .map_err(BackendError::from)
     }
 
-    pub(crate) fn get_version(
+    /// Resolves one version within its owning definition.
+    pub fn get_version(
         &self,
         request: GetVersionRequest,
-    ) -> Result<GetVersionResponse, ApplicationError> {
-        self.get_version.handle(request)
+    ) -> Result<GetVersionResponse, BackendError> {
+        self.get_version.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn delete_snapshot(
+    /// Deletes a snapshot only when application reference checks allow it.
+    pub fn delete_snapshot(
         &self,
         request: DeleteSnapshotRequest,
-    ) -> Result<DeleteSnapshotResponse, ApplicationError> {
-        self.delete_snapshot.handle(request)
+    ) -> Result<DeleteSnapshotResponse, BackendError> {
+        self.delete_snapshot
+            .handle(request)
+            .map_err(BackendError::from)
     }
 
-    pub(crate) fn get_snapshot(
+    /// Loads a snapshot through the same visibility rules as other definition reads.
+    pub fn get_snapshot(
         &self,
         request: GetWorkflowSnapshotRequest,
-    ) -> Result<GetWorkflowSnapshotResponse, ApplicationError> {
-        self.get_snapshot.handle(request)
+    ) -> Result<GetWorkflowSnapshotResponse, BackendError> {
+        self.get_snapshot
+            .handle(request)
+            .map_err(BackendError::from)
     }
 }
+
+#[cfg(test)]
+mod tests;

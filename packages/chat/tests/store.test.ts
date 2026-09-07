@@ -8,7 +8,7 @@ import {
   LocalTransportError,
   RemoteContractError,
 } from "@ora/contracts";
-import { createChatStore, type ChatSessionClient } from "../src/index.js";
+import { createChatStore, type ChatSessionClient } from "../src/index.ts";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
 function textEvent(

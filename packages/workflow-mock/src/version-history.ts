@@ -1,6 +1,6 @@
 import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
 import type { DemoWorkflow } from "./fixtures";
-import type { WorkflowNodeData } from "./node-data";
+import type { WorkflowGlobalVariable, WorkflowNodeData } from "./node-data";
 import type { WorkflowAnnotationNode } from "./annotation-data";
 
 export type MockWorkflowVersionGraph = ReactFlowJsonObject<
@@ -8,6 +8,7 @@ export type MockWorkflowVersionGraph = ReactFlowJsonObject<
   Edge
 > & {
   annotations?: WorkflowAnnotationNode[];
+  globalVariables?: WorkflowGlobalVariable[];
 };
 
 /** Represents one immutable, published workflow graph used by the version-history UI. */
@@ -52,6 +53,7 @@ function graphSnapshot(workflow: DemoWorkflow): MockWorkflowVersionGraph {
     edges: workflow.edges,
     viewport: workflow.viewport,
     annotations: workflow.annotations ?? [],
+    globalVariables: workflow.globalVariables ?? [],
   });
 }
 

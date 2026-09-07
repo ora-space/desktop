@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// Describes the lifecycle state of a workflow run in the public contract.
@@ -43,7 +44,6 @@ pub struct WorkflowRun {
     pub input: Option<String>,
     pub output: Option<String>,
     pub error: Option<String>,
-    pub payload: Option<String>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub created_at: i64,
@@ -148,6 +148,23 @@ pub struct GetWorkflowRunResponse {
     pub workspace_id: String,
     pub project_id: String,
     pub nodes: Vec<WorkflowNodeRun>,
+    /// Typed variable-pool projection; persistence metadata remains internal.
+    pub variables: Vec<WorkflowRunVariable>,
+    /// Condition decisions keyed by node id for branch-aware rendering.
+    pub condition_decisions: BTreeMap<String, String>,
+}
+
+/// One declared run variable and its optional current value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflowRun.ts")]
+pub struct WorkflowRunVariable {
+    pub selector: Vec<String>,
+    pub value_type: String,
+    pub source_node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "unknown")]
+    pub value: Option<serde_json::Value>,
 }
 
 // ── List by project ──
@@ -296,6 +313,10 @@ pub struct RestartWorkflowRunResponse {
 pub struct UpdateWorkflowRunInputRequest {
     pub run_id: String,
     pub input: Option<String>,
+    /// Start-variable values keyed by their declared short name; JSON null clears an assignment.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(optional, type = "Record<string, unknown>")]
+    pub variables: BTreeMap<String, serde_json::Value>,
 }
 
 /// Returns the run with its updated input.
@@ -344,6 +365,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowNodeStatus::export(config)?;
     WorkflowRun::export(config)?;
     WorkflowNodeRun::export(config)?;
+    WorkflowRunVariable::export(config)?;
     WorkflowRunSummary::export(config)?;
     WorkflowRunLocale::export(config)?;
     CreateWorkflowRunRequest::export(config)?;
@@ -383,11 +405,12 @@ mod tests {
         ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
         ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
         NodeCompletionRequester, WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun,
-        WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary,
+        WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary, WorkflowRunVariable,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
     use serde_json::{Value, json};
+    use std::collections::BTreeMap;
 
     /// Verifies the workflow-run contracts serialize to frontend-friendly camelCase payloads.
     #[test]
@@ -403,7 +426,6 @@ mod tests {
             input: Some("kickoff".to_string()),
             output: None,
             error: None,
-            payload: None,
             started_at: None,
             finished_at: None,
             created_at: 30,
@@ -439,7 +461,6 @@ mod tests {
                 "input": "kickoff",
                 "output": null,
                 "error": null,
-                "payload": null,
                 "startedAt": null,
                 "finishedAt": null,
                 "createdAt": 30,
@@ -475,7 +496,6 @@ mod tests {
                     "input": "kickoff",
                     "output": null,
                     "error": null,
-                    "payload": null,
                     "startedAt": null,
                     "finishedAt": null,
                     "createdAt": 30,
@@ -496,6 +516,16 @@ mod tests {
                 workspace_id: "workspace-1".to_string(),
                 project_id: "project-1".to_string(),
                 nodes: vec![node.clone()],
+                variables: vec![WorkflowRunVariable {
+                    selector: vec!["start".to_string(), "count".to_string()],
+                    value_type: "integer".to_string(),
+                    source_node_id: "start".to_string(),
+                    value: Some(json!(3)),
+                }],
+                condition_decisions: BTreeMap::from([(
+                    "condition-1".to_string(),
+                    "case-1".to_string(),
+                )]),
             },
             json!({
                 "run": {
@@ -509,7 +539,6 @@ mod tests {
                     "input": "kickoff",
                     "output": null,
                     "error": null,
-                    "payload": null,
                     "startedAt": null,
                     "finishedAt": null,
                     "createdAt": 30,
@@ -534,6 +563,13 @@ mod tests {
                     "createdAt": 30,
                     "updatedAt": 31,
                 }],
+                "variables": [{
+                    "selector": ["start", "count"],
+                    "valueType": "integer",
+                    "sourceNodeId": "start",
+                    "value": 3,
+                }],
+                "conditionDecisions": { "condition-1": "case-1" },
             }),
         );
         assert_serialized_json(
@@ -673,7 +709,6 @@ mod tests {
                     "input": "kickoff",
                     "output": null,
                     "error": null,
-                    "payload": null,
                     "startedAt": null,
                     "finishedAt": null,
                     "createdAt": 30,

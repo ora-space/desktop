@@ -1,6 +1,6 @@
 //! Endpoint declarations for generic Effect target status queries.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[FrontendEndpoint {
     operation_name: "getEffectTargetStatus",
@@ -8,4 +8,5 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[FrontendEndpoint {
     member_name: "getTargetStatus",
     request_type: "GetEffectTargetStatusRequest",
     response_type: "GetEffectTargetStatusResponse",
+    response_mode: FrontendResponseMode::Unary,
 }];

@@ -2,35 +2,35 @@ import * as React from "react";
 import { type Editor } from "@tiptap/react";
 
 // --- Hooks ---
-import { useMenuNavigation } from "../../hooks/use-menu-navigation";
-import { useIsMobile } from "../../hooks/use-mobile";
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useMenuNavigation } from "../../hooks/use-menu-navigation.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Icons ---
-import { BanIcon } from "../../icons/ban-icon";
-import { HighlighterIcon } from "../../icons/highlighter-icon";
+import { BanIcon } from "../../icons/ban-icon.tsx";
+import { HighlighterIcon } from "../../icons/highlighter-icon.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button, ButtonGroup } from "../../primitive/button";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button, ButtonGroup } from "../../primitive/button/index.tsx";
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
-} from "../../primitive/popover";
-import { Separator } from "../../primitive/separator";
-import { Card, CardBody, CardItemGroup } from "../../primitive/card";
+} from "../../primitive/popover/index.tsx";
+import { Separator } from "../../primitive/separator/index.tsx";
+import { Card, CardBody, CardItemGroup } from "../../primitive/card/index.tsx";
 
 // --- Tiptap UI ---
 import type {
   HighlightColor,
   UseColorHighlightConfig,
-} from "../color-highlight-button";
+} from "../color-highlight-button/index.tsx";
 import {
   ColorHighlightButton,
   pickHighlightColorsByValue,
   useColorHighlight,
-} from "../color-highlight-button";
+} from "../color-highlight-button/index.tsx";
 
 export interface ColorHighlightPopoverContentProps {
   /**

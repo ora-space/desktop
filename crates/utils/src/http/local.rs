@@ -62,6 +62,9 @@ fn resolve_source_path(source: &DownloadSource) -> Result<PathBuf, DownloadError
                 "scheme {scheme:?} is not supported by the local downloader"
             ))),
         },
+        DownloadSource::S3 { .. } => Err(DownloadError::InvalidSource(
+            "S3 object-key sources are not supported by the local downloader".to_owned(),
+        )),
     }
 }
 
@@ -126,6 +129,9 @@ fn source_url_for_error(source: &DownloadSource) -> Url {
         DownloadSource::Url(url) => url.clone(),
         DownloadSource::Local(path) => {
             Url::from_file_path(path).unwrap_or_else(|_| fallback_file_url())
+        }
+        DownloadSource::S3 { .. } => {
+            Url::parse("https://s3.invalid/").unwrap_or_else(|_| fallback_file_url())
         }
     }
 }

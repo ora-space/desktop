@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { settingsKeys } from "../data/settings";
 
 /** Loads and updates the shared developer-mode preference through the contracts client. */
 export function useDeveloperMode() {
@@ -9,7 +9,7 @@ export function useDeveloperMode() {
   const queryClient = useQueryClient();
   const submissionPending = useRef(false);
   const query = useQuery({
-    queryKey: queryKeys.developerMode,
+    queryKey: settingsKeys.developerMode,
     queryFn: () => client.developerMode.get({}),
   });
   const mutation = useMutation({
@@ -17,7 +17,7 @@ export function useDeveloperMode() {
     onSuccess: (response) => {
       // Keep the server response authoritative; optimistic state could expose controls
       // even when persistence rejected the requested change.
-      queryClient.setQueryData(queryKeys.developerMode, response);
+      queryClient.setQueryData(settingsKeys.developerMode, response);
     },
   });
   const submitEnabled = useCallback(

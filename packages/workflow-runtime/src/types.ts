@@ -22,11 +22,57 @@ export interface WorkflowAgentMcpConfig {
   enabled: boolean;
 }
 
-/** One named input variable exposed to a Prompt node's template. */
+/** Value types accepted by the workflow variable pool. */
+export type WorkflowVariableValueType =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "secret"
+  | "file"
+  | "object"
+  | "any"
+  | "array"
+  | "array[string]"
+  | "array[number]"
+  | "array[object]"
+  | "array[boolean]"
+  | "array[file]"
+  | "array[any]";
+
+/** One workflow-wide variable available independently of graph topology. */
+export interface WorkflowGlobalVariable {
+  name: string;
+  valueType: WorkflowVariableValueType;
+  value?: unknown;
+}
+
+/** Form controls supported by a Start node when collecting deployment-time input. */
+export type WorkflowInputFieldType =
+  | "text-input"
+  | "paragraph"
+  | "select"
+  | "number"
+  | "checkbox"
+  | "file"
+  | "file-list"
+  | "json";
+
+/** One typed input declared by the Start node. */
 export interface WorkflowInputVariable {
   name: string;
-  /** Default value, usually referencing a context variable like `{{repository}}`. */
-  defaultValue?: string;
+  /** Human-facing label shown when a deployed run collects this value. */
+  displayName?: string;
+  /** Presentation control; kept separate because several controls produce the same value type. */
+  fieldType?: WorkflowInputFieldType;
+  valueType: WorkflowVariableValueType;
+  /** Whether a deployed run must provide a non-empty value before execution. */
+  required?: boolean;
+  /** Choices presented by a select field. */
+  options?: string[];
+  /** Character limit for string-like values. */
+  maxLength?: number;
+  value?: unknown;
 }
 
 /** One rule inside a condition branch: a variable, a comparison operator, and an expected value. */
@@ -47,6 +93,32 @@ export interface WorkflowConditionBranch {
   logic?: WorkflowConditionLogic;
 }
 
+/**
+ * One comparison in the executable Condition format: a fully-qualified variable selector, a
+ * typed operator, and an optional expected value. Mirrors the backend's `data.cases` wire shape.
+ */
+export interface WorkflowConditionComparison {
+  /** Dify-style selector `["nodeId", "root", ...nestedPath]`. */
+  variableSelector: string[];
+  operator: string;
+  /** Expected value, omitted for operators such as `exists` / `empty`. */
+  value?: unknown;
+}
+
+/** One executable case of a Condition node; the trailing "else" path is implicit. */
+export interface WorkflowConditionCase {
+  id: string;
+  logic?: WorkflowConditionLogic;
+  conditions: WorkflowConditionComparison[];
+}
+
+/** One named result an Output node exposes, resolved from the run variable pool at completion. */
+export interface WorkflowOutputBinding {
+  name: string;
+  /** Dify-style selector `["nodeId", "root", ...nestedPath]`. */
+  variableSelector: string[];
+}
+
 /** Which branches a Junction node waits for before it may proceed. */
 export type WorkflowJunctionWaitStrategy = "all" | "any" | "count";
 
@@ -57,6 +129,13 @@ export type WorkflowJunctionFailureStrategy = "fail" | "continue";
 export interface WorkflowToolParameter {
   key: string;
   value: string;
+}
+
+/** Optional structured output emitted alongside an Agent node's stable text `output`. */
+export interface WorkflowAgentOutputContract {
+  type: "structured";
+  /** JSON Schema the final assistant response must validate against. */
+  schema: Record<string, unknown>;
 }
 
 /** Transport-neutral execution contract for an Agent node. */
@@ -77,7 +156,8 @@ export interface WorkflowAgentConfig {
    * Whether the node's final assistant response becomes its run output. Absent defaults to
    * `"none"`, so a node withholds its output unless opted in.
    */
-  outputPolicy?: "none" | "final_agent_response";
+  /** Optional structured parsing performed in addition to the stable raw output. */
+  outputContract?: WorkflowAgentOutputContract;
 }
 
 /** Serializable workflow node data shared by memory and future Rust adapters. */
@@ -85,31 +165,32 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   kind: WorkflowNodeKind;
   title: string;
   description: string;
+  /** Start node: initial prompt used as the run's kickoff input. */
+  input?: string;
+  /** Human node: prompt shown to the reviewer. */
   instruction?: string;
-  /** Start node: how the workflow is triggered (merge request, push, manual). */
+  /** Legacy scheduling metadata; no current runtime consumes this value. */
   trigger?: string;
   /** Start node: variables the workflow receives on start. */
   inputVariables?: WorkflowInputVariable[];
   tool?: string;
   condition?: string;
   agentConfig?: WorkflowAgentConfig;
-  /** Structured IF/ELSE rules for Condition nodes (replaces the flat condition string). */
   conditionBranches?: WorkflowConditionBranch[];
-  /** Selected operation of the Tool node, resolved from the tool's operation catalog. */
+  /** Legacy executable cases retained so existing saved graphs remain readable. */
+  conditionCases?: WorkflowConditionCase[];
+  /** Executable cases for Condition nodes, matching the backend `data.cases` wire format. */
+  cases?: WorkflowConditionCase[];
+  /** Named result bindings of an Output node, resolved from the variable pool at completion. */
+  outputs?: WorkflowOutputBinding[];
   operation?: string;
-  /** Key/value call parameters for the Tool node. */
   toolParameters?: WorkflowToolParameter[];
-  /** Junction node: which upstream branches must finish before it proceeds. */
   waitStrategy?: WorkflowJunctionWaitStrategy;
-  /** Junction node: minimum branch count when the wait strategy is "count". */
   waitCount?: number;
-  /** Junction node: behavior when an upstream branch fails. */
   failureStrategy?: WorkflowJunctionFailureStrategy;
-  /** Loop node: maximum iterations before the loop gives up. */
   maxAttempts?: number;
-  /** Loop node: condition that ends the loop early, shown as a readable rule. */
   exitCondition?: string;
-  /** Memory-adapter-only timing hint; real backends may ignore it. */
+  /** Fixture-only timing hint; the editor does not expose it as configuration. */
   mockStepMs?: number;
 }
 
@@ -141,6 +222,9 @@ export interface WorkflowDefinitionEdge {
   type?: "workflow";
   label?: string;
   data?: Record<string, unknown>;
+  /** Source port of a Condition node selecting its branch: a case id or `else`. */
+  sourceHandle?: string;
+  targetHandle?: string;
 }
 
 /** Frozen workflow definition shared across memory and future generated contracts. */
@@ -150,6 +234,7 @@ export interface WorkflowDefinition {
   description: string;
   updatedAt: string;
   viewport: WorkflowViewport;
+  globalVariables?: WorkflowGlobalVariable[];
   nodes: WorkflowDefinitionNode[];
   edges: WorkflowDefinitionEdge[];
 }
@@ -165,7 +250,13 @@ export type GraphWorkflowRunStatus =
 
 /** Per-node execution status overlaid on a frozen definition snapshot. */
 export type GraphWorkflowNodeStatus =
-  "idle" | "running" | "succeeded" | "failed" | "cancelled" | "awaiting_input";
+  | "idle"
+  | "inactive"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "awaiting_input";
 
 /** HITL timeout policy; MVP mock always waits (`wait`) until submit. */
 export type HitlTimeoutPolicy = "fail" | "skip" | "wait";
@@ -274,6 +365,7 @@ export interface GraphWorkflowRun {
  * Never written back to the mounted library definition.
  */
 export interface GraphWorkflowSnapshotNodePatch {
+  input?: string;
   instruction?: string;
   description?: string;
 }

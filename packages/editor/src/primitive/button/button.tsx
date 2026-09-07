@@ -1,10 +1,10 @@
 import * as React from "react";
 
 // --- Tiptap UI Primitive ---
-import { Tooltip, TooltipContent, TooltipTrigger } from "../tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../tooltip/index.tsx";
 
 // --- Lib ---
-import { cn, parseShortcutKeys } from "../../utils";
+import { cn, parseShortcutKeys } from "../../utils.ts";
 
 import "./button-colors.scss";
 import "./button-group.scss";

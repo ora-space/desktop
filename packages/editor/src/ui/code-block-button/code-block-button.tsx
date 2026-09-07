@@ -1,19 +1,19 @@
 import * as React from "react";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Lib ---
-import { parseShortcutKeys } from "../../utils";
+import { parseShortcutKeys } from "../../utils.ts";
 
 // --- Tiptap UI ---
-import type { UseCodeBlockConfig } from "../code-block-button";
-import { CODE_BLOCK_SHORTCUT_KEY, useCodeBlock } from "../code-block-button";
+import type { UseCodeBlockConfig } from "./index.tsx";
+import { CODE_BLOCK_SHORTCUT_KEY, useCodeBlock } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button } from "../../primitive/button";
-import { Badge } from "../../primitive/badge";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button } from "../../primitive/button/index.tsx";
+import { Badge } from "../../primitive/badge/index.tsx";
 
 export interface CodeBlockButtonProps
   extends Omit<ButtonProps, "type">, UseCodeBlockConfig {

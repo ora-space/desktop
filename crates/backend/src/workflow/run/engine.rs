@@ -71,6 +71,7 @@ impl WorkflowRunCallback for WorkflowRunEngineCallback {
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: Option<String>,
         file_changes: Vec<FileChange>,
     ) {
@@ -79,8 +80,14 @@ impl WorkflowRunCallback for WorkflowRunEngineCallback {
         let _gate = self.run_locks.acquire_exclusive(run_id.as_ref());
         if let Ok(guard) = self.engine.read()
             && let Some(engine) = guard.as_ref()
-            && let Err(error) =
-                engine.complete_node(run_id, node_run_id, output, stop_reason, file_changes)
+            && let Err(error) = engine.complete_node(
+                run_id,
+                node_run_id,
+                output,
+                structured_output,
+                stop_reason,
+                file_changes,
+            )
         {
             ora_error!(run_id = %run_id, node_run_id = %node_run_id, error = %error, "node completion callback failed");
         }
@@ -107,7 +114,7 @@ impl WorkflowRunCallback for WorkflowRunEngineCallback {
 pub(crate) struct WorkflowRunEngineAssembly {
     pub control: Arc<ConcreteWorkflowRunControl>,
     /// Serializes every scheduling-affecting mutation per run. Shared with the callback and the
-    /// `Backend` control entry points so no two engine mutations for one run interleave.
+    /// workflow-run control entry points so no two engine mutations for one run interleave.
     pub run_locks: Arc<KeyedResourceLocks>,
     /// The raw engine, used by boot recovery to resume scheduling on a stalled run.
     pub engine: Arc<ConcreteWorkflowRunEngine>,

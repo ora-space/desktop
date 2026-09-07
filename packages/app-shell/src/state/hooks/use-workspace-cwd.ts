@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useOptionalPlatform } from "../../platform";
-import { queryKeys } from "./query-keys";
+import { workspaceKeys } from "../data/workspace";
 
 /** Resolves a Workspace's local execution directory through the injected host adapter. */
 export function useWorkspaceCwd(workspaceId: string | undefined) {
   const platform = useOptionalPlatform();
   return useQuery({
-    queryKey: queryKeys.workspaceCwd(workspaceId ?? ""),
+    queryKey: workspaceKeys.workspaceCwd(workspaceId ?? ""),
     queryFn: () => {
       if (platform === null || workspaceId === undefined) {
         return Promise.reject(

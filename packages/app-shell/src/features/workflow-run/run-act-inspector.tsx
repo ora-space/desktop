@@ -6,6 +6,7 @@ import {
 } from "@tabler/icons-react";
 import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
+import { formatWorkflowNodeOutput } from "./format-node-output";
 import {
   conditionBranchesSummary,
   createWorkflowSummaryLabels,
@@ -25,6 +26,7 @@ import type {
   WorkflowArtifact,
   WorkflowNodeData,
   WorkflowNodeFileChange,
+  WorkflowVariableValueType,
 } from "@ora/workflow-runtime";
 
 interface RunActInspectorProps {
@@ -34,23 +36,65 @@ interface RunActInspectorProps {
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
   /**
-   * When true, description / instruction are editable for this run only
+   * When true, description and a human-approval prompt are editable for this run only
    * (`pending` overrides on the frozen snapshot).
    */
   editable?: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   /**
-   * When provided, the instruction field edits a local draft instead of patching on every
-   * keystroke and a save bar commits it once. `instructionDraft` stays `null` until the user
-   * types, so the field falls back to the snapshot instruction until then.
+   * When provided, the Start prompt edits a local draft instead of patching on every keystroke
+   * and a save bar commits it once. `instructionDraft` stays `null` until the user types, so the
+   * field falls back to the snapshot input until then.
    */
   instructionDraft?: string | null;
+  variableDraft?: Record<string, unknown> | null;
   onInstructionDraftChange?: (value: string) => void;
+  onVariableDraftChange?: (name: string, value: unknown) => void;
   onSaveInstruction?: () => void;
   onDiscardInstructionDraft?: () => void;
   instructionSavePending?: boolean;
   /** Fallback close action when no stage card can host the persistent toggle. */
   onClose?: () => void;
+}
+
+/** Formats an optional typed Start value for the compact read-only summary. */
+function formatInputVariableValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "—";
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/** Keeps an intentionally cleared run-time value visually empty while it is being edited. */
+function inputVariableDraftText(value: unknown): string {
+  return value === undefined || value === null
+    ? ""
+    : formatInputVariableValue(value);
+}
+
+/** Parses a run-time Start value while preserving an empty field as an explicit clear. */
+function parseInputVariableValue(
+  text: string,
+  valueType: WorkflowVariableValueType,
+): unknown {
+  if (text === "") {
+    return null;
+  }
+  if (valueType === "string") {
+    return text;
+  }
+  if (valueType === "boolean") {
+    return text === "true" ? true : text === "false" ? false : text;
+  }
+  if (valueType === "integer" || valueType === "number") {
+    const value = Number(text);
+    return Number.isFinite(value) ? value : text;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -66,7 +110,9 @@ export function RunActInspector({
   editable = false,
   onPatchNode,
   instructionDraft,
+  variableDraft,
   onInstructionDraftChange,
+  onVariableDraftChange,
   onSaveInstruction,
   onDiscardInstructionDraft,
   instructionSavePending = false,
@@ -112,7 +158,9 @@ export function RunActInspector({
       editable={editable}
       onPatchNode={onPatchNode}
       instructionDraft={instructionDraft}
+      variableDraft={variableDraft}
       onInstructionDraftChange={onInstructionDraftChange}
+      onVariableDraftChange={onVariableDraftChange}
       onSaveInstruction={onSaveInstruction}
       onDiscardInstructionDraft={onDiscardInstructionDraft}
       instructionSavePending={instructionSavePending}
@@ -131,7 +179,9 @@ function RunActInspectorPanel({
   editable,
   onPatchNode,
   instructionDraft,
+  variableDraft,
   onInstructionDraftChange,
+  onVariableDraftChange,
   onSaveInstruction,
   onDiscardInstructionDraft,
   instructionSavePending,
@@ -146,7 +196,9 @@ function RunActInspectorPanel({
   editable: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   instructionDraft?: string | null;
+  variableDraft?: Record<string, unknown> | null;
   onInstructionDraftChange?: (value: string) => void;
+  onVariableDraftChange?: (name: string, value: unknown) => void;
   onSaveInstruction?: () => void;
   onDiscardInstructionDraft?: () => void;
   instructionSavePending?: boolean;
@@ -174,65 +226,97 @@ function RunActInspectorPanel({
       : null;
   const agentConfig = data.agentConfig;
   const canEdit = editable && onPatchNode !== undefined;
+  const promptLabel = nodeType.configFields.includes("initialPrompt")
+    ? t("settings.workflow.field.initialPrompt")
+    : nodeType.configFields.includes("approvalPrompt")
+      ? t("settings.workflow.field.approvalPrompt")
+      : null;
+  const promptValue =
+    data.kind === "start" ? (data.input ?? "") : (data.instruction ?? "");
 
   return (
     <aside
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       aria-label={t("workflowRun.inspector.label")}
     >
-      <div className="flex items-center gap-2.5 px-4 py-3">
-        <span
-          className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-lg",
-            metadata.tone,
-          )}
-        >
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-xs font-semibold">{data.title}</h3>
-          <p className="truncate text-[10px] text-muted-foreground">
-            {t("workflowRun.inspector.nodeSuffix", { type: nodeType.label })}
-          </p>
-        </div>
-        <RunStatusBadge status={state.status} quiet className="shrink-0" />
-        {onClose !== undefined && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 cursor-pointer"
-            aria-label={t("workflowRun.inspector.collapse")}
-            onClick={onClose}
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-lg",
+              metadata.tone,
+            )}
           >
-            <IconLayoutSidebarRightCollapse className="size-4" />
-          </Button>
-        )}
+            <Icon className="size-4" />
+          </span>
+          <h3 className="min-w-0 flex-1 truncate font-sans text-base font-semibold">
+            {data.title}
+          </h3>
+          <RunStatusBadge status={state.status} quiet className="shrink-0" />
+          {onClose !== undefined && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 cursor-pointer"
+              aria-label={t("workflowRun.inspector.collapse")}
+              onClick={onClose}
+            >
+              <IconLayoutSidebarRightCollapse className="size-4" />
+            </Button>
+          )}
+        </div>
+        <p className="mt-1 truncate text-[11px] text-muted-foreground">
+          {data.description}
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
-        <InspectorSection title={t("workflowRun.inspector.config")}>
-          <ReadOnlyField
-            label={t("settings.workflow.field.name")}
-            value={data.title}
-          />
-          <ReadOnlyField
-            label={t("settings.workflow.field.description")}
-            value={data.description}
-          />
+        <InspectorSection>
+          {nodeType.configFields.includes("agent") &&
+            agentConfig !== undefined && (
+              <RunActAgentConfig config={agentConfig} />
+            )}
           {data.inputVariables !== undefined &&
-            data.inputVariables.length > 0 && (
+            data.inputVariables.length > 0 &&
+            (canEdit ? (
+              <div className="space-y-2">
+                {data.inputVariables.map((variable) => {
+                  const drafted =
+                    variableDraft !== null &&
+                    variableDraft !== undefined &&
+                    Object.hasOwn(variableDraft, variable.name);
+                  const value = drafted
+                    ? variableDraft[variable.name]
+                    : variable.value;
+                  return (
+                    <EditableField
+                      key={variable.name}
+                      id={`run-start-variable-${variable.name}`}
+                      label={`${variable.name} (${variable.valueType})`}
+                      value={inputVariableDraftText(value)}
+                      onChange={(text) =>
+                        onVariableDraftChange?.(
+                          variable.name,
+                          parseInputVariableValue(text, variable.valueType),
+                        )
+                      }
+                    />
+                  );
+                })}
+              </div>
+            ) : (
               <ReadOnlyField
                 label={t("settings.workflow.section.inputVariables")}
                 value={data.inputVariables
                   .map(
                     (variable) =>
-                      `${variable.name} = ${variable.defaultValue ?? ""}`,
+                      `${variable.name} (${variable.valueType}) = ${formatInputVariableValue(variable.value)}`,
                   )
                   .join(", ")}
                 mono
               />
-            )}
+            ))}
           {nodeType.configFields.includes("tool") && (
             <>
               <ReadOnlyField
@@ -300,62 +384,71 @@ function RunActInspectorPanel({
                 mono
               />
             )}
-          {nodeType.configFields.includes("agent") &&
-            agentConfig !== undefined && (
-              <RunActAgentConfig config={agentConfig} />
-            )}
-          {nodeType.configFields.includes("instruction") &&
+          {promptLabel !== null &&
             (canEdit ? (
               <div className="space-y-1.5">
                 <EditableField
                   id={`run-node-instruction-${nodeId}`}
-                  label={t("settings.workflow.field.instruction")}
-                  value={instructionDraft ?? data.instruction ?? ""}
+                  label={promptLabel}
+                  value={instructionDraft ?? promptValue}
                   multiline
                   onChange={(value) => {
                     if (onSaveInstruction !== undefined) {
                       onInstructionDraftChange?.(value);
                     } else {
-                      onPatchNode({ instruction: value });
+                      onPatchNode(
+                        data.kind === "start"
+                          ? { input: value }
+                          : { instruction: value },
+                      );
                     }
                   }}
                 />
-                {instructionDraft !== null &&
-                  instructionDraft !== undefined && (
-                    <div className="flex items-center justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="cursor-pointer"
-                        onClick={onDiscardInstructionDraft}
-                      >
-                        {t("workflowRun.inspector.discardDraft")}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="cursor-pointer"
-                        disabled={instructionSavePending}
-                        onClick={onSaveInstruction}
-                      >
-                        {instructionSavePending
-                          ? t("workflowRun.inspector.savingDraft")
-                          : t("workflowRun.inspector.saveDraft")}
-                      </Button>
-                    </div>
-                  )}
+                {(instructionDraft !== null &&
+                  instructionDraft !== undefined) ||
+                variableDraft !== null ? (
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="cursor-pointer"
+                      onClick={onDiscardInstructionDraft}
+                    >
+                      {t("workflowRun.inspector.discardDraft")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="cursor-pointer"
+                      disabled={instructionSavePending}
+                      onClick={onSaveInstruction}
+                    >
+                      {instructionSavePending
+                        ? t("workflowRun.inspector.savingDraft")
+                        : t("workflowRun.inspector.saveDraft")}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <ReadOnlyField
-                label={t("settings.workflow.field.instruction")}
-                value={data.instruction ?? ""}
+                label={promptLabel}
+                value={promptValue}
                 multiline
               />
             ))}
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.inspector.execution")}>
+          {data.kind === "output" && state.output?.summary !== undefined && (
+            <ReadOnlyField
+              label={t("workflowRun.inspector.output")}
+              value={formatWorkflowNodeOutput(state.output.summary)}
+              mono
+              multiline
+            />
+          )}
           {timingRange !== null && (
             <p className="text-[10px] tabular-nums text-muted-foreground/80">
               {timingRange}
@@ -404,7 +497,7 @@ function InspectorHeader({
   return (
     <div className="flex items-start gap-2 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <h3 className="text-xs font-semibold">{title}</h3>
+        <h3 className="font-sans text-xs font-semibold">{title}</h3>
         <p className="mt-1 text-[11px] text-muted-foreground">{subtitle}</p>
       </div>
       {onClose !== undefined && (
@@ -427,14 +520,16 @@ function InspectorSection({
   title,
   children,
 }: {
-  title: string;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="space-y-2.5">
-      <h4 className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
-        {title}
-      </h4>
+      {title !== undefined && (
+        <h4 className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+          {title}
+        </h4>
+      )}
       <div className="space-y-2.5">{children}</div>
     </section>
   );

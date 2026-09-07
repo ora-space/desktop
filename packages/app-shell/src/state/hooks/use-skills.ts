@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Skill } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { skillKeys } from "../data/skills";
 
 /** Pickers only surface skills whose on-disk package is still usable. */
 export function availableSkills(skills: readonly Skill[]): Skill[] {
@@ -12,7 +12,7 @@ export function availableSkills(skills: readonly Skill[]): Skill[] {
 export function useSkills() {
   const client = useContractsClient();
   return useQuery({
-    queryKey: queryKeys.skills,
+    queryKey: skillKeys.skills,
     queryFn: () => client.skill.list({}).then((response) => response.skills),
   });
 }

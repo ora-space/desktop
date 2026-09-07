@@ -18,7 +18,6 @@ interface RunTheaterPathRailProps {
   artifactCountByNode: Readonly<Record<string, number>>;
   /** When true, no path chip is marked current (result act has the stage). */
   showResultAct: boolean;
-  progress: { done: number; total: number; percent: number };
   pathRailRef: RefObject<HTMLDivElement | null>;
   onFocusNode: (nodeId: string) => void;
   onExpandHitl: (requestId: string) => void;
@@ -38,7 +37,6 @@ export function RunTheaterPathRail({
   openHitls,
   artifactCountByNode,
   showResultAct,
-  progress,
   pathRailRef,
   onFocusNode,
   onExpandHitl,
@@ -46,9 +44,22 @@ export function RunTheaterPathRail({
 }: RunTheaterPathRailProps) {
   const { t } = useTranslation();
   const pathNodes = useMemo(
-    () => workflowPathNodes(run.definitionSnapshot),
-    [run.definitionSnapshot],
+    () =>
+      workflowPathNodes(run.definitionSnapshot).filter(
+        (node) => run.nodeStates[node.id]?.status !== "inactive",
+      ),
+    [run.definitionSnapshot, run.nodeStates],
   );
+  const progress = useMemo(() => {
+    const total = Math.max(pathNodes.length, 1);
+    const done = pathNodes.filter((node) => {
+      const status = run.nodeStates[node.id]?.status;
+      return (
+        status === "succeeded" || status === "failed" || status === "cancelled"
+      );
+    }).length;
+    return { done, total, percent: Math.round((done / total) * 100) };
+  }, [pathNodes, run.nodeStates]);
   const activeIdSet = useMemo(() => new Set(activeIds), [activeIds]);
   const hitlByNodeId = useMemo(
     () => new Map(openHitls.map((request) => [request.nodeId, request])),
@@ -142,7 +153,7 @@ export function RunTheaterPathRail({
                     aria-label={`${node.data.title}: ${t(tone.labelKey)}`}
                   >
                     <RunStatusMark status={state.status} quiet />
-                    <span className="truncate text-[11px] font-medium">
+                    <span className="truncate font-sans text-[11px] font-medium">
                       {node.data.title}
                     </span>
                     {nodeArtifactCount > 0 && (
@@ -188,7 +199,7 @@ export function RunTheaterPathRail({
                   aria-label={`${t("workflowRun.result.pathChip")}: ${t(runStatusTone(run.status).labelKey)}`}
                 >
                   <RunStatusMark status={run.status} quiet />
-                  <span className="truncate text-[11px] font-medium">
+                  <span className="truncate font-sans text-[11px] font-medium">
                     {t("workflowRun.result.pathChip")}
                   </span>
                 </button>

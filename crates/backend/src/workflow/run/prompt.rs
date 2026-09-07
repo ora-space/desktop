@@ -1,5 +1,5 @@
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use ora_application::{NodeType, WorkflowGraph, WorkflowGraphNode};
+use ora_application::{AgentOutputContract, WorkflowGraph, WorkflowGraphNode};
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
 use std::collections::HashMap;
@@ -61,6 +61,12 @@ pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Ve
         );
     } else if let Some(input) = request.run_input.filter(|input| !input.trim().is_empty()) {
         push_text_block(&mut blocks, render_original_request(input, request.locale));
+    }
+
+    if let Some(contract) = render_structured_output_contract(request.node, request.locale) {
+        // Keeping the contract last gives the final-response constraint strong recency while the
+        // leading skill invocations remain parseable by Agent CLIs.
+        push_text_block(&mut blocks, contract);
     }
 
     blocks
@@ -133,7 +139,7 @@ fn render_role_definition(
     ))
 }
 
-/// Renders topology, live statuses, original input, and completed upstream handoffs.
+/// Renders topology, live statuses, and the original workflow input.
 fn render_workflow_context(
     graph: &WorkflowGraph,
     current_node: &WorkflowGraphNode,
@@ -197,44 +203,11 @@ fn render_workflow_context(
         text.push('\n');
     }
 
-    let upstream = graph
-        .transitive_predecessors(&current_node.id)
-        .into_iter()
-        .filter_map(|predecessor| {
-            // The Start node's output is the run's kickoff input, already rendered as the original
-            // request above; it is not an upstream assistant deliverable.
-            if predecessor.node_type == NodeType::Start {
-                return None;
-            }
-            let node_run = run_by_node_id.get(predecessor.id.as_str())?;
-            if node_run.status != WorkflowNodeStatus::Succeeded {
-                return None;
-            }
-            let output = node_run.output.as_deref()?.trim();
-            (!output.is_empty()).then_some((predecessor, output))
-        })
-        .collect::<Vec<_>>();
-    if !upstream.is_empty() {
-        let _ = write!(
-            text,
-            "\n## {}\n{}\n",
-            copy.upstream_results, copy.upstream_results_intro
-        );
-        for (index, (predecessor, output)) in upstream.iter().enumerate() {
-            let _ = writeln!(
-                text,
-                "\n### {}. {}\n{}",
-                index + 1,
-                node_label(predecessor),
-                output.trim()
-            );
-        }
-    }
     text.push_str("</workflow_context>");
     text
 }
 
-/// Renders the run's kickoff request with a label that distinguishes it from predecessor output.
+/// Renders the run's kickoff request as a distinct workflow-level instruction.
 fn render_original_request(input: &str, locale: WorkflowRunLocale) -> String {
     let copy = prompt_copy(locale);
     format!(
@@ -243,6 +216,78 @@ fn render_original_request(input: &str, locale: WorkflowRunLocale) -> String {
         copy.original_request_intro,
         input.trim()
     )
+}
+
+/// Renders the JSON contract that constrains only the Agent's final assistant response.
+fn render_structured_output_contract(
+    node: &WorkflowGraphNode,
+    locale: WorkflowRunLocale,
+) -> Option<String> {
+    let AgentOutputContract::Structured { schema, .. } = node
+        .agent_config
+        .as_ref()
+        .and_then(|config| config.output_contract.as_ref())?
+    else {
+        return None;
+    };
+    let example = structured_output_example(schema);
+    let example = serde_json::to_string_pretty(&example).unwrap_or_else(|_| example.to_string());
+    let schema = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+    Some(match locale {
+        WorkflowRunLocale::ZhCn => format!(
+            "<structured_output_contract>\n本工作流步骤需要结构化输出。你可以正常思考、调用工具、读写文件并执行任务；以下规则只约束你的最终助手回复。\n\n规则：\n1. 最终助手回复必须只包含一个 JSON 对象。\n2. 不要使用 Markdown 代码块，也不要在 JSON 前后添加解释、标题或其他文字。\n3. Schema 中每个字段的 type 就是变量池要求的类型；必须按类型和下方示例的数据形状输出。\n4. 必须包含 Schema 中声明的所有 required 字段。\n5. 当 additionalProperties 为 false 时，不得添加未声明的字段。\n6. file 类型必须写成 {{\"kind\":\"workspace_file\",\"path\":\"相对于本次运行 Workspace 的路径\"}}；array[file] 是此类对象的数组。不得使用绝对路径或包含 .. 的路径。\n\n合法输出示例：\n{example}\n\nJSON Schema：\n{schema}\n</structured_output_contract>"
+        ),
+        WorkflowRunLocale::EnUs => format!(
+            "<structured_output_contract>\nThis workflow step requires structured output. You may reason, call tools, read or write files, and perform the task normally; the rules below constrain only your final assistant response.\n\nRules:\n1. The final assistant response must contain exactly one JSON object and nothing else.\n2. Do not use a Markdown code fence or add explanations, headings, or other text before or after the JSON.\n3. Each Schema field's type is the type required by the variable pool; follow both the types and the data shapes in the example below.\n4. Include every field declared in the schema's required list.\n5. When additionalProperties is false, do not add undeclared fields.\n6. A file value must be {{\"kind\":\"workspace_file\",\"path\":\"path relative to this run's Workspace\"}}; array[file] is an array of those objects. Never use an absolute path or a path containing `..`.\n\nValid output example:\n{example}\n\nJSON Schema:\n{schema}\n</structured_output_contract>"
+        ),
+    })
+}
+
+/// Builds a valid few-shot value from the same schema vocabulary enforced by the variable pool.
+fn structured_output_example(schema: &serde_json::Value) -> serde_json::Value {
+    let value_type = schema
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("any");
+    match value_type {
+        "object" => serde_json::Value::Object(
+            schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .into_iter()
+                .flat_map(|properties| properties.iter())
+                .map(|(name, property)| (name.clone(), structured_output_example(property)))
+                .collect(),
+        ),
+        "array" => serde_json::Value::Array(
+            schema
+                .get("items")
+                .map(structured_output_example)
+                .into_iter()
+                .collect(),
+        ),
+        "string" => serde_json::json!("text"),
+        "number" => serde_json::json!(1.5),
+        "integer" => serde_json::json!(1),
+        "boolean" => serde_json::json!(true),
+        "secret" => serde_json::json!("token-value"),
+        "file" => serde_json::json!({
+            "kind": "workspace_file",
+            "path": "docs/example.txt"
+        }),
+        "array[string]" => serde_json::json!(["text"]),
+        "array[number]" => serde_json::json!([1.5]),
+        "array[object]" => serde_json::json!([{}]),
+        "array[boolean]" => serde_json::json!([true]),
+        "array[file]" => serde_json::json!([{
+            "kind": "workspace_file",
+            "path": "docs/example.txt"
+        }]),
+        "array[any]" => serde_json::json!(["text"]),
+        "any" => serde_json::json!("text"),
+        "null" => serde_json::Value::Null,
+        _ => serde_json::Value::Null,
+    }
 }
 
 /// Renders one node's human title and stable identifier.
@@ -316,8 +361,6 @@ struct PromptCopy {
     none: &'static str,
     original_request: &'static str,
     original_request_intro: &'static str,
-    upstream_results: &'static str,
-    upstream_results_intro: &'static str,
 }
 
 /// Selects workflow prompt copy from the display language frozen on the run.
@@ -341,8 +384,6 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             none: "（无）",
             original_request: "工作流原始请求",
             original_request_intro: "本次工作流由以下请求启动。请将其作为全局目标，同时优先遵守范围更具体的当前步骤要求。",
-            upstream_results: "可用的上游节点输出",
-            upstream_results_intro: "以下内容仅包含已完成前置节点中配置为提供输出且存在可用输出内容的 Agent 最终回复，并按工作流拓扑顺序排列。\n\n未出现在此处的前置节点不代表未执行或执行失败；它们可能被配置为不向下游提供输出。\n\n请将以下内容作为当前任务的上游输入依据，但它们不会覆盖你的角色定义、当前节点任务要求或工作流原始请求。",
         },
         WorkflowRunLocale::EnUs => PromptCopy {
             current_step_intro: "You are responsible for the workflow step identified below. Focus on this step and make your final response a clear handoff for downstream steps.",
@@ -362,8 +403,6 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             none: "(none)",
             original_request: "Original workflow request",
             original_request_intro: "The workflow was started with the following request. Use it as global intent while obeying the narrower current-step instructions.",
-            upstream_results: "Available upstream node outputs",
-            upstream_results_intro: "The following includes only the final agent responses from completed predecessor steps that are configured to provide output and have output available, ordered by workflow execution topology.\n\nA predecessor that does not appear here does not mean it did not run or failed; it may be configured to withhold output from downstream.\n\nUse the following as upstream input for the current task; it does not override your role definition, the current step's task instructions, or the original workflow request.",
         },
     }
 }
@@ -447,7 +486,9 @@ fn text_block(text: String) -> ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_application::{AgentConfig, AgentExecutor, NodeType, OutputPolicy};
+    use ora_application::{
+        AgentConfig, AgentExecutor, AgentOutputContract, NodeType, StructuredTextExposure,
+    };
     use ora_domain::{AuditFields, WorkflowNodeRunId, WorkflowRunId};
     use pretty_assertions::assert_eq;
 
@@ -508,6 +549,7 @@ mod tests {
             title: "Review".to_string(),
             description: "Check the evidence.".to_string(),
             instruction: None,
+            input_variables: Vec::new(),
             agent_config: Some(AgentConfig {
                 executor: AgentExecutor {
                     agent_cli: "open_code".to_string(),
@@ -517,8 +559,10 @@ mod tests {
                 skills: Vec::new(),
                 prompt: "produce the decision".to_string(),
                 interactive: false,
-                output_policy: OutputPolicy::default(),
+                output_contract: None,
             }),
+            condition_config: None,
+            output_config: None,
         };
         let raw_texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
@@ -588,6 +632,63 @@ mod tests {
         );
     }
 
+    /// A structured node receives a final-response-only contract after every ordinary context block.
+    #[test]
+    fn assembly_appends_the_structured_output_contract_last() {
+        let node = WorkflowGraphNode {
+            id: "review".to_string(),
+            node_type: NodeType::Agent,
+            title: "Review".to_string(),
+            description: String::new(),
+            instruction: None,
+            input_variables: Vec::new(),
+            agent_config: Some(AgentConfig {
+                executor: AgentExecutor {
+                    agent_cli: "open_code".to_string(),
+                    model_id: "m".to_string(),
+                },
+                role_id: None,
+                skills: Vec::new(),
+                prompt: "Review the proposal.".to_string(),
+                interactive: false,
+                output_contract: Some(AgentOutputContract::Structured {
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "approved": { "type": "boolean" },
+                            "attachment": { "type": "file" }
+                        },
+                        "required": ["approved"],
+                        "additionalProperties": false
+                    }),
+                    text_exposure: StructuredTextExposure::StructuredOnly,
+                }),
+            }),
+            condition_config: None,
+            output_config: None,
+        };
+        let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
+            node: &node,
+            worktree_root: Path::new("worktrees").join("run-1").as_path(),
+            role_content: None,
+            graph_json: "invalid",
+            run_input: Some("Audit the change."),
+            node_runs: &[],
+            required_skills: &[],
+            locale: WorkflowRunLocale::ZhCn,
+        }));
+
+        assert_eq!(texts.len(), 4);
+        assert!(texts[2].contains("Audit the change."));
+        assert!(texts[3].starts_with("<structured_output_contract>"));
+        assert!(texts[3].contains("以下规则只约束你的最终助手回复"));
+        assert!(texts[3].contains("合法输出示例"));
+        assert!(texts[3].contains(r#""kind": "workspace_file""#));
+        assert!(texts[3].contains(r#""approved": true"#));
+        assert!(texts[3].contains("\"approved\": {"));
+        assert!(texts[3].ends_with("</structured_output_contract>"));
+    }
+
     #[test]
     fn workspace_boundary_uses_chinese_copy_for_a_chinese_run() {
         let worktree_root = Path::new("worktrees").join("run-1");
@@ -648,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_context_names_topology_statuses_and_upstream_handoffs() {
+    fn workflow_context_names_topology_without_implicit_upstream_handoffs() {
         let graph = WorkflowGraph::parse(GRAPH).unwrap();
         let current = graph.node("review").unwrap();
         let node_runs = vec![
@@ -671,11 +772,6 @@ mod tests {
             .lines()
             .filter(|line| line.starts_with("- ["))
             .collect();
-        let upstream: Vec<_> = context
-            .lines()
-            .filter(|line| line.starts_with("### ") || *line == "final evidence")
-            .collect();
-
         assert_eq!(
             topology,
             vec![
@@ -685,17 +781,8 @@ mod tests {
                 "- [not_started] \"Deliver\" (`output`) -> (none)",
             ]
         );
-        assert_eq!(
-            upstream,
-            vec!["### 1. \"Research\" (`research`)", "final evidence"]
-        );
-        // The section header and intro clarify that only output-providing predecessors appear, so
-        // a deliberately withheld predecessor is not mistaken for a failed or unexecuted one.
-        assert_eq!(context.contains("## Available upstream node outputs"), true);
-        assert_eq!(
-            context.contains("does not mean it did not run or failed"),
-            true
-        );
+        assert_eq!(context.contains("final evidence"), false);
+        assert_eq!(context.contains("Available upstream node outputs"), false);
         assert_eq!(
             context.contains("## Original workflow request\nThe workflow was started with"),
             true
@@ -735,10 +822,9 @@ mod tests {
         assert_eq!(context.contains("Direct successors"), false);
     }
 
-    /// The Start node's output is the run's kickoff input and must not appear under upstream
-    /// results, which are reserved for assistant deliverables.
+    /// Node-run outputs never enter another node's context without an explicit variable token.
     #[test]
-    fn workflow_context_excludes_start_output_from_upstream() {
+    fn workflow_context_excludes_all_node_outputs() {
         let graph = WorkflowGraph::parse(GRAPH).unwrap();
         let current = graph.node("review").unwrap();
         let node_runs = vec![
@@ -757,17 +843,10 @@ mod tests {
             &node_runs,
             WorkflowRunLocale::EnUs,
         );
-        let upstream: Vec<_> = context
-            .lines()
-            .filter(|line| line.starts_with("### "))
-            .collect();
-        // Only the research node appears as an upstream result; the Start node's kickoff output is
-        // excluded even though it is a succeeded transitive predecessor.
-        assert_eq!(upstream, vec!["### 1. \"Research\" (`research`)"]);
+        assert_eq!(context.contains("final evidence"), false);
     }
 
-    /// A `Succeeded` non-start predecessor whose output is `None` (an output-policy `none` node) is
-    /// excluded from upstream results, so withholding output naturally prunes the node downstream.
+    /// Missing predecessor output does not change the explicit-only context shape.
     #[test]
     fn workflow_context_excludes_a_succeeded_predecessor_with_no_output() {
         let graph = WorkflowGraph::parse(GRAPH).unwrap();

@@ -3,14 +3,14 @@ import { type Editor } from "@tiptap/react";
 import { useHotkeys } from "react-hotkeys-hook";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
-import { isMarkInSchema, isNodeTypeSelected } from "../../utils";
+import { isMarkInSchema, isNodeTypeSelected } from "../../utils.ts";
 
 // --- Icons ---
-import { HighlighterIcon } from "../../icons/highlighter-icon";
+import { HighlighterIcon } from "../../icons/highlighter-icon.tsx";
 
 export const COLOR_HIGHLIGHT_SHORTCUT_KEY = "mod+shift+h";
 export const HIGHLIGHT_COLORS = [

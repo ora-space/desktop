@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ContractsClient } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "./query-keys";
+import { refetchSessions, invalidateSessions } from "../data/sessions";
+import { invalidatePluginState } from "../data/plugin-lifecycle";
+import { invalidateAgentModels } from "../data/agent-runtime";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -17,23 +19,6 @@ export function useAppEvents(client: ContractsClient) {
     let reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     let disposed = false;
 
-    const refetchSessions = () => {
-      void queryClient.refetchQueries({ queryKey: queryKeys.sessions });
-    };
-    const invalidateSessions = () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-    };
-    // Runtime transitions, scans, and package removal can happen outside mutations on this
-    // client, so refresh every view derived from installed plugin state together.
-    const invalidatePluginState = () => {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.installedPlugins,
-      });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.agentRuntimeStatus,
-      });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.skills });
-    };
     const scheduleReconnect = () => {
       if (disposed) return;
       reconnectTimer = setTimeout(() => {
@@ -44,7 +29,7 @@ export function useAppEvents(client: ContractsClient) {
     };
     const handleDisconnect = () => {
       setReady(false);
-      refetchSessions();
+      void refetchSessions(queryClient);
       scheduleReconnect();
     };
     const consume = async (): Promise<void> => {
@@ -60,15 +45,13 @@ export function useAppEvents(client: ContractsClient) {
             reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
             setReady(true);
             // The initial refetch closes the gap between database changes and stream subscription.
-            refetchSessions();
+            void refetchSessions(queryClient);
           } else if (event.type === "session_title_updated") {
-            invalidateSessions();
+            void invalidateSessions(queryClient);
           } else if (event.type === "plugin_status_changed") {
-            invalidatePluginState();
+            invalidatePluginState(queryClient);
           } else if (event.type === "agent_models_invalidated") {
-            void queryClient.invalidateQueries({
-              queryKey: queryKeys.agentModelsForAgent(event.agent_ref),
-            });
+            void invalidateAgentModels(queryClient, event.agent_ref);
           }
         }
         handleDisconnect();

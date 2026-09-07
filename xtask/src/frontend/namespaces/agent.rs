@@ -1,6 +1,6 @@
 //! Endpoint declarations for the agent generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "agent";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "create",
         request_type: "CreateAgentRequest",
         response_type: "CreateAgentResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getAgent",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetAgentRequest",
         response_type: "GetAgentResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listAgents",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "list",
         request_type: "ListAgentsRequest",
         response_type: "ListAgentsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateAgent",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "update",
         request_type: "UpdateAgentRequest",
         response_type: "UpdateAgentResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteAgent",
@@ -39,5 +43,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "delete",
         request_type: "DeleteAgentRequest",
         response_type: "DeleteAgentResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

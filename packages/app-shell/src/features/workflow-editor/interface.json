@@ -1,0 +1,22 @@
+{
+  "owner": "Workflow definition editing",
+  "modules": {
+    "./workflow-editor": {
+      "exports": ["WorkflowEditor"],
+      "purpose": "Workspace hosts the definition editor through its top-level view."
+    },
+    "./workflow-editor-list": {
+      "exports": ["WorkflowEditorList"],
+      "purpose": "Workspace sidebar places the editor-owned definition list."
+    },
+    "./workflow-editor-store": {
+      "exports": ["useWorkflowEditorStore"],
+      "purpose": "Sidebar and shell integration tests coordinate editor selection; persisted definitions remain state/data owned."
+    },
+    "./translations": {
+      "exports": ["workflowEditorTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

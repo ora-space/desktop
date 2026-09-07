@@ -128,11 +128,6 @@ function configuredParameters(
       t("settings.workflow.field.condition"),
       conditionBranchesSummary(data, labels, locale) ?? undefined,
     );
-    appendParameter(
-      parameters,
-      t("settings.workflow.field.instruction"),
-      data.instruction,
-    );
     return parameters;
   }
   if (data.kind === "tool") {
@@ -153,26 +148,14 @@ function configuredParameters(
         ),
       );
     }
-    appendParameter(
-      parameters,
-      t("settings.workflow.field.instruction"),
-      data.instruction,
-    );
     return parameters;
   }
 
   if (data.kind === "start") {
     appendParameter(
       parameters,
-      t("settings.workflow.field.trigger"),
-      data.trigger === undefined
-        ? undefined
-        : labels.triggerLabel(data.trigger),
-    );
-    appendParameter(
-      parameters,
-      t("settings.workflow.field.instruction"),
-      data.instruction,
+      t("settings.workflow.field.initialPrompt"),
+      data.input,
     );
     return parameters;
   }
@@ -187,11 +170,6 @@ function configuredParameters(
       t("settings.workflow.field.failureStrategy"),
       junctionFailureStrategyLabel(data.failureStrategy, t),
     );
-    appendParameter(
-      parameters,
-      t("settings.workflow.field.instruction"),
-      data.instruction,
-    );
     return parameters;
   }
   if (data.kind === "loop") {
@@ -205,17 +183,15 @@ function configuredParameters(
       t("settings.workflow.field.exitCondition"),
       data.exitCondition,
     );
-    appendParameter(
-      parameters,
-      t("settings.workflow.field.instruction"),
-      data.instruction,
-    );
+    return parameters;
+  }
+  if (data.kind === "output" || data.kind === "subflow") {
     return parameters;
   }
 
   appendParameter(
     parameters,
-    t("settings.workflow.field.instruction"),
+    t("settings.workflow.field.approvalPrompt"),
     data.instruction,
   );
   return parameters;

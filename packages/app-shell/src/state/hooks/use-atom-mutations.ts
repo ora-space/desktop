@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Skill } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { invalidateAgents } from "../data/agents";
+import { invalidateSkills } from "../data/skills";
 
 /** Creates a configurable agent and refreshes the agent list. */
 export function useCreateAgent() {
@@ -21,7 +22,7 @@ export function useCreateAgent() {
         .create({ name, description, content })
         .then((response) => response.agent),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+      invalidateAgents(queryClient);
     },
   });
 }
@@ -46,7 +47,7 @@ export function useUpdateAgent() {
         .update({ agentId: agent.id, name, description, content })
         .then((response) => response.agent),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+      invalidateAgents(queryClient);
     },
   });
 }
@@ -59,7 +60,7 @@ export function useDeleteAgent() {
     mutationFn: ({ agentId }: { agentId: string }) =>
       client.agent.delete({ agentId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+      invalidateAgents(queryClient);
     },
   });
 }
@@ -82,7 +83,7 @@ export function useCreateSkill() {
         .create({ name, description, content })
         .then((response) => response.skill),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.skills });
+      invalidateSkills(queryClient);
     },
   });
 }
@@ -107,7 +108,7 @@ export function useUpdateSkill() {
         .update({ skillId: skill.id, name, description, content })
         .then((response) => response.skill),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.skills });
+      invalidateSkills(queryClient);
     },
   });
 }
@@ -120,7 +121,7 @@ export function useDeleteSkill() {
     mutationFn: ({ skillId }: { skillId: string }) =>
       client.skill.delete({ skillId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.skills });
+      invalidateSkills(queryClient);
     },
   });
 }

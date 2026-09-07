@@ -1,10 +1,10 @@
 import type { JSONContent } from "@tiptap/core";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { isDangerousComposerHref } from "./composer-link";
-import { plainTextToComposerContent } from "./composer-plain-text";
-import { parseComposerFileQuote } from "./composer-file-quote";
-import type { ComposerFileAttrs } from "./composer-file";
+import { isDangerousComposerHref } from "./composer-link.ts";
+import { plainTextToComposerContent } from "./composer-plain-text.ts";
+import { parseComposerFileQuote } from "./composer-file-quote.ts";
+import type { ComposerFileAttrs } from "./composer-file.ts";
 
 type MarkSpec = { type: string; attrs?: Record<string, string | null> };
 
@@ -403,6 +403,22 @@ function takePromptToken(
   text: string,
   preceding: JSONContent[],
 ): { node: JSONContent; end: number } | null {
+  const variableMatch = /^\{\{#([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)#\}\}/.exec(
+    text,
+  );
+  if (variableMatch !== null) {
+    return {
+      node: {
+        type: "promptToken",
+        attrs: {
+          kind: "variable",
+          name: variableMatch[1]!,
+          label: "",
+        },
+      },
+      end: variableMatch[0].length,
+    };
+  }
   const match = /^\$([A-Za-z][\w-]*)/.exec(text);
   if (match === null) {
     return null;
@@ -739,6 +755,7 @@ function nextSpecial(text: string, from: number): number {
       char === "_" ||
       char === "~" ||
       char === "=" ||
+      char === "{" ||
       char === "$"
     ) {
       return index;

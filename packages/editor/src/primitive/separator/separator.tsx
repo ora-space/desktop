@@ -1,6 +1,6 @@
 import * as React from "react";
 import "./separator.scss";
-import { cn } from "../../utils";
+import { cn } from "../../utils.ts";
 
 export type Orientation = "horizontal" | "vertical";
 

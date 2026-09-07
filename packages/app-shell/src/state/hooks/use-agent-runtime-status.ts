@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { AgentRuntimeStatus } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { agentRuntimeKeys } from "../data/agent-runtime";
 
 /** Short-poll cadence used only while at least one agent is still completing its ACP handshake. */
 const STARTING_POLL_INTERVAL_MS = 1500;
@@ -40,7 +40,7 @@ function pollInterval(statuses: AgentRuntimeStatus[] | undefined) {
 export function useAgentRuntimeStatus() {
   const client = useContractsClient();
   return useQuery({
-    queryKey: queryKeys.agentRuntimeStatus,
+    queryKey: agentRuntimeKeys.agentRuntimeStatus,
     queryFn: () =>
       client.agentRuntime.getStatus({}).then((response) => response.statuses),
     refetchInterval: (query) => pollInterval(query.state.data),

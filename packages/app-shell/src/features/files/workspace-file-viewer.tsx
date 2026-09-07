@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8,9 +9,13 @@ import {
 } from "react";
 import { ScrollArea } from "@ora/ui";
 import type { BundledLanguage, ThemedTokenWithVariants } from "shiki";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { workspaceFileVisual } from "./workspace-file-visuals";
-import { utf8ByteColumnToStringIndex } from "./workspace-file-viewer-utils";
+import {
+  lineDisplayColumns,
+  utf8ByteColumnToStringIndex,
+} from "./workspace-file-viewer-utils";
 import {
   useQuoteLineSelection,
   type QuoteLineAnchor,
@@ -19,6 +24,42 @@ import "./workspace-file-viewer.css";
 import "../quote-line-selection.css";
 
 const MAX_HIGHLIGHT_BYTES = 512 * 1024;
+
+/** Rendered row height: `text-xs leading-5`, one non-wrapping line per row. */
+const LINE_HEIGHT_PX = 20;
+/**
+ * Files up to this many lines render every row: the DOM cost is trivial and
+ * interactions keep working across off-screen lines (pinned washes stay
+ * painted without re-render help). Beyond it only a window of rows is
+ * mounted — a full render of a multi-megabyte file costs hundreds of
+ * thousands of DOM nodes, which blocks every session switch that remounts
+ * the preview panel.
+ */
+const VIRTUALIZE_MIN_LINES = 400;
+/** Extra rows above/below the window so fast wheel scrolling rarely shows gaps. */
+const VIRTUAL_OVERSCAN = 24;
+/**
+ * Widest line counted for the scrollable width, in columns. Without the cap a
+ * previewed minified bundle (one multi-million-column line) would request an
+ * element wider than browsers allow; anything past the cap clips horizontally.
+ */
+const MAX_MEASURED_COLUMNS = 100_000;
+/** Fixed viewer chrome in front of the line text: 3.5rem gutter + 0.75rem padding on both sides. */
+const ROW_CHROME_REM = 5;
+/**
+ * Files above this many characters defer every per-content pass (split,
+ * quote lookups, width scan) until after the first paint and show the
+ * loading overlay instead. Session switches remount this panel inside the
+ * switch's own render, so without the deferral those passes block the new
+ * session page from appearing at all. The cost scales with characters, not
+ * lines, so this is measured on the raw content.
+ */
+const DEFER_MOUNT_CHARS = 512_000;
+/**
+ * Cache-key separator for the highlight cache; language ids never contain
+ * NUL, so this separator cannot collide with a language prefix.
+ */
+const HIGHLIGHT_KEY_SEPARATOR = "\u0000";
 
 export interface WorkspaceFileMatchTarget {
   line: number;
@@ -59,14 +100,40 @@ export function WorkspaceFileViewer({
 }: WorkspaceFileViewerProps) {
   const { t } = useTranslation();
   const targetRow = useRef<HTMLSpanElement | null>(null);
-  const lines = useMemo(() => content.split(/\r\n|\n|\r/), [content]);
-  const language = workspaceFileVisual(path).language;
-  const contentByteLength = useMemo(
-    () => new TextEncoder().encode(content).byteLength,
-    [content],
+  // Large files mount in two steps: the first commit renders the loading
+  // overlay with no rows and every per-content pass below short-circuited,
+  // then a post-paint timer brings the real content in. The timer is a
+  // macrotask, so the browser paints the session page with the overlay before
+  // the split/scan work blocks the main thread. Keyed on mount only: a
+  // refetch of the same file must not flash the overlay over live content.
+  const [deferred, setDeferred] = useState(
+    () => content.length > DEFER_MOUNT_CHARS,
   );
-  const highlightEnabled = contentByteLength <= MAX_HIGHLIGHT_BYTES;
-  const highlightKey = highlightEnabled ? `${language}\u0000${content}` : null;
+  const lines = useMemo(
+    () => (deferred ? [] : content.split(/\r\n|\n|\r/)),
+    [deferred, content],
+  );
+  const language = workspaceFileVisual(path).language;
+  // Infinity while deferred keeps `highlightEnabled` false so the lazy
+  // highlighter never receives the not-yet-split content.
+  const contentByteLength = useMemo(
+    () =>
+      deferred
+        ? Number.POSITIVE_INFINITY
+        : new TextEncoder().encode(content).byteLength,
+    [deferred, content],
+  );
+  const highlightEnabled =
+    !deferred && contentByteLength <= MAX_HIGHLIGHT_BYTES;
+
+  useEffect(() => {
+    if (!deferred) return;
+    const timer = setTimeout(() => setDeferred(false), 0);
+    return () => clearTimeout(timer);
+  }, [deferred]);
+  const highlightKey = highlightEnabled
+    ? `${language}${HIGHLIGHT_KEY_SEPARATOR}${content}`
+    : null;
   const [highlighted, setHighlighted] = useState<HighlightedFile | null>(null);
 
   const anchors = useMemo<QuoteLineAnchor[]>(
@@ -81,6 +148,7 @@ export function WorkspaceFileViewer({
 
   const {
     rootRef,
+    pinnedRange,
     onGutterMouseDown,
     onPlusMouseDown,
     onPlusClick,
@@ -110,6 +178,59 @@ export function WorkspaceFileViewer({
       ? undefined
       : Math.max(citationStart, citationEnd);
 
+  const virtualize = lines.length >= VIRTUALIZE_MIN_LINES;
+  const preRef = useRef<HTMLPreElement | null>(null);
+  // Base UI's ScrollArea owns the real scroll element between the root and
+  // the <pre>, so the viewport has to be discovered from the mounted DOM.
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  // The list starts below the <pre>'s vertical padding; every scroll
+  // computation must add that offset (tanstack's `scrollMargin`).
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useLayoutEffect(() => {
+    setViewport(
+      preRef.current?.closest<HTMLDivElement>(
+        '[data-slot="scroll-area-viewport"]',
+      ) ?? null,
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    const pre = preRef.current;
+    if (viewport === null || pre === null) return;
+    setScrollMargin(
+      pre.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top +
+        viewport.scrollTop,
+    );
+  }, [viewport]);
+
+  // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer instance is consumed imperatively (scrollToIndex, getTotalSize) during render; compiler memoization of this component is not required
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    enabled: virtualize && viewport !== null,
+    getScrollElement: () => viewport,
+    estimateSize: () => LINE_HEIGHT_PX,
+    overscan: VIRTUAL_OVERSCAN,
+    scrollMargin,
+    // Line numbers never reorder within one file, so window shifts reuse rows
+    // instead of swapping their text.
+    getItemKey: (index) => index + 1,
+  });
+
+  // Width of the widest line: with every row mounted min-w-max establishes the
+  // scroll range, but a mounted window cannot, so the monospace column
+  // estimate keeps the horizontal scrollbar from resizing while scrolling
+  // vertically.
+  const scrollWidthCh = useMemo(() => {
+    let max = 0;
+    for (const line of lines) {
+      const columns = lineDisplayColumns(line);
+      if (columns > max) max = columns;
+    }
+    return Math.min(max, MAX_MEASURED_COLUMNS);
+  }, [lines]);
+
   useEffect(() => {
     let active = true;
     if (highlightKey === null) {
@@ -138,12 +259,135 @@ export function WorkspaceFileViewer({
   }, [content, highlightKey, language]);
 
   useEffect(() => {
+    if (highlightTarget === null) return;
+    if (virtualize) {
+      // The target row is usually not mounted, so centering must go through
+      // the virtualizer instead of scrollIntoView on an element.
+      if (viewport !== null) {
+        virtualizer.scrollToIndex(highlightTarget.line - 1, {
+          align: "center",
+        });
+      }
+      return;
+    }
     targetRow.current?.scrollIntoView({ block: "center", inline: "nearest" });
-  }, [content, target]);
+  }, [
+    content,
+    highlightTarget,
+    scrollMargin,
+    virtualize,
+    virtualizer,
+    viewport,
+  ]);
+
+  const renderRow = (line: string, index: number, item: VirtualItem | null) => {
+    const lineNumber = index + 1;
+    const inCitedRange =
+      citationLo !== undefined &&
+      citationHi !== undefined &&
+      lineNumber >= citationLo &&
+      lineNumber <= citationHi;
+    // Pin washes are re-applied declaratively here because a windowed file
+    // mounts rows after the click that pinned them; the hook's imperative
+    // paint only reached the rows visible at click time.
+    const isPinned =
+      pinnedRange !== null &&
+      lineNumber >= pinnedRange.startLine &&
+      lineNumber <= pinnedRange.endLine;
+    const isSearchLine = isSearchMatch && highlightTarget.line === lineNumber;
+    const isScrollTarget =
+      isSearchLine || (inCitedRange && lineNumber === citationStart);
+    const match = isSearchLine
+      ? matchRange(line, highlightTarget.column, highlightTarget.matchedText)
+      : null;
+    return (
+      <span
+        key={lineNumber}
+        ref={isScrollTarget ? targetRow : undefined}
+        aria-current={isScrollTarget ? "location" : undefined}
+        data-line-number={lineNumber}
+        data-quote-key={lineNumber}
+        data-cited-range={inCitedRange ? "true" : undefined}
+        data-quote-pinned={isPinned ? "true" : undefined}
+        className={`workspace-file-line group/line relative block ${isSearchLine ? "bg-amber-500/10" : ""}`}
+        style={
+          item === null
+            ? undefined
+            : {
+                position: "absolute",
+                top: item.start - scrollMargin,
+                left: 0,
+                width: "100%",
+                height: item.size,
+              }
+        }
+        onMouseDown={(event) => {
+          if (event.button !== 0) return;
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-quote-gutter]")
+          ) {
+            onGutterMouseDown(event, String(lineNumber));
+          }
+        }}
+      >
+        <span
+          data-quote-gutter
+          className="workspace-file-gutter sticky left-0 z-[1] inline-flex h-5 select-none items-center justify-end bg-background"
+        >
+          <span
+            data-quote-number
+            role="button"
+            tabIndex={0}
+            aria-label={t("files.selectLine", { line: lineNumber })}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
+            className="workspace-file-line-number inline-block min-w-[1.75rem] cursor-pointer text-right tabular-nums text-muted-foreground/65 group-hover/line:text-foreground"
+            onClick={(event) => onNumberClick(event, String(lineNumber))}
+            onKeyDown={(event) => onNumberKeyDown(event, String(lineNumber))}
+          >
+            {lineNumber}
+          </span>
+          <button
+            type="button"
+            tabIndex={-1}
+            data-quote-button
+            className="workspace-file-quote-btn"
+            aria-label={t("files.quoteLineToChat", { line: lineNumber })}
+            onMouseDown={(event) => onPlusMouseDown(event, String(lineNumber))}
+            onClick={(event) => onPlusClick(event, String(lineNumber))}
+          />
+        </span>
+        <span className="px-3">
+          {renderHighlightedLine(
+            line,
+            highlighted?.key === highlightKey
+              ? highlighted.tokens?.[index]
+              : undefined,
+            match,
+          )}
+        </span>
+      </span>
+    );
+  };
+
+  // A windowed file renders no rows until the scroll viewport is discovered —
+  // including the very first commit. Falling back to a full render while the
+  // viewport is not ready yet would re-create every row inside the session
+  // switch's own commit, which is exactly the stall this windowing exists to
+  // avoid. The layout effect resolves the viewport before paint, so the empty
+  // window never becomes visible.
+  const viewerReady = !virtualize || viewport !== null;
+  const rows = !viewerReady
+    ? []
+    : virtualize
+      ? virtualizer
+          .getVirtualItems()
+          .map((item) => renderRow(lines[item.index]!, item.index, item))
+      : lines.map((line, index) => renderRow(line, index, null));
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {!highlightEnabled && (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {!deferred && !highlightEnabled && (
         <p
           data-large-file-notice
           className="shrink-0 border-b border-border bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground"
@@ -155,6 +399,7 @@ export function WorkspaceFileViewer({
         <pre
           ref={(node) => {
             rootRef.current = node;
+            preRef.current = node;
           }}
           data-quote-root
           data-selectable
@@ -172,95 +417,30 @@ export function WorkspaceFileViewer({
             }
           }}
         >
-          <code>
-            {lines.map((line, index) => {
-              const lineNumber = index + 1;
-              const inCitedRange =
-                citationLo !== undefined &&
-                citationHi !== undefined &&
-                lineNumber >= citationLo &&
-                lineNumber <= citationHi;
-              const isSearchLine =
-                isSearchMatch && highlightTarget.line === lineNumber;
-              const isScrollTarget =
-                isSearchLine || (inCitedRange && lineNumber === citationStart);
-              const match = isSearchLine
-                ? matchRange(
-                    line,
-                    highlightTarget.column,
-                    highlightTarget.matchedText,
-                  )
-                : null;
-              return (
-                <span
-                  key={lineNumber}
-                  ref={isScrollTarget ? targetRow : undefined}
-                  aria-current={isScrollTarget ? "location" : undefined}
-                  data-line-number={lineNumber}
-                  data-quote-key={lineNumber}
-                  data-cited-range={inCitedRange ? "true" : undefined}
-                  className={`workspace-file-line group/line relative block ${isSearchLine ? "bg-amber-500/10" : ""}`}
-                  onMouseDown={(event) => {
-                    if (event.button !== 0) return;
-                    if (
-                      event.target instanceof Element &&
-                      event.target.closest("[data-quote-gutter]")
-                    ) {
-                      onGutterMouseDown(event, String(lineNumber));
-                    }
-                  }}
-                >
-                  <span
-                    data-quote-gutter
-                    className="workspace-file-gutter sticky left-0 z-[1] inline-flex h-5 select-none items-center justify-end bg-background"
-                  >
-                    <span
-                      data-quote-number
-                      role="button"
-                      tabIndex={0}
-                      aria-label={t("files.selectLine", { line: lineNumber })}
-                      aria-keyshortcuts="Control+Enter Meta+Enter"
-                      className="workspace-file-line-number inline-block min-w-[1.75rem] cursor-pointer text-right tabular-nums text-muted-foreground/65 group-hover/line:text-foreground"
-                      onClick={(event) =>
-                        onNumberClick(event, String(lineNumber))
-                      }
-                      onKeyDown={(event) =>
-                        onNumberKeyDown(event, String(lineNumber))
-                      }
-                    >
-                      {lineNumber}
-                    </span>
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      data-quote-button
-                      className="workspace-file-quote-btn"
-                      aria-label={t("files.quoteLineToChat", {
-                        line: lineNumber,
-                      })}
-                      onMouseDown={(event) =>
-                        onPlusMouseDown(event, String(lineNumber))
-                      }
-                      onClick={(event) =>
-                        onPlusClick(event, String(lineNumber))
-                      }
-                    />
-                  </span>
-                  <span className="px-3">
-                    {renderHighlightedLine(
-                      line,
-                      highlighted?.key === highlightKey
-                        ? highlighted.tokens?.[index]
-                        : undefined,
-                      match,
-                    )}
-                  </span>
-                </span>
-              );
-            })}
+          <code
+            style={
+              virtualize
+                ? {
+                    display: "block",
+                    position: "relative",
+                    height: virtualizer.getTotalSize(),
+                    width: `calc(${ROW_CHROME_REM}rem + ${scrollWidthCh}ch)`,
+                  }
+                : undefined
+            }
+          >
+            {rows}
           </code>
         </pre>
       </ScrollArea>
+      {(deferred || !viewerReady) && (
+        <div
+          data-deferred-loading
+          className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 text-sm text-muted-foreground"
+        >
+          {t("files.loading")}
+        </div>
+      )}
     </div>
   );
 }

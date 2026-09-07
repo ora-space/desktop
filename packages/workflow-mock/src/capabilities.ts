@@ -8,10 +8,10 @@ export interface WorkflowChoice {
 
 export type WorkflowConfigField =
   | "agent"
-  | "trigger"
+  | "initialPrompt"
   | "tool"
   | "condition"
-  | "instruction"
+  | "approvalPrompt"
   | "waitStrategy"
   | "failureStrategy"
   | "maxAttempts"
@@ -36,22 +36,10 @@ export interface WorkflowCapabilities {
   conditionOperators: WorkflowChoice[];
   /** Operations offered per tool value, mirroring Dify's tool-derived actions. */
   toolOperations: Record<string, WorkflowChoice[]>;
-  /** Trigger methods offered by Start nodes (merge request, push, manual). */
-  startTriggers: WorkflowChoice[];
-  defaultTrigger: string;
   defaultModel: string;
   defaultAgentConfig: WorkflowAgentConfig;
   defaultTool: string;
 }
-
-/** Context variables every workflow run exposes, referenced as `{{name}}` in node configs. */
-export const WORKFLOW_CONTEXT_VARIABLES = [
-  "repository",
-  "branch",
-  "commit_id",
-  "mr_id",
-  "changed_files",
-] as const;
 
 export interface WorkflowNodeType {
   kind: WorkflowNodeKind;
@@ -127,11 +115,6 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
-    createMockWorkflowNodeType("tool", locale),
-    createMockWorkflowNodeType("junction", locale),
-    createMockWorkflowNodeType("human", locale),
-    createMockWorkflowNodeType("loop", locale),
-    createMockWorkflowNodeType("subflow", locale),
     createMockWorkflowNodeType("output", locale),
   ];
   const models = [
@@ -163,9 +146,9 @@ export function createMockWorkflowCapabilities(
       label: locale === "zh-CN" ? "大于" : "Greater than",
     },
     { value: "less_than", label: locale === "zh-CN" ? "小于" : "Less than" },
-    { value: "is_empty", label: locale === "zh-CN" ? "为空" : "Is empty" },
+    { value: "empty", label: locale === "zh-CN" ? "为空" : "Is empty" },
     {
-      value: "is_not_empty",
+      value: "not_empty",
       label: locale === "zh-CN" ? "不为空" : "Is not empty",
     },
   ];
@@ -197,11 +180,6 @@ export function createMockWorkflowCapabilities(
       },
     ],
   } satisfies Record<string, WorkflowChoice[]>;
-  const startTriggers = [
-    { value: "merge_request", label: "Merge Request" },
-    { value: "push", label: "Push" },
-    { value: "manual", label: locale === "zh-CN" ? "手动" : "Manual" },
-  ];
   const defaultAgentModel = agentModels[0] ?? DEFAULT_AGENT_MODEL;
   return {
     nodeTypes,
@@ -213,8 +191,6 @@ export function createMockWorkflowCapabilities(
     tools,
     conditionOperators,
     toolOperations,
-    startTriggers,
-    defaultTrigger: startTriggers[0]!.value,
     defaultModel: models[0].value,
     defaultAgentConfig: {
       schemaVersion: 3,
@@ -227,7 +203,6 @@ export function createMockWorkflowCapabilities(
       mcps: [],
       prompt: "",
       interactive: false,
-      outputPolicy: "none",
     },
     defaultTool: tools[0].value,
   };
@@ -245,7 +220,7 @@ export function createMockWorkflowNodeType(
         label: locale === "zh-CN" ? "开始" : "Start",
         description:
           locale === "zh-CN" ? "定义工作流输入" : "Define workflow inputs",
-        configFields: ["instruction", "trigger"],
+        configFields: ["initialPrompt"],
       };
     case "agent":
       return {
@@ -265,7 +240,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "根据规则选择路径"
             : "Route execution based on rules",
-        configFields: ["condition", "instruction"],
+        configFields: ["condition"],
       };
     case "tool":
       return {
@@ -273,7 +248,7 @@ export function createMockWorkflowNodeType(
         label: locale === "zh-CN" ? "工具" : "Tool",
         description:
           locale === "zh-CN" ? "调用终端或插件" : "Call a terminal or plugin",
-        configFields: ["tool", "instruction"],
+        configFields: ["tool"],
       };
     case "junction":
       return {
@@ -283,7 +258,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "等待多个执行分支完成"
             : "Wait for multiple branches to complete",
-        configFields: ["instruction", "waitStrategy", "failureStrategy"],
+        configFields: ["waitStrategy", "failureStrategy"],
       };
     case "human":
       return {
@@ -293,7 +268,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "等待人工决策后继续"
             : "Pause for a human decision",
-        configFields: ["instruction"],
+        configFields: ["approvalPrompt"],
       };
     case "loop":
       return {
@@ -303,7 +278,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
-        configFields: ["instruction", "maxAttempts", "exitCondition"],
+        configFields: ["maxAttempts", "exitCondition"],
       };
     case "subflow":
       return {
@@ -313,7 +288,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "封装复杂业务步骤"
             : "Encapsulate a complex business step",
-        configFields: ["instruction"],
+        configFields: [],
       };
     case "output":
       return {
@@ -321,7 +296,7 @@ export function createMockWorkflowNodeType(
         label: locale === "zh-CN" ? "输出" : "Output",
         description:
           locale === "zh-CN" ? "返回最终结果" : "Return the final result",
-        configFields: ["instruction"],
+        configFields: [],
       };
   }
 }

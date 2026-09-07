@@ -1,0 +1,41 @@
+// Pure translation data: safe to compose without importing feature implementation.
+export const surfaceTranslations = {
+  "zh-CN": {
+    "surface.launcher": "扩展面板",
+    "surface.reload": "重新加载",
+    "surface.popout": "在新窗口打开",
+    "surface.close": "关闭",
+    "surface.failed": "无法加载：{{reason}}",
+    "surface.retry": "重试",
+    "surface.downloaded": "已下载 {{fileName}}",
+    "surface.downloadFailed": "下载失败：{{fileName}}",
+    "surface.downloadChoiceTitle": "插件下载",
+    "surface.downloadChoiceDescription":
+      "{{origin}} 提供了文件 {{fileName}}（{{size}}），请选择处理方式。",
+    "surface.downloadImportSkill": "导入为技能",
+    "surface.downloadSaveAs": "另存为…",
+    "surface.downloadDismiss": "忽略",
+    "surface.downloadActionFailed": "下载处理失败",
+    "surface.openDirectory": "打开目录",
+    "surface.openFailed": "无法打开扩展面板",
+  },
+  "en-US": {
+    "surface.launcher": "Surfaces",
+    "surface.reload": "Reload",
+    "surface.popout": "Open in new window",
+    "surface.close": "Close",
+    "surface.failed": "Failed to load: {{reason}}",
+    "surface.retry": "Retry",
+    "surface.downloaded": "Downloaded {{fileName}}",
+    "surface.downloadFailed": "Download failed: {{fileName}}",
+    "surface.downloadChoiceTitle": "Plugin download",
+    "surface.downloadChoiceDescription":
+      "{{origin}} provided {{fileName}} ({{size}}). Choose what to do with it.",
+    "surface.downloadImportSkill": "Import as skill",
+    "surface.downloadSaveAs": "Save as…",
+    "surface.downloadDismiss": "Dismiss",
+    "surface.downloadActionFailed": "The download action failed",
+    "surface.openDirectory": "Open folder",
+    "surface.openFailed": "Could not open the surface",
+  },
+} as const;

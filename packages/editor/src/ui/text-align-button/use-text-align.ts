@@ -7,17 +7,17 @@ import { type Editor } from "@tiptap/react";
 import "@tiptap/extension-text-align";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
-import { isExtensionAvailable, isNodeTypeSelected } from "../../utils";
+import { isExtensionAvailable, isNodeTypeSelected } from "../../utils.ts";
 
 // --- Icons ---
-import { AlignCenterIcon } from "../../icons/align-center-icon";
-import { AlignJustifyIcon } from "../../icons/align-justify-icon";
-import { AlignLeftIcon } from "../../icons/align-left-icon";
-import { AlignRightIcon } from "../../icons/align-right-icon";
+import { AlignCenterIcon } from "../../icons/align-center-icon.tsx";
+import { AlignJustifyIcon } from "../../icons/align-justify-icon.tsx";
+import { AlignLeftIcon } from "../../icons/align-left-icon.tsx";
+import { AlignRightIcon } from "../../icons/align-right-icon.tsx";
 
 export type TextAlign = "left" | "center" | "right" | "justify";
 

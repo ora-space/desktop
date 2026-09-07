@@ -12,6 +12,28 @@ test("looksLikeComposerMarkdown ignores ordinary sentences", () => {
   assert.equal(looksLikeComposerMarkdown(""), false);
 });
 
+test("markdownToComposerContent restores workflow variable tokens", () => {
+  assert.deepEqual(markdownToComposerContent("Review {{#agent-1.output#}}"), {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "Review " },
+          {
+            type: "promptToken",
+            attrs: {
+              kind: "variable",
+              name: "agent-1.output",
+              label: "",
+            },
+          },
+        ],
+      },
+    ],
+  });
+});
+
 test("markdownToComposerContent covers the prompt-box Markdown surface", () => {
   const doc = markdownToComposerContent(
     [

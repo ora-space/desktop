@@ -3,11 +3,11 @@
 import * as React from "react";
 
 // --- UI Primitives ---
-import { Button } from "../primitive/button";
+import { Button } from "../primitive/button/index.tsx";
 
 // --- Icons ---
-import { MoonStarIcon } from "../icons/moon-star-icon";
-import { SunIcon } from "../icons/sun-icon";
+import { MoonStarIcon } from "../icons/moon-star-icon.tsx";
+import { SunIcon } from "../icons/sun-icon.tsx";
 
 /** Reads the current document / OS color scheme. Used as the ThemeToggle initial state. */
 function readInitialDarkMode(): boolean {

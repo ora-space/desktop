@@ -1,5 +1,7 @@
 use crate::RepositoryError;
 use crate::project::Clock;
+use crate::workflow_run::engine::branch_projection::BranchProjection;
+use crate::workflow_run::engine::condition::{ConditionError, ELSE_BRANCH_ID, evaluate_condition};
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
@@ -7,12 +9,11 @@ use crate::workflow_run::engine::ports::{
     NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
     WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
 };
+use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
+use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
 use std::collections::HashSet;
 use thiserror::Error;
-
-/// Separator between multiple direct-predecessor outputs concatenated by an output node.
-pub const OUTPUT_PREDECESSOR_SEPARATOR: &str = "\n\n";
 
 /// Executes one agent node through a real session, calling the engine back when done.
 ///
@@ -36,11 +37,14 @@ pub trait NodeExecutor {
 pub trait WorkflowRunCallback: Send + Sync {
     /// Reports a successful node completion with its final assistant output, stop reason, and
     /// incremental file changes.
+    ///
+    /// `structured_output` is the parsed, schema-validated object of a structured-output contract.
     fn complete_node(
         &self,
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: Option<String>,
         file_changes: Vec<FileChange>,
     );
@@ -67,6 +71,18 @@ pub enum WorkflowValidationError {
     },
     #[error("nodes are unreachable from the start node: {node_ids:?}")]
     UnreachableNodes { node_ids: Vec<String> },
+    #[error("output node {node_id} has outgoing edges; output must be terminal")]
+    OutputNodeHasSuccessors { node_id: String },
+    #[error("condition node {node_id} declares case {case_id} more than once")]
+    DuplicateConditionCase { node_id: String, case_id: String },
+    #[error("condition node {node_id} has an edge on unknown branch {handle}")]
+    UnknownConditionBranch { node_id: String, handle: String },
+    #[error("output node {node_id} declares the result name {name} more than once")]
+    DuplicateOutputName { node_id: String, name: String },
+    #[error("required Start variable has no value: {name}")]
+    MissingRequiredStartVariable { name: String },
+    #[error("Start variable {name} is not one of its configured options")]
+    InvalidStartVariableOption { name: String },
 }
 
 /// Failures surfaced by the workflow run engine.
@@ -138,6 +154,8 @@ where
             }
             .into());
         }
+        validate_executable_graph(&graph)?;
+        validate_start_inputs(start_node, context.run.payload.as_deref())?;
         let start_node_run = NodeRunToStart {
             id: self.node_run_id_generator.generate_node_run_id(),
             node_id: start_node.id.clone(),
@@ -183,9 +201,12 @@ where
         &self,
         run_id: &WorkflowRunId,
         input: Option<String>,
+        variables: std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<UpdateWorkflowRunInputResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
-        Ok(self.repository.update_run_input(run_id, input, now)?)
+        Ok(self
+            .repository
+            .update_run_input(run_id, input, variables, now)?)
     }
 
     /// Marks one node-run succeeded and continues the scheduling wave.
@@ -196,14 +217,19 @@ where
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: Option<String>,
         file_changes: Vec<FileChange>,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
-        match self
-            .repository
-            .complete_node(node_run_id, output, stop_reason, file_changes, now)?
-        {
+        match self.repository.complete_node(
+            node_run_id,
+            output,
+            structured_output,
+            stop_reason,
+            file_changes,
+            now,
+        )? {
             AdvanceWorkflowRunResult::Advanced => self.run_schedule(run_id),
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => Ok(()),
         }
@@ -238,53 +264,117 @@ where
         loop {
             let context = self.execution_context(run_id)?;
             let graph = WorkflowGraph::parse(&context.graph_json)?;
-            let mut node_runs = self.repository.list_node_runs(run_id)?;
+            let node_runs = self.repository.list_node_runs(run_id)?;
+            let (pool, _) = execution_state_from(context.run.payload.as_deref());
 
             // In-flight control nodes have no session to call back; complete them synchronously.
+            // A condition evaluates against the committed pool and reports its selected branch.
+            let mut completed_control = false;
             for node_run in node_runs
                 .iter()
                 .filter(|node_run| node_run.status == WorkflowNodeStatus::Running)
             {
-                if let Some(node) = graph.node(&node_run.node_id)
-                    && matches!(node.node_type, NodeType::Start | NodeType::Output)
-                {
-                    let output = control_node_output(&graph, node, &node_runs, &context);
-                    self.repository.complete_node(
-                        &node_run.id,
-                        Some(output),
-                        None,
-                        Vec::new(),
-                        now,
-                    )?;
+                let Some(node) = graph.node(&node_run.node_id) else {
+                    continue;
+                };
+                match node.node_type {
+                    NodeType::Start => {
+                        let output = context.run.input.clone().unwrap_or_default();
+                        self.repository.complete_node(
+                            &node_run.id,
+                            Some(output),
+                            None,
+                            None,
+                            Vec::new(),
+                            now,
+                        )?;
+                        completed_control = true;
+                    }
+                    NodeType::Output => {
+                        // A workflow must reach exactly one Output; a second one completing means
+                        // the active path degenerated into two terminals.
+                        let current_run_id = node_run.id.clone();
+                        let duplicate = node_runs.iter().find(|candidate| {
+                            candidate.id != current_run_id
+                                && candidate.node_type == "output"
+                                && candidate.status == WorkflowNodeStatus::Succeeded
+                        });
+                        if let Some(previous) = duplicate {
+                            let message = format!(
+                                "multiple active output nodes: {} and {}",
+                                previous.node_id, node.id
+                            );
+                            self.repository
+                                .fail_node(&node_run.id, message, None, now)?;
+                            return Ok(());
+                        }
+                        match control_node_output(node, &context, &pool) {
+                            Ok(output) => {
+                                self.repository.complete_node(
+                                    &node_run.id,
+                                    Some(output),
+                                    None,
+                                    None,
+                                    Vec::new(),
+                                    now,
+                                )?;
+                                completed_control = true;
+                            }
+                            Err(message) => {
+                                self.repository
+                                    .fail_node(&node_run.id, message, None, now)?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                    NodeType::Condition => {
+                        let outcome = node
+                            .condition_config
+                            .as_ref()
+                            .map(|config| evaluate_condition(config, &pool))
+                            .unwrap_or_else(|| Err(ConditionError::MissingConfig));
+                        match outcome {
+                            Ok(selected) => {
+                                self.repository.complete_node(
+                                    &node_run.id,
+                                    Some(selected),
+                                    None,
+                                    None,
+                                    Vec::new(),
+                                    now,
+                                )?;
+                                completed_control = true;
+                            }
+                            Err(error) => {
+                                // A condition that reads an unset or invalid variable fails the
+                                // node and the run rather than guessing a branch.
+                                self.repository.fail_node(
+                                    &node_run.id,
+                                    error.to_string(),
+                                    None,
+                                    now,
+                                )?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
-            node_runs = self.repository.list_node_runs(run_id)?;
-            let completed: HashSet<&str> = node_runs
-                .iter()
-                .filter(|node_run| node_run.status == WorkflowNodeStatus::Succeeded)
-                .map(|node_run| node_run.node_id.as_str())
-                .collect();
-            let in_flight: HashSet<&str> = node_runs
-                .iter()
-                .filter(|node_run| {
-                    matches!(
-                        node_run.status,
-                        // An awaiting (interactive) node is still in flight: it blocks its
-                        // successors and must not be re-dispatched until it completes.
-                        WorkflowNodeStatus::Running | WorkflowNodeStatus::Pending
-                    )
-                })
-                .map(|node_run| node_run.node_id.as_str())
-                .collect();
-            let ready: Vec<&WorkflowGraphNode> = graph
-                .ready_set(&completed)
-                .into_iter()
-                .filter(|node| !in_flight.contains(node.id.as_str()))
-                .collect();
+            // Control completions persist internal routing state; reload before projecting branches.
+            if completed_control {
+                continue;
+            }
+
+            let context = self.execution_context(run_id)?;
+            let (_, condition_decisions) = execution_state_from(context.run.payload.as_deref());
+            let node_runs = self.repository.list_node_runs(run_id)?;
+            let projection = BranchProjection::new(&graph, &node_runs, &condition_decisions);
+            let ready: Vec<&WorkflowGraphNode> = projection.ready_nodes();
 
             if ready.is_empty() {
-                if in_flight.is_empty() {
+                if !projection.has_in_flight() {
                     let output = compute_run_output(&node_runs);
                     self.repository.finish_run(run_id, output, now)?;
                 }
@@ -322,34 +412,131 @@ where
     }
 }
 
-/// Computes the output a control node writes when it completes synchronously.
-fn control_node_output(
-    graph: &WorkflowGraph,
-    node: &WorkflowGraphNode,
-    node_runs: &[WorkflowNodeRun],
-    context: &ExecutionContext,
-) -> String {
-    match node.node_type {
-        NodeType::Start => context.run.input.clone().unwrap_or_default(),
-        NodeType::Output => {
-            let parts = graph
-                .predecessors(&node.id)
-                .iter()
-                .map(|predecessor| {
-                    node_runs
-                        .iter()
-                        .find(|node_run| {
-                            node_run.node_id == predecessor.id
-                                && node_run.status == WorkflowNodeStatus::Succeeded
-                        })
-                        .and_then(|node_run| node_run.output.clone())
-                        .unwrap_or_default()
-                })
-                .collect::<Vec<String>>();
-            parts.join(OUTPUT_PREDECESSOR_SEPARATOR)
+/// Enforces form-level Start constraints at the execution boundary, not only in the editor.
+fn validate_start_inputs(
+    start_node: &WorkflowGraphNode,
+    serialized_payload: Option<&str>,
+) -> Result<(), WorkflowValidationError> {
+    let variable_pool = serialized_payload
+        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
+        .map(|payload| payload.variable_pool)
+        .unwrap_or_default();
+    for variable in &start_node.input_variables {
+        let selector = format!("{}.{}", start_node.id, variable.name);
+        let value = variable_pool
+            .values
+            .get(&selector)
+            .or(variable.value.as_ref());
+        let missing = value.is_none_or(|value| {
+            value.is_null()
+                || value.as_str().is_some_and(str::is_empty)
+                || value.as_array().is_some_and(Vec::is_empty)
+        });
+        if variable.required && missing {
+            return Err(WorkflowValidationError::MissingRequiredStartVariable {
+                name: variable.name.clone(),
+            });
         }
-        _ => String::new(),
+        if !variable.options.is_empty()
+            && value
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| !variable.options.iter().any(|option| option == value))
+        {
+            return Err(WorkflowValidationError::InvalidStartVariableOption {
+                name: variable.name.clone(),
+            });
+        }
     }
+    Ok(())
+}
+
+/// Computes the output a control node writes when it completes synchronously.
+///
+/// An Output node resolves only its explicitly declared variable bindings into a JSON object.
+fn control_node_output(
+    node: &WorkflowGraphNode,
+    context: &ExecutionContext,
+    pool: &WorkflowVariablePool,
+) -> Result<String, String> {
+    match node.node_type {
+        NodeType::Start => Ok(context.run.input.clone().unwrap_or_default()),
+        NodeType::Output => {
+            if let Some(config) = &node.output_config {
+                let mut result = serde_json::Map::new();
+                for binding in &config.outputs {
+                    let value = pool
+                        .resolve(&binding.variable_selector)
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| {
+                            format!(
+                                "result {} references unassigned variable {}",
+                                binding.name,
+                                binding.variable_selector.qualified()
+                            )
+                        })?;
+                    result.insert(binding.name.clone(), value.clone());
+                }
+                Ok(serde_json::Value::Object(result).to_string())
+            } else {
+                Ok(String::new())
+            }
+        }
+        _ => Ok(String::new()),
+    }
+}
+
+/// Validates the structural invariants that make a graph executable: a terminal output, no edges
+/// leaving an output, unique condition case ids, real condition branch handles, and result names
+/// that are unique within each output node.
+fn validate_executable_graph(graph: &WorkflowGraph) -> Result<(), WorkflowValidationError> {
+    for node in graph.nodes() {
+        match node.node_type {
+            NodeType::Output => {
+                if !graph.successors(&node.id).is_empty() {
+                    return Err(WorkflowValidationError::OutputNodeHasSuccessors {
+                        node_id: node.id.clone(),
+                    });
+                }
+                if let Some(config) = &node.output_config {
+                    let mut output_names = HashSet::new();
+                    for binding in &config.outputs {
+                        if !output_names.insert(&binding.name) {
+                            return Err(WorkflowValidationError::DuplicateOutputName {
+                                node_id: node.id.clone(),
+                                name: binding.name.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            NodeType::Condition => {
+                if let Some(config) = &node.condition_config {
+                    let mut seen_cases = HashSet::new();
+                    for case in &config.cases {
+                        if !seen_cases.insert(&case.id) {
+                            return Err(WorkflowValidationError::DuplicateConditionCase {
+                                node_id: node.id.clone(),
+                                case_id: case.id.clone(),
+                            });
+                        }
+                    }
+                    for edge in graph.outgoing_edges(&node.id) {
+                        let handle = edge.source_handle.as_deref().unwrap_or(ELSE_BRANCH_ID);
+                        let valid = handle == ELSE_BRANCH_ID
+                            || config.cases.iter().any(|case| case.id == handle);
+                        if !valid {
+                            return Err(WorkflowValidationError::UnknownConditionBranch {
+                                node_id: node.id.clone(),
+                                handle: handle.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Computes the run output written at finish: the last output node's output, or the last
@@ -382,5 +569,325 @@ fn node_input(node: &WorkflowGraphNode, context: &ExecutionContext) -> Option<St
             .as_ref()
             .map(|config| config.prompt.clone()),
         NodeType::Output | NodeType::Prompt | NodeType::Condition | NodeType::Tool => None,
+    }
+}
+
+/// Loads user variables and private routing decisions, including decisions from legacy pools.
+fn execution_state_from(
+    serialized_payload: Option<&str>,
+) -> (
+    WorkflowVariablePool,
+    std::collections::BTreeMap<String, String>,
+) {
+    let Some(payload) = serialized_payload
+        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
+    else {
+        return (WorkflowVariablePool::default(), Default::default());
+    };
+    let condition_decisions = payload.resolved_condition_decisions();
+    (payload.variable_pool, condition_decisions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
+    use ora_contracts::WorkflowRunLocale;
+    use ora_domain::{
+        AuditFields, WorkflowRun, WorkflowRunId, WorkflowRunStatus, Workspace, WorkspaceId,
+        WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
+    };
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    /// Builds a run context whose run input is fixed; workspace and graph are unused by the test.
+    fn context() -> ExecutionContext {
+        ExecutionContext {
+            run: WorkflowRun::new(
+                WorkflowRunId::new("run-1"),
+                WorkspaceId::new("workspace-1"),
+                ora_domain::WorkflowId::new("workflow-1"),
+                ora_domain::WorkflowSnapshotId::new("snapshot-1"),
+                "Review",
+                WorkflowRunStatus::Running,
+                None,
+                Some("task".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                AuditFields::new(1, 1, false),
+            ),
+            workspace: Workspace::new(
+                WorkspaceId::new("workspace-1"),
+                ora_domain::ProjectId::new("project-1"),
+                WorkspaceKind::Main,
+                WorkspaceLocation::local_filesystem("/tmp/workspace"),
+                WorkspaceLifecycle::Active,
+                AuditFields::new(1, 1, false),
+            ),
+            graph_json: String::new(),
+        }
+    }
+
+    /// An output node with declared bindings resolves each named result from the variable pool.
+    #[test]
+    fn output_resolves_declared_bindings_from_the_pool() {
+        let graph = WorkflowGraph::parse(
+            r#"{
+                "nodes": [
+                    {"id":"review","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"review"}}},
+                    {"id":"out","data":{"kind":"output","outputs":[
+                        {"name":"approved","variableSelector":["review","structured_output","approved"]},
+                        {"name":"files","variableSelector":["review","structured_output","files"]},
+                        {"name":"summary","variableSelector":["review","text"]}
+                    ]}}
+                ],
+                "edges": [{"source":"review","target":"out"}]
+            }"#,
+        )
+        .unwrap();
+        let mut pool = WorkflowVariablePool::default();
+        pool.declare("review.structured_output", "object", "review");
+        pool.declare("review.text", "string", "review");
+        pool.set(
+            "review.structured_output",
+            "review",
+            json!({
+                "approved": true,
+                "files": [{
+                    "file_path": "src/vs/base/common/numbers.ts",
+                    "lines": [{
+                        "symbol": "formatTokenCount",
+                        "start_line": 15,
+                        "end_line": 26
+                    }]
+                }]
+            }),
+        )
+        .unwrap();
+        pool.set("review.text", "review", json!("ok")).unwrap();
+
+        let node = graph.node("out").unwrap();
+        let output = control_node_output(node, &context(), &pool).unwrap();
+        assert_eq!(
+            output,
+            r#"{"approved":true,"files":[{"file_path":"src/vs/base/common/numbers.ts","lines":[{"symbol":"formatTokenCount","start_line":15,"end_line":26}]}],"summary":"ok"}"#
+        );
+    }
+
+    /// An output binding that references an unassigned variable fails instead of emitting null.
+    #[test]
+    fn output_fails_when_a_binding_is_unassigned() {
+        let graph = WorkflowGraph::parse(
+            r#"{
+                "nodes": [
+                    {"id":"out","data":{"kind":"output","outputs":[
+                        {"name":"summary","variableSelector":["writer","text"]}
+                    ]}}
+                ],
+                "edges": []
+            }"#,
+        )
+        .unwrap();
+        let mut pool = WorkflowVariablePool::default();
+        // The variable is declared by the graph but the writer has not produced it yet.
+        pool.declare("writer.text", "string", "writer");
+
+        let node = graph.node("out").unwrap();
+        let error = control_node_output(node, &context(), &pool).unwrap_err();
+        assert!(error.contains("unassigned variable writer.text"));
+    }
+
+    /// An output node without bindings does not import predecessor output implicitly.
+    #[test]
+    fn output_without_bindings_is_empty() {
+        let graph = WorkflowGraph::parse(
+            r#"{
+                "nodes": [
+                    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+                    {"id":"out","data":{"kind":"output"}}
+                ],
+                "edges": [{"source":"a","target":"out"}]
+            }"#,
+        )
+        .unwrap();
+        let node = graph.node("out").unwrap();
+        let output =
+            control_node_output(node, &context(), &WorkflowVariablePool::default()).unwrap();
+        assert_eq!(output, "");
+    }
+
+    // ── Executable-graph validation ──
+
+    fn graph(json: serde_json::Value) -> WorkflowGraph {
+        WorkflowGraph::parse(&json.to_string()).unwrap()
+    }
+
+    #[test]
+    fn validation_rejects_an_output_with_successors() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "out", "data": { "kind": "output" } },
+                { "id": "a", "data": { "kind": "agent", "agentConfig": {
+                    "executor": { "agentCli": "c", "modelId": "m" }, "roleId": "R", "skills": [], "prompt": "a"
+                } } }
+            ],
+            "edges": [{ "source": "out", "target": "a" }]
+        }));
+        assert_eq!(
+            validate_executable_graph(&g).unwrap_err(),
+            WorkflowValidationError::OutputNodeHasSuccessors {
+                node_id: "out".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_condition_case_ids() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "start", "data": { "kind": "start" } },
+                { "id": "out", "data": { "kind": "output" } },
+                { "id": "c", "data": { "kind": "condition", "cases": [
+                    { "id": "x", "logic": "and", "conditions": [] },
+                    { "id": "x", "logic": "and", "conditions": [] }
+                ] } }
+            ],
+            "edges": []
+        }));
+        assert_eq!(
+            validate_executable_graph(&g).unwrap_err(),
+            WorkflowValidationError::DuplicateConditionCase {
+                node_id: "c".to_string(),
+                case_id: "x".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validation_rejects_an_unknown_condition_branch_handle() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "start", "data": { "kind": "start" } },
+                { "id": "c", "data": { "kind": "condition", "cases": [
+                    { "id": "approved", "logic": "and", "conditions": [] }
+                ] } },
+                { "id": "out", "data": { "kind": "output" } }
+            ],
+            "edges": [
+                { "source": "start", "target": "c" },
+                { "source": "c", "sourceHandle": "bogus", "target": "out" }
+            ]
+        }));
+        assert_eq!(
+            validate_executable_graph(&g).unwrap_err(),
+            WorkflowValidationError::UnknownConditionBranch {
+                node_id: "c".to_string(),
+                handle: "bogus".to_string()
+            }
+        );
+    }
+
+    /// Separate terminal paths may expose the same public result shape.
+    #[test]
+    fn validation_allows_the_same_result_name_on_separate_output_nodes() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "start", "data": { "kind": "start" } },
+                { "id": "a", "data": { "kind": "output", "outputs": [
+                    { "name": "result", "variableSelector": ["x", "text"] }
+                ] } },
+                { "id": "b", "data": { "kind": "output", "outputs": [
+                    { "name": "result", "variableSelector": ["y", "text"] }
+                ] } }
+            ],
+            "edges": []
+        }));
+        assert!(validate_executable_graph(&g).is_ok());
+    }
+
+    /// Duplicate names in one Output would overwrite each other in its JSON object.
+    #[test]
+    fn validation_rejects_duplicate_result_names_within_one_output_node() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "start", "data": { "kind": "start" } },
+                { "id": "out", "data": { "kind": "output", "outputs": [
+                    { "name": "result", "variableSelector": ["x", "text"] },
+                    { "name": "result", "variableSelector": ["y", "text"] }
+                ] } }
+            ],
+            "edges": []
+        }));
+        assert_eq!(
+            validate_executable_graph(&g).unwrap_err(),
+            WorkflowValidationError::DuplicateOutputName {
+                node_id: "out".to_string(),
+                name: "result".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validation_accepts_a_branching_terminated_graph() {
+        let g = graph(json!({
+            "nodes": [
+                { "id": "start", "data": { "kind": "start" } },
+                { "id": "c", "data": { "kind": "condition", "cases": [
+                    { "id": "approved", "logic": "and", "conditions": [] }
+                ] } },
+                { "id": "ok", "data": { "kind": "output" } },
+                { "id": "no", "data": { "kind": "output" } }
+            ],
+            "edges": [
+                { "source": "start", "target": "c" },
+                { "source": "c", "sourceHandle": "approved", "target": "ok" },
+                { "source": "c", "sourceHandle": "else", "target": "no" }
+            ]
+        }));
+        assert!(validate_executable_graph(&g).is_ok());
+    }
+
+    /// Required Start fields are enforced again when execution begins, even if IPC is bypassed.
+    #[test]
+    fn validation_requires_start_values_at_execution() {
+        let graph = graph(json!({
+            "nodes": [{
+                "id": "start",
+                "data": {
+                    "kind": "start",
+                    "inputVariables": [{
+                        "name": "brief",
+                        "fieldType": "paragraph",
+                        "valueType": "string",
+                        "required": true
+                    }]
+                }
+            }],
+            "edges": []
+        }));
+        let start = graph.start_node().unwrap();
+        assert_eq!(
+            validate_start_inputs(start, None).unwrap_err(),
+            WorkflowValidationError::MissingRequiredStartVariable {
+                name: "brief".to_string()
+            }
+        );
+
+        let mut variable_pool = WorkflowVariablePool::from_graph(&graph);
+        variable_pool
+            .set("start.brief", "start", json!("Ship it"))
+            .unwrap();
+        let payload = WorkflowRunPayload::with_variable_pool(
+            WorkflowRunLocale::EnUs,
+            Default::default(),
+            Some("start".to_string()),
+            variable_pool,
+        );
+        assert!(
+            validate_start_inputs(start, Some(&serde_json::to_string(&payload).unwrap())).is_ok()
+        );
     }
 }

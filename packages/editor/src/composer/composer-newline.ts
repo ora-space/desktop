@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
-import { convertMarkdownFenceOpener } from "./composer-code-fence";
+import { convertMarkdownFenceOpener } from "./composer-code-fence.ts";
 
 /**
  * Shift+Enter starts a new line/block the way the rest of the composer does,

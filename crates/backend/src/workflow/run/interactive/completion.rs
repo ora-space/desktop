@@ -4,7 +4,9 @@
 //! future agent/CLI path can reuse the same commit through the engine. The session stop and the
 //! engine commit are done by the caller around [`prepare_completion`].
 
-use super::super::executor::{capture_worktree_snapshot, compute_file_changes, stop_reason_label};
+use super::super::executor::{
+    apply_output_contract, capture_worktree_snapshot, compute_file_changes, stop_reason_label,
+};
 use super::CompletingNodeRuns;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::error::BackendError;
@@ -25,6 +27,7 @@ use std::sync::Arc;
 pub(crate) struct PreparedCompletion {
     pub node_run_id: WorkflowNodeRunId,
     pub output: Option<String>,
+    pub structured_output: Option<serde_json::Value>,
     pub stop_reason: Option<String>,
     pub file_changes: Vec<FileChange>,
     pub session_id: Option<SessionId>,
@@ -177,26 +180,25 @@ pub(crate) fn prepare_completion(
         }
         .into());
     }
-    // A `Pending` node run is always an interactive agent node, so `agent_config` is present here;
-    // the default keeps the manual-completion output correct even for a malformed graph.
-    let output_policy = agent_config
-        .map(|config| config.output_policy)
-        .unwrap_or_default();
-
     // The final assistant message and the stop reason of the last turn both come from the same
     // durable history, so they are read together rather than re-reading the file.
-    let (output, stop_reason) = match node_run.session_id.as_ref() {
+    let (raw_output, stop_reason) = match node_run.session_id.as_ref() {
         Some(session_id) => {
             let history = read_session_history(sessions_root, session_id.as_ref())
                 .map_err(|error| BackendError::internal("failed to read session history", error))?;
             (
-                // Apply the node's output policy so manual completion mirrors the automatic path.
-                output_policy.apply(assistant_output_from_history(&history)),
+                assistant_output_from_history(&history),
                 last_stop_reason(&history).map(stop_reason_label),
             )
         }
         None => (None, None),
     };
+    let (output, structured_output) = apply_output_contract(
+        agent_config.and_then(|config| config.output_contract.as_ref()),
+        raw_output,
+        &node_run.node_id,
+    )
+    .map_err(|error| BackendError::internal("failed to parse structured workflow output", error))?;
 
     let file_changes = match load_worktree_baseline(baselines_root, &node_run.id) {
         Some(baseline) => {
@@ -220,6 +222,7 @@ pub(crate) fn prepare_completion(
     Ok(PreparedCompletion {
         node_run_id: node_run.id,
         output,
+        structured_output,
         stop_reason,
         file_changes,
         session_id: node_run.session_id,

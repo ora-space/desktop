@@ -1,9 +1,11 @@
 import { act, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import "../../i18n/i18n-instance";
 import {
   createTestQueryClient,
   renderHookWithClient,
@@ -11,13 +13,27 @@ import {
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { useUpdatePlugin } from "./use-update-plugin";
 
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createPluginMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...pluginHandlers(state),
+  };
+}
+
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
 });
 
 describe("useUpdatePlugin", () => {
   it("updates an installed plugin and refreshes the installed surface", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.availablePlugins.push({
       id: "official/weather",
       name: "weather",
@@ -46,7 +62,8 @@ describe("useUpdatePlugin", () => {
       configuration: { state: "not_declared" },
       runtime: "stopped",
     });
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const { result } = renderHookWithClient(
       () => useUpdatePlugin("official/weather"),
       client,
@@ -64,11 +81,13 @@ describe("useUpdatePlugin", () => {
   });
 
   it("keeps update progress across unmount and rejects a duplicate start", async () => {
-    const client = createMockClient(createMockClientState());
-    let resolveUpdate:
-      | ((response: Awaited<ReturnType<typeof client.plugin.update>>) => void)
-      | undefined;
-    const update = vi.spyOn(client.plugin, "update").mockImplementation(
+    const state = createFixtureState();
+    const handlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(handlers);
+    let resolveUpdate: ((response: { pluginId: string }) => void) | undefined;
+    // The update stays in flight so the durable operation state, not the query cache, is what
+    // carries progress across the unmount below.
+    const update = vi.spyOn(handlers, "updatePlugin").mockImplementation(
       () =>
         new Promise((resolve) => {
           resolveUpdate = resolve;

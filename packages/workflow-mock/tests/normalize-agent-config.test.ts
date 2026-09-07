@@ -24,7 +24,6 @@ describe("normalizeWorkflowAgentConfig", () => {
       mcps: [],
       prompt: "hello",
       interactive: false,
-      outputPolicy: "none",
     });
   });
 

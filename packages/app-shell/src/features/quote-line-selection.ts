@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { addComposerFileSelections } from "./chat/add-composer-file-selection";
+import { addComposerFileSelections } from "../state/actions/add-composer-file-selection";
 
 /**
  * One quoteable row. `key` must be unique within the rendered surface: file
@@ -28,6 +28,14 @@ export interface QuoteLineSelection {
   origin?: "diff";
   /** Present when every quoted line is the same side; mixed add/delete omits it. */
   diffSide?: "old" | "new";
+}
+
+/** The click/shift-click selection the hook currently holds, if any. */
+export interface QuotePinnedRange {
+  group: string | undefined;
+  anchorLine: number;
+  startLine: number;
+  endLine: number;
 }
 
 interface QuoteDragState {
@@ -74,12 +82,7 @@ export function useQuoteLineSelection<T extends QuoteLineAnchor>({
   /** Rows currently tinted by the active drag (key → cells), so a mousemove only touches rows that entered or left the range. */
   const paintedRef = useRef(new Map<string, HTMLElement[]>());
   const anchorElRef = useRef<HTMLElement | null>(null);
-  const pinnedRef = useRef<{
-    group: string | undefined;
-    anchorLine: number;
-    startLine: number;
-    endLine: number;
-  } | null>(null);
+  const pinnedRef = useRef<QuotePinnedRange | null>(null);
   const suppressClickRef = useRef(false);
 
   /**
@@ -465,14 +468,27 @@ export function useQuoteLineSelection<T extends QuoteLineAnchor>({
     [pinFromNumber, quoteFromNumber],
   );
 
+  /**
+   * `pinnedRange` exposes the live pin, read during render so a virtualized
+   * surface can re-apply the `[data-quote-pinned]` wash to rows that mount
+   * after the pin was made (the imperative paint only reached the rows
+   * visible at click time). It is deliberately not state: pinning must not
+   * re-render a whole-file or whole-diff surface, and the imperative paint
+   * already covers the no-render window after each pin change — every render
+   * that does happen re-reads the fresh value, so a cleared pin never
+   * resurrects.
+   */
+  /* eslint-disable react-hooks/refs -- fresh read during render is the point; see the doc comment above */
   return {
     rootRef,
+    pinnedRange: pinnedRef.current,
     onGutterMouseDown,
     onPlusMouseDown,
     onPlusClick,
     onNumberClick,
     onNumberKeyDown,
   };
+  /* eslint-enable react-hooks/refs */
 }
 
 /**

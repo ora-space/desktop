@@ -19,6 +19,7 @@ pub(super) struct SessionTraceRegistry {
 }
 
 struct TraceEntry {
+    #[cfg(debug_assertions)]
     ora_session_id: String,
     token: u64,
 }
@@ -30,6 +31,8 @@ impl SessionTraceRegistry {
         agent_session_id: &str,
         ora_session_id: &str,
     ) -> SessionTraceRegistration {
+        #[cfg(not(debug_assertions))]
+        let _ = ora_session_id;
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
         self.entries
             .write()
@@ -37,6 +40,7 @@ impl SessionTraceRegistry {
             .insert(
                 agent_session_id.to_string(),
                 TraceEntry {
+                    #[cfg(debug_assertions)]
                     ora_session_id: ora_session_id.to_string(),
                     token,
                 },
@@ -49,6 +53,7 @@ impl SessionTraceRegistry {
     }
 
     /// Resolves the application identity without exposing the mutable registry.
+    #[cfg(debug_assertions)]
     pub(super) fn resolve(&self, agent_session_id: &str) -> String {
         self.entries
             .read()

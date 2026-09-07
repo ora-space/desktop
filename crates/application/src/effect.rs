@@ -64,7 +64,6 @@ where
     pub fn replace(
         &self,
         request: ReplaceEffectStateRequest,
-        updated_at: i64,
     ) -> Result<ReplaceEffectStateResponse, EffectApplicationError> {
         let scope = workspace_scope(request.workspace_id);
         let effects = request
@@ -78,7 +77,6 @@ where
                 &scope,
                 Generation::new(request.expected_generation),
                 effects,
-                LocalTimestamp::from_millis(updated_at),
             )
             .map_err(EffectApplicationError::Repository)?;
         match outcome {
@@ -126,7 +124,7 @@ where
             }
         }
         .map_err(EffectApplicationError::Repository)?
-        .map(|(status, conditions)| map_target_status(status, conditions));
+        .map(map_target_status);
         Ok(GetEffectTargetStatusResponse { status })
     }
 
@@ -275,10 +273,12 @@ fn map_consumer_dto(consumer: ConsumerIdentity) -> EffectConsumerRefDto {
 }
 
 /// Projects all Target watermarks and structured current Conditions atomically.
-fn map_target_status(
-    status: ora_effect::TargetStatus,
-    conditions: Vec<EffectCondition>,
-) -> EffectTargetStatusDto {
+fn map_target_status(view: ora_effect::TargetStatusView) -> EffectTargetStatusDto {
+    let ora_effect::TargetStatusView {
+        status,
+        updated_at,
+        conditions,
+    } = view;
     let recovery_operation_id = match status.phase() {
         TargetPhase::RecoveryRequired(operation) => Some(operation.to_string()),
         TargetPhase::Pending
@@ -296,7 +296,7 @@ fn map_target_status(
         phase: map_target_phase(status.phase()),
         status_version: status.version().value(),
         recovery_operation_id,
-        updated_at: status.updated_at().millis(),
+        updated_at: updated_at.millis(),
         conditions: conditions.into_iter().map(map_condition).collect(),
     }
 }

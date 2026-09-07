@@ -5,10 +5,8 @@ import {
   type ChatStore,
   type SessionConversation,
 } from "@ora/chat";
-import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+import { createTestClient } from "../../test/contracts-transport";
+import "../../i18n/i18n-instance";
 import { useSessionUnreadSync } from "./use-session-unread-sync";
 import { useUnreadSessionsStore } from "../stores/unread-sessions-store";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
@@ -36,7 +34,7 @@ function conversation(
 
 /** A chat store we never prompt - tests write conversation state directly. */
 function makeChatStore(): ChatStore {
-  return createChatStore(createMockClient(createMockClientState()).session);
+  return createChatStore(createTestClient({}).session);
 }
 
 /** Sets one session's live responding flag, leaving the others untouched. */

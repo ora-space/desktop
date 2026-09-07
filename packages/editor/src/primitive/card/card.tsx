@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { cn } from "../../utils";
+import { cn } from "../../utils.ts";
 import "./card.scss";
 
 const Card = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(

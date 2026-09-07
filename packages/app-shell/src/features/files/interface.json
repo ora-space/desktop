@@ -1,0 +1,27 @@
+{
+  "owner": "Workspace file browsing",
+  "modules": {
+    "./workspace-file-visuals": {
+      "exports": ["WorkspaceFileIcon"],
+      "purpose": "Composer file references reuse file-kind presentation without duplicating icons."
+    },
+    "./workspace-files-view": {
+      "exports": [
+        "WorkspaceArtifactRequest",
+        "WorkspaceDirectoryRequest",
+        "WorkspaceFileRequest",
+        "WorkspaceFilesView"
+      ],
+      "purpose": "Review hosts issue typed file, directory or artifact navigation requests."
+    },
+    "./workspace-review-files-panel": {
+      "exports": ["WorkspaceReviewFilesPanel"],
+      "purpose": "Review layout explicitly composes the Files product panel."
+    },
+    "./translations": {
+      "exports": ["filesTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

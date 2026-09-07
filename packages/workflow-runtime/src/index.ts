@@ -34,6 +34,8 @@ export type {
   WorkflowRunEvent,
   WorkflowRunEventEnvelope,
   WorkflowRunLiveSnapshot,
+  WorkflowVariableValueType,
+  WorkflowGlobalVariable,
 } from "./types";
 export { findOpenHitlForNode, listOpenHitls } from "./types";
 export {
@@ -52,8 +54,13 @@ export {
   type WorkflowGraphAnnotation,
   type WorkflowGraphEnvelope,
 } from "./graph-codec";
-export { projectNodeStatus, projectRunStatus } from "./run-projection";
+export {
+  isTerminalRunStatus,
+  projectNodeStatus,
+  projectRunStatus,
+} from "./run-projection";
 export { workflowPathNodes, workflowPathOrder } from "./workflow-path-order";
+export { computeInactiveNodes } from "./branch-projection";
 
 export type {
   WorkflowHostRepository,

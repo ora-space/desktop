@@ -164,9 +164,8 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
 
     /// Re-pairs current declarations, claims one fair batch, and reconciles each independently.
     pub(crate) fn run_pass(&self, runtime: &Handle) {
-        let now = self.clock.now_timestamp_millis();
-        self.converge_target_declarations(now);
-        let now = LocalTimestamp::from_millis(now);
+        self.converge_target_declarations();
+        let now = LocalTimestamp::from_millis(self.clock.now_timestamp_millis());
         if let Err(error) = self.repository.quarantine_unfinished_operations(now) {
             ora_warn!(
                 operation = "effect_recovery",
@@ -175,6 +174,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
             );
             return;
         }
+        let now = LocalTimestamp::from_millis(self.clock.now_timestamp_millis());
         let lease_until =
             LocalTimestamp::from_millis(now.millis() + LEASE_DURATION.as_millis() as i64);
         let claimed = match self.repository.claim_due_targets(
@@ -194,12 +194,12 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
             }
         };
         for (target, claim) in claimed {
-            self.reconcile_target(runtime, &target, &claim, now, lease_until);
+            self.reconcile_target(runtime, &target, &claim, lease_until);
         }
     }
 
     /// Closes Workspace/declaration ordering gaps before requests are claimed.
-    fn converge_target_declarations(&self, now: i64) {
+    fn converge_target_declarations(&self) {
         let declarations = self.plugin_host.agent_effect_declarations();
         if declarations.is_empty() {
             return;
@@ -215,8 +215,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                 return;
             }
         };
-        if let Err(error) =
-            converge_workspace_targets(&self.repository, &workspaces, &declarations, now)
+        if let Err(error) = converge_workspace_targets(&self.repository, &workspaces, &declarations)
         {
             ora_warn!(
                 operation = "effect_declaration",
@@ -232,7 +231,6 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
         runtime: &Handle,
         target: &EffectTargetId,
         claim: &ora_effect::ReconcileClaim,
-        now: LocalTimestamp,
         lease_until: LocalTimestamp,
     ) {
         let planner = SkillPlanner;
@@ -249,8 +247,9 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
             &planner,
             &consumer_adapter,
             &resource_adapter,
+            &self.clock,
         );
-        match reconciler.reconcile(target, claim, now, lease_until) {
+        match reconciler.reconcile(target, claim, lease_until) {
             Ok(ReconcileOutcome::Current { generation, .. }) => ora_info!(
                 operation = "effect_reconcile",
                 target = target.as_str(),
@@ -281,6 +280,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                     error = %error,
                     "Effect Target reconcile failed",
                 );
+                let now = LocalTimestamp::from_millis(self.clock.now_timestamp_millis());
                 if let Err(recovery_error) = self.repository.quarantine_unfinished_operations(now) {
                     ora_warn!(
                         operation = "effect_recovery",
@@ -290,6 +290,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                     );
                     return;
                 }
+                let now = LocalTimestamp::from_millis(self.clock.now_timestamp_millis());
                 let not_before =
                     LocalTimestamp::from_millis(now.millis() + RETRY_DELAY.as_millis() as i64);
                 if let Err(retry_error) = self

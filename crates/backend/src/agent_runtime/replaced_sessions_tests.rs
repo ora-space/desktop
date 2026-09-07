@@ -12,7 +12,7 @@ use super::{
 use crate::app_event::{AppEventHub, AppEventPublisher};
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
-use crate::user_config::UserConfigApi;
+use crate::settings::Settings;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_domain::{AgentRef, PluginId, SessionId};
 use ora_scheduler::Scheduler;
@@ -38,7 +38,7 @@ const PACKAGE_NAMESPACE: &str = "official";
 const INSTALLED_AGENT: &str = "ora-space.opencode";
 
 fn test_pool(root: &Path) -> RepositoryPool {
-    DatabaseBootstrapper::system()
+    DatabaseBootstrapper::new(crate::test_clock::TestClock)
         .bootstrap_repository_pool(
             &DatabaseLocation::path(root.join("test.sqlite")),
             &default_migration_catalog().expect("build migration catalog"),
@@ -59,7 +59,7 @@ fn test_manager(
             PathBuf::from("deno"),
             SystemClock,
             AppEventHub::new().publisher(),
-            Arc::new(UserConfigApi::new(pool.clone())),
+            Arc::new(Settings::new(pool.clone())),
         )
         .expect("open plugin host"),
     );

@@ -1,0 +1,18 @@
+{
+  "owner": "Composer editing interface",
+  "modules": {
+    "./composer-editor": {
+      "exports": ["ComposerEditor", "ComposerEditorHandle"],
+      "purpose": "Chat, workflow prompts and human follow-ups share the composer editing surface."
+    },
+    "./composer-query": {
+      "exports": [
+        "ComposerQueryState",
+        "EMPTY_COMPOSER_QUERY",
+        "queryStateFromText",
+        "queryStatesEqual"
+      ],
+      "purpose": "Chat owns suggestions while the editor owns query-state interpretation."
+    }
+  }
+}

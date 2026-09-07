@@ -44,9 +44,8 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
         (node.data.kind !== "start" || node.deletable === false) &&
         typeof node.data.title === "string" &&
         typeof node.data.description === "string" &&
-        (node.data.kind === "agent"
-          ? isWorkflowAgentConfig(node.data.agentConfig)
-          : typeof node.data.instruction === "string"),
+        (node.data.kind !== "agent" ||
+          isWorkflowAgentConfig(node.data.agentConfig)),
     ) &&
     candidate.edges.every(
       (edge) =>
@@ -56,8 +55,12 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
         edge.type === "workflow" &&
         typeof edge.source === "string" &&
         typeof edge.target === "string" &&
-        (edge.sourceHandle === undefined || edge.sourceHandle === null) &&
-        (edge.targetHandle === undefined || edge.targetHandle === null),
+        (edge.sourceHandle === undefined ||
+          edge.sourceHandle === null ||
+          typeof edge.sourceHandle === "string") &&
+        (edge.targetHandle === undefined ||
+          edge.targetHandle === null ||
+          typeof edge.targetHandle === "string"),
     )
   )) {
     return false;

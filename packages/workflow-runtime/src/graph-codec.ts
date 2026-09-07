@@ -1,6 +1,7 @@
 import type {
   WorkflowDefinitionEdge,
   WorkflowDefinitionNode,
+  WorkflowGlobalVariable,
   WorkflowViewport,
 } from "./types";
 
@@ -10,6 +11,7 @@ export interface WorkflowGraphEnvelope {
   edges: WorkflowDefinitionEdge[];
   viewport: WorkflowViewport;
   annotations: WorkflowGraphAnnotation[];
+  globalVariables: WorkflowGlobalVariable[];
   description?: string;
 }
 
@@ -47,6 +49,7 @@ export function serializeWorkflowGraph(input: {
   edges: readonly WorkflowDefinitionEdge[];
   viewport: WorkflowViewport;
   annotations?: readonly WorkflowGraphAnnotation[];
+  globalVariables?: readonly WorkflowGlobalVariable[];
   description?: string;
 }): string {
   return JSON.stringify({
@@ -54,6 +57,7 @@ export function serializeWorkflowGraph(input: {
     edges: input.edges,
     viewport: input.viewport,
     annotations: input.annotations ?? [],
+    globalVariables: input.globalVariables ?? [],
     ...(input.description === undefined
       ? {}
       : { description: input.description }),
@@ -76,6 +80,7 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
       edges: [],
       viewport: DEFAULT_VIEWPORT,
       annotations: [],
+      globalVariables: [],
     };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -84,6 +89,7 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
       edges: [],
       viewport: DEFAULT_VIEWPORT,
       annotations: [],
+      globalVariables: [],
     };
   }
   const record = value as Record<string, unknown>;
@@ -103,11 +109,29 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
     annotations: Array.isArray(record.annotations)
       ? record.annotations.filter(isWorkflowGraphAnnotation)
       : [],
+    globalVariables: Array.isArray(record.globalVariables)
+      ? record.globalVariables.filter(isWorkflowGlobalVariable)
+      : [],
   };
   if (typeof record.description === "string") {
     envelope.description = record.description;
   }
   return envelope;
+}
+
+/** Guards workflow-wide variables before exposing persisted data to the editor. */
+function isWorkflowGlobalVariable(
+  value: unknown,
+): value is WorkflowGlobalVariable {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const variable = value as Record<string, unknown>;
+  return (
+    typeof variable.name === "string" &&
+    variable.name.includes(".") &&
+    typeof variable.valueType === "string"
+  );
 }
 
 /** Guards editor-note data before custom nodes render persisted content. */

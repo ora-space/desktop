@@ -1,0 +1,38 @@
+{
+  "owner": "Conversation UI",
+  "modules": {
+    "./chat-view": {
+      "exports": ["ChatView"],
+      "purpose": "Workspace and workflow-run compose the same conversation renderer."
+    },
+    "./composer-context-bar": {
+      "exports": ["ComposerContextBar"],
+      "purpose": "Workspace places the active conversation context above its composer."
+    },
+    "./expand-prompt-role-tokens": {
+      "exports": ["expandPromptRoleTokens"],
+      "purpose": "Both prompt submission surfaces must expand the same role references."
+    },
+    "./markdown-message": {
+      "exports": ["MarkdownDocument"],
+      "purpose": "Plugin README uses the same safe document renderer as conversation content."
+    },
+    "./session-agent-banner": {
+      "exports": ["SessionAgentBanner"],
+      "purpose": "Workspace owns placement while chat owns unavailable-agent presentation."
+    },
+    "./session-history-banner": {
+      "exports": ["SessionHistoryBanner"],
+      "purpose": "Workspace composes chat-owned history status above the conversation."
+    },
+    "./turn-diff-files": {
+      "exports": ["displayPath"],
+      "purpose": "Files and workflow activity normalize displayed ACP worktree paths consistently."
+    },
+    "./translations": {
+      "exports": ["chatTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

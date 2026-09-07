@@ -35,6 +35,7 @@ describe("graph envelope codec", () => {
       nodes: [node],
       edges: [edge],
       annotations: [annotation],
+      globalVariables: [{ name: "sys.workflow_id", valueType: "string" }],
       viewport: { x: 32, y: 64, zoom: 1.5 },
       description: "A review flow",
     });
@@ -43,6 +44,7 @@ describe("graph envelope codec", () => {
       nodes: [node],
       edges: [edge],
       annotations: [annotation],
+      globalVariables: [{ name: "sys.workflow_id", valueType: "string" }],
       viewport: { x: 32, y: 64, zoom: 1.5 },
       description: "A review flow",
     });
@@ -68,6 +70,7 @@ describe("graph envelope codec", () => {
       edges: [],
       viewport: { x: 5, y: 6, zoom: 1 },
       annotations: [],
+      globalVariables: [],
     });
   });
 
@@ -95,12 +98,14 @@ describe("graph envelope codec", () => {
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
       annotations: [],
+      globalVariables: [],
     });
     expect(parseWorkflowGraph("[1,2]")).toEqual({
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
       annotations: [],
+      globalVariables: [],
     });
   });
 

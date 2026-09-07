@@ -1,7 +1,9 @@
+use super::variable_pool::WorkflowVariablePool;
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::AgentRef;
 use ora_utils::path::StrictRelativePath;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -103,6 +105,14 @@ impl MaterializedSkillBinding {
 pub struct WorkflowRunPayload {
     pub locale: WorkflowRunLocale,
     pub skill_materialization: SkillMaterializationReceipt,
+    /// Identifies the owner of editable Start variables without treating the run instruction as one.
+    #[serde(default)]
+    pub start_node_id: Option<String>,
+    #[serde(default)]
+    pub variable_pool: WorkflowVariablePool,
+    /// Internal Condition routing decisions kept outside the user-selectable variable pool.
+    #[serde(default)]
+    pub condition_decisions: BTreeMap<String, String>,
 }
 
 impl WorkflowRunPayload {
@@ -114,7 +124,42 @@ impl WorkflowRunPayload {
         Self {
             locale,
             skill_materialization,
+            start_node_id: None,
+            variable_pool: WorkflowVariablePool::default(),
+            condition_decisions: BTreeMap::new(),
         }
+    }
+
+    /// Creates run metadata with the graph-derived variable pool used by a new execution.
+    pub fn with_variable_pool(
+        locale: WorkflowRunLocale,
+        skill_materialization: SkillMaterializationReceipt,
+        start_node_id: Option<String>,
+        variable_pool: WorkflowVariablePool,
+    ) -> Self {
+        Self {
+            locale,
+            skill_materialization,
+            start_node_id,
+            variable_pool,
+            condition_decisions: BTreeMap::new(),
+        }
+    }
+
+    /// Returns Condition routing state while migrating decisions stored by older payloads.
+    pub fn resolved_condition_decisions(&self) -> BTreeMap<String, String> {
+        let mut decisions = self
+            .variable_pool
+            .values
+            .iter()
+            .filter_map(|(selector, value)| {
+                let node_id = selector.strip_suffix(".selected_branch_id")?;
+                Some((node_id.to_string(), value.as_str()?.to_string()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        // The dedicated field is authoritative when a payload contains both old and new state.
+        decisions.extend(self.condition_decisions.clone());
+        decisions
     }
 }
 
@@ -151,5 +196,30 @@ mod tests {
         let encoded = r#"{"locale":"en-US","skillMaterialization":{"bindings":[{"nodeId":"review","skillId":"catalog-id","invocationName":"review","packagePaths":["../escape"]}]}}"#;
 
         assert!(serde_json::from_str::<WorkflowRunPayload>(encoded).is_err());
+    }
+
+    /// Legacy branch variables remain restart-readable but dedicated decisions take precedence.
+    #[test]
+    fn workflow_run_payload_resolves_legacy_condition_decisions_privately() {
+        let mut payload = WorkflowRunPayload::new(WorkflowRunLocale::EnUs, Default::default());
+        payload
+            .variable_pool
+            .declare("condition-1.selected_branch_id", "string", "condition-1");
+        payload
+            .variable_pool
+            .set(
+                "condition-1.selected_branch_id",
+                "condition-1",
+                serde_json::json!("legacy-case"),
+            )
+            .unwrap();
+        payload
+            .condition_decisions
+            .insert("condition-1".to_string(), "current-case".to_string());
+
+        assert_eq!(
+            payload.resolved_condition_decisions(),
+            BTreeMap::from([("condition-1".to_string(), "current-case".to_string())])
+        );
     }
 }

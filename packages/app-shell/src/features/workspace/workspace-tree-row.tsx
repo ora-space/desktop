@@ -29,7 +29,7 @@ import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 import {
   useRenameWorkflowRun,
   useWorkflowRunsByProject,
-} from "../../state/hooks/use-workflow-runs";
+} from "../../state/data/workflow-runs";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
 /**

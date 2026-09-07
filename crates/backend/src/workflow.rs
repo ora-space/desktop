@@ -3,4 +3,4 @@
 mod definition;
 pub(crate) mod run;
 
-pub(crate) use definition::WorkflowApi;
+pub use definition::WorkflowApi;

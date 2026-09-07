@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -5,7 +6,8 @@ use crate::workflow::WorkflowRepository;
 use crate::workflow_run::mapper::{map_node_run, map_run, map_run_awaiting, map_run_summary};
 use crate::workflow_run::{
     DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkspaceRepository,
+    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowVariablePool,
+    WorkspaceRepository,
 };
 use crate::{ApplicationError, Clock, WorkflowGraph};
 use ora_contracts::{
@@ -13,7 +15,7 @@ use ora_contracts::{
     DeleteWorkflowRunResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
     ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
     ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-    RenameWorkflowRunRequest, RenameWorkflowRunResponse,
+    RenameWorkflowRunRequest, RenameWorkflowRunResponse, WorkflowRunVariable,
 };
 use ora_domain::{
     AuditFields, Workflow, WorkflowId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
@@ -156,9 +158,45 @@ where
             .workspace_initializer
             .initialize_workspace(&graph, Path::new(&workspace_root))
             .map_err(ApplicationError::from_start_prerequisites_error)?;
-        let run_payload = serde_json::to_string(&WorkflowRunPayload::new(
+        let start_node_id = graph.start_node().map(|node| node.id.clone());
+        let mut variable_pool = WorkflowVariablePool::from_graph(&graph);
+        variable_pool
+            .set(
+                "sys.workflow_id",
+                "sys",
+                serde_json::Value::String(workflow_id.to_string()),
+            )
+            .and_then(|()| {
+                variable_pool.set(
+                    "sys.timestamp",
+                    "sys",
+                    serde_json::Value::Number(now.into()),
+                )
+            })
+            .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                message: format!("failed to initialize system workflow variables: {error}"),
+            })?;
+        // Mirror the resolved kickoff text into the reserved `{start_id}.input` selector so a node
+        // prompt can render the run instruction as a template variable in addition to receiving it
+        // in the assembled workflow context.
+        if let (Some(start_node_id), Some(input)) =
+            (start_node_id.as_deref(), kickoff_input.as_deref())
+        {
+            variable_pool
+                .set(
+                    &format!("{start_node_id}.input"),
+                    start_node_id,
+                    serde_json::Value::String(input.to_string()),
+                )
+                .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                    message: format!("failed to initialize run instruction variable: {error}"),
+                })?;
+        }
+        let run_payload = serde_json::to_string(&WorkflowRunPayload::with_variable_pool(
             request.locale,
             skill_materialization,
+            start_node_id,
+            variable_pool,
         ))
         .map_err(|error| ApplicationError::WorkflowRunStartFailed {
             message: format!("failed to serialize workflow run payload: {error}"),
@@ -270,14 +308,55 @@ where
             .nodes
             .iter()
             .any(|node_run| node_run.status == WorkflowNodeStatus::Pending);
+        let (variables, condition_decisions) =
+            project_variable_pool(detail.run.payload.as_deref())?;
         Ok(GetWorkflowRunResponse {
             run: map_run_awaiting(detail.run, has_awaiting_node),
             name: detail.name,
             workspace_id: detail.workspace_id.to_string(),
             project_id: detail.project_id.to_string(),
             nodes: detail.nodes.into_iter().map(map_node_run).collect(),
+            variables,
+            condition_decisions,
         })
     }
+}
+
+/// Projects the internal payload into stable variable and branch-decision contracts.
+fn project_variable_pool(
+    serialized_payload: Option<&str>,
+) -> Result<(Vec<WorkflowRunVariable>, BTreeMap<String, String>), ApplicationError> {
+    let Some(serialized_payload) = serialized_payload else {
+        return Ok((Vec::new(), BTreeMap::new()));
+    };
+    let payload: WorkflowRunPayload =
+        serde_json::from_str(serialized_payload).map_err(|error| {
+            ApplicationError::WorkflowRunStartFailed {
+                message: format!("workflow run payload is corrupted: {error}"),
+            }
+        })?;
+    let mut variables = Vec::with_capacity(payload.variable_pool.catalog.len());
+    let condition_decisions = payload.resolved_condition_decisions();
+    for (qualified, definition) in payload.variable_pool.catalog {
+        let Some((node_id, name)) = qualified.split_once('.') else {
+            return Err(ApplicationError::WorkflowRunStartFailed {
+                message: format!("workflow variable selector is invalid: {qualified}"),
+            });
+        };
+        let value = payload.variable_pool.values.get(&qualified).cloned();
+        // Older payloads stored routing decisions in the variable pool. Continue reading them for
+        // restart compatibility, but never expose them through the public variable contract.
+        if name == "selected_branch_id" {
+            continue;
+        }
+        variables.push(WorkflowRunVariable {
+            selector: vec![node_id.to_string(), name.to_string()],
+            value_type: definition.value_type,
+            source_node_id: definition.writer,
+            value,
+        });
+    }
+    Ok((variables, condition_decisions))
 }
 
 /// Handles listing of visible workflow runs for one project.

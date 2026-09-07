@@ -1,6 +1,6 @@
 //! Endpoint declarations for the session generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "session";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "start",
         request_type: "StartSessionRequest",
         response_type: "StartSessionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "setSessionConfig",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "setConfig",
         request_type: "SetSessionConfigRequest",
         response_type: "SetSessionConfigResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getSession",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetSessionRequest",
         response_type: "GetSessionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listSessions",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "list",
         request_type: "ListSessionsRequest",
         response_type: "ListSessionsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "loadSession",
@@ -39,6 +43,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "load",
         request_type: "LoadSessionRequest",
         response_type: "LoadSessionEvent",
+        response_mode: FrontendResponseMode::Stream,
     },
     FrontendEndpoint {
         operation_name: "promptSession",
@@ -46,6 +51,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "prompt",
         request_type: "PromptSessionRequest",
         response_type: "PromptSessionEvent",
+        response_mode: FrontendResponseMode::Stream,
     },
     FrontendEndpoint {
         operation_name: "respondToSessionPermission",
@@ -53,6 +59,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "respondToPermission",
         request_type: "RespondToPermissionRequest",
         response_type: "RespondToPermissionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "cancelSessionPrompt",
@@ -60,6 +67,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "cancelPrompt",
         request_type: "CancelSessionPromptRequest",
         response_type: "CancelSessionPromptResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "stopSession",
@@ -67,6 +75,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "stop",
         request_type: "StopSessionRequest",
         response_type: "StopSessionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "switchSessionAgent",
@@ -74,6 +83,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "switchAgent",
         request_type: "SwitchSessionAgentRequest",
         response_type: "SwitchSessionAgentResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "resumeSessionHistory",
@@ -81,6 +91,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "resumeHistory",
         request_type: "ResumeSessionHistoryRequest",
         response_type: "ResumeSessionHistoryResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteSession",
@@ -88,6 +99,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "delete",
         request_type: "DeleteSessionRequest",
         response_type: "DeleteSessionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "renameSession",
@@ -95,5 +107,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "rename",
         request_type: "RenameSessionRequest",
         response_type: "RenameSessionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

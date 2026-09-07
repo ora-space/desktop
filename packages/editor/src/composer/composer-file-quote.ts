@@ -1,4 +1,4 @@
-import type { ComposerFileAttrs } from "./composer-file";
+import type { ComposerFileAttrs } from "./composer-file.ts";
 
 /** `start:end:path` info string of a legacy file-preview citation fence. */
 const CITATION_INFO = /^(\d+):(\d+):(.+)$/;

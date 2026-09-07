@@ -50,6 +50,7 @@ uuid = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+rusqlite = { workspace = true }
 pretty_assertions = { workspace = true }
 ora-plugin-manifest = { workspace = true }
 ora-test-support = { workspace = true }

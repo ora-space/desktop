@@ -1,7 +1,7 @@
 import React from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import "./video-node.scss";
-import type { VideoOptions } from "./video-extension";
+import type { VideoOptions } from "./video-extension.ts";
 
 interface VideoAttrs {
   src: string;

@@ -5,15 +5,38 @@ import type {
   GetAgentRuntimeStatusResponse,
 } from "@ora/contracts";
 import {
-  createMockClient,
-  createMockClientState,
-  type MockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createSessionMemory,
+  sessionHandlers,
+} from "../../test/memory/sessions";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import "../../i18n/i18n-instance";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { DEFAULT_SETTINGS, useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { useTargetAgentReadiness } from "./use-target-agent-readiness";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createSessionMemory(), ...createAgentRuntimeMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...sessionHandlers(state),
+    ...agentRuntimeHandlers(state),
+  };
+}
 
 /** The project-only surface every case here resolves: no session, no task. */
 const PROJECT_SELECTION = { projectId: "p1", taskId: null, sessionId: null };
@@ -31,7 +54,7 @@ beforeEach(() => {
 
 /** Replaces what the runtime reports about one agent, leaving the rest detected. */
 function reportOpenCode(status: AgentStatus) {
-  return (state: MockClientState) => {
+  return (state: FixtureState) => {
     const entry = state.agentRuntimeStatuses.find(
       (candidate) => candidate.agentRef === AGENT_REF.opencode,
     );
@@ -45,13 +68,13 @@ function reportOpenCode(status: AgentStatus) {
  * the test is not about.
  */
 async function readiness(
-  seed: (state: MockClientState) => void = () => {},
+  seed: (state: FixtureState) => void = () => {},
 ): Promise<ReturnType<typeof useTargetAgentReadiness>> {
-  const state = createMockClientState();
+  const state = createFixtureState();
   seed(state);
   const { result } = renderHookWithClient(
     () => useTargetAgentReadiness(PROJECT_SELECTION),
-    createMockClient(state),
+    createTestClient(createFixtureHandlers(state)),
   );
   await waitFor(() => expect(result.current).not.toBe("unknown"));
   return result.current;
@@ -94,15 +117,13 @@ describe("useTargetAgentReadiness", () => {
   });
 
   it("stays unknown while detection never answers", async () => {
-    const state = createMockClientState();
-    const client = createMockClient(state);
-    const stalled = {
-      ...client,
-      agentRuntime: {
-        ...client.agentRuntime,
-        getStatus: () => new Promise<GetAgentRuntimeStatusResponse>(() => {}),
-      },
-    };
+    const state = createFixtureState();
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const stalled = createTestClient({
+      ...clientHandlers,
+      getAgentRuntimeStatus: () =>
+        new Promise<GetAgentRuntimeStatusResponse>(() => {}),
+    });
     const { result } = renderHookWithClient(
       () => useTargetAgentReadiness(PROJECT_SELECTION),
       stalled,

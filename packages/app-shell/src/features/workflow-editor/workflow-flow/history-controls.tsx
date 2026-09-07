@@ -187,6 +187,7 @@ export function WorkflowHistoryControls({
       "layout.organize": t("settings.workflow.historyEventOrganize"),
       "node.edit": t("settings.workflow.historyEventNodeEdit"),
       "annotation.edit": t("settings.workflow.historyEventAnnotationEdit"),
+      "workflow.variables": t("settings.workflow.historyEventVariables"),
       "workflow.rename": t("settings.workflow.historyEventRename"),
     };
     const subject = meta?.subject ?? meta?.nodeTitle;

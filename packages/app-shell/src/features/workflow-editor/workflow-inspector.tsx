@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconCheck,
-  IconLayoutSidebarRightCollapse,
   IconChevronDown,
   IconLoader2,
   IconPlus,
@@ -19,40 +18,50 @@ import {
   CommandItem,
   CommandList,
   Input,
+  Label,
   Popover,
   PopoverContent,
   PopoverTrigger,
   Select,
   SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
   Switch,
-  Textarea,
 } from "@ora/ui";
 import {
+  DEFAULT_WORKFLOW_STRUCTURED_OUTPUT_SCHEMA,
   type WorkflowAgentConfig,
   type WorkflowAgentModel,
   type WorkflowNodeData,
   type WorkflowCapabilities,
+  type WorkflowOutputBinding,
+  type WorkflowVariableCatalogEntry,
   normalizeWorkflowAgentConfig,
 } from "@ora/workflow-mock";
 import type { Node } from "@xyflow/react";
-import { agentLabel, type AgentEntry } from "../chat/agent-catalog";
+import {
+  agentLabel,
+  type AgentEntry,
+} from "../../state/hooks/use-agent-catalog";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import type { WorkflowAgentCliStatus } from "../../state/hooks/use-workflow-agent-models";
-import { getNodeMetadata } from "./workflow-node-metadata";
 import {
   InspectorField,
+  WorkflowNodeDetailsHeader,
   WorkflowNodeDetailsLayout,
 } from "./workflow-node-details";
-
-/** Soft card copy limit so node descriptions stay glanceable on the canvas. */
-const NODE_DESCRIPTION_MAX_LENGTH = 30;
+import { WorkflowVariableDisplay } from "./workflow-variable-display";
+import { WorkflowVariableSelectGroups } from "./workflow-variable-list";
+import { WorkflowPromptEditor } from "./workflow-prompt-editor";
+import {
+  WorkflowStructuredOutputDialog,
+  WorkflowStructuredOutputSummary,
+} from "./workflow-structured-output-dialog";
 
 interface WorkflowInspectorProps {
   node: Node<WorkflowNodeData, "workflow"> | null;
   capabilities: WorkflowCapabilities;
+  variableCatalog: WorkflowVariableCatalogEntry[];
   agentModelsLoading?: boolean;
   agentModelsError?: boolean;
   onRetryAgentModels?: () => void;
@@ -76,6 +85,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
     <WorkflowNodeInspector
       node={props.node}
       capabilities={props.capabilities}
+      variableCatalog={props.variableCatalog}
       agentModelsLoading={props.agentModelsLoading ?? false}
       agentModelsError={props.agentModelsError ?? false}
       onRetryAgentModels={props.onRetryAgentModels}
@@ -124,6 +134,7 @@ function WorkflowInspectorEmpty() {
 function WorkflowNodeInspector({
   node,
   capabilities,
+  variableCatalog,
   agentModelsLoading,
   agentModelsError,
   onRetryAgentModels,
@@ -139,6 +150,7 @@ function WorkflowNodeInspector({
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
+  variableCatalog: WorkflowVariableCatalogEntry[];
   agentModelsLoading: boolean;
   agentModelsError: boolean;
   onRetryAgentModels?: () => void;
@@ -153,7 +165,6 @@ function WorkflowNodeInspector({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const metadata = getNodeMetadata(node.data.kind);
   const nodeType = capabilities.nodeTypes.find(
     (candidate) => candidate.kind === node.data.kind,
   );
@@ -162,12 +173,26 @@ function WorkflowNodeInspector({
       `Missing workflow capability for node kind "${node.data.kind}"`,
     );
   }
-  const Icon = metadata.icon;
   const agentConfig = node.data.agentConfig;
   // Agent and output keep their dedicated flat editors; the remaining kinds
   // use the Dify-style grouped layout so their details read as sections.
   const usesFlatLayout =
     node.data.kind === "agent" || node.data.kind === "output";
+  const outputBindings =
+    node.data.kind === "output" ? (node.data.outputs ?? []) : [];
+  const updateOutputBindings = (next: WorkflowOutputBinding[]): void => {
+    onUpdate({ ...node, data: { ...node.data, outputs: next } });
+  };
+  const updateOutputBinding = (
+    index: number,
+    patch: Partial<WorkflowOutputBinding>,
+  ): void => {
+    updateOutputBindings(
+      outputBindings.map((binding, candidateIndex) =>
+        candidateIndex === index ? { ...binding, ...patch } : binding,
+      ),
+    );
+  };
   return (
     <aside
       data-workflow-inspector=""
@@ -175,82 +200,17 @@ function WorkflowNodeInspector({
     >
       {usesFlatLayout ? (
         <>
-          <div className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-3">
-            <span
-              className={`flex size-8 items-center justify-center rounded-lg ${metadata.tone}`}
-            >
-              <Icon className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="truncate text-xs font-semibold">
-                {node.data.title}
-              </h3>
-              <p className="text-[10px] text-muted-foreground">
-                {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0"
-              aria-label={t("settings.workflow.closeConfiguration")}
-              onClick={onClose}
-            >
-              <IconLayoutSidebarRightCollapse />
-            </Button>
-          </div>
+          <WorkflowNodeDetailsHeader
+            node={node}
+            nodeType={nodeType}
+            onUpdate={onUpdate}
+            onClose={onClose}
+          />
           <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4">
-            <InspectorField
-              label={t("settings.workflow.field.name")}
-              htmlFor="workflow-node-title"
-            >
-              <Input
-                id="workflow-node-title"
-                value={node.data.title}
-                onChange={(event) =>
-                  onUpdate({
-                    ...node,
-                    data: { ...node.data, title: event.target.value },
-                  })
-                }
-              />
-            </InspectorField>
-            <InspectorField
-              label={t("settings.workflow.field.description")}
-              htmlFor="workflow-node-description"
-            >
-              <>
-                <Input
-                  id="workflow-node-description"
-                  value={node.data.description}
-                  maxLength={NODE_DESCRIPTION_MAX_LENGTH}
-                  onChange={(event) =>
-                    onUpdate({
-                      ...node,
-                      data: {
-                        ...node.data,
-                        description: event.target.value.slice(
-                          0,
-                          NODE_DESCRIPTION_MAX_LENGTH,
-                        ),
-                      },
-                    })
-                  }
-                />
-                <p
-                  className="text-right text-[10px] text-muted-foreground"
-                  aria-live="polite"
-                >
-                  {t("settings.workflow.characterCount", {
-                    count: node.data.description.length,
-                    max: NODE_DESCRIPTION_MAX_LENGTH,
-                  })}
-                </p>
-              </>
-            </InspectorField>
             {nodeType.configFields.includes("agent") &&
               agentConfig !== undefined && (
                 <AgentConfigurationFields
+                  key={node.id}
                   config={agentConfig}
                   capabilities={capabilities}
                   modelsLoading={agentModelsLoading}
@@ -259,6 +219,7 @@ function WorkflowNodeInspector({
                   agents={agents}
                   modelsByCli={modelsByCli}
                   cliStatus={cliStatus}
+                  variableCatalog={variableCatalog}
                   catalogsLoading={agentCatalogsLoading}
                   catalogsError={agentCatalogsError}
                   onRetryCatalogs={onRetryAgentCatalogs}
@@ -270,22 +231,136 @@ function WorkflowNodeInspector({
                   }
                 />
               )}
-            {nodeType.configFields.includes("instruction") && (
+            {node.data.kind === "output" && (
               <InspectorField
-                label={t("settings.workflow.field.instruction")}
-                htmlFor="workflow-node-instruction"
+                label={t("settings.workflow.field.outputBindings")}
+                htmlFor="workflow-output-bindings"
               >
-                <Textarea
-                  id="workflow-node-instruction"
-                  className="min-h-32 resize-none text-xs leading-5"
-                  value={node.data.instruction ?? ""}
-                  onChange={(event) =>
-                    onUpdate({
-                      ...node,
-                      data: { ...node.data, instruction: event.target.value },
-                    })
-                  }
-                />
+                <div className="space-y-2">
+                  {outputBindings.map((binding, bindingIndex) => (
+                    <div
+                      className="flex items-start gap-1.5"
+                      key={bindingIndex}
+                    >
+                      <div className="min-w-0 flex-1 space-y-1.5 rounded-lg bg-muted/70 p-2">
+                        <Input
+                          value={binding.name}
+                          aria-label={t(
+                            "settings.workflow.field.outputBindingName",
+                            { index: bindingIndex + 1 },
+                          )}
+                          placeholder={t(
+                            "settings.workflow.field.outputBindingNamePlaceholder",
+                          )}
+                          className="h-8 w-full bg-background"
+                          onChange={(event) =>
+                            updateOutputBinding(bindingIndex, {
+                              name: event.target.value,
+                            })
+                          }
+                        />
+                        <Select
+                          value={binding.variableSelector.join(".")}
+                          onValueChange={(value) => {
+                            if (value !== null) {
+                              updateOutputBinding(bindingIndex, {
+                                variableSelector: value
+                                  .split(".")
+                                  .map((part) => part.trim())
+                                  .filter((part) => part !== ""),
+                              });
+                            }
+                          }}
+                        >
+                          <SelectTrigger
+                            className="h-8 w-full bg-background"
+                            aria-label={t(
+                              "settings.workflow.field.outputBindingSelector",
+                              { index: bindingIndex + 1 },
+                            )}
+                          >
+                            <SelectValue placeholder="node.variable.path">
+                              {(() => {
+                                const selector =
+                                  binding.variableSelector.join(".");
+                                const variable = variableCatalog.find(
+                                  (candidate) =>
+                                    candidate.selector.join(".") === selector,
+                                );
+                                if (variable === undefined) {
+                                  return selector;
+                                }
+                                return (
+                                  <WorkflowVariableDisplay
+                                    variable={variable}
+                                    nodeName={
+                                      variable.sourceNodeTitle ??
+                                      (variable.scope === "global"
+                                        ? t("settings.workflow.globalVariables")
+                                        : variable.sourceNodeId)
+                                    }
+                                  />
+                                );
+                              })()}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent
+                            alignItemWithTrigger={false}
+                            align="start"
+                            className="w-70 min-w-70 max-w-70"
+                          >
+                            <WorkflowVariableSelectGroups
+                              variables={variableCatalog}
+                              globalVariablesLabel={t(
+                                "settings.workflow.globalVariables",
+                              )}
+                            />
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {outputBindings.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={t(
+                            "settings.workflow.field.outputBindingRemove",
+                            { index: bindingIndex + 1 },
+                          )}
+                          onClick={() =>
+                            updateOutputBindings(
+                              outputBindings.filter(
+                                (_, candidateIndex) =>
+                                  candidateIndex !== bindingIndex,
+                              ),
+                            )
+                          }
+                        >
+                          <IconTrash className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start"
+                    onClick={() =>
+                      updateOutputBindings([
+                        ...outputBindings,
+                        {
+                          name: `result-${outputBindings.length + 1}`,
+                          variableSelector: [],
+                        },
+                      ])
+                    }
+                  >
+                    <IconPlus />
+                    {t("settings.workflow.field.outputBindingAdd")}
+                  </Button>
+                </div>
               </InspectorField>
             )}
           </div>
@@ -295,6 +370,7 @@ function WorkflowNodeInspector({
           node={node}
           nodeType={nodeType}
           capabilities={capabilities}
+          variableCatalog={variableCatalog}
           onUpdate={onUpdate}
           onClose={onClose}
         />
@@ -314,7 +390,7 @@ function WorkflowNodeInspector({
   );
 }
 
-/** Edits the structured Agent contract without conflating it with a free-form prompt field. */
+/** Edits optional structured parsing without changing the node's persisted raw output. */
 function AgentConfigurationFields({
   config: rawConfig,
   capabilities,
@@ -324,6 +400,7 @@ function AgentConfigurationFields({
   agents,
   modelsByCli,
   cliStatus,
+  variableCatalog,
   catalogsLoading,
   catalogsError,
   onRetryCatalogs,
@@ -337,6 +414,7 @@ function AgentConfigurationFields({
   agents?: AgentEntry[];
   modelsByCli?: ReadonlyMap<string, WorkflowAgentModel[]>;
   cliStatus?: Readonly<Record<string, WorkflowAgentCliStatus>>;
+  variableCatalog: WorkflowVariableCatalogEntry[];
   catalogsLoading: boolean;
   catalogsError: boolean;
   onRetryCatalogs?: () => void;
@@ -347,8 +425,13 @@ function AgentConfigurationFields({
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [mcpPickerOpen, setMcpPickerOpen] = useState(false);
+  const [structuredOutputDialogOpen, setStructuredOutputDialogOpen] =
+    useState(false);
   // Older drafts may omit `mcps`; normalize before any list access.
   const config = normalizeWorkflowAgentConfig(rawConfig);
+  // Alias the narrowed structured setting so spreading it keeps its discriminant.
+  const structuredContract =
+    config.outputContract?.type === "structured" ? config.outputContract : null;
   const offeredAgents = agents ?? [];
   const currentAgentCli = config.executor.agentCli;
   const configuredModel = capabilities.agentModels.find(
@@ -638,6 +721,18 @@ function AgentConfigurationFields({
             </Command>
           </PopoverContent>
         </Popover>
+      </InspectorField>
+      <InspectorField
+        label={t("settings.workflow.field.prompt")}
+        htmlFor="workflow-agent-prompt"
+      >
+        <WorkflowPromptEditor
+          value={config.prompt}
+          variableCatalog={variableCatalog}
+          ariaLabel={t("settings.workflow.field.prompt")}
+          insertVariableLabel={t("settings.workflow.field.insertVariable")}
+          onChange={(prompt) => onChange({ ...config, prompt })}
+        />
       </InspectorField>
       <InspectorField
         label={t("settings.workflow.field.role")}
@@ -932,19 +1027,6 @@ function AgentConfigurationFields({
         </div>
       </fieldset>
       <InspectorField
-        label={t("settings.workflow.field.prompt")}
-        htmlFor="workflow-agent-prompt"
-      >
-        <Textarea
-          id="workflow-agent-prompt"
-          className="min-h-32 resize-none text-xs leading-5"
-          value={config.prompt}
-          onChange={(event) =>
-            onChange({ ...config, prompt: event.target.value })
-          }
-        />
-      </InspectorField>
-      <InspectorField
         label={t("settings.workflow.field.interactive")}
         htmlFor="workflow-agent-interactive"
       >
@@ -962,42 +1044,55 @@ function AgentConfigurationFields({
           />
         </div>
       </InspectorField>
-      <InspectorField
-        label={t("settings.workflow.field.outputPolicy")}
-        htmlFor="workflow-agent-output-policy"
-      >
-        <Select
-          value={config.outputPolicy ?? "none"}
-          onValueChange={(value) =>
-            onChange({
-              ...config,
-              // Only two policies exist; fold any unexpected value back to the default.
-              outputPolicy: value === "none" ? "none" : "final_agent_response",
-            })
-          }
-        >
-          <SelectTrigger id="workflow-agent-output-policy" className="w-full">
-            <SelectValue>
-              {(selected) =>
-                selected === "none"
-                  ? t("settings.workflow.field.outputPolicyNone")
-                  : t("settings.workflow.field.outputPolicyFinalAgentResponse")
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <Label
+            htmlFor="workflow-agent-output-contract"
+            className="text-[11px]"
+          >
+            {t("settings.workflow.field.structuredOutput")}
+          </Label>
+          <Switch
+            id="workflow-agent-output-contract"
+            checked={structuredContract !== null}
+            onCheckedChange={(enabled) => {
+              if (!enabled) {
+                onChange({
+                  ...config,
+                  outputContract: undefined,
+                });
+                return;
               }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="final_agent_response">
-              {t("settings.workflow.field.outputPolicyFinalAgentResponse")}
-            </SelectItem>
-            <SelectItem value="none">
-              {t("settings.workflow.field.outputPolicyNone")}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          {t("settings.workflow.field.outputPolicyDescription")}
-        </p>
-      </InspectorField>
+              const schema = structuredClone(
+                DEFAULT_WORKFLOW_STRUCTURED_OUTPUT_SCHEMA,
+              );
+              onChange({
+                ...config,
+                outputContract: { type: "structured", schema },
+              });
+            }}
+          />
+        </div>
+        {structuredContract !== null && (
+          <div className="pt-1">
+            <WorkflowStructuredOutputSummary
+              schema={structuredContract.schema}
+              onConfigure={() => setStructuredOutputDialogOpen(true)}
+            />
+            <WorkflowStructuredOutputDialog
+              open={structuredOutputDialogOpen}
+              schema={structuredContract.schema}
+              onOpenChange={setStructuredOutputDialogOpen}
+              onSave={(schema) =>
+                onChange({
+                  ...config,
+                  outputContract: { type: "structured", schema },
+                })
+              }
+            />
+          </div>
+        )}
+      </div>
     </>
   );
 }

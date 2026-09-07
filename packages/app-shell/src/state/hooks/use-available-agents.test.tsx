@@ -2,14 +2,34 @@ import { waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { AgentStatus } from "@ora/contracts";
 import {
-  createMockClient,
-  createMockClientState,
-  type MockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import "../../i18n/i18n-instance";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 import { useAvailableAgents } from "./use-available-agents";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createAgentRuntimeMemory(), ...createPluginMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...agentRuntimeHandlers(state),
+    ...pluginHandlers(state),
+  };
+}
 
 /**
  * Every agent the seeded installation supplies, in the order its packages are listed.
@@ -33,7 +53,7 @@ const WITHOUT_OPENCODE = INSTALLED.filter(
 
 /** Replaces what the runtime reports about one agent, leaving the rest detected. */
 function reportOpenCode(status: AgentStatus) {
-  return (state: MockClientState) => {
+  return (state: FixtureState) => {
     const entry = state.agentRuntimeStatuses.find(
       (candidate) => candidate.agentRef === AGENT_REF.opencode,
     );
@@ -48,16 +68,16 @@ function reportOpenCode(status: AgentStatus) {
  * whole catalog: asserting before it settles would pass for reasons the test is not about.
  */
 async function offeredAgents(
-  seed: (state: MockClientState) => void,
+  seed: (state: FixtureState) => void,
 ): Promise<string[]> {
-  const state = createMockClientState();
+  const state = createFixtureState();
   seed(state);
   const { result } = renderHookWithClient(
     () => ({
       offered: useAvailableAgents(),
       statuses: useAgentRuntimeStatus(),
     }),
-    createMockClient(state),
+    createTestClient(createFixtureHandlers(state)),
   );
   await waitFor(() => expect(result.current.statuses.isSuccess).toBe(true));
   await waitFor(() => expect(result.current.offered.length).toBeGreaterThan(0));
@@ -75,7 +95,7 @@ describe("useAvailableAgents", () => {
         offered: useAvailableAgents(),
         statuses: useAgentRuntimeStatus(),
       }),
-      createMockClient(createMockClientState()),
+      createTestClient(createFixtureHandlers(createFixtureState())),
     );
     await waitFor(() => expect(result.current.statuses.isSuccess).toBe(true));
     await waitFor(() =>
@@ -90,13 +110,13 @@ describe("useAvailableAgents", () => {
   });
 
   it("identifies each offered agent the way the runtime keys it, not by the package name", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     const { result } = renderHookWithClient(
       () => ({
         offered: useAvailableAgents(),
         statuses: useAgentRuntimeStatus(),
       }),
-      createMockClient(state),
+      createTestClient(createFixtureHandlers(state)),
     );
     await waitFor(() => expect(result.current.statuses.isSuccess).toBe(true));
     await waitFor(() =>
@@ -154,7 +174,7 @@ describe("useAvailableAgents", () => {
   it("offers the whole installed catalog while the detection status is still loading", async () => {
     const { result } = renderHookWithClient(
       () => useAvailableAgents(),
-      createMockClient(createMockClientState()),
+      createTestClient(createFixtureHandlers(createFixtureState())),
     );
 
     await waitFor(() => expect(result.current.length).toBeGreaterThan(0));

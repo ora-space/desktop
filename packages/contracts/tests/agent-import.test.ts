@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createContractsClient } from "../src/client.js";
+import { createContractsClient } from "../src/client.ts";
 import type {
   ContractTransport,
   ContractTransportRequest,
-} from "../src/transport.js";
+} from "../src/transport.ts";
 
 test("forwards Agent Markdown and conflict metadata as one IPC request", async () => {
   const requests: ContractTransportRequest[] = [];

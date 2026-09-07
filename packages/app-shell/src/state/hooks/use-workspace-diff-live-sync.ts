@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ChatStore, ChatToolCall, SessionConversation } from "@ora/chat";
 import type { Session } from "@ora/contracts";
-import { queryKeys } from "./query-keys";
+import { invalidateWorkspaceDiffs } from "../data/diff";
 
 const DIFF_REFRESH_DEBOUNCE_MS = 400;
 
@@ -43,9 +43,7 @@ export function useWorkspaceDiffLiveSync(
         const workspaceIds = [...pendingWorkspaceIds];
         pendingWorkspaceIds.clear();
         for (const pendingWorkspaceId of workspaceIds) {
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.workspaceDiffs(pendingWorkspaceId),
-          });
+          void invalidateWorkspaceDiffs(queryClient, pendingWorkspaceId);
         }
       }, DIFF_REFRESH_DEBOUNCE_MS);
     };

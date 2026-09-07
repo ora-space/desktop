@@ -11,11 +11,26 @@ import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { createStubPlatform } from "../../test/stub-platform";
 import { usePluginOperationStore } from "../../state/stores/plugin-operation-store";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import { PluginOperationEventBridge } from "./plugin-operation-event-bridge";
 import { PluginsSettings } from "./plugins-settings";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createPluginMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...pluginHandlers(state),
+  };
+}
 
 // Keep this test worker responsible for initializing the instance used by useTranslation.
 void appI18n;
@@ -63,7 +78,7 @@ const WEATHER_LOGO =
   '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>';
 
 function clientWithWeather(logo: string | null = null) {
-  const state = createMockClientState();
+  const state = createFixtureState();
   // This file exercises install/import flows in isolation from the seeded agent
   // packages, so installed-plugin assertions can count exactly the fixture under test.
   state.installedPlugins = [];
@@ -79,7 +94,8 @@ function clientWithWeather(logo: string | null = null) {
     logo,
     compatibility: "compatible",
   });
-  return { state, client: createMockClient(state) };
+  const handlers = createFixtureHandlers(state);
+  return { state, handlers, client: createTestClient(handlers) };
 }
 
 /** A mock installed entry so import tests can assert the committed package shape. */
@@ -104,7 +120,7 @@ function weatherInstalled(): InstalledPlugin {
 
 /** Seeds one installed plugin and its smallest editable declaration. */
 function clientWithPluginConfiguration(unavailable = false) {
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.installedPlugins.push({
     ...weatherInstalled(),
     configuration: unavailable
@@ -138,7 +154,7 @@ function clientWithPluginConfiguration(unavailable = false) {
       ? { state: "unavailable", errorCode: "configuration_load_failed" }
       : { state: "available", completeness: "incomplete" },
   });
-  return { state, client: createMockClient(state) };
+  return { state, client: createTestClient(createFixtureHandlers(state)) };
 }
 
 /** The browse grid is driven entirely by the backend registry index. */
@@ -193,8 +209,8 @@ it("installs a marketplace plugin through the backend", async () => {
 /** Marketplace cards expose native byte progress while a package download is pending. */
 it("shows marketplace plugin download progress", async () => {
   const user = userEvent.setup();
-  const { client } = clientWithWeather();
-  vi.spyOn(client.plugin, "install").mockImplementation(
+  const { client, handlers } = clientWithWeather();
+  vi.spyOn(handlers, "installPlugin").mockImplementation(
     () => new Promise<never>(() => undefined),
   );
   let reportProgress:
@@ -236,12 +252,12 @@ it("shows marketplace plugin download progress", async () => {
 /** Marketplace updates reuse the durable byte-progress presentation used by installs. */
 it("shows marketplace plugin update download progress", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client, handlers } = clientWithWeather();
   state.installedPlugins.push({
     ...weatherInstalled(),
     version: "1.1.0",
   });
-  vi.spyOn(client.plugin, "update").mockImplementation(
+  vi.spyOn(handlers, "updatePlugin").mockImplementation(
     () => new Promise<never>(() => undefined),
   );
   let reportProgress:
@@ -300,12 +316,12 @@ it("renders the managed plugin update action without an outline", async () => {
 /** The managed update action names the active operation instead of retaining its idle label. */
 it("labels a managed plugin update as updating while it downloads", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client, handlers } = clientWithWeather();
   state.installedPlugins.push({
     ...weatherInstalled(),
     version: "1.1.0",
   });
-  vi.spyOn(client.plugin, "update").mockImplementation(
+  vi.spyOn(handlers, "updatePlugin").mockImplementation(
     () => new Promise<never>(() => undefined),
   );
   renderSettings(client);
@@ -337,8 +353,8 @@ it("syncs the marketplace through the backend", async () => {
 /** A failed marketplace sync surfaces an error toast instead of failing silently. */
 it("reports a failed marketplace sync", async () => {
   const user = userEvent.setup();
-  const { client } = clientWithWeather();
-  vi.spyOn(client.plugin, "syncAvailable").mockRejectedValue(
+  const { client, handlers } = clientWithWeather();
+  vi.spyOn(handlers, "syncAvailablePlugins").mockRejectedValue(
     new Error("marketplace unreachable"),
   );
   const errorToast = vi
@@ -465,7 +481,7 @@ it("renders the brand mark of an installed plugin in the manager", async () => {
 /** Installed plugins no longer expose start or stop, regardless of runtime. */
 it("hides start and stop for stopped, starting, failed, and running plugins", async () => {
   const user = userEvent.setup();
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.installedPlugins = [
     weatherInstalled(),
     { ...weatherInstalled(), id: "official/starting", runtime: "starting" },
@@ -477,7 +493,7 @@ it("hides start and stop for stopped, starting, failed, and running plugins", as
     },
     { ...weatherInstalled(), id: "official/running", runtime: "running" },
   ];
-  renderSettings(createMockClient(state));
+  renderSettings(createTestClient(createFixtureHandlers(state)));
 
   await openManagePlugins(user);
   await screen.findByText("official/weather");
@@ -496,7 +512,7 @@ it("hides start and stop for stopped, starting, failed, and running plugins", as
 /** Host-rendered fields preserve defaults and explicit boolean false through Save. */
 it("configures declared plugin settings and keeps the editor open after save", async () => {
   const user = userEvent.setup();
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.installedPlugins.push({
     ...weatherInstalled(),
     configuration: { state: "available", completeness: "incomplete" },
@@ -558,7 +574,8 @@ it("configures declared plugin settings and keeps the editor open after save", a
     ],
     summary: { state: "available", completeness: "incomplete" },
   });
-  const client = createMockClient(state);
+  const clientHandlers: TestHandlers = createFixtureHandlers(state);
+  const client = createTestClient(clientHandlers);
   const save = vi.spyOn(client.plugin, "saveConfiguration");
   renderSettings(client);
 
@@ -702,7 +719,7 @@ it("confirms corrupt configuration recovery before replacing values", async () =
 
 /** Host-incompatible marketplace listings keep Install disabled and explain why. */
 it("disables install for a host-incompatible marketplace plugin", async () => {
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.availablePlugins.push({
     id: "official/rtk-ai.rtk",
     name: "rtk-ai.rtk",
@@ -717,7 +734,7 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
     reason:
       "this release supports x86_64-pc-windows-msvc but your host is aarch64-apple-darwin",
   });
-  renderSettings(createMockClient(state));
+  renderSettings(createTestClient(createFixtureHandlers(state)));
 
   expect(await screen.findByText("RTK")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /安装|Install/ })).toBeDisabled();
@@ -731,7 +748,7 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
 /** A Hook package without Settings has no Configure action and surfaces its descriptor. */
 it("shows hook descriptor fields and hides configure when settings are not declared", async () => {
   const user = userEvent.setup();
-  const state = createMockClientState();
+  const state = createFixtureState();
   state.installedPlugins.push({
     id: "official/rtk-ai.rtk",
     namespace: "official",
@@ -751,7 +768,7 @@ it("shows hook descriptor fields and hides configure when settings are not decla
     configuration: { state: "not_declared" },
     runtime: "stopped",
   });
-  renderSettings(createMockClient(state));
+  renderSettings(createTestClient(createFixtureHandlers(state)));
 
   await openManagePlugins(user);
   expect(await screen.findByText("official/rtk-ai.rtk")).toBeInTheDocument();

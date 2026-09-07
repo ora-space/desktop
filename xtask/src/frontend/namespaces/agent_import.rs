@@ -1,6 +1,6 @@
 //! Endpoint declarations for the agentImport generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "agentImport";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "prepare",
         request_type: "PrepareAgentImportRequest",
         response_type: "PrepareAgentImportResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "commitAgentImport",
@@ -18,5 +19,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "commit",
         request_type: "CommitAgentImportRequest",
         response_type: "CommitAgentImportResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

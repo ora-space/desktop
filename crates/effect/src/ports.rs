@@ -39,6 +39,14 @@ pub enum ReplaceDesiredStateOutcome {
     ScopeRetiring,
 }
 
+/// Transaction-consistent Target evidence together with persistence audit metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetStatusView {
+    pub status: TargetStatus,
+    pub updated_at: LocalTimestamp,
+    pub conditions: Vec<crate::EffectCondition>,
+}
+
 /// Complete current facts reloaded after a Target request has been claimed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReconcileSnapshot {
@@ -109,21 +117,20 @@ pub trait EffectRepository {
         scope: &EffectScopeId,
         expected_generation: Generation,
         effects: Vec<DesiredEffect>,
-        updated_at: LocalTimestamp,
     ) -> Result<ReplaceDesiredStateOutcome, RepositoryError>;
 
     /// Loads the transaction-consistent Target status and its current Conditions.
     fn load_target_status(
         &self,
         target: &EffectTargetId,
-    ) -> Result<Option<(TargetStatus, Vec<crate::EffectCondition>)>, RepositoryError>;
+    ) -> Result<Option<TargetStatusView>, RepositoryError>;
 
     /// Loads the active Target status selected by its stable Scope and Consumer identities.
     fn load_consumer_target_status(
         &self,
         scope: &EffectScopeId,
         consumer: &crate::ConsumerIdentity,
-    ) -> Result<Option<(TargetStatus, Vec<crate::EffectCondition>)>, RepositoryError>;
+    ) -> Result<Option<TargetStatusView>, RepositoryError>;
 
     /// Coalesces an explicit Target wakeup without mutating Desired State.
     fn request_reconcile(
@@ -176,7 +183,6 @@ pub trait EffectRepository {
         attempt: &ReconcileAttempt,
         operations: &[EffectOperation],
         coordination_receipts: &[CoordinationReceipt],
-        updated_at: LocalTimestamp,
     ) -> Result<(), RepositoryError>;
 
     /// Commits current blocked Conditions and request state under the Target fencing token.
@@ -187,7 +193,6 @@ pub trait EffectRepository {
         target_status: TargetStatus,
         resource_statuses: Vec<ResourceStatus>,
         conditions: Vec<ConditionProposal>,
-        updated_at: LocalTimestamp,
     ) -> Result<(), RepositoryError>;
 
     /// Commits a no-mutation projection/readiness transition and completes or preserves the wakeup.
@@ -210,7 +215,7 @@ pub trait EffectRepository {
         target: &EffectTargetId,
         claim: &ReconcileClaim,
         not_before: LocalTimestamp,
-        updated_at: LocalTimestamp,
+        scheduled_at: LocalTimestamp,
     ) -> Result<Option<crate::RetryAttempt>, RepositoryError>;
 
     /// Loads immutable unfinished operations in deterministic preparation order for recovery.
@@ -233,7 +238,6 @@ pub trait EffectRepository {
     fn mark_artifact_cleanup_failed(
         &self,
         artifact: OperationArtifact,
-        failed_at: LocalTimestamp,
     ) -> Result<(), RepositoryError>;
 }
 

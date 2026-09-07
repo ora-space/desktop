@@ -1,6 +1,6 @@
 //! Endpoint declarations for the workflow generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "workflow";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "create",
         request_type: "CreateWorkflowRequest",
         response_type: "CreateWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getWorkflow",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetWorkflowRequest",
         response_type: "GetWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listWorkflows",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "list",
         request_type: "ListWorkflowsRequest",
         response_type: "ListWorkflowsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateWorkflow",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "update",
         request_type: "UpdateWorkflowRequest",
         response_type: "UpdateWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteWorkflow",
@@ -39,6 +43,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "delete",
         request_type: "DeleteWorkflowRequest",
         response_type: "DeleteWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getDraft",
@@ -46,6 +51,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "getDraft",
         request_type: "GetDraftRequest",
         response_type: "GetDraftResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateDraft",
@@ -53,6 +59,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "updateDraft",
         request_type: "UpdateDraftRequest",
         response_type: "UpdateDraftResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "publishWorkflow",
@@ -60,6 +67,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "publish",
         request_type: "PublishWorkflowRequest",
         response_type: "PublishWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "rollbackWorkflow",
@@ -67,6 +75,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "rollback",
         request_type: "RollbackWorkflowRequest",
         response_type: "RollbackWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "activateWorkflow",
@@ -74,6 +83,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "activate",
         request_type: "ActivateWorkflowRequest",
         response_type: "ActivateWorkflowResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listVersions",
@@ -81,6 +91,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "listVersions",
         request_type: "ListVersionsRequest",
         response_type: "ListVersionsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getVersion",
@@ -88,6 +99,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "getVersion",
         request_type: "GetVersionRequest",
         response_type: "GetVersionResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteSnapshot",
@@ -95,6 +107,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "deleteSnapshot",
         request_type: "DeleteSnapshotRequest",
         response_type: "DeleteSnapshotResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getWorkflowSnapshot",
@@ -102,5 +115,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "getSnapshot",
         request_type: "GetWorkflowSnapshotRequest",
         response_type: "GetWorkflowSnapshotResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

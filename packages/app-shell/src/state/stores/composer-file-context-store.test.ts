@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "@ora/ui";
-import { addComposerFileSelections } from "../../features/chat/add-composer-file-selection";
+import { addComposerFileSelections } from "../actions/add-composer-file-selection";
 import {
   resetComposerFileDeliveriesForTests,
   useComposerFileContextStore,

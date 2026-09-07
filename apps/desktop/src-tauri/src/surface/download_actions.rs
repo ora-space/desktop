@@ -6,7 +6,7 @@
 //! the action implementation exists exactly once and `downloadCompleted` is only emitted after
 //! the action really ran.
 
-use ora_backend::{Backend, BackendError};
+use ora_backend::{BackendError, SkillApi};
 use ora_contracts::{PrepareSkillImportRequest, SkillImportSource};
 use std::path::Path;
 
@@ -24,21 +24,19 @@ pub trait DownloadActionHost: Send + Sync + 'static {
     -> Result<String, BackendError>;
 }
 
-impl DownloadActionHost for Backend {
+impl DownloadActionHost for SkillApi {
+    /// Imports through the Skill interface without retaining the rest of the application runtime.
     fn prepare_skill_import(
         &self,
         archive: &Path,
         file_name: &str,
     ) -> Result<String, BackendError> {
-        Backend::prepare_skill_import(
-            self,
-            PrepareSkillImportRequest {
-                source: SkillImportSource::Archive {
-                    path: archive.to_string_lossy().into_owned(),
-                    file_name: file_name.to_owned(),
-                },
+        self.prepare_import(PrepareSkillImportRequest {
+            source: SkillImportSource::Archive {
+                path: archive.to_string_lossy().into_owned(),
+                file_name: file_name.to_owned(),
             },
-        )
+        })
         .map(|response| response.session.session_id)
     }
 }

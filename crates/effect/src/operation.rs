@@ -225,7 +225,7 @@ impl EffectOperation {
         };
         self.progress = OperationProgress::Applied {
             prepared_at,
-            applied_at,
+            applied_at: applied_at.max(prepared_at),
         };
         Ok(())
     }
@@ -245,7 +245,7 @@ impl EffectOperation {
         self.progress = OperationProgress::Finalized {
             prepared_at,
             applied_at,
-            finalized_at,
+            finalized_at: finalized_at.max(applied_at),
         };
         Ok(())
     }
@@ -268,7 +268,7 @@ impl EffectOperation {
         self.progress = OperationProgress::RecoveryRequired {
             prepared_at,
             applied_at,
-            detected_at,
+            detected_at: detected_at.max(applied_at.unwrap_or(prepared_at)),
         };
         Ok(())
     }

@@ -1,5 +1,6 @@
 import {
   createMockWorkflowCapabilities,
+  resolveConditionCases,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 
@@ -7,7 +8,6 @@ import {
 export interface WorkflowSummaryLabels {
   operatorLabel: (operator: string) => string;
   operationLabel: (operation: string) => string;
-  triggerLabel: (trigger: string) => string;
 }
 
 /** Builds label resolvers from the localized mock capability catalogs. */
@@ -31,10 +31,6 @@ export function createWorkflowSummaryLabels(
       }
       return operation;
     },
-    triggerLabel: (trigger) =>
-      capabilities.startTriggers.find(
-        (candidate) => candidate.value === trigger,
-      )?.label ?? trigger,
   };
 }
 
@@ -63,41 +59,44 @@ export function junctionFailureStrategyLabel(
 }
 
 /**
- * Compacts structured condition branches into one readable line, e.g.
- * `分支 1: 工具1.exit_code 等于 0`. Rules combine with `且`/`或` per the branch
- * logic and negated rules gain a `非` prefix. Falls back to the legacy flat
- * condition string so graphs saved before structured branches still
- * summarize correctly.
+ * Compacts executable condition cases into one readable line, e.g.
+ * `分支 1: 工具1.exit_code 等于 0`. Comparisons combine with `且`/`或` per the
+ * case logic. Falls back to the legacy flat condition string so graphs saved
+ * before structured cases still summarize correctly.
  */
 export function conditionBranchesSummary(
   data: WorkflowNodeData,
   labels: WorkflowSummaryLabels,
   locale: "zh-CN" | "en-US",
 ): string | null {
-  const branches = data.conditionBranches;
-  if (branches === undefined || branches.length === 0) {
+  const cases = resolveConditionCases(data);
+  if (cases.length === 0) {
     return data.condition ?? null;
   }
   const english = locale === "en-US";
   const and = english ? " and " : " 且 ";
   const or = english ? " or " : " 或 ";
-  const negated = english ? "not " : "非 ";
-  const lines = branches.map((branch) =>
-    branch.conditions
-      .map((rule) => {
-        const clause = [
-          rule.variable,
-          labels.operatorLabel(rule.operator),
-          rule.value,
+  const lines = cases.map((conditionCase) =>
+    conditionCase.conditions
+      .map((comparison) =>
+        [
+          comparison.variableSelector.join("."),
+          labels.operatorLabel(comparison.operator),
+          comparisonValueLabel(comparison.value),
         ]
           .filter((part) => part !== "")
-          .join(" ");
-        return rule.negated === true && clause !== ""
-          ? `${negated}${clause}`
-          : clause;
-      })
+          .join(" "),
+      )
       .filter((line) => line !== "")
-      .join(branch.logic === "or" ? or : and),
+      .join(conditionCase.logic === "or" ? or : and),
   );
   return lines.filter((line) => line !== "").join("；");
+}
+
+/** Renders a comparison value as text, JSON for non-strings. */
+function comparisonValueLabel(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
 }

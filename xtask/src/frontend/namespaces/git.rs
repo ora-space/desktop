@@ -1,6 +1,6 @@
 //! Endpoint declarations for the gitIdentity generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "gitIdentity";
 
@@ -10,4 +10,5 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[FrontendEndpoint {
     member_name: "get",
     request_type: "GetGitIdentityRequest",
     response_type: "GitIdentityResponse",
+    response_mode: FrontendResponseMode::Unary,
 }];

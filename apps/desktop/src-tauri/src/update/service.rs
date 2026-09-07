@@ -6,7 +6,7 @@ use super::platform::{InstallSupport, install_support};
 use super::state::{ReadyUpdate, RuntimeUpdateState};
 use super::verifier::UpdateVerifier;
 use super::{DesktopUpdateStatus, UpdateError};
-use ora_backend::Backend;
+use ora_backend::Settings;
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_scheduler::{CronHandle, DelayHandle, Scheduler};
 use semver::Version;
@@ -41,7 +41,7 @@ pub struct UpdateService {
 
 struct UpdateServiceInner {
     app: AppHandle,
-    backend: Backend,
+    settings: Settings,
     artifacts: UpdateArtifactStore,
     verifier: UpdateVerifier,
     state: Mutex<RuntimeUpdateState<Update>>,
@@ -55,7 +55,7 @@ impl UpdateService {
     /// Creates the service, opens the recoverable artifact store, and registers update checks.
     pub fn start(
         app: AppHandle,
-        backend: Backend,
+        settings: Settings,
         home_directory: &Path,
         timezone: chrono_tz::Tz,
         mode: DesktopUpdateMode,
@@ -68,7 +68,7 @@ impl UpdateService {
         let service = Self {
             inner: Arc::new(UpdateServiceInner {
                 app,
-                backend,
+                settings,
                 artifacts,
                 verifier,
                 state: Mutex::new(RuntimeUpdateState::Current),
@@ -203,7 +203,7 @@ impl UpdateService {
         let mut updater_builder = self.inner.app.updater_builder();
         if let Some(settings) = self
             .inner
-            .backend
+            .settings
             .network_proxy_settings()
             .map_err(|error| UpdateError::ProxySettings(error.to_string()))?
         {

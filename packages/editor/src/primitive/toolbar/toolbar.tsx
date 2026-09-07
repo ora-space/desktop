@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Separator } from "../separator";
+import { Separator } from "../separator/index.tsx";
 import "./toolbar.scss";
-import { cn } from "../../utils";
+import { cn } from "../../utils.ts";
 
 type BaseProps = React.HTMLAttributes<HTMLDivElement>;
 

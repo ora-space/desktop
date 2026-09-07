@@ -3,6 +3,7 @@ mod connection;
 mod events;
 mod handoff;
 mod history;
+mod operations;
 pub(crate) mod plugin_agent;
 mod replay;
 mod restart_circuit;
@@ -23,6 +24,7 @@ mod unavailable_session_tests;
 
 use crate::app_event::AppEventPublisher;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
+pub use operations::AgentRuntime;
 pub use stream::SessionEventStream;
 use support::*;
 use title_acquisition::TitleAcquisition;

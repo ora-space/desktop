@@ -283,7 +283,7 @@ describe("createMemoryWorkflowRuntime", () => {
       (node) => node.id === startNode!.id,
     );
     expect(libraryNode?.data.description).toBe(startNode!.data.description);
-    expect(libraryNode?.data.instruction).toBe(startNode!.data.instruction);
+    expect(libraryNode?.data.input).toBe(startNode!.data.input);
   });
 
   it("rejects snapshot node edits once the run is no longer pending", async () => {

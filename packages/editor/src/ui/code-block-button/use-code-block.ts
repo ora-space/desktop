@@ -6,8 +6,8 @@ import { useHotkeys } from "react-hotkeys-hook";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Lib ---
 import {
@@ -15,10 +15,10 @@ import {
   isNodeInSchema,
   isNodeTypeSelected,
   isValidPosition,
-} from "../../utils";
+} from "../../utils.ts";
 
 // --- Icons ---
-import { CodeBlockIcon } from "../../icons/code-block-icon";
+import { CodeBlockIcon } from "../../icons/code-block-icon.tsx";
 
 export const CODE_BLOCK_SHORTCUT_KEY = "mod+alt+c";
 

@@ -1,19 +1,19 @@
 import * as React from "react";
 
 // --- Lib ---
-import { parseShortcutKeys } from "../../utils";
+import { parseShortcutKeys } from "../../utils.ts";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Tiptap UI ---
-import type { UndoRedoAction, UseUndoRedoConfig } from "../undo-redo-button";
-import { UNDO_REDO_SHORTCUT_KEYS, useUndoRedo } from "../undo-redo-button";
+import type { UndoRedoAction, UseUndoRedoConfig } from "./index.tsx";
+import { UNDO_REDO_SHORTCUT_KEYS, useUndoRedo } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button } from "../../primitive/button";
-import { Badge } from "../../primitive/badge";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button } from "../../primitive/button/index.tsx";
+import { Badge } from "../../primitive/badge/index.tsx";
 
 export interface UndoRedoButtonProps
   extends Omit<ButtonProps, "type">, UseUndoRedoConfig {

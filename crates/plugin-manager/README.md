@@ -47,6 +47,9 @@ orchestrates checksum-verified installs of new plugin releases.
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`, where the
   namespace is supplied by the caller as the identity of the installing marketplace source.
+- Convert a manifest `ReleaseLocator` into a transport-neutral `DownloadSource`: HTTPS locators
+  remain URLs and object-key locators become S3 requests. Source-specific endpoint, bucket,
+  credentials, proxy, and request signing stay outside this crate in the backend/downloader layer.
 - Update an installed plugin release by refusing no-op and downgrade attempts (the marketplace
   manifest must declare a higher version than the highest installed SemVer directory), then
   downloading, verifying, and extracting the new release into its version directory and retiring

@@ -3,7 +3,10 @@ import { Button } from "@ora/ui";
 import { IconFolderOpen, IconRefresh, IconSearch } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { queryKeys } from "../../state/hooks/query-keys";
+import {
+  invalidateFilesScope,
+  resolveFilesScope,
+} from "../../state/data/files";
 import {
   WorkspaceFilesView,
   type WorkspaceDirectoryRequest,
@@ -69,15 +72,10 @@ export function WorkspaceReviewFilesPanel({
   }
 
   const refreshFiles = () => {
-    if (taskId !== undefined) {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.workspaceFiles(taskId),
-      });
-      return;
-    }
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.projectFiles(projectId),
-    });
+    void invalidateFilesScope(
+      queryClient,
+      resolveFilesScope(projectId, taskId),
+    );
   };
 
   return (

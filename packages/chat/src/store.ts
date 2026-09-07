@@ -15,8 +15,8 @@ import type {
   ChatToolCallStatus,
   ChatTurn,
   SessionConversation,
-} from "./types.js";
-import { currentModel } from "./model-option.js";
+} from "./types.ts";
+import { currentModel } from "./model-option.ts";
 
 export type {
   ChatContent,
@@ -31,7 +31,7 @@ export type {
   ChatTurnItem,
   ChatTurnStatus,
   SessionConversation,
-} from "./types.js";
+} from "./types.ts";
 
 export interface SendMessageRequest {
   text: string;

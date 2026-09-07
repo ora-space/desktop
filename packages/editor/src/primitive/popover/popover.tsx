@@ -1,6 +1,6 @@
 import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
-import { cn } from "../../utils";
+import { cn } from "../../utils.ts";
 import "./popover.scss";
 
 function Popover({

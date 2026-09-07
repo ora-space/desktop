@@ -313,7 +313,7 @@ mod tests {
 
     /// Opens an isolated repository pool used by capability-driven binding tests.
     fn test_pool(temp: &TempDir) -> RepositoryPool {
-        DatabaseBootstrapper::system()
+        DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&temp.path().join("ora.sqlite3")),
                 &default_migration_catalog().expect("create migration catalog"),
@@ -356,7 +356,7 @@ mod tests {
         )
         .unwrap();
         let database_path = temp.path().join("ora.sqlite3");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&database_path),
                 &default_migration_catalog().expect("create migration catalog"),

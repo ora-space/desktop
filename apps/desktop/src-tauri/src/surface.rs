@@ -54,7 +54,7 @@ pub fn install(
     service
         .gateway
         .set_surface_closer(SurfaceCloserHandle(service.clone()));
-    service.install_download_action_host(Arc::new(backend.clone()));
+    service.install_download_action_host(backend.skills());
     if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let service = Arc::downgrade(service);
         main.on_window_event(move |event| {

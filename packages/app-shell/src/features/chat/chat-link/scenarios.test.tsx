@@ -15,9 +15,15 @@ import { PlatformProvider, type PlatformAdapter } from "../../../platform";
 import { AppI18nProvider } from "../../../i18n/i18n";
 import { ContractsClientContext } from "../../../contracts-client-context";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../../test/contracts-transport";
+import {
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../../test/memory/workspaces";
+import { emptyFilesHandlers } from "../../../test/memory/files";
+import "../../../i18n/i18n-instance";
 import { createStubPlatform } from "../../../test/stub-platform";
 import { TaskChangesNavigationProvider } from "../../diff/task-changes-navigation";
 import type { FileNavigationLocation } from "../../diff/task-changes-navigation-context";
@@ -26,6 +32,21 @@ import { MessageList } from "../message-list";
 import type { SessionArtifactIndex } from "./artifact-index";
 import { ChatFileLink } from "./chat-file-link";
 import { ChatLinkContext } from "./context";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return { ...createWorkspaceMemory() };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workspaceHandlers(state),
+    ...emptyFilesHandlers(),
+  };
+}
 
 const index: SessionArtifactIndex = {
   edited: ["src/main.rs"],
@@ -170,14 +191,16 @@ async function renderMessageList(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const mockClient = createMockClient(createMockClientState());
+  const mockClientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const mockClient = createTestClient(mockClientHandlers);
   if (options.workspaceRoot) {
-    mockClient.task.getWorkspace = vi.fn(async () => ({
+    mockClientHandlers.getTaskWorkspace = vi.fn(async () => ({
       workspace: { rootPath: options.workspaceRoot!, branchName: "main" },
     }));
   }
   if (options.projectId !== undefined && options.taskId === undefined) {
-    mockClient.project.list = vi.fn(async () => ({
+    mockClientHandlers.listProjects = vi.fn(async () => ({
       projects: [
         {
           id: options.projectId!,
@@ -217,8 +240,10 @@ async function renderMessageList(
 
 /** Renders Files after a chat click whose workspace read fails (deleted / missing). */
 function renderMissingFilesPreview(path: string) {
-  const client = createMockClient(createMockClientState());
-  client.fileSystem.readWorkspaceFile = async () => {
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
+  clientHandlers.readWorkspaceFile = async () => {
     throw new RemoteContractError(
       {
         code: "file_system_path_not_found",

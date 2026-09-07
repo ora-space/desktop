@@ -12,10 +12,54 @@ import {
   createHookWrapper,
 } from "../../test/hook-harness";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../test/memory/workspaces";
+import {
+  createSessionMemory,
+  sessionHandlers,
+} from "../../test/memory/sessions";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import {
+  createWorkflowRunMemory,
+  workflowRunHandlers,
+} from "../../test/memory/workflow-runs";
 import { RunNodeSessionChat } from "./run-node-session-chat";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return {
+    ...createWorkspaceMemory(),
+    ...createSessionMemory(),
+    ...createAgentRuntimeMemory(),
+    ...createPluginMemory(),
+    ...createAgentMemory(),
+    ...createWorkflowRunMemory(),
+  };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workspaceHandlers(state),
+    ...sessionHandlers(state),
+    ...agentRuntimeHandlers(state),
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+    ...workflowRunHandlers(state),
+  };
+}
 
 const sessionId = "session-1";
 const runId = "run-1";
@@ -51,7 +95,9 @@ function renderDock(
   onNodeCompleted?: (nodeId: string) => void,
   configOptions: acp.SessionConfigOption[] = [],
 ) {
-  const client = createMockClient(createMockClientState());
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
   const chatStore = createChatStore(client.session);
   chatStore.setState({
     conversations: {
@@ -70,12 +116,14 @@ function renderDock(
       wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
     },
   );
-  return client;
+  return { client, handlers: clientHandlers };
 }
 
 /** Renders the same session surface without granting node interaction controls. */
 function renderReadOnlyDock() {
-  const client = createMockClient(createMockClientState());
+  const clientHandlers: TestHandlers =
+    createFixtureHandlers(createFixtureState());
+  const client = createTestClient(clientHandlers);
   const loadSpy = vi.spyOn(client.session, "load");
   const chatStore = createChatStore(client.session);
   render(
@@ -189,7 +237,9 @@ describe("RunNodeSessionChat", () => {
   });
 
   it("keeps replaying an empty running session until its automatic prompt appears", async () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const loadSpy = vi.spyOn(client.session, "load");
     const chatStore = createChatStore(client.session);
     chatStore.setState({
@@ -221,7 +271,9 @@ describe("RunNodeSessionChat", () => {
   });
 
   it("reveals a running node session as soon as its first turn is available", () => {
-    const client = createMockClient(createMockClientState());
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
     const chatStore = createChatStore(client.session);
     chatStore.setState({
       conversations: { [sessionId]: seededConversation(false) },
@@ -265,7 +317,7 @@ describe("RunNodeSessionChat", () => {
   });
 
   it("cancels the session's active prompt instead of aborting its load stream", async () => {
-    const client = renderDock("running", true, [
+    const { client } = renderDock("running", true, [
       {
         id: "turn-1",
         userMessage: {
@@ -351,7 +403,7 @@ describe("RunNodeSessionChat", () => {
   });
 
   it("completes the node when the button is clicked while awaiting input", async () => {
-    const client = renderDock("awaiting_input", false);
+    const { client } = renderDock("awaiting_input", false);
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
     const button = screen.getByTestId("complete-current-node");
@@ -369,37 +421,35 @@ describe("RunNodeSessionChat", () => {
       releaseCompletion = resolve;
     });
     const onNodeCompleted = vi.fn();
-    const client = renderDock(
+    const { handlers } = renderDock(
       "awaiting_input",
       false,
       [],
       undefined,
       onNodeCompleted,
     );
-    vi.spyOn(client.workflowRun, "completeNode").mockImplementation(
-      async () => {
-        await completionGate;
-        return {
-          run: {
-            id: runId,
-            workspaceId: "workspace-1",
-            workflowId: "workflow-1",
-            snapshotId: "snapshot-1",
-            name: "Run 1",
-            status: "running",
-            state: null,
-            input: null,
-            output: null,
-            error: null,
-            payload: null,
-            startedAt: 1n,
-            finishedAt: null,
-            createdAt: 1n,
-            updatedAt: 2n,
-          },
-        };
-      },
-    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockImplementation(async () => {
+      await completionGate;
+      return {
+        run: {
+          id: runId,
+          workspaceId: "workspace-1",
+          workflowId: "workflow-1",
+          snapshotId: "snapshot-1",
+          name: "Run 1",
+          status: "running",
+          state: null,
+          input: null,
+          output: null,
+          error: null,
+          payload: null,
+          startedAt: 1n,
+          finishedAt: null,
+          createdAt: 1n,
+          updatedAt: 2n,
+        },
+      };
+    });
 
     const button = screen.getByTestId("complete-current-node");
     await userEvent.click(button);

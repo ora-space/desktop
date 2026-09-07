@@ -9,7 +9,7 @@ import {
 import {
   looksLikeComposerMarkdown,
   markdownToComposerContent,
-} from "./composer-markdown";
+} from "./composer-markdown.ts";
 
 const BACKFILL_META = "composerMarkdownBackfill";
 

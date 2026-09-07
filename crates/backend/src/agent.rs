@@ -1,8 +1,9 @@
+use crate::BackendError;
 use crate::clock::SystemClock;
 use ora_application::{
-    AgentImportService, ApplicationError, CreateAgentDefinitionHandler,
-    DeleteAgentDefinitionHandler, GetAgentDefinitionHandler, ListAgentDefinitionsHandler,
-    UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
+    AgentImportService, CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler,
+    GetAgentDefinitionHandler, ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler,
+    UuidAgentDefinitionIdGenerator,
 };
 use ora_contracts::{
     CommitAgentImportRequest, CommitAgentImportResponse, CreateAgentRequest, CreateAgentResponse,
@@ -13,7 +14,7 @@ use ora_contracts::{
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository};
 
 /// Groups the concrete configurable-agent handlers shared by runtime adapters.
-pub(crate) struct AgentApi {
+pub struct AgentApi {
     create: CreateAgentDefinitionHandler<
         SqliteAgentDefinitionRepository,
         UuidAgentDefinitionIdGenerator,
@@ -54,56 +55,46 @@ impl AgentApi {
     }
 
     /// Executes configurable-agent creation through the application handler.
-    pub(crate) fn create(
-        &self,
-        request: CreateAgentRequest,
-    ) -> Result<CreateAgentResponse, ApplicationError> {
-        self.create.handle(request)
+    pub fn create(&self, request: CreateAgentRequest) -> Result<CreateAgentResponse, BackendError> {
+        self.create.handle(request).map_err(BackendError::from)
     }
 
     /// Executes one configurable-agent lookup through the application handler.
-    pub(crate) fn get(
-        &self,
-        request: GetAgentRequest,
-    ) -> Result<GetAgentResponse, ApplicationError> {
-        self.get.handle(request)
+    pub fn get(&self, request: GetAgentRequest) -> Result<GetAgentResponse, BackendError> {
+        self.get.handle(request).map_err(BackendError::from)
     }
 
     /// Executes configurable-agent listing through the application handler.
-    pub(crate) fn list(
-        &self,
-        request: ListAgentsRequest,
-    ) -> Result<ListAgentsResponse, ApplicationError> {
-        self.list.handle(request)
+    pub fn list(&self, request: ListAgentsRequest) -> Result<ListAgentsResponse, BackendError> {
+        self.list.handle(request).map_err(BackendError::from)
     }
 
     /// Executes configurable-agent replacement through the application handler.
-    pub(crate) fn update(
-        &self,
-        request: UpdateAgentRequest,
-    ) -> Result<UpdateAgentResponse, ApplicationError> {
-        self.update.handle(request)
+    pub fn update(&self, request: UpdateAgentRequest) -> Result<UpdateAgentResponse, BackendError> {
+        self.update.handle(request).map_err(BackendError::from)
     }
 
     /// Executes configurable-agent deletion through the application handler.
-    pub(crate) fn delete(
-        &self,
-        request: DeleteAgentRequest,
-    ) -> Result<DeleteAgentResponse, ApplicationError> {
-        self.delete.handle(request)
+    pub fn delete(&self, request: DeleteAgentRequest) -> Result<DeleteAgentResponse, BackendError> {
+        self.delete.handle(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn prepare_import(
+    /// Validates imported Markdown and reports the decisions required before committing it.
+    pub fn prepare_import(
         &self,
         request: PrepareAgentImportRequest,
-    ) -> Result<PrepareAgentImportResponse, ApplicationError> {
-        self.import.prepare(request)
+    ) -> Result<PrepareAgentImportResponse, BackendError> {
+        self.import.prepare(request).map_err(BackendError::from)
     }
 
-    pub(crate) fn commit_import(
+    /// Commits an import through the same identity and conflict checks as the agent catalog.
+    pub fn commit_import(
         &self,
         request: CommitAgentImportRequest,
-    ) -> Result<CommitAgentImportResponse, ApplicationError> {
-        self.import.commit(request)
+    ) -> Result<CommitAgentImportResponse, BackendError> {
+        self.import.commit(request).map_err(BackendError::from)
     }
 }
+
+#[cfg(test)]
+mod tests;

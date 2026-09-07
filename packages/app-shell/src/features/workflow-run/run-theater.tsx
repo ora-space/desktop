@@ -1,3 +1,4 @@
+import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import {
   useEffect,
   useMemo,
@@ -7,7 +8,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge, cn, toast } from "@ora/ui";
-import { useUpdateWorkflowRunInput } from "../../state/hooks/use-workflow-runs";
+import { useUpdateWorkflowRunInput } from "../../state/data/workflow-runs";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
@@ -16,7 +17,6 @@ import { RunTheaterParallelStage } from "./run-theater-parallel-stage";
 import { RunTheaterPathRail } from "./run-theater-path-rail";
 import { resolveTheaterFocus } from "./run-focus";
 import { isNodeWorking } from "./run-status-style";
-import { isTerminalRunStatus } from "./run-status-style";
 import {
   animateOverlayWidth,
   cancelOverlayWidthAnimation,
@@ -90,10 +90,14 @@ export function RunTheater({
 }: RunTheaterProps) {
   const { t } = useTranslation();
   const updateInput = useUpdateWorkflowRunInput();
-  // Local draft of the start-node instruction while the user edits it. Committed to the run's
+  // Local draft of the Start input while the user edits it. Committed to the run's
   // kickoff input only by the explicit save action, so per-keystroke refetches cannot clobber
   // an in-progress edit or fire one mutation per character.
   const [instructionDraft, setInstructionDraft] = useState<string | null>(null);
+  const [variableDraft, setVariableDraft] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const inspectorAnimationRef = useRef<number | null>(null);
   const inspectorWidthRef = useRef(DEFAULT_INSPECTOR_WIDTH);
   const inspectorCurrentWidthRef = useRef(0);
@@ -170,7 +174,7 @@ export function RunTheater({
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
   const primaryState =
     primaryId !== null ? run.nodeStates[primaryId] : undefined;
-  // The start instruction is editable whenever the run is not executing — a not-started pending
+  // The Start input is editable whenever the run is not executing — a not-started pending
   // run or any terminal run — so the kickoff input can be changed before a restart re-runs it.
   const isEditableStart =
     (run.status === "pending" || isTerminalRunStatus(run.status)) &&
@@ -184,6 +188,7 @@ export function RunTheater({
   if (nextDraftPendingKey !== draftPendingKey) {
     setDraftPendingKey(nextDraftPendingKey);
     setInstructionDraft(null);
+    setVariableDraft(null);
   }
   const primaryArtifacts = useMemo(
     () =>
@@ -237,18 +242,6 @@ export function RunTheater({
     artifactCountByNode,
     conversationByNodeId,
   ]);
-
-  const progress = useMemo(() => {
-    const states = Object.values(run.nodeStates);
-    const total = Math.max(states.length, 1);
-    const done = states.filter(
-      (state) =>
-        state.status === "succeeded" ||
-        state.status === "failed" ||
-        state.status === "cancelled",
-    ).length;
-    return { done, total, percent: Math.round((done / total) * 100) };
-  }, [run.nodeStates]);
 
   useEffect(() => {
     return () => cancelOverlayWidthAnimation(inspectorAnimationRef);
@@ -306,19 +299,23 @@ export function RunTheater({
     closeInspector();
   }
 
-  // Commits the drafted start-node instruction to the run's kickoff input in one request and
+  // Commits the drafted Start input to the run's kickoff input in one request and
   // clears the draft on success (the refetched run then surfaces the saved input).
   function saveInstructionDraft(): void {
-    if (instructionDraft === null) {
+    if (instructionDraft === null && variableDraft === null) {
       return;
     }
     updateInput.mutate(
       {
         runId: run.id,
-        input: instructionDraft,
+        input: instructionDraft ?? primaryNode?.data.input ?? "",
+        ...(variableDraft === null ? {} : { variables: variableDraft }),
       },
       {
-        onSuccess: () => setInstructionDraft(null),
+        onSuccess: () => {
+          setInstructionDraft(null);
+          setVariableDraft(null);
+        },
         onError: () => toast.error(t("workflowRun.updateFailed")),
       },
     );
@@ -435,7 +432,8 @@ export function RunTheater({
   }, [showResultAct]);
 
   const primaryConversationOpen =
-    primaryNode !== undefined && sessionConversationNodeId === primaryNode.id;
+    primaryNode?.data.kind === "agent" &&
+    sessionConversationNodeId === primaryNode.id;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -446,7 +444,6 @@ export function RunTheater({
         openHitls={openHitls}
         artifactCountByNode={artifactCountByNode}
         showResultAct={showResultAct}
-        progress={progress}
         pathRailRef={pathRailRef}
         onFocusNode={onFocusNode}
         onExpandHitl={expandHitlForRequest}
@@ -536,6 +533,7 @@ export function RunTheater({
                     live={isNodeWorking(primaryState.status)}
                     artifactCount={primaryArtifacts.length}
                     conversation={primaryConversation}
+                    conversationEnabled={primaryNode.data.kind === "agent"}
                     conversationOpen={
                       sessionConversationNodeId === primaryNode.id
                     }
@@ -665,24 +663,39 @@ export function RunTheater({
                 onPatchNode={
                   isEditableStart
                     ? (patch) => {
-                        // The start node's instruction is the run's kickoff input; the backend has no
+                        // The start node's input is the run's kickoff input; the backend has no
                         // way to edit other nodes of the frozen snapshot, so description patches are
                         // intentionally ignored. Edits stay in a local draft until save.
-                        if (patch.instruction != null) {
-                          setInstructionDraft(patch.instruction);
+                        if (patch.input != null) {
+                          setInstructionDraft(patch.input);
                         }
                       }
                     : undefined
                 }
                 instructionDraft={isEditableStart ? instructionDraft : null}
+                variableDraft={isEditableStart ? variableDraft : null}
                 onInstructionDraftChange={
                   isEditableStart ? setInstructionDraft : undefined
+                }
+                onVariableDraftChange={
+                  isEditableStart
+                    ? (name, value) =>
+                        setVariableDraft((current) => ({
+                          ...(current ?? {}),
+                          [name]: value,
+                        }))
+                    : undefined
                 }
                 onSaveInstruction={
                   isEditableStart ? saveInstructionDraft : undefined
                 }
                 onDiscardInstructionDraft={
-                  isEditableStart ? () => setInstructionDraft(null) : undefined
+                  isEditableStart
+                    ? () => {
+                        setInstructionDraft(null);
+                        setVariableDraft(null);
+                      }
+                    : undefined
                 }
                 instructionSavePending={
                   isEditableStart ? updateInput.isPending : false

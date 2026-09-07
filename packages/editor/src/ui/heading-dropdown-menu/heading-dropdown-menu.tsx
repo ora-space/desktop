@@ -1,26 +1,26 @@
 import * as React from "react";
 
 // --- Icons ---
-import { ChevronDownIcon } from "../../icons/chevron-down-icon";
+import { ChevronDownIcon } from "../../icons/chevron-down-icon.tsx";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Tiptap UI ---
-import { HeadingButton } from "../heading-button";
-import type { UseHeadingDropdownMenuConfig } from "../heading-dropdown-menu";
-import { useHeadingDropdownMenu } from "../heading-dropdown-menu";
+import { HeadingButton } from "../heading-button/index.tsx";
+import type { UseHeadingDropdownMenuConfig } from "./index.tsx";
+import { useHeadingDropdownMenu } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button, ButtonGroup } from "../../primitive/button";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button, ButtonGroup } from "../../primitive/button/index.tsx";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-} from "../../primitive/dropdown-menu";
-import { Card, CardBody } from "../../primitive/card";
+} from "../../primitive/dropdown-menu/index.tsx";
+import { Card, CardBody } from "../../primitive/card/index.tsx";
 
 export interface HeadingDropdownMenuProps
   extends Omit<ButtonProps, "type">, UseHeadingDropdownMenuConfig {

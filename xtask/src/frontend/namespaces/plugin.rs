@@ -1,6 +1,6 @@
 //! Endpoint declarations for the plugin generated-client namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "plugin";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "listAvailable",
         request_type: "ListAvailablePluginsRequest",
         response_type: "ListAvailablePluginsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "syncAvailablePlugins",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "syncAvailable",
         request_type: "SyncAvailablePluginsRequest",
         response_type: "SyncAvailablePluginsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "readPluginReadme",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "readReadme",
         request_type: "ReadPluginReadmeRequest",
         response_type: "ReadPluginReadmeResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listMarketplaceSources",
@@ -32,6 +35,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "listSources",
         request_type: "ListMarketplaceSourcesRequest",
         response_type: "ListMarketplaceSourcesResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "addMarketplaceSource",
@@ -39,6 +43,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "addSource",
         request_type: "AddMarketplaceSourceRequest",
         response_type: "AddMarketplaceSourceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "deleteMarketplaceSource",
@@ -46,6 +51,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "deleteSource",
         request_type: "DeleteMarketplaceSourceRequest",
         response_type: "DeleteMarketplaceSourceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updateMarketplaceSource",
@@ -53,6 +59,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "updateSource",
         request_type: "UpdateMarketplaceSourceRequest",
         response_type: "UpdateMarketplaceSourceResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "listInstalledPlugins",
@@ -60,6 +67,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "listInstalled",
         request_type: "ListInstalledPluginsRequest",
         response_type: "ListInstalledPluginsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "getPluginConfiguration",
@@ -67,6 +75,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "getConfiguration",
         request_type: "GetPluginConfigurationRequest",
         response_type: "GetPluginConfigurationResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "savePluginConfiguration",
@@ -74,6 +83,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "saveConfiguration",
         request_type: "SavePluginConfigurationRequest",
         response_type: "SavePluginConfigurationResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "resetPluginConfiguration",
@@ -81,6 +91,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "resetConfiguration",
         request_type: "ResetPluginConfigurationRequest",
         response_type: "ResetPluginConfigurationResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "scanPlugins",
@@ -88,6 +99,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "scan",
         request_type: "ScanPluginsRequest",
         response_type: "ScanPluginsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "activatePlugin",
@@ -95,6 +107,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "activate",
         request_type: "ActivatePluginRequest",
         response_type: "ActivatePluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "stopPlugin",
@@ -102,6 +115,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "stop",
         request_type: "StopPluginRequest",
         response_type: "StopPluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "uninstallPlugin",
@@ -109,6 +123,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "uninstall",
         request_type: "UninstallPluginRequest",
         response_type: "UninstallPluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "installPlugin",
@@ -116,6 +131,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "install",
         request_type: "InstallPluginRequest",
         response_type: "InstallPluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "updatePlugin",
@@ -123,6 +139,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "update",
         request_type: "UpdatePluginRequest",
         response_type: "UpdatePluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "importPlugin",
@@ -130,5 +147,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "import",
         request_type: "ImportPluginRequest",
         response_type: "ImportPluginResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

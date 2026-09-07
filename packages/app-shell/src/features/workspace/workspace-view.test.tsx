@@ -18,10 +18,31 @@ import {
 } from "../../test/hook-harness";
 import { createStubPlatform } from "../../test/stub-platform";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../test/memory/workspaces";
+import {
+  createSessionMemory,
+  sessionHandlers,
+} from "../../test/memory/sessions";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
+import {
+  createWorkflowMemory,
+  workflowHandlers,
+} from "../../test/memory/workflows";
+import { readyEffectHandlers } from "../../test/memory/effects";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
+import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
@@ -34,6 +55,35 @@ import {
 import { WorkspaceView } from "./workspace-view";
 import { directChatTitle } from "./workspace-view-utils";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return {
+    ...createWorkspaceMemory(),
+    ...createSessionMemory(),
+    ...createAgentRuntimeMemory(),
+    ...createPluginMemory(),
+    ...createAgentMemory(),
+    ...createSkillMemory(),
+    ...createWorkflowMemory(),
+  };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workspaceHandlers(state),
+    ...sessionHandlers(state),
+    ...agentRuntimeHandlers(state),
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+    ...skillHandlers(state),
+    ...workflowHandlers(state),
+    ...readyEffectHandlers(),
+  };
+}
 
 function composerText(element: HTMLElement): string {
   return element.dataset.composerText ?? "";
@@ -57,7 +107,10 @@ beforeEach(() => {
   // nothing has handshaken, or an earlier test's list would answer for it.
   // Agent picks outlive a render, so a test that leaves one recorded would hand
   // the next one a surface already pointing somewhere it never chose.
-  usePendingAgentStore.setState({ selections: {}, switches: {} });
+  usePendingAgentStore.setState({ selections: {}, switches: {}, models: {} });
+  // Remembered per agent and persisted, so a preference one test records would
+  // otherwise decide which model the next test's first send starts on.
+  useAgentModelPreferenceStore.setState({ models: {} });
   useSettingsStore.setState({
     settings: { ...DEFAULT_SETTINGS, agentCli: AGENT_REF.opencode },
   });
@@ -65,7 +118,7 @@ beforeEach(() => {
 
 describe("WorkspaceView", () => {
   it("reloads a selected running session after the in-memory chat store is recreated", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -85,11 +138,12 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const load = vi.fn(async function* () {
       yield { type: "completed" as const };
     });
-    client.session.load = load;
+    clientHandlers.loadSession = load;
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -117,7 +171,7 @@ describe("WorkspaceView", () => {
   });
 
   it("shows the Changes button for a selected task's review panel", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -127,7 +181,8 @@ describe("WorkspaceView", () => {
         title: "Worktree task",
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -157,9 +212,10 @@ describe("WorkspaceView", () => {
   });
 
   it("shows the Changes button for a selected project with no task open", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -189,7 +245,7 @@ describe("WorkspaceView", () => {
   });
 
   it("warns when loaded history contains records whose positions are unknown", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -209,8 +265,9 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const client = createMockClient(state);
-    client.session.load = async function* () {
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    clientHandlers.loadSession = async function* () {
       yield {
         type: "history_notice" as const,
         notice: { type: "unreadable_records" as const, count: 2 },
@@ -246,7 +303,7 @@ describe("WorkspaceView", () => {
   });
 
   it("does not load history for a newly initialized session", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -266,11 +323,12 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const load = vi.fn(async function* () {
       yield { type: "completed" as const };
     });
-    client.session.load = load;
+    clientHandlers.loadSession = load;
     const chatStore = createChatStore(client.session);
     chatStore.getState().initializeSession("s1");
     const Wrapper = createHookWrapper(
@@ -299,8 +357,9 @@ describe("WorkspaceView", () => {
   });
 
   it("keeps the composer disabled when no project is selected", async () => {
-    const state = createMockClientState();
-    const client = createMockClient(state);
+    const state = createFixtureState();
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -327,9 +386,10 @@ describe("WorkspaceView", () => {
   it("keeps agent selection enabled while an untouched chat cannot send", async () => {
     const user = userEvent.setup();
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } });
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -367,13 +427,14 @@ describe("WorkspaceView", () => {
 
   it("gates only the send button while the chosen agent is unreachable", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     const entry = state.agentRuntimeStatuses.find(
       (candidate) => candidate.agentRef === AGENT_REF.opencode,
     );
     entry!.status = "unavailable";
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -419,9 +480,10 @@ describe("WorkspaceView", () => {
   });
 
   it("does not repeat the default direct-chat mode in the composer context", async () => {
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -460,7 +522,7 @@ describe("WorkspaceView", () => {
 
   it("shows only worktrees in the worktree context menu", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -476,7 +538,8 @@ describe("WorkspaceView", () => {
         title: "Other worktree",
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -509,24 +572,22 @@ describe("WorkspaceView", () => {
 
   it("sends an ordinary chat through the project's main workspace", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     const calls: string[] = [];
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        start: async (request, options) => {
-          calls.push("start");
-          return baseClient.session.start(request, options);
-        },
-        prompt: async function* (request, options) {
-          calls.push("prompt");
-          yield* baseClient.session.prompt(request, options);
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        calls.push("start");
+        return baseClient.session.start(request, options);
       },
-    };
+      promptSession: async function* (request, options) {
+        calls.push("prompt");
+        yield* baseClient.session.prompt(request, options);
+      },
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -592,21 +653,19 @@ describe("WorkspaceView", () => {
 
   it("retries an ordinary chat with a fresh main-workspace session after attach fails", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     let attachCalls = 0;
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        start: async (request, options) => {
-          attachCalls += 1;
-          if (attachCalls === 1) throw new Error("session unavailable");
-          return baseClient.session.start(request, options);
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        attachCalls += 1;
+        if (attachCalls === 1) throw new Error("session unavailable");
+        return baseClient.session.start(request, options);
       },
-    };
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -653,21 +712,19 @@ describe("WorkspaceView", () => {
 
   it("unbinds a draft and restores dismissibility when attach fails after bind", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     let attachCalls = 0;
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        start: async (request, options) => {
-          attachCalls += 1;
-          if (attachCalls === 1) throw new Error("session unavailable");
-          return baseClient.session.start(request, options);
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        attachCalls += 1;
+        if (attachCalls === 1) throw new Error("session unavailable");
+        return baseClient.session.start(request, options);
       },
-    };
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -711,9 +768,10 @@ describe("WorkspaceView", () => {
 
   it("keeps the started session when synchronous send setup fails", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -766,19 +824,16 @@ describe("WorkspaceView", () => {
 
   it("keeps the persisted session selected when prompt fails after attach", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        prompt: async function* () {
-          yield* [];
-          throw new Error("provider disconnected");
-        },
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      promptSession: async function* () {
+        yield* [];
+        throw new Error("provider disconnected");
       },
-    };
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -827,7 +882,7 @@ describe("WorkspaceView", () => {
 
   it("clears pending send when leaving a draft mid-handshake so return is not stuck", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -847,21 +902,19 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => {
       releaseStart = resolve;
     });
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        start: async (request, options) => {
-          await startGate;
-          return baseClient.session.start(request, options);
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        await startGate;
+        return baseClient.session.start(request, options);
       },
-    };
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -928,7 +981,7 @@ describe("WorkspaceView", () => {
 
   it("creates a fresh session when a retry follows a failed start", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     // An already-existing task keeps both attempts on one chat surface, so no
     // task-creation side effect can re-target the retry.
@@ -940,25 +993,23 @@ describe("WorkspaceView", () => {
         title: "Existing task",
       },
     ];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     let startCalls = 0;
     const startedSessionIds: string[] = [];
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        start: async (request, options) => {
-          startCalls += 1;
-          // A start that fails leaves nothing behind on either side: the backend
-          // releases the provider session it had created, and the client holds
-          // no identifier it could retry against.
-          if (startCalls === 1) throw new Error("session unavailable");
-          const response = await baseClient.session.start(request, options);
-          startedSessionIds.push(response.session.id);
-          return response;
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        startCalls += 1;
+        // A start that fails leaves nothing behind on either side: the backend
+        // releases the provider session it had created, and the client holds
+        // no identifier it could retry against.
+        if (startCalls === 1) throw new Error("session unavailable");
+        const response = await baseClient.session.start(request, options);
+        startedSessionIds.push(response.session.id);
+        return response;
       },
-    };
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,
@@ -1003,7 +1054,7 @@ describe("WorkspaceView", () => {
 
   it("shows a model switch that never reached the agent", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -1023,28 +1074,23 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const baseClient = createMockClient(state);
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        // A persisted session reports its options through load, and only a
-        // persisted session's model change is asked of the backend at all.
-        load: async function* () {
-          yield {
-            type: "session_update" as const,
-            update: {
-              sessionUpdate: "config_option_update" as const,
-              configOptions: state.configOptions,
-            },
-          };
-          yield { type: "completed" as const };
-        },
-        setConfig: async () => {
-          throw new Error("agent unreachable");
-        },
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      loadSession: async function* () {
+        yield {
+          type: "session_update" as const,
+          update: {
+            sessionUpdate: "config_option_update" as const,
+            configOptions: state.configOptions,
+          },
+        };
+        yield { type: "completed" as const };
       },
-    };
+      setSessionConfig: async () => {
+        throw new Error("agent unreachable");
+      },
+    });
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1082,17 +1128,15 @@ describe("WorkspaceView", () => {
 
   it("keeps a model picked before the first send across a remount", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     const discover = vi.fn(baseClient.agentRuntime.listModels);
-    const client: ContractsClient = {
-      ...baseClient,
-      agentRuntime: {
-        ...baseClient.agentRuntime,
-        listModels: discover,
-      },
-    };
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      listAgentModels: discover,
+    });
     // One query client and one chat store across both renders, so this is the
     // same app session leaving a surface and coming back to it.
     const Wrapper = createHookWrapper(
@@ -1142,22 +1186,17 @@ describe("WorkspaceView", () => {
 
   it("says the model list is still arriving while discovery is open", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
     let openHandshake: (response: ListAgentModelsResponse) => void = () => {};
-    const client: ContractsClient = {
-      ...baseClient,
-      agentRuntime: {
-        ...baseClient.agentRuntime,
-        // Held open so the picker can be inspected mid-handshake, which is what
-        // a real agent's a second or so of start-up looks like.
-        listModels: () =>
-          new Promise<ListAgentModelsResponse>((resolve) => {
-            openHandshake = resolve;
-          }),
-      },
-    };
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      listAgentModels: () =>
+        new Promise<ListAgentModelsResponse>((resolve) => {
+          openHandshake = resolve;
+        }),
+    });
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1206,22 +1245,20 @@ describe("WorkspaceView", () => {
 
   it("carries a model picked before the first send into startSession", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     const started: StartSessionRequest[] = [];
     const setConfig = vi.fn(baseClient.session.setConfig);
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        setConfig,
-        start: async (request, options) => {
-          started.push(request);
-          return baseClient.session.start(request, options);
-        },
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      setSessionConfig: setConfig,
+      startSession: async (request, options) => {
+        started.push(request);
+        return baseClient.session.start(request, options);
       },
-    };
+    });
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1270,9 +1307,61 @@ describe("WorkspaceView", () => {
     expect(setConfig).not.toHaveBeenCalled();
   });
 
+  it("starts an untouched chat on the model remembered for its agent", async () => {
+    const user = userEvent.setup();
+    useAgentModelPreferenceStore.setState({
+      models: { [AGENT_REF.opencode]: "opencode/small-pickle" },
+    });
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
+    const started: StartSessionRequest[] = [];
+    const client: ContractsClient = createTestClient({
+      ...baseClientHandlers,
+      startSession: async (request, options) => {
+        started.push(request);
+        return baseClient.session.start(request, options);
+      },
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    // The picker is never opened: what the surface is labelled with has to be
+    // what the send asks for, or the first turn silently runs on another model.
+    await user.type(await screen.findByRole("textbox"), "hello");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(started).toEqual([
+        {
+          workspaceId: "workspace-p1",
+          agentRef: AGENT_REF.opencode,
+          model: "opencode/small-pickle",
+        },
+      ]),
+    );
+  });
+
   it("says the model list is still arriving while a selected session replays", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -1292,14 +1381,15 @@ describe("WorkspaceView", () => {
         historyState: { type: "writable" },
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     let finishReplay: () => void = () => {};
     const replayed = new Promise<void>((resolve) => {
       finishReplay = resolve;
     });
     // A selected session gets its options from `session/load`, which reports
     // them partway through the stream rather than at its start.
-    client.session.load = async function* () {
+    clientHandlers.loadSession = async function* () {
       await replayed;
       yield {
         type: "session_update" as const,
@@ -1351,10 +1441,11 @@ describe("WorkspaceView", () => {
 
   it("still reports an agent that offers no model choice", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.configOptions = [];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1392,49 +1483,43 @@ describe("WorkspaceView", () => {
    * observed offering the incoming CLI's list rather than the outgoing one's.
    */
   function createSwitchTargetClient(
-    state: ReturnType<typeof createMockClientState>,
+    state: ReturnType<typeof createFixtureState>,
   ) {
-    const baseClient = createMockClient(state);
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const baseClient = createTestClient(baseClientHandlers);
     const switched: SwitchSessionAgentRequest[] = [];
     const prompted: string[] = [];
-    const client: ContractsClient = {
-      ...baseClient,
-      session: {
-        ...baseClient.session,
-        prompt: (request, options) => {
-          prompted.push(request.sessionId);
-          return baseClient.session.prompt(request, options);
-        },
-        switchAgent: async (request, options) => {
-          switched.push(request);
-          return baseClient.session.switchAgent(request, options);
-        },
+    const clientHandlers: TestHandlers = {
+      ...baseClientHandlers,
+      promptSession: (request, options) => {
+        prompted.push(request.sessionId);
+        return baseClient.session.prompt(request, options);
       },
-      agentRuntime: {
-        ...baseClient.agentRuntime,
-        listModels: async (request, options) => {
-          const response = await baseClient.agentRuntime.listModels(
-            request,
-            options,
-          );
-          if (request.agentRef !== AGENT_REF.claude) return response;
-          return {
-            ...response,
-            models: [
-              { id: "claude/sonnet", displayName: "Sonnet", default: true },
-              { id: "claude/haiku", displayName: "Haiku", default: false },
-            ],
-          };
-        },
+      switchSessionAgent: async (request, options) => {
+        switched.push(request);
+        return baseClient.session.switchAgent(request, options);
+      },
+      listAgentModels: async (request, options) => {
+        const response = await baseClient.agentRuntime.listModels(
+          request,
+          options,
+        );
+        if (request.agentRef !== AGENT_REF.claude) return response;
+        return {
+          ...response,
+          models: [
+            { id: "claude/sonnet", displayName: "Sonnet", default: true },
+            { id: "claude/haiku", displayName: "Haiku", default: false },
+          ],
+        };
       },
     };
-    return { client, switched, prompted };
+    const client = createTestClient(clientHandlers);
+    return { client, handlers: clientHandlers, switched, prompted };
   }
 
   /** Seeds one running session on OpenCode under a worktree task. */
-  function seedSwitchableSession(
-    state: ReturnType<typeof createMockClientState>,
-  ) {
+  function seedSwitchableSession(state: ReturnType<typeof createFixtureState>) {
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -1458,7 +1543,7 @@ describe("WorkspaceView", () => {
 
   it("offers the incoming agent's models without rebinding the session yet", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     seedSwitchableSession(state);
     const { client, switched } = createSwitchTargetClient(state);
     const Wrapper = createHookWrapper(
@@ -1505,7 +1590,7 @@ describe("WorkspaceView", () => {
 
   it("commits a recorded agent move with the next message", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     seedSwitchableSession(state);
     const { client, switched } = createSwitchTargetClient(state);
     const Wrapper = createHookWrapper(
@@ -1547,7 +1632,7 @@ describe("WorkspaceView", () => {
 
   it("moves a session off an unavailable agent with the next message", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     seedSwitchableSession(state);
     state.sessions[0]!.agentRef = "ora-space.opencode";
     state.installedPlugins = state.installedPlugins.filter(
@@ -1556,8 +1641,9 @@ describe("WorkspaceView", () => {
     state.agentRuntimeStatuses = state.agentRuntimeStatuses.filter(
       (status) => status.agentRef !== AGENT_REF.opencode,
     );
-    const { client, switched, prompted } = createSwitchTargetClient(state);
-    client.session.load = async function* (request) {
+    const { client, handlers, switched, prompted } =
+      createSwitchTargetClient(state);
+    handlers.loadSession = async function* (request) {
       if (request.sessionId === "s1") {
         throw new Error("ora-space.opencode is not installed");
       }
@@ -1605,7 +1691,7 @@ describe("WorkspaceView", () => {
 
   it("sends without rebinding when the picker returns to the session's own agent", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     seedSwitchableSession(state);
     const { client, switched, prompted } = createSwitchTargetClient(state);
     const Wrapper = createHookWrapper(
@@ -1649,7 +1735,7 @@ describe("WorkspaceView", () => {
 
   it("resumes a session whose history stopped recording", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -1669,7 +1755,8 @@ describe("WorkspaceView", () => {
         historyState: { type: "degraded", reason: "no space left on device" },
       },
     ];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1701,9 +1788,10 @@ describe("WorkspaceView", () => {
 
   it("renders the workflow editor in place of chat when the editor is open", async () => {
     await act(() => appI18n.changeLanguage("zh-CN"));
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),

@@ -13,15 +13,57 @@ import {
 import { createScriptedChatSession } from "../../test/chat-session-harness";
 import { createStubPlatform } from "../../test/stub-platform";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import {
+  createWorkspaceMemory,
+  workspaceHandlers,
+} from "../../test/memory/workspaces";
+import {
+  createSessionMemory,
+  sessionHandlers,
+} from "../../test/memory/sessions";
+import {
+  createAgentRuntimeMemory,
+  agentRuntimeHandlers,
+} from "../../test/memory/agent-runtime";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
+import "../../i18n/i18n-instance";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { WorkspaceView } from "./workspace-view";
 import { AGENT_REF } from "../../test/agent-identity";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return {
+    ...createWorkspaceMemory(),
+    ...createSessionMemory(),
+    ...createAgentRuntimeMemory(),
+    ...createPluginMemory(),
+    ...createAgentMemory(),
+    ...createSkillMemory(),
+  };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workspaceHandlers(state),
+    ...sessionHandlers(state),
+    ...agentRuntimeHandlers(state),
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+    ...skillHandlers(state),
+  };
+}
 
 /** Builds one assistant text frame in the same shape as the generated ACP client. */
 function assistantText(
@@ -57,7 +99,7 @@ beforeEach(() => {
 describe("chat interaction MVP", () => {
   it("sends an Enter-submitted message and renders a controlled streaming reply", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
@@ -85,11 +127,11 @@ describe("chat interaction MVP", () => {
       yield assistantText("第二段");
       yield { type: "completed", stopReason: "end_turn" };
     });
-    const baseClient = createMockClient(state);
-    const client = {
-      ...baseClient,
-      session: { ...baseClient.session, ...scriptedSession },
-    };
+    const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient({
+      ...baseClientHandlers,
+      ...scriptedSession.handlers,
+    });
     const chatStore = createChatStore(client.session);
     const Wrapper = createHookWrapper(
       client,

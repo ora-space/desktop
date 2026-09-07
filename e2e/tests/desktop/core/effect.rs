@@ -5,9 +5,9 @@ mod tests {
     use ora_backend::Backend;
     use ora_contracts::{
         AgentStatus, CommitSkillImportRequest, CreateProjectRequest, DeleteSkillRequest,
-        GetAgentRuntimeStatusRequest, GetSkillImportSessionRequest, ListSkillsRequest,
-        PrepareSkillImportRequest, SkillImportProgress, SkillImportResult, SkillImportResultStatus,
-        SkillImportSessionStatus, SkillImportSource,
+        GetAgentRuntimeStatusRequest, GetEffectTargetStatusRequest, GetSkillImportSessionRequest,
+        ListSkillsRequest, ListWorkspacesRequest, PrepareSkillImportRequest, SkillImportProgress,
+        SkillImportResult, SkillImportResultStatus, SkillImportSessionStatus, SkillImportSource,
     };
     use pretty_assertions::assert_eq;
     use std::fs;
@@ -35,7 +35,8 @@ mod tests {
         let agent_ref = format!("{AGENT_NAMESPACE}/{AGENT_NAME}");
         wait_until("fake OpenCode agent did not become ready", || {
             backend
-                .get_agent_runtime_status(GetAgentRuntimeStatusRequest {})
+                .agent_runtime()
+                .status(GetAgentRuntimeStatusRequest {})
                 .is_ok_and(|response| {
                     response.statuses.iter().any(|runtime| {
                         runtime.agent_ref == agent_ref && runtime.status == AgentStatus::Ready
@@ -45,7 +46,7 @@ mod tests {
 
         let workspace = setup.root().join("workspace");
         fs::create_dir_all(&workspace)?;
-        backend.create_project(CreateProjectRequest {
+        backend.projects().create(CreateProjectRequest {
             name: "Effect E2E".to_string(),
             main_workspace_path: workspace.to_string_lossy().into_owned(),
         })?;
@@ -56,7 +57,7 @@ mod tests {
             import_source.join("SKILL.md"),
             "---\nname: review\ndescription: Reviews changes\n---\n# Review\n",
         )?;
-        let prepared = backend.prepare_skill_import(PrepareSkillImportRequest {
+        let prepared = backend.skills().prepare_import(PrepareSkillImportRequest {
             source: SkillImportSource::Folder {
                 path: import_source.to_string_lossy().into_owned(),
             },
@@ -64,13 +65,14 @@ mod tests {
         assert_eq!(prepared.session.candidates.len(), 1);
         let candidate_id = prepared.session.candidates[0].candidate_id.clone();
         let session_id = prepared.session.session_id;
-        backend.commit_skill_import(CommitSkillImportRequest {
+        backend.skills().commit_import(CommitSkillImportRequest {
             session_id: session_id.clone(),
             decisions: Vec::new(),
         })?;
         wait_until("Skill import did not complete", || {
             backend
-                .get_skill_import(GetSkillImportSessionRequest {
+                .skills()
+                .get_import(GetSkillImportSessionRequest {
                     session_id: session_id.clone(),
                 })
                 .is_ok_and(|response| {
@@ -78,7 +80,8 @@ mod tests {
                 })
         })?;
         let completed = backend
-            .get_skill_import(GetSkillImportSessionRequest { session_id })?
+            .skills()
+            .get_import(GetSkillImportSessionRequest { session_id })?
             .session;
         assert_eq!(
             completed.progress,
@@ -93,14 +96,38 @@ mod tests {
                 }],
             }
         );
-        let skills = backend.list_skills(ListSkillsRequest {})?.skills;
+        let skills = backend.skills().list(ListSkillsRequest {})?.skills;
         assert_eq!(skills.len(), 1);
 
         let materialized_skill = workspace.join(".opencode").join("skills").join("review");
         wait_until("imported Skill was not promptly materialized", || {
             materialized_skill.join("SKILL.md").is_file()
         })?;
-        backend.delete_skill(DeleteSkillRequest {
+        let workspace_id = backend
+            .workspaces()
+            .list(ListWorkspacesRequest {})?
+            .workspaces
+            .into_iter()
+            .next()
+            .ok_or("fixture workspace missing")?
+            .id;
+        let status = backend
+            .effects()
+            .target_status(GetEffectTargetStatusRequest::WorkspaceAgent {
+                workspace_id,
+                agent_plugin_id: agent_ref,
+            })?
+            .status
+            .ok_or("materialization must have a persisted target status")?;
+        let by_id = backend
+            .effects()
+            .target_status(GetEffectTargetStatusRequest::Target {
+                target_id: status.target_id.clone(),
+            })?
+            .status
+            .ok_or("target id must resolve the same status")?;
+        assert_eq!(by_id.target_id, status.target_id);
+        backend.skills().delete(DeleteSkillRequest {
             skill_id: skills[0].id.clone(),
         })?;
         wait_until("deleted Skill was not promptly removed", || {

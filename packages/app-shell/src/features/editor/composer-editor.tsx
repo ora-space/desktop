@@ -16,16 +16,18 @@ import {
   type ComposerFileAttrs,
   type PromptTokenKind,
 } from "@ora/editor/composer";
-import type { JSONContent } from "@tiptap/core";
+import type { AnyExtension, JSONContent } from "@tiptap/core";
 import { useOptionalPlatform } from "@ora/app-shell/platform";
 import { cn } from "@ora/ui";
 import {
   AT_TRIGGER_PATTERN,
   EMPTY_COMPOSER_QUERY,
+  INLINE_SLASH_TRIGGER_PATTERN,
   SLASH_TRIGGER_PATTERN,
   queryStateFromText,
   queryStatesEqual,
   type ComposerQueryState,
+  type SlashQueryMode,
 } from "./composer-query";
 import { AppComposerFile } from "./composer-file-extension";
 import "./composer-editor.css";
@@ -43,9 +45,20 @@ export interface ComposerEditorHandle {
   replaceText: (text: string) => void;
   /** Restores a parked TipTap document without round-tripping through plain text. */
   replaceDocument: (doc: JSONContent) => void;
-  insertPromptToken: (kind: PromptTokenKind, name: string) => void;
+  insertPromptToken: (
+    kind: PromptTokenKind,
+    name: string,
+    label?: string,
+    meta?: string,
+  ) => void;
+  /** Inserts plain text at a preserved editor selection or the live caret. */
+  insertText: (text: string, selection?: { from: number; to: number }) => void;
+  /** Captures the current ProseMirror selection before an external control takes focus. */
+  getSelection: () => { from: number; to: number };
   insertFileChips: (files: ComposerFileAttrs[]) => void;
   appendText: (text: string) => void;
+  /** Returns the viewport rectangle immediately below the current caret when layout is available. */
+  getCaretRect: () => DOMRect | null;
   removeAtToken: () => void;
   getDom: () => HTMLElement | null;
 }
@@ -56,6 +69,8 @@ export interface ComposerEditorProps {
   autoFocus?: boolean;
   /** Seed from `documentPlainText` so HITL drafts restore as the same nodes. */
   initialText?: string;
+  /** Optional structured seed for callers that need labeled inline atoms. */
+  initialDocument?: JSONContent;
   enterKey?: "submit" | "newline";
   className?: string;
   /** Optional DOM id so a `<label htmlFor>` can focus the contenteditable. */
@@ -66,6 +81,10 @@ export interface ComposerEditorProps {
   ariaExpanded?: boolean;
   ariaControls?: string;
   ariaActivedescendant?: string;
+  /** Controls whether slash queries require a command boundary or may start inline. */
+  slashQueryMode?: SlashQueryMode;
+  /** Overrides the prompt-token slot, e.g. with a React NodeView for workflow variables. */
+  promptTokenExtension?: AnyExtension;
   onSubmit: () => void;
   /**
    * Fires only when slash/@/blankness actually change so typing a normal
@@ -94,6 +113,7 @@ export const ComposerEditor = forwardRef<
     disabled = false,
     autoFocus = false,
     initialText = "",
+    initialDocument,
     enterKey = "submit",
     className,
     id,
@@ -103,6 +123,8 @@ export const ComposerEditor = forwardRef<
     ariaExpanded,
     ariaControls,
     ariaActivedescendant,
+    slashQueryMode = "command",
+    promptTokenExtension,
     onSubmit,
     onQueryChange,
     onDocChange,
@@ -128,24 +150,33 @@ export const ComposerEditor = forwardRef<
   onMenuKeyDownRef.current = onMenuKeyDown;
   const enterKeyRef = useRef(enterKey);
   enterKeyRef.current = enterKey;
+  const slashQueryModeRef = useRef(slashQueryMode);
+  slashQueryModeRef.current = slashQueryMode;
   const lastQueryRef = useRef<ComposerQueryState>(EMPTY_COMPOSER_QUERY);
   const suppressNotifyRef = useRef(false);
   const platform = useOptionalPlatform();
   const platformRef = useRef(platform);
   platformRef.current = platform;
+  const promptTokenExtensionRef = useRef(promptTokenExtension);
+  promptTokenExtensionRef.current = promptTokenExtension;
 
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         placeholder: () => placeholderRef.current,
-        features: { fileChip: AppComposerFile },
+        features: {
+          fileChip: AppComposerFile,
+          ...(promptTokenExtensionRef.current === undefined
+            ? {}
+            : { promptToken: promptTokenExtensionRef.current }),
+        },
       }),
     [],
   );
 
   const editor = useEditor({
     extensions,
-    content: markdownToComposerContent(initialText),
+    content: initialDocument ?? markdownToComposerContent(initialText),
     autofocus: autoFocus ? "end" : false,
     editable: !disabled,
     immediatelyRender: true,
@@ -188,14 +219,24 @@ export const ComposerEditor = forwardRef<
       },
     },
     onCreate: ({ editor: current }) => {
-      emitQuery(current, lastQueryRef, onQueryChangeRef);
+      emitQuery(
+        current,
+        lastQueryRef,
+        onQueryChangeRef,
+        slashQueryModeRef.current,
+      );
     },
     onUpdate: ({ editor: current }) => {
       if (suppressNotifyRef.current) {
         syncComposerTextDataset(current, lastQueryRef);
         return;
       }
-      emitQuery(current, lastQueryRef, onQueryChangeRef);
+      emitQuery(
+        current,
+        lastQueryRef,
+        onQueryChangeRef,
+        slashQueryModeRef.current,
+      );
       onDocChangeRef.current?.();
       onTextChangeRef.current?.(documentPlainText(current.state.doc));
     },
@@ -204,7 +245,12 @@ export const ComposerEditor = forwardRef<
         syncComposerTextDataset(current, lastQueryRef);
         return;
       }
-      emitQuery(current, lastQueryRef, onQueryChangeRef);
+      emitQuery(
+        current,
+        lastQueryRef,
+        onQueryChangeRef,
+        slashQueryModeRef.current,
+      );
     },
   });
 
@@ -285,10 +331,27 @@ export const ComposerEditor = forwardRef<
           editor.chain().setContent(doc).focus("end").run();
         });
       },
-      insertPromptToken: (kind, name) => {
-        deleteTriggerToken(editor, SLASH_TRIGGER_PATTERN);
-        editor.commands.setPromptToken(kind, name);
+      insertPromptToken: (kind, name, label, meta) => {
+        deleteTriggerToken(
+          editor,
+          slashQueryModeRef.current === "inline"
+            ? INLINE_SLASH_TRIGGER_PATTERN
+            : SLASH_TRIGGER_PATTERN,
+        );
+        editor.commands.setPromptToken(kind, name, label, meta);
       },
+      insertText: (text, selection) => {
+        const chain = editor.chain().focus();
+        if (selection === undefined) {
+          chain.insertContent(text).run();
+          return;
+        }
+        chain.insertContentAt(selection, text, { updateSelection: true }).run();
+      },
+      getSelection: () => ({
+        from: editor.state.selection.from,
+        to: editor.state.selection.to,
+      }),
       insertFileChips: (files) => {
         // Leave the caret where insertContent placed it so mid-prompt @ mentions
         // do not jump to the document end. Callers that want the end (sidebar
@@ -306,6 +369,21 @@ export const ComposerEditor = forwardRef<
           ? blocks
           : [{ type: "paragraph" }, ...blocks];
         editor.chain().focus("end").insertContent(content).run();
+      },
+      getCaretRect: () => {
+        try {
+          const coordinates = editor.view.coordsAtPos(
+            editor.state.selection.head,
+          );
+          return new DOMRect(
+            coordinates.left,
+            coordinates.top,
+            coordinates.right - coordinates.left,
+            coordinates.bottom - coordinates.top,
+          );
+        } catch {
+          return null;
+        }
       },
       removeAtToken: () => {
         deleteTriggerToken(editor, AT_TRIGGER_PATTERN);
@@ -426,6 +504,7 @@ function emitQuery(
   editor: Editor,
   lastQueryRef: { current: ComposerQueryState },
   onQueryChangeRef: { current: ComposerEditorProps["onQueryChange"] },
+  slashQueryMode: SlashQueryMode,
 ): void {
   const text = documentPlainText(editor.state.doc);
   const before = editor.state.doc.textBetween(
@@ -435,7 +514,7 @@ function emitQuery(
     "\n",
   );
   editor.view.dom.dataset.composerText = text;
-  const next = queryStateFromText(text, before);
+  const next = queryStateFromText(text, before, slashQueryMode);
   if (editor.state.selection.$from.parent.type.name === "codeBlock") {
     next.slashQuery = null;
     next.atQuery = null;

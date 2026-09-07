@@ -6,7 +6,7 @@ import {
   sanitizeReviewContextPersist,
   useReviewStore,
 } from "./review-store";
-import { DEFAULT_REVIEW_WIDTH } from "../../features/workspace/workspace-review-layout-utils";
+import { DEFAULT_REVIEW_WIDTH } from "./review-layout";
 
 beforeEach(() => {
   useReviewStore.setState({ byContext: {} });

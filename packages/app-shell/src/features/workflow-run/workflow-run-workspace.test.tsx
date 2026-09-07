@@ -10,13 +10,42 @@ import {
   createTestQueryClient,
 } from "../../test/hook-harness";
 import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { createWorkspaceMemory } from "../../test/memory/workspaces";
+import {
+  createWorkflowMemory,
+  workflowHandlers,
+} from "../../test/memory/workflows";
+import {
+  createWorkflowRunMemory,
+  workflowRunHandlers,
+} from "../../test/memory/workflow-runs";
+import "../../i18n/i18n-instance";
 import { createStubPlatform } from "../../test/stub-platform";
 import { useLocationActionsStore } from "../../state/stores/location-actions-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { WorkflowRunWorkspace } from "./workflow-run-workspace";
+
+/** State for this test surface; no unrelated domain fixtures are initialized. */
+function createFixtureState() {
+  return {
+    ...createWorkspaceMemory(),
+    ...createWorkflowMemory(),
+    ...createWorkflowRunMemory(),
+  };
+}
+
+type FixtureState = ReturnType<typeof createFixtureState>;
+
+/** Explicit domain composition for the behaviors exercised by this test file. */
+function createFixtureHandlers(state: FixtureState): TestHandlers {
+  return {
+    ...workflowHandlers(state),
+    ...workflowRunHandlers(state),
+  };
+}
 
 vi.mock("../diff/task-diff-view", () => ({
   TaskDiffView: ({ toolbar }: { toolbar?: ReactNode }) => (
@@ -46,9 +75,35 @@ const GRAPH = JSON.stringify({
   description: "",
 });
 
+const GRAPH_WITH_START_INPUT = JSON.stringify({
+  nodes: [
+    {
+      id: "start",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "start",
+        title: "开始",
+        description: "",
+        inputVariables: [
+          {
+            name: "topic",
+            displayName: "输入主题",
+            valueType: "string",
+            maxLength: 40,
+          },
+        ],
+      },
+    },
+  ],
+  edges: [],
+  viewport: { x: 32, y: 32, zoom: 1 },
+  description: "",
+});
+
 /** Seeds project + workflow + Workspace-owned run so the workspace can load its actions. */
-function seedRun() {
-  const state = createMockClientState();
+function seedRun(graph = GRAPH) {
+  const state = createFixtureState();
   state.projects = [{ id: "p1", name: "Demo" }];
   state.workflows = [
     {
@@ -64,7 +119,7 @@ function seedRun() {
         id: "draft-1",
         workflowId: "workflow-a",
         version: "draft",
-        graph: GRAPH,
+        graph,
         createdAt: 1n,
         updatedAt: 1n,
       },
@@ -73,7 +128,7 @@ function seedRun() {
           id: "snap-1",
           workflowId: "workflow-a",
           version: "v1",
-          graph: GRAPH,
+          graph,
           createdAt: 1n,
           updatedAt: null,
         },
@@ -112,7 +167,8 @@ describe("WorkflowRunWorkspace", () => {
 
   it("exposes the run Files panel for the Workspace-owned review surface", async () => {
     const state = seedRun();
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const runtime = createMemoryWorkflowRuntime();
     const Wrapper = createHookWrapper(
       client,
@@ -149,9 +205,84 @@ describe("WorkflowRunWorkspace", () => {
     runtime.dispose();
   });
 
+  it("opens the deployed Start input form before execution", async () => {
+    const state = seedRun(GRAPH_WITH_START_INPUT);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /启动|Start/ }));
+    expect(
+      screen.getByRole("heading", { name: "审查流程 1" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("输入主题")).toHaveAttribute(
+      "maxlength",
+      "40",
+    );
+
+    runtime.dispose();
+  });
+
+  it("reopens the Start input form when running a terminal run again", async () => {
+    const state = seedRun(GRAPH_WITH_START_INPUT);
+    state.workflowRuns[0].status = "cancelled";
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /再次运行|Run again/ }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "审查流程 1" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("输入主题")).toHaveAttribute(
+      "maxlength",
+      "40",
+    );
+
+    await user.click(screen.getByRole("button", { name: /取消|Cancel/ }));
+    runtime.dispose();
+  });
+
   it("exposes Desktop open-location actions against the run-task worktree", async () => {
     const state = seedRun();
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const runtime = createMemoryWorkflowRuntime();
     const Wrapper = createHookWrapper(
       client,
@@ -205,7 +336,8 @@ describe("WorkflowRunWorkspace", () => {
     const state = seedRun();
     // "Run again" is only offered on terminal runs.
     state.workflowRuns[0].status = "cancelled";
-    const client = createMockClient(state);
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
     const runtime = createMemoryWorkflowRuntime();
     const Wrapper = createHookWrapper(
       client,
@@ -230,6 +362,12 @@ describe("WorkflowRunWorkspace", () => {
     await user.click(
       screen.getByRole("button", { name: /再次运行|Run again/ }),
     );
+
+    // "Run again" reuses the Start dialog so start parameters can be edited first.
+    expect(
+      await screen.findByRole("heading", { name: "审查流程 1" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /启动|Start/ }));
 
     // Regression: the display run stubs projectId as "", and re-selecting with it
     // would poison the workspace selection, making the next chat surface target an empty

@@ -22,7 +22,7 @@ import {
   useCreateSession,
   useDeleteSession,
 } from "../../state/hooks/use-workspace-mutations";
-import { useDeleteWorkflowRun } from "../../state/hooks/use-workflow-runs";
+import { useDeleteWorkflowRun } from "../../state/data/workflow-runs";
 import {
   useUiStore,
   type DialogState,

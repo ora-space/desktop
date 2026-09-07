@@ -1,6 +1,6 @@
 //! Endpoint declarations for the network proxy settings namespace.
 
-use crate::frontend::FrontendEndpoint;
+use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
 const NAMESPACE: &str = "proxy";
 
@@ -11,6 +11,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "get",
         request_type: "GetProxySettingsRequest",
         response_type: "GetProxySettingsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "setProxySettings",
@@ -18,6 +19,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "set",
         request_type: "SetProxySettingsRequest",
         response_type: "SetProxySettingsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "clearProxySettings",
@@ -25,6 +27,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "clear",
         request_type: "ClearProxySettingsRequest",
         response_type: "ClearProxySettingsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
         operation_name: "checkProxySettings",
@@ -32,5 +35,6 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "check",
         request_type: "CheckProxySettingsRequest",
         response_type: "CheckProxySettingsResponse",
+        response_mode: FrontendResponseMode::Unary,
     },
 ];

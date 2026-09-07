@@ -2,6 +2,7 @@ import type { Edge, Node } from "@xyflow/react";
 import type {
   DemoWorkflow,
   WorkflowAnnotationNode,
+  WorkflowGlobalVariable,
   WorkflowNodeData,
 } from "@ora/workflow-mock";
 
@@ -17,6 +18,7 @@ export type WorkflowHistoryEvent =
   | "layout.organize"
   | "node.edit"
   | "annotation.edit"
+  | "workflow.variables"
   | "workflow.rename";
 
 /** Stores the workflow fields that represent authored content, excluding UI state. */
@@ -26,6 +28,7 @@ export interface WorkflowHistorySnapshot {
   nodes: Node<WorkflowNodeData, "workflow">[];
   edges: Edge[];
   annotations: WorkflowAnnotationNode[];
+  globalVariables?: WorkflowGlobalVariable[];
 }
 
 /** Adds stable context to a history step without coupling the history engine to UI text. */
@@ -79,6 +82,7 @@ export function captureWorkflowHistorySnapshot(
       selected: false,
       data: { ...annotation.data },
     })),
+    globalVariables: structuredClone(workflow.globalVariables ?? []),
   };
   return structuredClone(snapshot);
 }
@@ -105,6 +109,7 @@ export function restoreWorkflowHistorySnapshot(
       ...annotation,
       selected: false,
     })),
+    globalVariables: structuredClone(snapshot.globalVariables ?? []),
   };
 }
 

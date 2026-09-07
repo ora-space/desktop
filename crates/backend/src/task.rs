@@ -1,6 +1,7 @@
 use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
-use crate::git_cleanup::GatedWorktreeProvisioner;
+use crate::git_cleanup::{GatedWorktreeProvisioner, GitCleanupHandle, KeyedResourceLocks};
+use crate::repository_work::spawn_repository_work;
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
@@ -11,8 +12,8 @@ use ora_application::{
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, TaskWorkspace,
-    UpdateTaskRequest, UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
+    ListTasksResponse, TaskWorkspace, UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
@@ -24,8 +25,11 @@ use ora_domain::{Project, ProjectId, TaskId, WorkspaceId, WorkspaceLocation, Wor
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+#[cfg(test)]
+mod lifecycle_tests;
+
 /// Groups task handlers while resolving each Git repository from the task's owning project.
-pub(crate) struct TaskApi {
+pub struct TaskApi {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
     /// Base directory used to resolve relative main Workspace locations.
@@ -40,19 +44,34 @@ pub(crate) struct TaskApi {
     clock: SystemClock,
     /// Wakes Effect convergence for the Workspace a new task brings with it.
     effect_reconcile: EffectWorkerHandle,
+    git_cleanup: GitCleanupHandle,
+}
+
+/// Names every task dependency at composition time; construction is not part of the public handle.
+pub(crate) struct TaskSetup {
+    pub(crate) pool: RepositoryPool,
+    pub(crate) worktree_root: Arc<RwLock<PathBuf>>,
+    pub(crate) relative_path_base: PathBuf,
+    pub(crate) sessions_root: PathBuf,
+    pub(crate) repository_gates: Arc<KeyedResourceLocks>,
+    pub(crate) clock: SystemClock,
+    pub(crate) effect_reconcile: EffectWorkerHandle,
+    pub(crate) git_cleanup: GitCleanupHandle,
 }
 
 impl TaskApi {
     /// Builds task handlers from shared persistence and mutable runtime path configuration.
-    pub(crate) fn new(
-        pool: RepositoryPool,
-        worktree_root: Arc<RwLock<PathBuf>>,
-        relative_path_base: PathBuf,
-        sessions_root: PathBuf,
-        repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
-        clock: SystemClock,
-        effect_reconcile: EffectWorkerHandle,
-    ) -> Self {
+    pub(crate) fn new(setup: TaskSetup) -> Self {
+        let TaskSetup {
+            pool,
+            worktree_root,
+            relative_path_base,
+            sessions_root,
+            repository_gates,
+            clock,
+            effect_reconcile,
+            git_cleanup,
+        } = setup;
         let repository = SqliteTaskRepository::new(pool.clone());
 
         Self {
@@ -62,6 +81,7 @@ impl TaskApi {
             sessions_root,
             repository_gates,
             effect_reconcile,
+            git_cleanup,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
             update: UpdateTaskHandler::new(repository, clock),
@@ -75,10 +95,7 @@ impl TaskApi {
     /// no declaration will fire again on its own. Waking here is a latency optimization only: the
     /// worker converges the same Workspace within one scan interval regardless, so a wake lost to a
     /// crash costs a scan interval rather than the materialization.
-    pub(crate) fn create(
-        &self,
-        request: CreateTaskRequest,
-    ) -> Result<CreateTaskResponse, ApplicationError> {
+    pub fn create(&self, request: CreateTaskRequest) -> Result<CreateTaskResponse, BackendError> {
         let project_id = ProjectId::new(&request.project_id);
         self.find_project(&project_id)?;
         let repository_root = self.find_main_workspace_root(&project_id)?;
@@ -102,28 +119,41 @@ impl TaskApi {
     }
 
     /// Executes one task lookup through the application handler.
-    pub(crate) fn get(&self, request: GetTaskRequest) -> Result<GetTaskResponse, ApplicationError> {
-        self.get.handle(request)
+    pub fn get(&self, request: GetTaskRequest) -> Result<GetTaskResponse, BackendError> {
+        self.get.handle(request).map_err(BackendError::from)
     }
 
     /// Executes task listing through the application handler.
-    pub(crate) fn list(
-        &self,
-        request: ListTasksRequest,
-    ) -> Result<ListTasksResponse, ApplicationError> {
-        self.list.handle(request)
+    pub fn list(&self, request: ListTasksRequest) -> Result<ListTasksResponse, BackendError> {
+        self.list.handle(request).map_err(BackendError::from)
     }
 
     /// Executes task replacement while preserving its owning project.
-    pub(crate) fn update(
+    pub fn update(&self, request: UpdateTaskRequest) -> Result<UpdateTaskResponse, BackendError> {
+        self.update.handle(request).map_err(BackendError::from)
+    }
+
+    /// Runs the task cascade off the async worker, then wakes its durable cleanup executor.
+    pub async fn delete(
+        self: &Arc<Self>,
+        request: DeleteTaskRequest,
+    ) -> Result<DeleteTaskResponse, BackendError> {
+        let task = self.clone();
+        let response = spawn_repository_work(move || task.delete_persisted(request)).await?;
+        self.git_cleanup.notify();
+        Ok(response)
+    }
+
+    /// Returns the same authoritative checkout and branch used by runtime task resolution.
+    pub fn workspace(
         &self,
-        request: UpdateTaskRequest,
-    ) -> Result<UpdateTaskResponse, ApplicationError> {
-        self.update.handle(request)
+        request: GetTaskWorkspaceRequest,
+    ) -> Result<GetTaskWorkspaceResponse, BackendError> {
+        get_task_workspace(&self.pool, &request.task_id, &self.relative_path_base)
     }
 
     /// Soft-deletes the task and Ora worktree record without touching Git state.
-    pub(crate) fn delete(
+    fn delete_persisted(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
@@ -402,13 +432,13 @@ mod tests {
         let project_root = temp_dir.path().join("project-root");
         fs::create_dir_all(&project_root).expect("create project root");
         let database_path = temp_dir.path().join("ora.sqlite3");
-        let pool = DatabaseBootstrapper::system()
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(&database_path),
                 &default_migration_catalog().expect("create migration catalog"),
             )
             .expect("bootstrap repository pool");
-        SqliteProjectRepository::new(pool.clone())
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock)
             .create_project(
                 Project::new(
                     ProjectId::new("project-1"),

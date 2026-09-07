@@ -7,9 +7,9 @@
     "format": "prettier --write \"web/**/*.{ts,tsx,css}\" \"*.{html,json,ts}\" --ignore-path ../../.prettierignore",
     "format:check": "prettier --check \"web/**/*.{ts,tsx,css}\" \"*.{html,json,ts}\" --ignore-path ../../.prettierignore",
     "dev": "vite",
-    "build": "node ../../scripts/setup-binary.mjs && tsc -b && vite build",
-    "lint": "eslint . --max-warnings 0",
-    "test": "node ../../scripts/run-with-clean-stderr.mjs \"vitest run web/tauri-transport.test.ts web/tauri-platform-adapter.test.ts\"",
+    "build": "deno run -A ../../scripts/setup-binary.ts && tsc -b && vite build",
+    "lint": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && eslint . --max-warnings 0",
+    "test": "deno run -A ../../scripts/run-with-clean-stderr.ts \"vitest run web/tauri-transport.test.ts web/tauri-platform-adapter.test.ts\"",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -18,19 +18,19 @@
     "@ora/chat": "workspace:*",
     "@ora/contracts": "workspace:*",
     "@ora/ui": "workspace:*",
-    "@tailwindcss/typography": "^0.5.19",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/api": "^2.11.1",
-    "@tailwindcss/vite": "^4.2.4",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "tailwindcss": "^4.2.4",
-    "tailwindcss-animate": "^1.0.7",
-    "tailwindcss-react-aria-components": "^2.0.1"
+    "@tailwindcss/typography": "0.5.20",
+    "@tauri-apps/plugin-dialog": "2.7.1",
+    "@tauri-apps/api": "2.11.1",
+    "@tailwindcss/vite": "4.3.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwindcss": "4.3.0",
+    "tailwindcss-animate": "1.0.7",
+    "tailwindcss-react-aria-components": "2.2.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.1",
-    "vitest": "^4.1.10",
-    "vite": "^8.0.10"
+    "@vitejs/plugin-react": "6.0.1",
+    "vitest": "4.1.10",
+    "vite": "8.0.11"
   }
 }

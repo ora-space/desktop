@@ -1,26 +1,23 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  IconChevronDown,
   IconLayoutSidebarRightCollapse,
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
 import {
-  WORKFLOW_CONTEXT_VARIABLES,
+  resolveConditionCases,
   type WorkflowCapabilities,
   type WorkflowChoice,
-  type WorkflowConditionBranch,
-  type WorkflowConditionRule,
+  type WorkflowConditionCase,
+  type WorkflowConditionComparison,
   type WorkflowInputVariable,
   type WorkflowNodeData,
   type WorkflowNodeType,
+  type WorkflowVariableCatalogEntry,
 } from "@ora/workflow-mock";
 import {
   Button,
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
   Input,
   Label,
   Select,
@@ -33,16 +30,18 @@ import {
 } from "@ora/ui";
 import type { Node } from "@xyflow/react";
 import { getNodeMetadata } from "./workflow-node-metadata";
+import { WorkflowVariableDisplay } from "./workflow-variable-display";
+import { WorkflowVariableSelectGroups } from "./workflow-variable-list";
+import { WorkflowStartVariables } from "./workflow-start-variables";
 
 const NODE_DESCRIPTION_MAX_LENGTH = 30;
-const DEFAULT_CONDITION_OPERATOR = "equals";
-
 interface WorkflowNodeDetailsLayoutProps {
   node: Node<WorkflowNodeData, "workflow">;
   nodeType: WorkflowNodeType;
   capabilities: WorkflowCapabilities;
   onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onClose: () => void;
+  variableCatalog: WorkflowVariableCatalogEntry[];
 }
 
 /**
@@ -58,6 +57,7 @@ export function WorkflowNodeDetailsLayout({
   capabilities,
   onUpdate,
   onClose,
+  variableCatalog,
 }: WorkflowNodeDetailsLayoutProps) {
   switch (node.data.kind) {
     case "start":
@@ -65,7 +65,6 @@ export function WorkflowNodeDetailsLayout({
         <StartNodeDetails
           node={node}
           nodeType={nodeType}
-          capabilities={capabilities}
           onUpdate={onUpdate}
           onClose={onClose}
         />
@@ -78,52 +77,44 @@ export function WorkflowNodeDetailsLayout({
           capabilities={capabilities}
           onUpdate={onUpdate}
           onClose={onClose}
+          variableCatalog={variableCatalog}
         />
       );
     case "tool":
       return (
         <ToolNodeDetails
-          node={node}
-          nodeType={nodeType}
-          capabilities={capabilities}
-          onUpdate={onUpdate}
-          onClose={onClose}
+          {...{
+            node,
+            nodeType,
+            capabilities,
+            onUpdate,
+            onClose,
+            variableCatalog,
+          }}
         />
       );
     case "junction":
       return (
         <JunctionNodeDetails
-          node={node}
-          nodeType={nodeType}
-          onUpdate={onUpdate}
-          onClose={onClose}
+          {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
     case "human":
       return (
         <HumanNodeDetails
-          node={node}
-          nodeType={nodeType}
-          onUpdate={onUpdate}
-          onClose={onClose}
+          {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
     case "loop":
       return (
         <LoopNodeDetails
-          node={node}
-          nodeType={nodeType}
-          onUpdate={onUpdate}
-          onClose={onClose}
+          {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
     case "subflow":
       return (
         <SubflowNodeDetails
-          node={node}
-          nodeType={nodeType}
-          onUpdate={onUpdate}
-          onClose={onClose}
+          {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
     default:
@@ -133,38 +124,112 @@ export function WorkflowNodeDetailsLayout({
   }
 }
 
-/** Shared panel header: the type label heads the panel with the close action. */
-function WorkflowNodeDetailsHeader({
+/** Keeps node identity close to the panel title while leaving the body for behavior settings. */
+export function WorkflowNodeDetailsHeader({
   node,
   nodeType,
+  onUpdate,
   onClose,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   nodeType: WorkflowNodeType;
+  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(node.data.title);
   const metadata = getNodeMetadata(node.data.kind);
   const Icon = metadata.icon;
+
+  /** Commits a non-empty title and restores the existing title for blank edits. */
+  function commitTitle(): void {
+    const title = titleDraft.trim() || node.data.title;
+    setTitleDraft(title);
+    setEditingTitle(false);
+    if (title !== node.data.title) {
+      onUpdate({ ...node, data: { ...node.data, title } });
+    }
+  }
+
   return (
-    <header className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-3">
-      <span
-        className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${metadata.tone}`}
-      >
-        <Icon className="size-4" />
-      </span>
-      <h3 className="min-w-0 flex-1 truncate text-xs font-semibold">
-        {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
-      </h3>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="shrink-0"
-        aria-label={t("settings.workflow.closeConfiguration")}
-        onClick={onClose}
-      >
-        <IconLayoutSidebarRightCollapse />
-      </Button>
+    <header className="min-w-0 border-b border-border px-4 py-3">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span
+          className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${metadata.tone}`}
+          title={nodeType.label}
+        >
+          <Icon className="size-4" />
+        </span>
+        {editingTitle ? (
+          <Input
+            autoFocus
+            aria-label={t("settings.workflow.field.name")}
+            className="h-9 min-w-0 flex-1 px-2 font-sans text-base font-bold"
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                setTitleDraft(node.data.title);
+                setEditingTitle(false);
+              }
+            }}
+          />
+        ) : (
+          <h3 className="min-w-0 flex-1 font-sans text-base font-bold">
+            <button
+              type="button"
+              className="block w-full truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={t("settings.workflow.editNodeTitle")}
+              onDoubleClick={() => {
+                setTitleDraft(node.data.title);
+                setEditingTitle(true);
+              }}
+            >
+              {node.data.title}
+            </button>
+          </h3>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          aria-label={t("settings.workflow.closeConfiguration")}
+          onClick={onClose}
+        >
+          <IconLayoutSidebarRightCollapse />
+        </Button>
+      </div>
+      <div className="mt-1 flex min-w-0 items-center gap-2">
+        <Input
+          aria-label={t("settings.workflow.field.description")}
+          className="h-7 min-w-0 flex-1 border-0 bg-transparent px-0 text-[11px] text-muted-foreground shadow-none focus-visible:ring-0"
+          placeholder={t("settings.workflow.addDescription")}
+          value={node.data.description}
+          maxLength={NODE_DESCRIPTION_MAX_LENGTH}
+          onChange={(event) =>
+            onUpdate({
+              ...node,
+              data: {
+                ...node.data,
+                description: event.target.value.slice(
+                  0,
+                  NODE_DESCRIPTION_MAX_LENGTH,
+                ),
+              },
+            })
+          }
+        />
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {t("settings.workflow.characterCount", {
+            count: node.data.description.length,
+            max: NODE_DESCRIPTION_MAX_LENGTH,
+          })}
+        </span>
+      </div>
     </header>
   );
 }
@@ -178,136 +243,13 @@ function WorkflowNodeBody({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Name and description fields shared by every kind-specific panel. */
-function NodeIdentityFields({
-  node,
-  onUpdate,
-}: {
-  node: Node<WorkflowNodeData, "workflow">;
-  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <>
-      <InspectorField
-        label={t("settings.workflow.field.name")}
-        htmlFor="workflow-node-title"
-      >
-        <Input
-          id="workflow-node-title"
-          value={node.data.title}
-          onChange={(event) =>
-            onUpdate({
-              ...node,
-              data: { ...node.data, title: event.target.value },
-            })
-          }
-        />
-      </InspectorField>
-      <InspectorField
-        label={t("settings.workflow.field.description")}
-        htmlFor="workflow-node-description"
-      >
-        <>
-          <Input
-            id="workflow-node-description"
-            value={node.data.description}
-            maxLength={NODE_DESCRIPTION_MAX_LENGTH}
-            onChange={(event) =>
-              onUpdate({
-                ...node,
-                data: {
-                  ...node.data,
-                  description: event.target.value.slice(
-                    0,
-                    NODE_DESCRIPTION_MAX_LENGTH,
-                  ),
-                },
-              })
-            }
-          />
-          <p
-            className="text-right text-[10px] text-muted-foreground"
-            aria-live="polite"
-          >
-            {t("settings.workflow.characterCount", {
-              count: node.data.description.length,
-              max: NODE_DESCRIPTION_MAX_LENGTH,
-            })}
-          </p>
-        </>
-      </InspectorField>
-    </>
-  );
-}
-
-/** Collapsible "Advanced settings" group shared by the model-driven node kinds. */
-function AdvancedSettingsSection({ children }: { children: React.ReactNode }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[11px] font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
-        {t("settings.workflow.section.advanced")}
-        <IconChevronDown
-          className={cn(
-            "size-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
-            open && "rotate-180",
-          )}
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-3 pt-2">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-/** Optional mock-engine step duration, grouped under advanced settings. */
-function MockStepMsField({
-  node,
-  onUpdate,
-}: {
-  node: Node<WorkflowNodeData, "workflow">;
-  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <InspectorField
-      label={t("settings.workflow.field.mockStepMs")}
-      htmlFor="workflow-node-mock-step"
-    >
-      <Input
-        id="workflow-node-mock-step"
-        type="number"
-        min={0}
-        value={node.data.mockStepMs ?? ""}
-        onChange={(event) => {
-          const parsed = Number(event.target.value);
-          onUpdate({
-            ...node,
-            data: {
-              ...node.data,
-              mockStepMs:
-                event.target.value !== "" && Number.isFinite(parsed)
-                  ? parsed
-                  : undefined,
-            },
-          });
-        }}
-      />
-    </InspectorField>
-  );
-}
-
-/** Start panel: trigger method, workflow input variables, and the available context variables. */
+/** Start panel: workflow input variables and the prompt that begins the first Agent turn. */
 function StartNodeDetails({
   node,
   nodeType,
-  capabilities,
   onUpdate,
   onClose,
-}: WorkflowNodeDetailsLayoutProps) {
+}: Omit<WorkflowNodeDetailsLayoutProps, "capabilities" | "variableCatalog">) {
   const { t } = useTranslation();
   const inputVariables = node.data.inputVariables ?? [];
   const updateVariables = (variables: WorkflowInputVariable[]): void => {
@@ -318,199 +260,128 @@ function StartNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
+        <WorkflowStartVariables
+          variables={inputVariables}
+          onChange={updateVariables}
+        />
         <InspectorField
-          label={t("settings.workflow.field.trigger")}
-          htmlFor="workflow-node-trigger"
+          label={t("settings.workflow.field.initialPrompt")}
+          htmlFor="workflow-node-initial-prompt"
         >
-          <Select
-            value={node.data.trigger ?? capabilities.defaultTrigger}
-            onValueChange={(trigger) => {
-              if (trigger !== null) {
-                onUpdate({ ...node, data: { ...node.data, trigger } });
-              }
-            }}
-          >
-            <SelectTrigger id="workflow-node-trigger" className="w-full">
-              <LocalizedSelectValue
-                options={capabilities.startTriggers}
-                value={node.data.trigger ?? capabilities.defaultTrigger}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {capabilities.startTriggers.map((trigger) => (
-                <SelectItem key={trigger.value} value={trigger.value}>
-                  {trigger.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Textarea
+            id="workflow-node-initial-prompt"
+            className="min-h-24 resize-none text-xs leading-5"
+            value={node.data.input ?? ""}
+            onChange={(event) =>
+              onUpdate({
+                ...node,
+                data: { ...node.data, input: event.target.value },
+              })
+            }
+          />
         </InspectorField>
-        <WorkflowNodeSection
-          title={t("settings.workflow.section.inputVariables")}
-        >
-          <div className="space-y-2">
-            {inputVariables.map((variable, index) => (
-              <div
-                key={index}
-                className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
-              >
-                <Input
-                  value={variable.name}
-                  aria-label={t("settings.workflow.field.inputVariableName", {
-                    index: index + 1,
-                  })}
-                  placeholder={t(
-                    "settings.workflow.field.inputVariableNamePlaceholder",
-                  )}
-                  className="h-8"
-                  onChange={(event) =>
-                    updateVariables(
-                      inputVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index
-                          ? { ...candidate, name: event.target.value }
-                          : candidate,
-                      ),
-                    )
-                  }
-                />
-                <Input
-                  value={variable.defaultValue ?? ""}
-                  aria-label={t(
-                    "settings.workflow.field.inputVariableDefault",
-                    { index: index + 1 },
-                  )}
-                  placeholder={t("settings.workflow.field.defaultPlaceholder")}
-                  className="h-8"
-                  onChange={(event) =>
-                    updateVariables(
-                      inputVariables.map((candidate, candidateIndex) =>
-                        candidateIndex === index
-                          ? { ...candidate, defaultValue: event.target.value }
-                          : candidate,
-                      ),
-                    )
-                  }
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={t("settings.workflow.start.removeVariable")}
-                  onClick={() =>
-                    updateVariables(
-                      inputVariables.filter(
-                        (_, candidateIndex) => candidateIndex !== index,
-                      ),
-                    )
-                  }
-                >
-                  <IconTrash className="size-3.5" />
-                </Button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full justify-start"
-              onClick={() =>
-                updateVariables([
-                  ...inputVariables,
-                  { name: "", defaultValue: "" },
-                ])
-              }
-            >
-              <IconPlus />
-              {t("settings.workflow.start.addVariable")}
-            </Button>
-          </div>
-        </WorkflowNodeSection>
-        <WorkflowNodeSection
-          title={t("settings.workflow.section.availableVariables")}
-        >
-          <p className="text-[10px] leading-4 text-muted-foreground">
-            {t("settings.workflow.start.availableHint")}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {WORKFLOW_CONTEXT_VARIABLES.map((name) => (
-              <code
-                key={name}
-                className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80"
-              >
-                {name}
-              </code>
-            ))}
-          </div>
-        </WorkflowNodeSection>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
 }
 
-/** IF/ELSE panel: branch cards with rule rows, plus the implicit default branch. */
+/** Executable IF/ELSE panel: case cards with comparisons, plus the implicit else branch. */
 function ConditionNodeDetails({
   node,
   nodeType,
   capabilities,
   onUpdate,
   onClose,
+  variableCatalog,
 }: WorkflowNodeDetailsLayoutProps) {
   const { t } = useTranslation();
-  const branches = node.data.conditionBranches ?? defaultConditionBranches();
-  const updateBranches = (next: WorkflowConditionBranch[]): void => {
-    onUpdate({ ...node, data: { ...node.data, conditionBranches: next } });
+  const cases = resolveConditionCases(node.data);
+  const updateCases = (next: WorkflowConditionCase[]): void => {
+    const data = { ...node.data, cases: next };
+    // Editing is the migration boundary: keep old saved graphs readable, then persist one shape.
+    delete data.conditionCases;
+    delete data.conditionBranches;
+    onUpdate({ ...node, data });
   };
-  const updateBranch = (
-    branchIndex: number,
-    patch: Partial<WorkflowConditionBranch>,
+  const updateCase = (
+    caseIndex: number,
+    patch: Partial<WorkflowConditionCase>,
   ): void => {
-    updateBranches(
-      branches.map((branch, candidateIndex) =>
-        candidateIndex === branchIndex ? { ...branch, ...patch } : branch,
+    updateCases(
+      cases.map((conditionCase, candidateIndex) =>
+        candidateIndex === caseIndex
+          ? { ...conditionCase, ...patch }
+          : conditionCase,
       ),
     );
   };
-  const updateRule = (
-    branchIndex: number,
-    ruleIndex: number,
-    patch: Partial<WorkflowConditionRule>,
+  const updateComparison = (
+    caseIndex: number,
+    comparisonIndex: number,
+    patch: Partial<WorkflowConditionComparison>,
   ): void => {
-    updateBranches(
-      branches.map((branch, candidateIndex) =>
-        candidateIndex === branchIndex
+    updateCases(
+      cases.map((conditionCase, candidateIndex) =>
+        candidateIndex === caseIndex
           ? {
-              ...branch,
-              conditions: branch.conditions.map((rule, candidateRuleIndex) =>
-                candidateRuleIndex === ruleIndex ? { ...rule, ...patch } : rule,
+              ...conditionCase,
+              conditions: conditionCase.conditions.map(
+                (comparison, candidateComparisonIndex) =>
+                  candidateComparisonIndex === comparisonIndex
+                    ? { ...comparison, ...patch }
+                    : comparison,
               ),
             }
-          : branch,
+          : conditionCase,
       ),
     );
+  };
+  const removeCase = (caseIndex: number): void => {
+    updateCases(cases.filter((_, index) => index !== caseIndex));
+  };
+  const addComparison = (caseIndex: number): void => {
+    updateCases(
+      cases.map((conditionCase, candidateIndex) =>
+        candidateIndex === caseIndex
+          ? {
+              ...conditionCase,
+              conditions: [
+                ...conditionCase.conditions,
+                defaultConditionComparison(),
+              ],
+            }
+          : conditionCase,
+      ),
+    );
+  };
+  const removeComparison = (
+    caseIndex: number,
+    comparisonIndex: number,
+  ): void => {
+    updateCases(
+      cases.map((conditionCase, candidateIndex) =>
+        candidateIndex === caseIndex
+          ? {
+              ...conditionCase,
+              conditions: conditionCase.conditions.filter(
+                (_, index) => index !== comparisonIndex,
+              ),
+            }
+          : conditionCase,
+      ),
+    );
+  };
+  const addCase = (): void => {
+    const nextSequence =
+      cases.reduce((max, conditionCase) => {
+        const number = /^case-(\d+)$/.exec(conditionCase.id);
+        return Math.max(max, number === null ? 0 : Number(number[1]));
+      }, 0) + 1;
+    updateCases([...cases, defaultConditionCase(nextSequence)]);
   };
   const logicOptions = [
     { value: "and" as const, label: t("settings.workflow.condition.logicAnd") },
@@ -521,282 +392,263 @@ function ConditionNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
-        {branches.map((branch, branchIndex) => (
-          <div
-            key={branchIndex}
-            className="overflow-hidden rounded-lg border border-border"
+        {cases.map((conditionCase, caseIndex) => (
+          <section
+            key={conditionCase.id}
+            className="space-y-2 border-b border-border/70 pb-4"
           >
-            <div className="space-y-2 border-b border-border bg-muted/25 px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold">
-                  {t("settings.workflow.condition.branchTitle", {
-                    index: branchIndex + 1,
-                  })}
-                </span>
-                {branchIndex > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold">
+                {caseIndex === 0 ? "IF" : "ELIF"}
+              </span>
+              <div className="flex items-center gap-1">
+                {conditionCase.conditions.length === 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 bg-background shadow-sm"
+                    onClick={() => addComparison(caseIndex)}
+                  >
+                    <IconPlus />
+                    {t("settings.workflow.condition.addRule")}
+                  </Button>
+                )}
+                {caseIndex > 0 && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
                     className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     aria-label={t("settings.workflow.condition.removeBranch")}
-                    onClick={() =>
-                      updateBranches(
-                        branches.filter(
-                          (_, candidateIndex) => candidateIndex !== branchIndex,
-                        ),
-                      )
-                    }
+                    onClick={() => removeCase(caseIndex)}
                   >
                     <IconTrash className="size-3.5" />
                   </Button>
                 )}
               </div>
-              <Select
-                value={branch.logic ?? "and"}
-                onValueChange={(logic) => {
-                  if (logic === "and" || logic === "or") {
-                    updateBranch(branchIndex, { logic });
-                  }
-                }}
-              >
-                <SelectTrigger
-                  aria-label={t("settings.workflow.condition.branchLogic", {
-                    index: branchIndex + 1,
-                  })}
-                  className="h-7 w-full text-[11px]"
-                >
-                  <LocalizedSelectValue
-                    options={logicOptions}
-                    value={branch.logic ?? "and"}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {logicOptions.map((logic) => (
-                    <SelectItem key={logic.value} value={logic.value}>
-                      {logic.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
-            <div className="space-y-3 p-3">
-              {branch.conditions.map((rule, ruleIndex) => (
-                <div
-                  key={ruleIndex}
-                  className="space-y-2 rounded-md border border-border/70 bg-background p-2.5"
-                >
-                  <RuleField label={t("settings.workflow.field.variable")}>
-                    <Input
-                      value={rule.variable}
-                      aria-label={t("settings.workflow.field.variable", {
-                        index: ruleIndex + 1,
-                      })}
-                      placeholder={t(
-                        "settings.workflow.condition.variablePlaceholder",
-                      )}
-                      className="h-8"
-                      onChange={(event) =>
-                        updateRule(branchIndex, ruleIndex, {
-                          variable: event.target.value,
-                        })
-                      }
-                    />
-                  </RuleField>
-                  <RuleField label={t("settings.workflow.field.operator")}>
-                    <Select
-                      value={rule.operator}
-                      onValueChange={(operator) => {
-                        if (operator !== null) {
-                          updateRule(branchIndex, ruleIndex, { operator });
-                        }
-                      }}
-                    >
-                      <SelectTrigger
-                        aria-label={t("settings.workflow.field.operator", {
-                          index: ruleIndex + 1,
-                        })}
-                        className="h-8 w-full"
-                      >
-                        <LocalizedSelectValue
-                          options={capabilities.conditionOperators}
-                          value={rule.operator}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {capabilities.conditionOperators.map((operator) => (
-                          <SelectItem
-                            key={operator.value}
-                            value={operator.value}
-                          >
-                            {operator.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </RuleField>
-                  <RuleField label={t("settings.workflow.field.value")}>
-                    <>
-                      <Input
-                        value={rule.value}
-                        aria-label={t("settings.workflow.field.value", {
-                          index: ruleIndex + 1,
-                        })}
-                        placeholder={t(
-                          "settings.workflow.condition.valuePlaceholder",
-                        )}
-                        className="h-8"
-                        onChange={(event) =>
-                          updateRule(branchIndex, ruleIndex, {
-                            value: event.target.value,
-                          })
-                        }
-                      />
-                      <Button
-                        type="button"
-                        variant={rule.negated === true ? "secondary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                          "h-8 shrink-0 px-2 text-[10px] font-semibold",
-                          rule.negated === true &&
-                            "text-amber-700 dark:text-amber-400",
-                        )}
-                        aria-label={t("settings.workflow.condition.toggleNot", {
-                          index: ruleIndex + 1,
-                        })}
-                        aria-pressed={rule.negated === true}
-                        onClick={() =>
-                          updateRule(branchIndex, ruleIndex, {
-                            negated: rule.negated === true ? undefined : true,
-                          })
-                        }
-                      >
-                        {t("settings.workflow.condition.not")}
-                      </Button>
-                      {ruleIndex > 0 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          aria-label={t(
-                            "settings.workflow.condition.removeRule",
-                          )}
-                          onClick={() =>
-                            updateBranches(
-                              branches.map((candidateBranch, candidateIndex) =>
-                                candidateIndex === branchIndex
-                                  ? {
-                                      ...candidateBranch,
-                                      conditions:
-                                        candidateBranch.conditions.filter(
-                                          (_, candidateRuleIndex) =>
-                                            candidateRuleIndex !== ruleIndex,
-                                        ),
-                                    }
-                                  : candidateBranch,
-                              ),
-                            )
+            <div
+              className={cn(
+                "px-1",
+                conditionCase.conditions.length > 1 &&
+                  "relative ml-2 border-l border-border/80 pl-3",
+              )}
+            >
+              {conditionCase.conditions.map((comparison, comparisonIndex) => (
+                <Fragment key={comparisonIndex}>
+                  {comparisonIndex > 0 && (
+                    <div className="relative h-7">
+                      <Select
+                        value={conditionCase.logic ?? "and"}
+                        onValueChange={(logic) => {
+                          if (logic === "and" || logic === "or") {
+                            updateCase(caseIndex, { logic });
                           }
+                        }}
+                      >
+                        <SelectTrigger
+                          aria-label={`${t(
+                            "settings.workflow.condition.branchLogic",
+                            { index: caseIndex + 1 },
+                          )} · ${comparisonIndex}`}
+                          className="absolute -left-6 top-1/2 h-6 w-auto min-w-10 -translate-y-1/2 justify-center gap-1 rounded-md border-blue-200 bg-background px-1.5 text-[10px] font-semibold text-blue-600 shadow-sm dark:border-blue-800 dark:text-blue-400"
                         >
-                          <IconTrash className="size-3.5" />
-                        </Button>
-                      )}
-                    </>
-                  </RuleField>
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start"
-                onClick={() =>
-                  updateBranches(
-                    branches.map((candidateBranch, candidateIndex) =>
-                      candidateIndex === branchIndex
-                        ? {
-                            ...candidateBranch,
-                            conditions: [
-                              ...candidateBranch.conditions,
-                              defaultConditionRule(),
-                            ],
+                          <span>
+                            {(conditionCase.logic ?? "and").toUpperCase()}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {logicOptions.map((logic) => (
+                            <SelectItem key={logic.value} value={logic.value}>
+                              {logic.value.toUpperCase()} · {logic.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="flex items-start gap-1.5">
+                    <div className="min-w-0 flex-1 space-y-1.5 rounded-lg bg-muted/70 p-2">
+                      <Select
+                        value={selectorToText(comparison.variableSelector)}
+                        onValueChange={(value) => {
+                          if (value !== null) {
+                            updateComparison(caseIndex, comparisonIndex, {
+                              variableSelector: textToSelector(value),
+                            });
                           }
-                        : candidateBranch,
-                    ),
-                  )
-                }
-              >
-                <IconPlus />
-                {t("settings.workflow.condition.addRule")}
-              </Button>
+                        }}
+                      >
+                        <SelectTrigger
+                          className="h-8 w-full bg-background"
+                          aria-label={t("settings.workflow.field.variable", {
+                            index: comparisonIndex + 1,
+                          })}
+                        >
+                          <VariableSelectValue
+                            catalog={variableCatalog}
+                            selector={comparison.variableSelector}
+                            placeholder={t(
+                              "settings.workflow.condition.variablePlaceholder",
+                            )}
+                          />
+                        </SelectTrigger>
+                        <SelectContent
+                          alignItemWithTrigger={false}
+                          align="start"
+                          className="w-70 min-w-70 max-w-70"
+                        >
+                          <WorkflowVariableSelectGroups
+                            variables={variableCatalog}
+                            globalVariablesLabel={t(
+                              "settings.workflow.globalVariables",
+                            )}
+                          />
+                        </SelectContent>
+                      </Select>
+                      <div className="flex min-w-0 gap-1.5">
+                        <Select
+                          value={comparison.operator}
+                          onValueChange={(operator) => {
+                            if (operator !== null) {
+                              updateComparison(caseIndex, comparisonIndex, {
+                                operator,
+                              });
+                            }
+                          }}
+                        >
+                          <SelectTrigger
+                            aria-label={t("settings.workflow.field.operator", {
+                              index: comparisonIndex + 1,
+                            })}
+                            className="h-8 w-20 shrink-0 bg-background"
+                          >
+                            <LocalizedSelectValue
+                              options={capabilities.conditionOperators}
+                              value={comparison.operator}
+                              placeholder={t(
+                                "settings.workflow.condition.operatorPlaceholder",
+                              )}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {capabilities.conditionOperators.map((operator) => (
+                              <SelectItem
+                                key={operator.value}
+                                value={operator.value}
+                              >
+                                {operator.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          value={comparisonValueToText(comparison.value)}
+                          aria-label={t("settings.workflow.field.value", {
+                            index: comparisonIndex + 1,
+                          })}
+                          placeholder={t(
+                            "settings.workflow.condition.valuePlaceholder",
+                          )}
+                          className="h-8 min-w-0 flex-1 bg-background"
+                          onChange={(event) =>
+                            updateComparison(caseIndex, comparisonIndex, {
+                              value: parseComparisonValue(event.target.value),
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={t("settings.workflow.condition.removeRule")}
+                      onClick={() =>
+                        removeComparison(caseIndex, comparisonIndex)
+                      }
+                    >
+                      <IconTrash className="size-3.5" />
+                    </Button>
+                  </div>
+                </Fragment>
+              ))}
+              {conditionCase.conditions.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 w-fit justify-start border border-border bg-background shadow-sm"
+                  onClick={() => addComparison(caseIndex)}
+                >
+                  <IconPlus />
+                  {t("settings.workflow.condition.addRule")}
+                </Button>
+              )}
             </div>
-          </div>
+          </section>
         ))}
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="w-full justify-start"
-          onClick={() =>
-            updateBranches([
-              ...branches,
-              { conditions: [defaultConditionRule()] },
-            ])
-          }
+          className="w-full justify-center bg-muted/70 font-semibold"
+          onClick={addCase}
         >
           <IconPlus />
-          {t("settings.workflow.condition.addBranch")}
+          {t("settings.workflow.condition.addElif")}
         </Button>
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/25 px-3 py-2.5">
-          <span className="text-[11px] font-medium">
-            {t("settings.workflow.condition.otherCases")}
-          </span>
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            {t("settings.workflow.condition.defaultBranch")}
-          </span>
+        <div className="space-y-1 border-t border-border/70 pt-4">
+          <span className="text-[11px] font-medium">ELSE</span>
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            {t("settings.workflow.condition.elseDescription")}
+          </p>
         </div>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
 }
 
-/** One labeled row inside a condition rule (variable, operator, or value). */
-function RuleField({
-  label,
-  children,
+/** Renders the chosen variable with its node identity, or the selector text as a fallback. */
+function VariableSelectValue({
+  catalog,
+  selector,
+  placeholder,
 }: {
-  label: string;
-  children: React.ReactNode;
+  catalog: WorkflowVariableCatalogEntry[];
+  selector: string[];
+  placeholder: string;
 }) {
+  const { t } = useTranslation();
+  const selectorText = selectorToText(selector);
+  if (selectorText === "") {
+    return <SelectValue placeholder={placeholder} />;
+  }
+  const variable = catalog.find(
+    (candidate) => selectorToText(candidate.selector) === selectorText,
+  );
   return (
-    <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-      <div className="flex min-w-0 items-center gap-2">{children}</div>
-    </div>
+    <SelectValue placeholder={placeholder}>
+      {variable === undefined ? (
+        selectorText
+      ) : (
+        <WorkflowVariableDisplay
+          variable={variable}
+          nodeName={
+            variable.sourceNodeTitle ??
+            (variable.scope === "global"
+              ? t("settings.workflow.globalVariables")
+              : variable.sourceNodeId)
+          }
+        />
+      )}
+    </SelectValue>
   );
 }
 
@@ -808,12 +660,17 @@ function RuleField({
 function LocalizedSelectValue({
   options,
   value,
+  placeholder,
 }: {
   options: WorkflowChoice[];
   value: string;
+  placeholder?: string;
 }) {
+  if (value === "" && placeholder !== undefined) {
+    return <SelectValue placeholder={placeholder} />;
+  }
   return (
-    <SelectValue>
+    <SelectValue placeholder={placeholder}>
       {(selected) =>
         options.find((option) => option.value === (selected ?? value))?.label ??
         String(selected ?? value)
@@ -822,13 +679,53 @@ function LocalizedSelectValue({
   );
 }
 
-/** A fresh condition branch with one empty rule, materialized on first edit. */
-function defaultConditionBranches(): WorkflowConditionBranch[] {
-  return [{ conditions: [defaultConditionRule()] }];
+/** A fresh ELIF branch starts empty and exposes an explicit Add condition action. */
+function defaultConditionCase(sequence: number): WorkflowConditionCase {
+  return {
+    id: `case-${sequence}`,
+    logic: "and",
+    conditions: [],
+  };
 }
 
-function defaultConditionRule(): WorkflowConditionRule {
-  return { variable: "", operator: DEFAULT_CONDITION_OPERATOR, value: "" };
+function defaultConditionComparison(): WorkflowConditionComparison {
+  return { variableSelector: [], operator: "" };
+}
+
+/** Joins a selector array into its dotted text form for the editor input. */
+function selectorToText(selector: string[]): string {
+  return selector.join(".");
+}
+
+/** Splits the dotted selector text into `[nodeId, root, ...nested]` parts. */
+function textToSelector(text: string): string[] {
+  return text
+    .split(".")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+}
+
+/** Coerces the comparison value's text form into a JSON-ish value for the backend. */
+function parseComparisonValue(text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed === "true") {
+    return true;
+  }
+  if (trimmed === "false") {
+    return false;
+  }
+  if (trimmed !== "" && Number.isFinite(Number(trimmed))) {
+    return Number(trimmed);
+  }
+  return text;
+}
+
+/** Renders a comparison value back into its editable text form. */
+function comparisonValueToText(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** Tool-card panel: tool picker, derived operation, key/value parameters, and advanced settings. */
@@ -851,10 +748,10 @@ function ToolNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
         <InspectorField
           label={t("settings.workflow.field.tool")}
           htmlFor="workflow-node-tool"
@@ -995,25 +892,6 @@ function ToolNodeDetails({
             </Button>
           </div>
         </WorkflowNodeSection>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
@@ -1048,10 +926,10 @@ function JunctionNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
         <InspectorField
           label={t("settings.workflow.field.waitStrategy")}
           htmlFor="workflow-node-wait-strategy"
@@ -1145,25 +1023,6 @@ function JunctionNodeDetails({
             </SelectContent>
           </Select>
         </InspectorField>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
@@ -1182,10 +1041,10 @@ function HumanNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
         <InspectorField
           label={t("settings.workflow.field.approvalPrompt")}
           htmlFor="workflow-node-instruction"
@@ -1202,9 +1061,6 @@ function HumanNodeDetails({
             }
           />
         </InspectorField>
-        <AdvancedSettingsSection>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
@@ -1223,10 +1079,10 @@ function LoopNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
         <InspectorField
           label={t("settings.workflow.field.maxAttempts")}
           htmlFor="workflow-node-max-attempts"
@@ -1267,25 +1123,6 @@ function LoopNodeDetails({
             }
           />
         </InspectorField>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );
@@ -1304,32 +1141,13 @@ function SubflowNodeDetails({
       <WorkflowNodeDetailsHeader
         node={node}
         nodeType={nodeType}
+        onUpdate={onUpdate}
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <NodeIdentityFields node={node} onUpdate={onUpdate} />
         <p className="rounded-lg border border-border bg-muted/25 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
           {t("settings.workflow.subflow.hint")}
         </p>
-        <AdvancedSettingsSection>
-          <InspectorField
-            label={t("settings.workflow.field.instruction")}
-            htmlFor="workflow-node-instruction"
-          >
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-24 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
-                  ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-          <MockStepMsField node={node} onUpdate={onUpdate} />
-        </AdvancedSettingsSection>
       </WorkflowNodeBody>
     </>
   );

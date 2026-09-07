@@ -51,3 +51,10 @@ export function projectNodeStatus(
   }
   return nodeRun.status;
 }
+
+/** Run-level terminal statuses. */
+export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
+  return (
+    status === "succeeded" || status === "failed" || status === "cancelled"
+  );
+}

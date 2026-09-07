@@ -67,7 +67,8 @@ import {
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
-import { queryKeys } from "../../state/hooks/query-keys";
+import { invalidateAgents } from "../../state/data/agents";
+import { invalidateSkills } from "../../state/data/skills";
 
 type AtomRecord = Agent | Skill;
 type TablerIcon = typeof IconRobot;
@@ -162,9 +163,7 @@ export function RolesSettings() {
       <AgentImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onCompleted={() =>
-          void queryClient.invalidateQueries({ queryKey: queryKeys.agents })
-        }
+        onCompleted={() => void invalidateAgents(queryClient)}
       />
     </>
   );
@@ -230,7 +229,7 @@ export function SkillsSettings() {
   useEffect(() => {
     // Re-read disk-backed availability whenever this pane opens, so a package
     // lost or restored while Ora stayed running is not stuck behind staleTime.
-    void queryClient.invalidateQueries({ queryKey: queryKeys.skills });
+    void invalidateSkills(queryClient);
   }, [queryClient]);
 
   return (
@@ -337,9 +336,7 @@ export function SkillsSettings() {
           setImportOpen(open);
           if (!open) setRestoreName(null);
         }}
-        onCompleted={() =>
-          void queryClient.invalidateQueries({ queryKey: queryKeys.skills })
-        }
+        onCompleted={() => void invalidateSkills(queryClient)}
       />
     </>
   );

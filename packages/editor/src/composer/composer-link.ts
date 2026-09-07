@@ -1,6 +1,6 @@
 import Link from "@tiptap/extension-link";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { sanitizeUrl } from "../utils";
+import { sanitizeUrl } from "../utils.ts";
 
 /**
  * Schemes the host browser command will open. Keep in sync with Desktop

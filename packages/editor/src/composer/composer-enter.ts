@@ -6,7 +6,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import {
   convertMarkdownFenceOpener,
   handleComposerCodeEnter,
-} from "./composer-code-fence";
+} from "./composer-code-fence.ts";
 
 export type ComposerEnterAction = "handled" | "submit";
 

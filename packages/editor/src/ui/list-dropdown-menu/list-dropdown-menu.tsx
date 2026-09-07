@@ -2,26 +2,26 @@ import * as React from "react";
 import { type Editor } from "@tiptap/react";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Icons ---
-import { ChevronDownIcon } from "../../icons/chevron-down-icon";
+import { ChevronDownIcon } from "../../icons/chevron-down-icon.tsx";
 
 // --- Tiptap UI ---
-import { ListButton, type ListType } from "../list-button";
+import { ListButton, type ListType } from "../list-button/index.tsx";
 
-import { useListDropdownMenu } from "./use-list-dropdown-menu";
+import { useListDropdownMenu } from "./use-list-dropdown-menu.ts";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button, ButtonGroup } from "../../primitive/button";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button, ButtonGroup } from "../../primitive/button/index.tsx";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-} from "../../primitive/dropdown-menu";
-import { Card, CardBody } from "../../primitive/card";
+} from "../../primitive/dropdown-menu/index.tsx";
+import { Card, CardBody } from "../../primitive/card/index.tsx";
 
 export interface ListDropdownMenuProps extends Omit<ButtonProps, "type"> {
   /**

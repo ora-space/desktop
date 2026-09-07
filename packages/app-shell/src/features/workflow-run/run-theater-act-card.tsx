@@ -7,7 +7,8 @@ import {
 import { Badge, Button, cn } from "@ora/ui";
 import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
-import { useAgentCatalog } from "../chat/agent-catalog";
+import { formatWorkflowNodeOutput } from "./format-node-output";
+import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
 import {
   AgentExecutionModeMark,
   WorkflowNodeCardShell,
@@ -115,7 +116,10 @@ export function RunTheaterActCard({
   );
   // Keep the session dock available during HITL so readers can inspect prior
   // node messages before answering a permission or clarify gate.
-  const canUseConversation = !compact && conversationEnabled;
+  // Only Agent nodes own sessions. Giving control nodes a dock produces a misleading
+  // "Agent is processing" placeholder because those nodes can never receive a session id.
+  const canUseConversation =
+    data.kind === "agent" && !compact && conversationEnabled;
   const isConversationOpen = conversationOpen && canUseConversation;
   const sessionChatIdentity =
     isConversationOpen && state.sessionId != null
@@ -301,6 +305,21 @@ export function RunTheaterActCard({
           <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
             {data.description}
           </p>
+        ) : data.kind === "output" ? (
+          <div className="mt-5 rounded-xl border border-border/80 bg-muted/30 px-4 py-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+              {t("workflowRun.inspector.output")}
+            </p>
+            {state.output?.summary !== undefined ? (
+              <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground/90">
+                {formatWorkflowNodeOutput(state.output.summary)}
+              </pre>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("workflowRun.theater.outputPending")}
+              </p>
+            )}
+          </div>
         ) : (
           <>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">

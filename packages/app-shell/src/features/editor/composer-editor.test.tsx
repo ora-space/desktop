@@ -1315,4 +1315,22 @@ describe("ComposerEditor", () => {
     );
     expect(textbox.querySelector(".composer-chip")).toBeNull();
   });
+
+  it("inserts plain text at a preserved selection in the middle of existing text", async () => {
+    const user = userEvent.setup();
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("hello world");
+    act(() => {
+      // ProseMirror position 7 is immediately after `hello ` in this paragraph.
+      editorRef.current?.insertText("/", { from: 7, to: 7 });
+    });
+
+    expect(composerText(textbox)).toBe("hello /world");
+  });
 });

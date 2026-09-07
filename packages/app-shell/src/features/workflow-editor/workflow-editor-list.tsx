@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useUiStore } from "../../state/stores/ui-store";
-import { useWorkflowLibrary } from "./workflow-definitions";
+import { useWorkflowLibrary } from "../../state/data/workflows";
 import { useWorkflowEditorStore } from "./workflow-editor-store";
 import { WorkflowManager } from "./workflow-manager";
 

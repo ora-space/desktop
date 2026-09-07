@@ -5,9 +5,9 @@ use thiserror::Error;
 /// Identifies the executable kind of one workflow node.
 ///
 /// Naming mirrors the backend column `workflow_node_runs.node_type`; the wire field that produces
-/// this value is React Flow's `data.kind`. Only `Start`, `Agent`, and `Output` are executable in
-/// v1; the remaining variants are recognized so the parser can reject graphs that contain them
-/// instead of silently skipping or downgrading them.
+/// this value is React Flow's `data.kind`. `Start`, `Agent`, `Condition`, and `Output` are
+/// executable; the remaining variants are recognized so the parser can reject graphs that contain
+/// them instead of silently skipping or downgrading them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType {
     Start,
@@ -41,7 +41,10 @@ impl NodeType {
     /// Known-but-unsupported types stay recognized so workflow start rejects them explicitly
     /// rather than skipping or degrading them.
     pub fn supported(self) -> bool {
-        matches!(self, Self::Start | Self::Agent | Self::Output)
+        matches!(
+            self,
+            Self::Start | Self::Agent | Self::Condition | Self::Output
+        )
     }
 }
 

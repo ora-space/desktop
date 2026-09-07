@@ -5,6 +5,14 @@ use tracing_subscriber::prelude::*;
 
 use crate::{LogLevel, LogLevelControl};
 
+/// Initializes the clock prerequisite for integration tests that compose production adapters.
+///
+/// Subscriber installation remains test-scoped. Repeated callers retain the first configured
+/// timezone, just as production does; deterministic timestamp tests should inject their own clock.
+pub fn initialize_test_clock() {
+    let _ = crate::clock::initialize(chrono_tz::Asia::Shanghai);
+}
+
 /// Creates an isolated reload control for higher-level state and adapter tests.
 #[doc(hidden)]
 pub fn test_log_level_control(level: LogLevel) -> LogLevelControl {

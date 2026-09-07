@@ -7,13 +7,13 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import "@tiptap/extension-list";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
+import { useIsMobile } from "../../hooks/use-mobile.ts";
 
 // --- Icons ---
-import { ListIcon } from "../../icons/list-icon";
-import { ListOrderedIcon } from "../../icons/list-ordered-icon";
-import { ListTodoIcon } from "../../icons/list-todo-icon";
+import { ListIcon } from "../../icons/list-icon.tsx";
+import { ListOrderedIcon } from "../../icons/list-ordered-icon.tsx";
+import { ListTodoIcon } from "../../icons/list-todo-icon.tsx";
 
 // --- Lib ---
 import {
@@ -21,7 +21,7 @@ import {
   isNodeInSchema,
   isNodeTypeSelected,
   isValidPosition,
-} from "../../utils";
+} from "../../utils.ts";
 
 export type ListType = "bulletList" | "orderedList" | "taskList";
 

@@ -1,19 +1,19 @@
 import * as React from "react";
 
 // --- Lib ---
-import { parseShortcutKeys } from "../../utils";
+import { parseShortcutKeys } from "../../utils.ts";
 
 // --- Hooks ---
-import { useTiptapEditor } from "../../hooks/use-tiptap-editor";
+import { useTiptapEditor } from "../../hooks/use-tiptap-editor.ts";
 
 // --- Tiptap UI ---
-import type { Mark, UseMarkConfig } from "../mark-button";
-import { MARK_SHORTCUT_KEYS, useMark } from "../mark-button";
+import type { Mark, UseMarkConfig } from "./index.tsx";
+import { MARK_SHORTCUT_KEYS, useMark } from "./index.tsx";
 
 // --- UI Primitives ---
-import type { ButtonProps } from "../../primitive/button";
-import { Button } from "../../primitive/button";
-import { Badge } from "../../primitive/badge";
+import type { ButtonProps } from "../../primitive/button/index.tsx";
+import { Button } from "../../primitive/button/index.tsx";
+import { Badge } from "../../primitive/badge/index.tsx";
 
 export interface MarkButtonProps
   extends Omit<ButtonProps, "type">, UseMarkConfig {

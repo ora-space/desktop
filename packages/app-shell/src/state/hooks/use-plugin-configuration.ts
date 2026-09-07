@@ -1,12 +1,11 @@
 import type {
-  InstalledPlugin,
   PluginConfigurationDetails,
   ResetPluginConfigurationRequest,
   SavePluginConfigurationRequest,
 } from "@ora/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { pluginKeys, cachePluginConfiguration } from "../data/plugins";
 
 type ResetConfigurationInput =
   ResetPluginConfigurationRequest extends infer Request
@@ -20,7 +19,7 @@ export function usePluginConfiguration(pluginId: string) {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: queryKeys.pluginConfiguration(pluginId),
+    queryKey: pluginKeys.pluginConfiguration(pluginId),
     queryFn: () =>
       client.plugin
         .getConfiguration({ pluginId })
@@ -29,19 +28,7 @@ export function usePluginConfiguration(pluginId: string) {
   });
 
   const adopt = (configuration: PluginConfigurationDetails) => {
-    queryClient.setQueryData(
-      queryKeys.pluginConfiguration(pluginId),
-      configuration,
-    );
-    queryClient.setQueryData<InstalledPlugin[]>(
-      queryKeys.installedPlugins,
-      (plugins) =>
-        plugins?.map((plugin) =>
-          plugin.id === pluginId
-            ? { ...plugin, configuration: configuration.summary }
-            : plugin,
-        ),
-    );
+    cachePluginConfiguration(queryClient, pluginId, configuration);
   };
   const save = useMutation({
     mutationFn: (request: Omit<SavePluginConfigurationRequest, "pluginId">) =>

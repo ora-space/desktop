@@ -1,16 +1,14 @@
 import { waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import {
-  createMockClient,
-  createMockClientState,
-} from "../../test/mock-client";
+import { createTestClient } from "../../test/contracts-transport";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import { renderHookWithClient } from "../../test/hook-harness";
-import { queryKeys } from "./query-keys";
+import { pluginKeys } from "../data/plugins";
 import { useInstalledPlugins } from "./use-installed-plugins";
 
 describe("useInstalledPlugins", () => {
   it("loads the cached installed plugin list through the contracts client", async () => {
-    const state = createMockClientState();
+    const state = createPluginMemory();
     state.installedPlugins.push({
       id: "official/ora.reviewer",
       namespace: "official",
@@ -29,12 +27,12 @@ describe("useInstalledPlugins", () => {
     });
     const { result, queryClient } = renderHookWithClient(
       () => useInstalledPlugins(),
-      createMockClient(state),
+      createTestClient(pluginHandlers(state)),
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(state.installedPlugins);
-    expect(queryClient.getQueryData(queryKeys.installedPlugins)).toEqual(
+    expect(queryClient.getQueryData(pluginKeys.installedPlugins)).toEqual(
       state.installedPlugins,
     );
   });

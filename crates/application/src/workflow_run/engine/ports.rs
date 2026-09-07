@@ -5,6 +5,7 @@ use ora_domain::{
     SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
     Workspace,
 };
+use std::collections::BTreeMap;
 use std::path::Path;
 use thiserror::Error;
 
@@ -218,10 +219,15 @@ pub trait WorkflowRunEngineRepository {
 
     /// Marks one node-run succeeded, records its final assistant output, stop reason, and file
     /// changes, and removes it from `current_nodes`.
+    ///
+    /// `structured_output` carries the parsed, schema-validated object of an agent node's
+    /// structured-output contract, written to `{node}.structured_output` alongside the status
+    /// transition in the same transaction.
     fn complete_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: Option<String>,
         file_changes: Vec<FileChange>,
         now: i64,
@@ -266,6 +272,7 @@ pub trait WorkflowRunEngineRepository {
         &self,
         run_id: &WorkflowRunId,
         input: Option<String>,
+        variables: BTreeMap<String, serde_json::Value>,
         now: i64,
     ) -> Result<UpdateWorkflowRunInputResult, RepositoryError>;
 

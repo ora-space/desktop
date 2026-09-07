@@ -2,8 +2,8 @@ import { Extension } from "@tiptap/core";
 import type { Mark, Node } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
-import { handleComposerCodeBackspace } from "./composer-code-fence";
-import { inlineMarksPlainText } from "./composer-plain-text";
+import { handleComposerCodeBackspace } from "./composer-code-fence.ts";
+import { inlineMarksPlainText } from "./composer-plain-text.ts";
 
 export const MARKDOWN_REVERT_META = "composerMarkdownRevert";
 

@@ -12,9 +12,10 @@ use agent_client_protocol_schema::v1::{
     SessionConfigSelectOptions,
 };
 use ora_application::{
-    AgentDefinitionRepository, AgentSkill, BindWorkflowNodeSessionResult, Clock, ExecutionContext,
-    FileChange, NodeExecutor, RepositoryError, WorkflowGraphNode, WorkflowRunCallback,
-    WorkflowRunEngineRepository, WorkflowRunPayload,
+    AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
+    Clock, ExecutionContext, FileChange, NodeExecutor, RepositoryError, StructuredOutputError,
+    VariableTemplateError, WorkflowGraphNode, WorkflowRunCallback, WorkflowRunEngineRepository,
+    WorkflowRunPayload, extract_json_object, render_variable_template, validate_against_schema,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -114,9 +115,9 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                     let callback = callback.clone();
                     let run_id = context.run.id.clone();
                     let node_run_id = node_run_id.clone();
-                    let message = error.message();
+                    let (message, output) = error.into_failure_report();
                     let join = tokio::task::spawn_blocking(move || {
-                        callback.fail_node(&run_id, &node_run_id, message, None);
+                        callback.fail_node(&run_id, &node_run_id, message, output);
                     });
                     if let Err(source) = join.await {
                         ora_warn!("workflow node failure callback panicked: {source}");
@@ -132,6 +133,7 @@ enum AgentNodeOutcome {
     /// The node finished and reports completion or failure through the callback.
     Completed {
         output: Option<String>,
+        structured_output: Option<serde_json::Value>,
         stop_reason: StopReason,
         file_changes: Vec<FileChange>,
     },
@@ -150,6 +152,20 @@ pub enum NodeExecutionError {
     MissingAgentConfig { node_id: String },
     #[error("workflow run has invalid frozen execution metadata")]
     InvalidRunPayload,
+    #[error("agent node {node_id} prompt template cannot be rendered: {source}")]
+    PromptTemplate {
+        node_id: String,
+        #[source]
+        source: VariableTemplateError,
+    },
+    #[error("agent node {node_id} structured output failed: {source}")]
+    StructuredOutput {
+        node_id: String,
+        #[source]
+        source: StructuredOutputError,
+        /// Retained so a schema failure does not erase the Agent's auditable final response.
+        output: Option<String>,
+    },
     #[error("node {node_id} is missing the frozen materialization receipt for skill {skill_id}")]
     MissingSkillMaterialization { node_id: String, skill_id: String },
     #[error("prompt session ended without a stop reason")]
@@ -169,9 +185,24 @@ pub enum NodeExecutionError {
 }
 
 impl NodeExecutionError {
-    /// Renders the actionable message surfaced to the failed node.
-    fn message(&self) -> String {
-        self.to_string()
+    /// Splits a terminal failure into its user-facing error and any raw output worth retaining.
+    fn into_failure_report(self) -> (String, Option<String>) {
+        let message = self.to_string();
+        let output = match self {
+            Self::StructuredOutput { output, .. } => output,
+            Self::MissingAgentRef
+            | Self::WorkflowModelNotFound { .. }
+            | Self::MissingAgentConfig { .. }
+            | Self::InvalidRunPayload
+            | Self::PromptTemplate { .. }
+            | Self::MissingSkillMaterialization { .. }
+            | Self::SessionEndedWithoutStopReason
+            | Self::SessionBindingRejected
+            | Self::BaselinePersist { .. }
+            | Self::Repository(_)
+            | Self::Session(_) => None,
+        };
+        (message, output)
     }
 }
 
@@ -390,6 +421,18 @@ async fn drive_agent_node(
             _ => None,
         };
 
+        // Render {{#node.variable.path#}} placeholders in the node's prompt against the committed
+        // variable pool, so an unresolvable reference fails the node before it starts.
+        let mut rendered_node = node.clone();
+        if let Some(agent_config) = rendered_node.agent_config.as_mut() {
+            agent_config.prompt =
+                render_variable_template(&config.prompt, &run_payload.variable_pool)
+                    .map_err(|source| NodeExecutionError::PromptTemplate {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+        }
+
         // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
         let node_runs = repository.list_node_runs(&context.run.id)?;
         let workspace_root = agent_runtime.workspace_cwd(&context.workspace.id)?;
@@ -400,7 +443,7 @@ async fn drive_agent_node(
             &workspace_root,
         )?;
         let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
-            node,
+            node: &rendered_node,
             worktree_root: &workspace_root,
             role_content: role_content.as_deref(),
             graph_json: &context.graph_json,
@@ -491,11 +534,16 @@ async fn drive_agent_node(
             capture_worktree_snapshot(&workspace_root).as_ref(),
         );
 
+        // Parse the optional structured value only after the final response is settled. The raw
+        // response remains available to both successful completion and schema-failure reporting.
+        let (output, structured_output) = apply_output_contract(
+            config.output_contract.as_ref(),
+            accumulator.into_output(),
+            &node.id,
+        )?;
         Ok(AgentNodeOutcome::Completed {
-            // Apply the node's output policy at the single place the completed output is produced,
-            // so both `complete_node` and the refusal/unknown failure branches reuse the same
-            // value: a `None` policy withholds the assistant deliverable on success and failure.
-            output: config.output_policy.apply(accumulator.into_output()),
+            output,
+            structured_output,
             stop_reason,
             file_changes,
         })
@@ -543,6 +591,7 @@ fn report_outcome(
 ) {
     let AgentNodeOutcome::Completed {
         output,
+        structured_output,
         stop_reason,
         file_changes,
     } = outcome
@@ -555,6 +604,7 @@ fn report_outcome(
             run_id,
             node_run_id,
             output,
+            structured_output,
             Some("end_turn".to_string()),
             file_changes,
         ),
@@ -562,6 +612,7 @@ fn report_outcome(
             run_id,
             node_run_id,
             output,
+            structured_output,
             Some("max_tokens".to_string()),
             file_changes,
         ),
@@ -569,6 +620,7 @@ fn report_outcome(
             run_id,
             node_run_id,
             output,
+            structured_output,
             Some("max_turn_requests".to_string()),
             file_changes,
         ),
@@ -590,6 +642,51 @@ fn report_outcome(
             "agent stopped for a reason this Ora version does not recognize".to_string(),
             output,
         ),
+    }
+}
+
+/// Resolves a completed node's final response into the output variables to commit.
+///
+/// A structured contract parses the response as a JSON object and validates it against the schema.
+/// The raw result remains the node's stable `output`; absent and legacy text contracts perform no
+/// additional parsing.
+pub(crate) fn apply_output_contract(
+    contract: Option<&AgentOutputContract>,
+    final_text: Option<String>,
+    node_id: &str,
+) -> Result<(Option<String>, Option<serde_json::Value>), NodeExecutionError> {
+    match contract {
+        None => Ok((final_text, None)),
+        Some(AgentOutputContract::None) => Ok((final_text, None)),
+        Some(AgentOutputContract::Text) => Ok((final_text, None)),
+        Some(AgentOutputContract::Structured {
+            schema,
+            text_exposure: _,
+        }) => {
+            let Some(text) = final_text else {
+                return Err(NodeExecutionError::StructuredOutput {
+                    node_id: node_id.to_string(),
+                    source: StructuredOutputError::NotJsonObject {
+                        reason: "the agent produced no final response".to_string(),
+                    },
+                    output: None,
+                });
+            };
+            let structured = match extract_json_object(&text).and_then(|value| {
+                validate_against_schema(&value, schema)?;
+                Ok(value)
+            }) {
+                Ok(structured) => structured,
+                Err(source) => {
+                    return Err(NodeExecutionError::StructuredOutput {
+                        node_id: node_id.to_string(),
+                        source,
+                        output: Some(text),
+                    });
+                }
+            };
+            Ok((Some(text), Some(structured)))
+        }
     }
 }
 
@@ -787,6 +884,7 @@ mod tests {
         ContentChunk, MessageId, SessionConfigId, SessionConfigSelect, SessionConfigValueId,
         TextContent, ToolCall, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
     };
+    use ora_application::StructuredTextExposure;
     use ora_contracts::WorkflowRunLocale;
     use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
@@ -1096,6 +1194,80 @@ mod tests {
             parse_workflow_run_payload(None),
             Err(NodeExecutionError::InvalidRunPayload)
         ));
+    }
+
+    /// A structured contract with `includeFinalText` returns the raw text and the parsed object.
+    #[test]
+    fn apply_output_contract_parses_and_keeps_text_when_requested() {
+        let contract = AgentOutputContract::Structured {
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "approved": { "type": "boolean" } },
+                "required": ["approved"]
+            }),
+            text_exposure: StructuredTextExposure::IncludeFinalText,
+        };
+        let (output, structured) = apply_output_contract(
+            Some(&contract),
+            Some(r#"{"approved": true}"#.to_string()),
+            "review",
+        )
+        .unwrap();
+        assert_eq!(output, Some(r#"{"approved": true}"#.to_string()));
+        assert_eq!(structured, Some(serde_json::json!({ "approved": true })));
+    }
+
+    /// A structured-only contract still keeps the node's stable raw `output`.
+    #[test]
+    fn apply_output_contract_keeps_raw_output_when_structured_only() {
+        let contract = AgentOutputContract::Structured {
+            schema: serde_json::json!({ "type": "object" }),
+            text_exposure: StructuredTextExposure::StructuredOnly,
+        };
+        let (output, structured) = apply_output_contract(
+            Some(&contract),
+            Some(r#"{"approved": true}"#.to_string()),
+            "review",
+        )
+        .unwrap();
+        assert_eq!(output, Some(r#"{"approved": true}"#.to_string()));
+        assert_eq!(structured, Some(serde_json::json!({ "approved": true })));
+    }
+
+    /// A structured response that is not a JSON object or violates the schema fails the node.
+    #[test]
+    fn apply_output_contract_fails_on_invalid_or_nonconforming_json() {
+        let contract = AgentOutputContract::Structured {
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "approved": { "type": "boolean" } },
+                "required": ["approved"]
+            }),
+            text_exposure: StructuredTextExposure::StructuredOnly,
+        };
+        let invalid_json =
+            apply_output_contract(Some(&contract), Some("no json here".to_string()), "review")
+                .unwrap_err();
+        let (message, output) = invalid_json.into_failure_report();
+        assert!(message.contains("structured output failed"));
+        assert_eq!(output, Some("no json here".to_string()));
+        assert!(matches!(
+            apply_output_contract(
+                Some(&contract),
+                Some(r#"{"approved": "yes"}"#.to_string()),
+                "review"
+            ),
+            Err(NodeExecutionError::StructuredOutput { .. })
+        ));
+    }
+
+    /// A missing structured contract still preserves the node's raw text output.
+    #[test]
+    fn apply_output_contract_keeps_text_when_absent() {
+        assert_eq!(
+            apply_output_contract(None, Some("text".into()), "a").unwrap(),
+            (Some("text".to_string()), None)
+        );
     }
 
     /// Node execution uses the frozen receipt for invocation and placement, never the live catalog.

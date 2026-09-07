@@ -19,7 +19,8 @@ import { useSkills } from "../../state/hooks/use-skills";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
-import { queryKeys } from "../../state/hooks/query-keys";
+import { sessionKeys } from "../../state/data/sessions";
+import { invalidateWorkspaceDiffs } from "../../state/data/diff";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
@@ -32,6 +33,7 @@ import {
   pendingModelKey,
   usePendingAgentStore,
 } from "../../state/stores/pending-agent-store";
+import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { conversationKeyFor } from "../../state/stores/conversation-key";
 import { useComposerPluginSelectionStore } from "../../state/stores/composer-plugin-selection-store";
@@ -307,7 +309,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               usePendingAgentStore.getState().clearPendingSwitch(session.id);
               usePendingAgentStore.getState().clearPendingModel(modelKey);
               queryClient.setQueryData<Session[]>(
-                queryKeys.sessions,
+                sessionKeys.sessions,
                 (current) => upsertById(current, response.session),
               );
               // Recorded against the session being moved, so
@@ -330,9 +332,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         // lifecycle snapshot after every finite prompt without polling idle sessions.
         await Promise.all([
           sessionsQuery.refetch(),
-          queryClient.invalidateQueries({
-            queryKey: queryKeys.workspaceDiffs(session.workspaceId),
-          }),
+          invalidateWorkspaceDiffs(queryClient, session.workspaceId),
         ]);
       }
       return;
@@ -374,10 +374,20 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         throw new Error("No workspace is available for this chat");
       }
       const modelKey = pendingModelKey(selection, targetAgentCli);
+      // Falls back to the preference the picker is already labelling this
+      // surface with, so a chat started without opening the picker begins on
+      // the model shown rather than on the agent's own default. A remembered
+      // model the agent no longer offers is not filtered here: the backend
+      // applies an intent only when the new session reports that exact value,
+      // which lands on the same default the label falls back to.
+      const model =
+        usePendingAgentStore.getState().models[modelKey] ??
+        useAgentModelPreferenceStore.getState().models[targetAgentCli] ??
+        null;
       started = await client.session.start({
         workspaceId: selectedWorkspaceId,
         agentRef: targetAgentCli,
-        model: usePendingAgentStore.getState().models[modelKey] ?? null,
+        model,
       });
       usePendingAgentStore.getState().clearPendingModel(modelKey);
     } catch (error) {
@@ -434,7 +444,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     const projectId = project.id;
     const taskId = task?.id ?? null;
     try {
-      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
+      queryClient.setQueryData<Session[]>(sessionKeys.sessions, (current) =>
         upsertById(current, started.session),
       );
       chatStore.getState().setConfigOptions(sessionId, started.configOptions);
@@ -464,8 +474,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         images,
         prepare: async () => {
           try {
-            queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
-              upsertById(current, started.session),
+            queryClient.setQueryData<Session[]>(
+              sessionKeys.sessions,
+              (current) => upsertById(current, started.session),
             );
           } finally {
             // Even a cache update failure must not leave a muted row pointing at
@@ -501,9 +512,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       endDraftSend();
       await Promise.all([
         sessionsQuery.refetch(),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.workspaceDiffs(workspaceId),
-        }),
+        invalidateWorkspaceDiffs(queryClient, workspaceId),
       ]);
     }
   };

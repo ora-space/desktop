@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
-import { queryKeys } from "./query-keys";
+import { invalidatePluginQueries } from "../data/plugins";
 
 /**
  * Installs one marketplace plugin and refreshes the installed and available
@@ -14,11 +14,7 @@ export function useInstallPlugin(pluginId: string) {
   const activity = usePluginOperationStore(
     (state) => state.activities[pluginId],
   );
-  const invalidate = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.installedPlugins }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.availablePlugins }),
-    ]);
+  const invalidate = () => invalidatePluginQueries(queryClient);
 
   const mutation = useMutation({
     mutationFn: ({ signal }: { signal?: AbortSignal } = {}) =>

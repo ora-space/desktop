@@ -1,0 +1,35 @@
+{
+  "owner": "Settings and plugin presentation",
+  "modules": {
+    "./atoms-settings": {
+      "exports": ["SkillImportDialog"],
+      "purpose": "Surface downloads reuse the Skill import review workflow, not the whole settings screen."
+    },
+    "./plugin-catalog": {
+      "exports": ["PLUGIN_CATALOG", "PluginEntry", "findPlugin"],
+      "purpose": "Composer plugin chips consume the existing synthetic display catalog; this is not authoritative installed-plugin data."
+    },
+    "./plugin-logo": {
+      "exports": ["PluginLogoMark"],
+      "purpose": "Agent pickers and surface launchers share plugin logo presentation."
+    },
+    "./plugin-operation-event-bridge": {
+      "exports": ["PluginOperationEventBridge"],
+      "purpose": "The shell mounts one plugin operation notification bridge."
+    },
+    "./settings-dialog": {
+      "exports": ["SettingsDialog"],
+      "purpose": "The shell opens settings without depending on individual settings panes."
+    },
+    "./translations": {
+      "exports": [
+        "pluginTranslations",
+        "roleTranslations",
+        "settingsTranslations",
+        "skillTranslations"
+      ],
+      "purpose": "The single i18n composition loads these separately owned pure settings bundles.",
+      "kind": "resources"
+    }
+  }
+}

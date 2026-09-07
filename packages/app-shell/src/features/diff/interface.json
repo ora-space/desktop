@@ -1,0 +1,27 @@
+{
+  "owner": "Changes navigation and diff presentation",
+  "modules": {
+    "./task-changes-navigation": {
+      "exports": ["TaskChangesNavigationProvider"],
+      "purpose": "Review hosts and navigation integration tests inject the shared navigation interface."
+    },
+    "./task-changes-navigation-context": {
+      "exports": [
+        "FileNavigationLocation",
+        "TaskChangesNavigation",
+        "fileNavigationLocation",
+        "useTaskChangesNavigation"
+      ],
+      "purpose": "File references and activity cards request navigation without knowing the review implementation."
+    },
+    "./task-diff-view": {
+      "exports": ["TaskDiffFileRequest", "TaskDiffView", "TaskDiffViewType"],
+      "purpose": "The review host composes the diff viewer through explicit request and view types."
+    },
+    "./translations": {
+      "exports": ["diffTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

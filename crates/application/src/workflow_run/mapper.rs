@@ -20,7 +20,6 @@ pub(crate) fn map_run(run: WorkflowRun) -> ContractRun {
         input: run.input,
         output: run.output,
         error: run.error,
-        payload: run.payload,
         started_at: run.started_at,
         finished_at: run.finished_at,
         created_at: run.audit_fields.created_at,

@@ -5,7 +5,7 @@ import {
   resolveTheaterActInstruction,
 } from "./agent-config-display";
 import type { WorkflowNodeData } from "@ora/workflow-runtime";
-import type { AgentEntry } from "../chat/agent-catalog";
+import type { AgentEntry } from "../../state/hooks/use-agent-catalog";
 import { AGENT_REF } from "../../test/agent-identity";
 
 /** The installed agent packages these summaries are rendered against. */

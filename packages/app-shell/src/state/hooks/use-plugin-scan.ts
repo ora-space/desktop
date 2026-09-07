@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
-import { queryKeys } from "./query-keys";
+import { invalidateInstalledPlugins } from "../data/plugins";
 
 /** Rescans installed packages and refreshes the installed-plugin query. */
 export function usePluginScan() {
@@ -8,7 +8,6 @@ export function usePluginScan() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => client.plugin.scan({}),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.installedPlugins }),
+    onSettled: () => invalidateInstalledPlugins(queryClient),
   });
 }
