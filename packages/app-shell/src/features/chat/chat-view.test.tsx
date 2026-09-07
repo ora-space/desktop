@@ -2209,6 +2209,35 @@ describe("ChatView", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("copies a selected transcript through the conversation context menu", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText, readText: vi.fn() },
+    });
+    renderWithI18n(
+      <ChatView
+        turns={[turn("t1", "hello from the user", 1)]}
+        userName="Eric"
+        isResponding={false}
+        error={null}
+        onSend={() => {}}
+      />,
+    );
+
+    const thread = screen.getByTestId("message-list");
+    fireEvent.contextMenu(thread);
+    await user.click(await screen.findByRole("menuitem", { name: "全选" }));
+    fireEvent.contextMenu(thread);
+    await user.click(await screen.findByRole("menuitem", { name: "复制" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(String(writeText.mock.calls[0]?.[0] ?? "")).toMatch(
+      /hello from the user/,
+    );
+  });
+
   it("keeps the disabled hint shut when the pointer never left the enabled composer", async () => {
     const user = userEvent.setup();
     const view = renderWithI18n(

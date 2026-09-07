@@ -62,7 +62,13 @@ describe("ComposerFileChipView navigation", () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
     render(
-      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+      <AppI18nProvider>
+        <ComposerEditor
+          ref={editorRef}
+          ariaLabel="Message"
+          onSubmit={vi.fn()}
+        />
+      </AppI18nProvider>,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
 

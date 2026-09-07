@@ -62,6 +62,7 @@ function ImageBlock({
     : t("chat.content.generatedImage");
   return (
     <figure
+      data-copyable-image
       className={`overflow-hidden rounded-md border border-border bg-muted/20 ${appearance === "tool" ? "max-w-xl" : "max-w-2xl"}`}
     >
       <div className="group relative">

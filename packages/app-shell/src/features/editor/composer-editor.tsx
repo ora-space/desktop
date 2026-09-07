@@ -4,6 +4,7 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
@@ -13,6 +14,7 @@ import {
   markdownToComposerContent,
   resolveComposerEnter,
   resolveComposerLinkHref,
+  composerPasteInsert,
   type ComposerFileAttrs,
   type PromptTokenKind,
 } from "@ora/editor/composer";
@@ -30,6 +32,12 @@ import {
   type SlashQueryMode,
 } from "./composer-query";
 import { AppComposerFile } from "./composer-file-extension";
+import {
+  readClipboardFiles,
+  readClipboardText,
+  TextEditContextMenu,
+  writeClipboardText,
+} from "./text-edit-context-menu";
 import "./composer-editor.css";
 
 export interface ComposerEditorHandle {
@@ -154,6 +162,8 @@ export const ComposerEditor = forwardRef<
   slashQueryModeRef.current = slashQueryMode;
   const lastQueryRef = useRef<ComposerQueryState>(EMPTY_COMPOSER_QUERY);
   const suppressNotifyRef = useRef(false);
+  const parkedSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  const [menuHasSelection, setMenuHasSelection] = useState(false);
   const platform = useOptionalPlatform();
   const platformRef = useRef(platform);
   platformRef.current = platform;
@@ -393,55 +403,114 @@ export const ComposerEditor = forwardRef<
     [editor],
   );
 
+  /** Menu focus collapses the caret; restore the range parked on right-click. */
+  const restoreParkedSelection = () => {
+    const parked = parkedSelectionRef.current;
+    if (parked === null) {
+      editor.commands.focus();
+      return;
+    }
+    editor.chain().focus().setTextSelection(parked).run();
+  };
+
+  const copyParkedSelection = async () => {
+    restoreParkedSelection();
+    const { from, to, empty } = editor.state.selection;
+    if (empty) {
+      return;
+    }
+    await writeClipboardText(editor.state.doc.textBetween(from, to, "\n"));
+  };
+
   return (
-    <div
-      data-slot="composer-editor"
-      className={cn(
-        "composer-editor-shell",
-        disabled && "pointer-events-none opacity-50",
-        className,
-      )}
-      onPointerDownCapture={(event) => {
-        const adapter = platformRef.current;
-        if (adapter === null) {
-          return;
-        }
-        const safe = resolveComposerLinkHref(event);
-        if (safe === null) {
-          return;
-        }
-        // Consume the press before ProseMirror places a caret or Tiptap waits
-        // for mouseup; Desktop `openExternalUrl` is fire-and-forget from here.
-        event.preventDefault();
-        event.stopPropagation();
-        void adapter.openExternalUrl(safe);
+    <TextEditContextMenu
+      editable={!disabled}
+      hasSelection={menuHasSelection}
+      trigger={
+        <div
+          data-slot="composer-editor"
+          className={cn(
+            "composer-editor-shell",
+            disabled && "pointer-events-none opacity-50",
+            className,
+          )}
+          onContextMenu={() => {
+            const { from, to } = editor.state.selection;
+            parkedSelectionRef.current = { from, to };
+            setMenuHasSelection(from !== to);
+          }}
+          onPointerDownCapture={(event) => {
+            const adapter = platformRef.current;
+            if (adapter === null) {
+              return;
+            }
+            const safe = resolveComposerLinkHref(event);
+            if (safe === null) {
+              return;
+            }
+            // Consume the press before ProseMirror places a caret or Tiptap waits
+            // for mouseup; Desktop `openExternalUrl` is fire-and-forget from here.
+            event.preventDefault();
+            event.stopPropagation();
+            void adapter.openExternalUrl(safe);
+          }}
+          onPasteCapture={(event) => {
+            const files = [...(event.clipboardData?.files ?? [])];
+            if (files.length === 0 || onPasteFilesRef.current === undefined) {
+              return;
+            }
+            const text =
+              typeof event.clipboardData?.getData === "function"
+                ? event.clipboardData.getData("text/plain")
+                : "";
+            // Always own the paste when files are present so the image path runs;
+            // still insert accompanying plain text so markdown+screenshot copies
+            // do not lose the typed payload.
+            event.preventDefault();
+            event.stopPropagation();
+            onPasteFilesRef.current(files);
+            if (text.length > 0) {
+              editor
+                .chain()
+                .focus()
+                .insertContent(markdownToComposerContent(text).content ?? [])
+                .run();
+            }
+          }}
+        />
+      }
+      onCut={() => {
+        void copyParkedSelection().then(() => {
+          editor.commands.deleteSelection();
+        });
       }}
-      onPasteCapture={(event) => {
-        const files = [...(event.clipboardData?.files ?? [])];
-        if (files.length === 0 || onPasteFilesRef.current === undefined) {
-          return;
-        }
-        const text =
-          typeof event.clipboardData?.getData === "function"
-            ? event.clipboardData.getData("text/plain")
-            : "";
-        // Always own the paste when files are present so the image path runs;
-        // still insert accompanying plain text so markdown+screenshot copies
-        // do not lose the typed payload.
-        event.preventDefault();
-        event.stopPropagation();
-        onPasteFilesRef.current(files);
-        if (text.length > 0) {
-          editor
-            .chain()
-            .focus()
-            .insertContent(markdownToComposerContent(text).content ?? [])
-            .run();
-        }
+      onCopy={() => {
+        void copyParkedSelection();
+      }}
+      onPaste={() => {
+        void (async () => {
+          const files = await readClipboardFiles();
+          if (files.length > 0) {
+            onPasteFilesRef.current?.(files);
+          }
+          const text = await readClipboardText();
+          if (text.length === 0) {
+            return;
+          }
+          restoreParkedSelection();
+          const insert = composerPasteInsert(text);
+          if (typeof insert === "string" && insert.length === 0) {
+            return;
+          }
+          editor.chain().focus().insertContent(insert).run();
+        })();
+      }}
+      onSelectAll={() => {
+        editor.chain().focus().selectAll().run();
       }}
     >
       <EditorContent editor={editor} />
-    </div>
+    </TextEditContextMenu>
   );
 });
 

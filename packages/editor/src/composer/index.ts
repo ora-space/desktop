@@ -26,6 +26,7 @@ export {
 export {
   ComposerMarkdownPaste,
   composerFileAttrsFromPlainText,
+  composerPasteInsert,
   looksLikeComposerMarkdown,
   markdownToComposerContent,
 } from "./composer-markdown.ts";

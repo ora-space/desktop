@@ -21,6 +21,7 @@ import {
   ComposerEditor,
   type ComposerEditorHandle,
 } from "../editor/composer-editor";
+import { TextEditContextMenu } from "../editor/text-edit-context-menu";
 import type { PromptTokenKind } from "@ora/editor/composer";
 import {
   EMPTY_COMPOSER_QUERY,
@@ -923,13 +924,24 @@ export function Composer({
       )}
       <div className="flex flex-col p-2">
         {attachments.length > 0 && (
-          <div
-            className="flex gap-2 overflow-x-auto px-2 pb-2 pt-1"
-            aria-label={t("chat.attachments.selected")}
+          <TextEditContextMenu
+            editable={false}
+            hasSelection={false}
+            trigger={
+              <div
+                className="flex gap-2 overflow-x-auto px-2 pb-2 pt-1"
+                aria-label={t("chat.attachments.selected")}
+              />
+            }
+            onCut={() => undefined}
+            onCopy={() => undefined}
+            onPaste={() => undefined}
+            onSelectAll={() => undefined}
           >
             {attachments.map((attachment) => (
               <figure
                 key={attachment.id}
+                data-copyable-image
                 className="group/attachment relative size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted"
               >
                 <button
@@ -967,7 +979,7 @@ export function Composer({
                 </button>
               </figure>
             ))}
-          </div>
+          </TextEditContextMenu>
         )}
         {attachmentError && (
           <p role="alert" className="px-2 pb-1 text-[11px] text-destructive">

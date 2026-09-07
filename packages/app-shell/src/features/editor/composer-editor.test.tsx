@@ -1,4 +1,4 @@
-import { createRef } from "react";
+import { createRef, type ReactElement } from "react";
 import {
   act,
   fireEvent,
@@ -14,6 +14,7 @@ import {
   documentPlainText,
 } from "@ora/editor/composer";
 import { PlatformProvider } from "@ora/app-shell/platform";
+import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import { ComposerEditor, type ComposerEditorHandle } from "./composer-editor";
 import { createStubPlatform } from "../../test/stub-platform";
@@ -22,11 +23,16 @@ function composerText(element: HTMLElement): string {
   return element.dataset.composerText ?? "";
 }
 
+/** ComposerEditor now owns translated edit-menu copy. */
+function renderWithI18n(ui: ReactElement) {
+  return render(<AppI18nProvider>{ui}</AppI18nProvider>);
+}
+
 describe("ComposerEditor", () => {
   it("sends on Enter and inserts a newline on Shift+Enter", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(
+    renderWithI18n(
       <ComposerEditor
         ariaLabel="Message"
         placeholder="Type"
@@ -51,7 +57,7 @@ describe("ComposerEditor", () => {
 
   it("moves the caret forward across consecutive Shift+Enter newlines", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -66,7 +72,7 @@ describe("ComposerEditor", () => {
 
   it("preserves line breaks when plain multiline text is pasted", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -81,7 +87,7 @@ describe("ComposerEditor", () => {
 
   it("turns a markdown heading prefix into a heading node", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -100,7 +106,7 @@ describe("ComposerEditor", () => {
 
   it("turns markdown and pasted URLs into exclusive underlined links", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -125,7 +131,7 @@ describe("ComposerEditor", () => {
 
   it("inserts file chips that serialize to backtick path ranges", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -151,7 +157,7 @@ describe("ComposerEditor", () => {
   it("paints file chips inside a spanning text selection", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -173,7 +179,7 @@ describe("ComposerEditor", () => {
 
   it("pins a skill mention on plain click instead of giving no feedback", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -225,7 +231,7 @@ describe("ComposerEditor", () => {
   it("steps the caret across a file chip instead of node-selecting it", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -254,7 +260,7 @@ describe("ComposerEditor", () => {
   it("removes a file chip through its hover remove control", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -284,7 +290,7 @@ describe("ComposerEditor", () => {
 
   it("serializes quoted file snippets as a path:range reference, not the body", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -310,7 +316,7 @@ describe("ComposerEditor", () => {
 
   it("serializes diff-gutter quotes as unified diff fences for the agent", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -341,7 +347,7 @@ describe("ComposerEditor", () => {
 
   it("replaceDocument restores chips from TipTap JSON without markdown round-trip", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -400,7 +406,7 @@ describe("ComposerEditor", () => {
 
   it("appendText keeps slash-command chips instead of round-tripping through Markdown", async () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
 
@@ -544,7 +550,7 @@ describe("ComposerEditor", () => {
   });
 
   it("restores documentPlainText as formatted nodes instead of leftover markers", () => {
-    render(
+    renderWithI18n(
       <ComposerEditor
         ariaLabel="Message"
         initialText={"# Title\n**bold**\n- item"}
@@ -561,7 +567,7 @@ describe("ComposerEditor", () => {
   });
 
   it("keeps HTML tags as text when restoring a draft", () => {
-    render(
+    renderWithI18n(
       <ComposerEditor
         ariaLabel="Message"
         initialText="<script>alert(1)</script>"
@@ -576,7 +582,7 @@ describe("ComposerEditor", () => {
 
   it("replaceText parses composer markdown the same way as initialText", () => {
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -592,7 +598,7 @@ describe("ComposerEditor", () => {
 
   it("pastes adjacent bold and italic that share a middle ***", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -605,7 +611,7 @@ describe("ComposerEditor", () => {
   it("converts leftover marks after the opener is typed in front and a space follows", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -686,7 +692,7 @@ describe("ComposerEditor", () => {
   it("keeps typing at the start of converted marks inside the mark", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -705,7 +711,7 @@ describe("ComposerEditor", () => {
   it("turns an existing line into a heading when the prefix is typed at the start", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -722,7 +728,7 @@ describe("ComposerEditor", () => {
 
   it("turns a quote prefix into a blockquote", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -735,7 +741,7 @@ describe("ComposerEditor", () => {
   it("leaves a quote on Enter and newlines inside it on Shift+Enter", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -767,7 +773,7 @@ describe("ComposerEditor", () => {
   it("lifts an empty quote on Shift+Enter instead of inserting another paragraph inside it", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -782,7 +788,7 @@ describe("ComposerEditor", () => {
   it("leaves a list on Enter and adds an item on Shift+Enter", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -804,7 +810,7 @@ describe("ComposerEditor", () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
     const onSubmit = vi.fn();
-    render(
+    renderWithI18n(
       <ComposerEditor
         ref={editorRef}
         ariaLabel="Message"
@@ -859,7 +865,7 @@ describe("ComposerEditor", () => {
   it("leaves a heading on Enter without sending", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -872,7 +878,7 @@ describe("ComposerEditor", () => {
 
   it("does not submit while an IME composition is active", async () => {
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
     textbox.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -888,7 +894,7 @@ describe("ComposerEditor", () => {
   it("moves existing text down when Shift+Enter is pressed at the start of a line", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -906,7 +912,7 @@ describe("ComposerEditor", () => {
   it("turns three backticks into a fenced code block instead of sending", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -921,7 +927,7 @@ describe("ComposerEditor", () => {
   it("opens a fence on Enter after three backticks instead of sending", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -934,7 +940,7 @@ describe("ComposerEditor", () => {
   it("keeps ```C++ as a language fence, newlines on Shift+Enter, and leaves on Enter", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -959,7 +965,7 @@ describe("ComposerEditor", () => {
 
   it("opens a language fence when a space follows the info string", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -971,7 +977,7 @@ describe("ComposerEditor", () => {
 
   it("supports CommonMark basics: headings 1-6, lists, emphasis, and strike", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1001,7 +1007,7 @@ describe("ComposerEditor", () => {
 
   it("turns task-list, rule, and Ctrl+B markdown into the matching nodes", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1036,7 +1042,7 @@ describe("ComposerEditor", () => {
 
   it("pastes a Markdown document into headings, lists, marks, and fences", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1078,7 +1084,7 @@ describe("ComposerEditor", () => {
 
   it("pastes nested quotes, lists inside quotes, and titled links", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1106,7 +1112,7 @@ describe("ComposerEditor", () => {
 
   it("covers the remaining typed Markdown surface without leftover delimiters", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1179,7 +1185,7 @@ describe("ComposerEditor", () => {
 
   it("applies bold and italic next to CJK without requiring an ASCII space", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1209,7 +1215,7 @@ describe("ComposerEditor", () => {
 
   it("underlines with Ctrl+U", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1223,7 +1229,7 @@ describe("ComposerEditor", () => {
 
   it("turns ==highlight== into a highlighter mark and hides the delimiters", async () => {
     const user = userEvent.setup();
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1247,7 +1253,7 @@ describe("ComposerEditor", () => {
   it("opens underlined links on click", async () => {
     const user = userEvent.setup();
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
-    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
     const textbox = screen.getByRole("textbox", { name: "Message" });
 
     await user.click(textbox);
@@ -1266,7 +1272,7 @@ describe("ComposerEditor", () => {
     const user = userEvent.setup();
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     const openExternalUrl = vi.fn().mockResolvedValue(undefined);
-    render(
+    renderWithI18n(
       <PlatformProvider adapter={{ ...createStubPlatform(), openExternalUrl }}>
         <ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />
       </PlatformProvider>,
@@ -1290,7 +1296,7 @@ describe("ComposerEditor", () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
     const onQueryChange = vi.fn();
-    render(
+    renderWithI18n(
       <ComposerEditor
         ref={editorRef}
         ariaLabel="Message"
@@ -1319,7 +1325,7 @@ describe("ComposerEditor", () => {
   it("inserts plain text at a preserved selection in the middle of existing text", async () => {
     const user = userEvent.setup();
     const editorRef = createRef<ComposerEditorHandle>();
-    render(
+    renderWithI18n(
       <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
     );
     const textbox = screen.getByRole("textbox", { name: "Message" });
@@ -1332,5 +1338,49 @@ describe("ComposerEditor", () => {
     });
 
     expect(composerText(textbox)).toBe("hello /world");
+  });
+
+  it("cuts the parked selection through the context menu", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText, readText: vi.fn() },
+    });
+    const editorRef = createRef<ComposerEditorHandle>();
+    renderWithI18n(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("hello");
+    fireEvent.contextMenu(textbox);
+    await user.click(await screen.findByRole("menuitem", { name: "全选" }));
+    fireEvent.contextMenu(textbox);
+    await user.click(await screen.findByRole("menuitem", { name: "剪切" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("hello"));
+    await waitFor(() => expect(composerText(textbox)).toBe(""));
+  });
+
+  it("pastes clipboard text at the parked caret without opening a new line", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(),
+        readText: vi.fn().mockResolvedValue("world\n"),
+      },
+    });
+    renderWithI18n(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("hello ");
+    fireEvent.contextMenu(textbox);
+    await user.click(await screen.findByRole("menuitem", { name: "粘贴" }));
+
+    await waitFor(() => expect(composerText(textbox)).toBe("hello world"));
   });
 });

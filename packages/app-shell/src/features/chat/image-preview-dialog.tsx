@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@ora/ui";
 import { useTranslation } from "react-i18next";
+import { TextEditContextMenu } from "../editor/text-edit-context-menu";
 
 interface ImagePreviewDialogProps {
   open: boolean;
@@ -202,20 +203,31 @@ export function ImagePreviewDialog({
         <DialogDescription className="sr-only">
           {t("chat.imagePreview.description")}
         </DialogDescription>
-        <div
-          ref={bindCanvas}
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={stopDragging}
-          onPointerCancel={stopDragging}
-          onLostPointerCapture={stopDragging}
-          aria-label={t("chat.imagePreview.canvas", {
-            name,
-            zoom: zoomPercent,
-          })}
-          className={`relative min-h-0 touch-none overflow-hidden bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${dragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
+        <TextEditContextMenu
+          editable={false}
+          hasSelection={false}
+          trigger={
+            <div
+              ref={bindCanvas}
+              tabIndex={0}
+              data-copyable-image
+              onKeyDown={handleKeyDown}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={stopDragging}
+              onPointerCancel={stopDragging}
+              onLostPointerCapture={stopDragging}
+              aria-label={t("chat.imagePreview.canvas", {
+                name,
+                zoom: zoomPercent,
+              })}
+              className={`relative min-h-0 touch-none overflow-hidden bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${dragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
+            />
+          }
+          onCut={() => undefined}
+          onCopy={() => undefined}
+          onPaste={() => undefined}
+          onSelectAll={() => undefined}
         >
           <img
             data-slot="preview-image"
@@ -227,7 +239,7 @@ export function ImagePreviewDialog({
               transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             }}
           />
-        </div>
+        </TextEditContextMenu>
       </DialogContent>
     </Dialog>
   );

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   looksLikeComposerMarkdown,
   markdownToComposerContent,
+  composerPasteInsert,
 } from "../src/composer/composer-markdown.ts";
 
 test("looksLikeComposerMarkdown ignores ordinary sentences", () => {
@@ -10,6 +11,16 @@ test("looksLikeComposerMarkdown ignores ordinary sentences", () => {
   assert.equal(looksLikeComposerMarkdown("a * b = c"), false);
   assert.equal(looksLikeComposerMarkdown("2 * 3 * 4"), false);
   assert.equal(looksLikeComposerMarkdown(""), false);
+});
+
+test("composerPasteInsert keeps a single line inline, even with a trailing break", () => {
+  assert.equal(composerPasteInsert("hello"), "hello");
+  assert.equal(composerPasteInsert("hello\n"), "hello");
+  assert.equal(composerPasteInsert("hello\r\n"), "hello");
+  assert.deepEqual(composerPasteInsert("first\nsecond\n"), [
+    { type: "paragraph", content: [{ type: "text", text: "first" }] },
+    { type: "paragraph", content: [{ type: "text", text: "second" }] },
+  ]);
 });
 
 test("markdownToComposerContent restores workflow variable tokens", () => {

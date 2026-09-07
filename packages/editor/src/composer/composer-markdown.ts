@@ -58,6 +58,25 @@ export function markdownToComposerContent(text: string): JSONContent {
 }
 
 /**
+ * Clipboard text as an insertable fragment. A single line — including the
+ * trailing newline Windows and line-copy often append — stays inline so Paste
+ * cannot open a new paragraph the way inserting a block node would.
+ */
+export function composerPasteInsert(text: string): string | JSONContent[] {
+  const normalized = text.replace(/\r\n?/g, "\n");
+  if (looksLikeComposerMarkdown(normalized)) {
+    return markdownToComposerContent(normalized).content ?? [];
+  }
+  const withoutTrailingBreak = normalized.endsWith("\n")
+    ? normalized.slice(0, -1)
+    : normalized;
+  if (!withoutTrailingBreak.includes("\n")) {
+    return withoutTrailingBreak;
+  }
+  return plainTextToComposerContent(withoutTrailingBreak).content ?? [];
+}
+
+/**
  * Pastes Markdown as composer nodes when the clipboard is plain text.
  * HTML copies (browser/editor) keep ProseMirror's default path.
  */

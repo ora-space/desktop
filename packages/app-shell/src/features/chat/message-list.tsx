@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  selectElementContents,
+  TextEditContextMenu,
+  writeClipboardText,
+} from "../editor/text-edit-context-menu";
 import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { useTranslation } from "react-i18next";
 import { AnchorHighlight } from "./anchor-highlight";
@@ -50,6 +55,8 @@ export function MessageList({
     taskId === undefined ? workspaceId : undefined,
   );
   const cwd = workspaceQuery.data?.rootPath ?? workspaceCwdQuery.data ?? null;
+  const parkedSelectionTextRef = useRef("");
+  const [menuHasSelection, setMenuHasSelection] = useState(false);
   const [artifactCache] = useState(
     () => new Map<string, TurnArtifactCacheEntry>(),
   );
@@ -93,19 +100,49 @@ export function MessageList({
   return (
     <ChatLinkContext.Provider value={chatLinkValue}>
       <div className="relative min-h-0 flex-1">
-        <div
-          ref={scrollRef}
-          onScroll={navigation.handleScroll}
-          onWheel={(event) => navigation.handleWheel(event.deltaY)}
-          onPointerDown={navigation.beginPointerScroll}
-          onPointerUp={navigation.endPointerScroll}
-          onPointerCancel={navigation.endPointerScroll}
-          onTouchStart={navigation.beginPointerScroll}
-          onTouchEnd={navigation.endPointerScroll}
-          onTouchCancel={navigation.endPointerScroll}
-          data-testid="message-list"
-          aria-live="polite"
-          className="scrollbar-hide h-full min-h-0 animate-in overflow-y-auto fade-in duration-500"
+        <TextEditContextMenu
+          editable={false}
+          hasSelection={menuHasSelection}
+          trigger={
+            <div
+              ref={scrollRef}
+              onScroll={navigation.handleScroll}
+              onWheel={(event) => navigation.handleWheel(event.deltaY)}
+              onPointerDown={navigation.beginPointerScroll}
+              onPointerUp={navigation.endPointerScroll}
+              onPointerCancel={navigation.endPointerScroll}
+              onTouchStart={navigation.beginPointerScroll}
+              onTouchEnd={navigation.endPointerScroll}
+              onTouchCancel={navigation.endPointerScroll}
+              data-testid="message-list"
+              aria-live="polite"
+              className="scrollbar-hide h-full min-h-0 animate-in overflow-y-auto fade-in duration-500"
+              onContextMenu={() => {
+                const text = window.getSelection()?.toString() ?? "";
+                parkedSelectionTextRef.current = text;
+                setMenuHasSelection(text.length > 0);
+              }}
+            />
+          }
+          onCut={() => undefined}
+          onCopy={() => {
+            const text = parkedSelectionTextRef.current;
+            if (text.length === 0) {
+              return;
+            }
+            void writeClipboardText(text);
+          }}
+          onPaste={() => undefined}
+          onSelectAll={() => {
+            const root = contentRef.current;
+            if (root === null) {
+              return;
+            }
+            selectElementContents(root);
+            parkedSelectionTextRef.current =
+              window.getSelection()?.toString() ?? "";
+            setMenuHasSelection(parkedSelectionTextRef.current.length > 0);
+          }}
         >
           <div
             ref={contentRef}
@@ -165,7 +202,7 @@ export function MessageList({
             {showRunning && <RunningIndicator />}
             <div className="h-8" />
           </div>
-        </div>
+        </TextEditContextMenu>
         <ConversationNavigator
           {...conversationNavigation}
           turns={turns}
