@@ -17,10 +17,18 @@ use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
+use time::format_description::well_known::Rfc3339;
 use time::macros::datetime;
 
 const SESSION_ID: &str = "session-with-missing-agent";
 const MISSING_AGENT: &str = "ora-space.opencode";
+const HISTORY_CLOCK: time::OffsetDateTime = datetime!(2026-09-03 11:20:02.558 +08:00);
+
+fn history_recorded_at() -> String {
+    HISTORY_CLOCK
+        .format(&Rfc3339)
+        .expect("format fixture timestamp")
+}
 
 /// Opens a migrated repository used by the runtime and plugin host.
 fn test_pool(root: &Path) -> RepositoryPool {
@@ -74,7 +82,7 @@ fn seed_session(root: &Path, pool: &RepositoryPool) {
         SESSION_ID,
         0,
         &ora_domain::HistoryState::Writable,
-        FixedHistoryClock::new(datetime!(2026-09-03 11:20:02.558 +08:00)),
+        FixedHistoryClock::new(HISTORY_CLOCK),
     )
     .expect("open session history");
     assert_eq!(
@@ -122,9 +130,11 @@ fn loads_recorded_history_without_the_session_agent() {
                                         ContentBlock::Text(TextContent::new("previous question")),
                                     ),
                                 ),
+                            recorded_at: Some(history_recorded_at()),
                         },
                         LoadSessionEvent::TurnEnded {
                             stop_reason: StopReason::EndTurn,
+                            recorded_at: Some(history_recorded_at()),
                         },
                         LoadSessionEvent::Completed,
                     ],

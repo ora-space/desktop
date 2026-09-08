@@ -187,7 +187,7 @@ impl RuntimeActor {
                 self.reported_config_options.clone(),
             ));
             if events
-                .send(Ok(LoadSessionEvent::SessionUpdate { update }))
+                .send(Ok(LoadSessionEvent::session_update(update)))
                 .await
                 .is_err()
             {

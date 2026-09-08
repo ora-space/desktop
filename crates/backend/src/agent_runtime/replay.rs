@@ -15,14 +15,19 @@ fn integrity_notice(integrity: HistoryIntegrity) -> Option<LoadSessionEvent> {
 
 /// Maps one durable record onto the load event the client renders, dropping bookkeeping records
 /// that only matter for persistence or provider handoff.
-fn map_record(record: HistoryRecord) -> Option<LoadSessionEvent> {
+///
+/// `recorded_at` is the history line's wall-clock stamp so replay can restore bubble times.
+/// Pending in-memory records pass `None` because they have not been written yet.
+fn map_record(record: HistoryRecord, recorded_at: Option<String>) -> Option<LoadSessionEvent> {
     match record {
-        HistoryRecord::Update { update } => {
-            Some(LoadSessionEvent::SessionUpdate { update: *update })
-        }
-        HistoryRecord::TurnEnded { stop_reason } => {
-            Some(LoadSessionEvent::TurnEnded { stop_reason })
-        }
+        HistoryRecord::Update { update } => Some(LoadSessionEvent::SessionUpdate {
+            update: *update,
+            recorded_at,
+        }),
+        HistoryRecord::TurnEnded { stop_reason } => Some(LoadSessionEvent::TurnEnded {
+            stop_reason,
+            recorded_at,
+        }),
         HistoryRecord::Gap { reason } => Some(LoadSessionEvent::HistoryNotice {
             notice: SessionHistoryNotice::UnrecordedContent { reason },
         }),
@@ -41,7 +46,7 @@ pub(super) fn recorded_replay(history: SessionHistory) -> impl Iterator<Item = L
         history
             .lines
             .into_iter()
-            .filter_map(|line| map_record(line.record)),
+            .filter_map(|line| map_record(line.record, Some(line.at))),
     )
 }
 
@@ -52,23 +57,23 @@ pub(super) fn replay_prefix(
     history: SessionHistory,
     pending: Vec<AssembledRecord>,
 ) -> Vec<LoadSessionEvent> {
-    let mut merged: Vec<(u32, HistoryRecord)> = history
+    let mut merged: Vec<(u32, HistoryRecord, Option<String>)> = history
         .lines
         .into_iter()
-        .map(|line| (line.seq, line.record))
+        .map(|line| (line.seq, line.record, Some(line.at)))
         .chain(
             pending
                 .into_iter()
-                .map(|record| (record.seq, record.record)),
+                .map(|record| (record.seq, record.record, None)),
         )
         .collect();
-    merged.sort_by_key(|(seq, _)| *seq);
+    merged.sort_by_key(|(seq, _, _)| *seq);
     let mut events: Vec<LoadSessionEvent> =
         integrity_notice(history.integrity).into_iter().collect();
     events.extend(
         merged
             .into_iter()
-            .filter_map(|(_, record)| map_record(record)),
+            .filter_map(|(_, record, recorded_at)| map_record(record, recorded_at)),
     );
     events
 }
@@ -82,9 +87,11 @@ mod tests {
     use serde_json::json;
     use std::num::NonZeroUsize;
 
-    /// Creates a history line whose timestamp is irrelevant to replay mapping.
+    const RECORDED_AT: &str = "2026-08-14T10:00:00+08:00";
+
+    /// Creates a history line stamped with the fixture time so replay must forward it.
     fn line(seq: u32, record: HistoryRecord) -> HistoryLine {
-        HistoryLine::new("2026-08-14T10:00:00+08:00", seq, record)
+        HistoryLine::new(RECORDED_AT, seq, record)
     }
 
     #[test]
@@ -110,6 +117,7 @@ mod tests {
                 },
                 LoadSessionEvent::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    recorded_at: Some(RECORDED_AT.to_string()),
                 },
             ],
         );
@@ -178,9 +186,13 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                LoadSessionEvent::SessionUpdate { update },
+                LoadSessionEvent::SessionUpdate {
+                    update,
+                    recorded_at: None,
+                },
                 LoadSessionEvent::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    recorded_at: Some(RECORDED_AT.to_string()),
                 },
             ]
         );

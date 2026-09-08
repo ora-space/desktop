@@ -398,7 +398,7 @@ mod tests {
         let mut stream = opening.await?;
         let mut updates = Vec::new();
         while let Some(event) = stream.recv().await {
-            if let LoadSessionEvent::SessionUpdate { update } = event? {
+            if let LoadSessionEvent::SessionUpdate { update, .. } = event? {
                 updates.push(update);
             }
         }
