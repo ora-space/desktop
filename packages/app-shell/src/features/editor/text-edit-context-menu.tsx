@@ -38,7 +38,11 @@ interface TextEditContextMenuProps {
  * because a composer chip and a Markdown transcript are not the same payload.
  */
 export async function writeClipboardText(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text);
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // WebView may deny clipboard write; Copy/Cut already closed the menu.
+  }
 }
 
 /**
@@ -126,7 +130,12 @@ function blobFromDataUrl(src: string): Blob | null {
   if (match === null) {
     return null;
   }
-  const binary = atob(match[2] ?? "");
+  let binary: string;
+  try {
+    binary = atob(match[2] ?? "");
+  } catch {
+    return null;
+  }
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
@@ -174,9 +183,13 @@ export async function copyImageElement(img: HTMLImageElement): Promise<void> {
   try {
     await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
   } catch {
-    await navigator.clipboard.write([
-      new ClipboardItem({ "image/png": Promise.resolve(png) }),
-    ]);
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": Promise.resolve(png) }),
+      ]);
+    } catch {
+      // Neither ClipboardItem construction path is available in this WebView.
+    }
   }
 }
 

@@ -490,14 +490,17 @@ export const ComposerEditor = forwardRef<
       onPaste={() => {
         void (async () => {
           const files = await readClipboardFiles();
+          const text = await readClipboardText();
+          // Restore after the async clipboard read: the menu stole focus, and
+          // file chips must land at the caret parked on right-click.
+          restoreParkedSelection();
           if (files.length > 0) {
             onPasteFilesRef.current?.(files);
           }
-          const text = await readClipboardText();
           if (text.length === 0) {
             return;
           }
-          restoreParkedSelection();
+          // Chips may have shifted offsets; insert at the live caret, not parked.
           const insert = composerPasteInsert(text);
           if (typeof insert === "string" && insert.length === 0) {
             return;

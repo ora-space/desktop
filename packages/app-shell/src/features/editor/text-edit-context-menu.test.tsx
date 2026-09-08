@@ -3,7 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
-import { TextEditContextMenu } from "./text-edit-context-menu";
+import {
+  copyImageElement,
+  TextEditContextMenu,
+  writeClipboardText,
+} from "./text-edit-context-menu";
 
 void appI18n;
 
@@ -121,5 +125,33 @@ describe("TextEditContextMenu", () => {
     await waitFor(() => expect(copy).not.toHaveAttribute("data-disabled"));
     await user.click(copy);
     await waitFor(() => expect(write).toHaveBeenCalled());
+  });
+
+  it("swallows clipboard write denials so Copy does not reject", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    await expect(writeClipboardText("hello")).resolves.toBeUndefined();
+  });
+
+  it("does not reject when both ClipboardItem construction paths throw", async () => {
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(false),
+    });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor() {
+          throw new Error("unsupported");
+        }
+      },
+    );
+    const img = document.createElement("img");
+    img.src = ONE_PIXEL_PNG;
+    document.body.append(img);
+    await expect(copyImageElement(img)).resolves.toBeUndefined();
+    img.remove();
   });
 });
