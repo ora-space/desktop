@@ -432,7 +432,7 @@ mod tests {
         let (new_controls, mut new_controls_receiver) = mpsc::unbounded_channel();
         let _old = routes.register("old", 1, old_updates, old_controls);
         let _new = routes.register("new", 2, new_updates, new_controls);
-        let error = super::super::runtime_internal("agent_runtime_unavailable", "connection lost");
+        let error = super::super::runtime_unavailable_because("connection lost");
 
         routes.fail_generation(1, error.clone());
 
@@ -460,7 +460,7 @@ mod tests {
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();
         let _registration = routes.register("session-1", 1, events, controls);
         assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
-        let error = super::super::runtime_internal("agent_runtime_unavailable", "connection lost");
+        let error = super::super::runtime_unavailable_because("connection lost");
 
         routes.fail_generation(1, error);
 

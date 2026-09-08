@@ -10,7 +10,7 @@ use super::routing::{SessionChannel, SessionControl, SessionEvent};
 use super::start::{
     PendingProviderSession, ProviderSessionRelease, apply_model_intent, create_provider_session,
 };
-use super::support::{map_acp_error, runtime_internal};
+use super::support::{agent_timed_out, map_acp_error, protocol_violation, session_event_overflow};
 use super::{RuntimeActor, SESSION_SETUP_TIMEOUT};
 use crate::BackendError;
 use crate::session_setup::{LiveMcpState, SessionMcpSnapshot};
@@ -158,8 +158,7 @@ impl RuntimeActor {
                                 &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
                             )
                             .await;
-                        return Err(runtime_internal(
-                            "agent_protocol_error",
+                        return Err(protocol_violation(
                             "permission request during session/load is unsupported",
                         ));
                     }
@@ -177,20 +176,14 @@ impl RuntimeActor {
                 control = channel.controls.recv() => match control {
                     Some(SessionControl::ConnectionLost(error)) => return Err(error),
                     Some(SessionControl::QueueOverflow) => {
-                        return Err(runtime_internal(
-                            "agent_event_overflow",
-                            "session event queue overflowed",
-                        ));
+                        return Err(session_event_overflow("session event queue overflowed"));
                     }
                     None => return Err(super::support::runtime_unavailable()),
                 },
                 () = &mut deadline => {
                     ora_debug!(session_id = %self.session.id, "session/load timed out");
                     self.cancel(&client, &HashMap::new()).await;
-                    return Err(runtime_internal(
-                        "agent_load_timeout",
-                        "agent CLI session load timed out",
-                    ));
+                    return Err(agent_timed_out("agent CLI session load timed out"));
                 }
             }
         }

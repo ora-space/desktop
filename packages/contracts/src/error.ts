@@ -72,6 +72,9 @@ export type ContractError =
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_not_installed"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
+    | { "code": "agent_start_failed"; "params": EmptyErrorParams }
+    | { "code": "agent_timed_out"; "params": EmptyErrorParams }
+    | { "code": "agent_model_discovery_failed"; "params": EmptyErrorParams }
     | { "code": "session_busy"; "params": EmptyErrorParams }
     | { "code": "session_stopped"; "params": EmptyErrorParams }
     | { "code": "session_load_unsupported"; "params": EmptyErrorParams }
@@ -262,6 +265,9 @@ export type PublicError =
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_not_installed"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
+  | { "code": "agent_start_failed"; "params": EmptyErrorParams }
+  | { "code": "agent_timed_out"; "params": EmptyErrorParams }
+  | { "code": "agent_model_discovery_failed"; "params": EmptyErrorParams }
   | { "code": "session_busy"; "params": EmptyErrorParams }
   | { "code": "session_stopped"; "params": EmptyErrorParams }
   | { "code": "session_load_unsupported"; "params": EmptyErrorParams }

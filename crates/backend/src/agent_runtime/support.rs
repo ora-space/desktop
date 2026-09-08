@@ -83,8 +83,7 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
 /// so structural validation happens here. Whether the named agent is actually installed is a
 /// separate, later question answered by the supervisor lookup.
 pub(super) fn domain_agent_ref(agent_ref: ContractAgentRef) -> Result<AgentRef, BackendError> {
-    AgentRef::parse(&agent_ref)
-        .map_err(|error| runtime_internal("agent_not_installed", error.to_string()))
+    AgentRef::parse(&agent_ref).map_err(|error| agent_not_installed(error.to_string()))
 }
 
 /// Builds the stable public error for an unknown or deleted Ora session.
@@ -111,7 +110,19 @@ pub(super) fn session_stopped() -> BackendError {
 
 /// Builds the degraded-mode error while the selected CLI is starting or recovering.
 pub(super) fn runtime_unavailable() -> BackendError {
-    runtime_internal("agent_runtime_unavailable", "agent runtime is unavailable")
+    runtime_unavailable_because("agent runtime is unavailable")
+}
+
+/// Builds the degraded-mode error with the specific reason the runtime could not serve a caller.
+///
+/// The reason names the agent or supervisor state that refused, which is what distinguishes a
+/// runtime that never started from one that is mid-recovery when reading logs after the fact.
+pub(super) fn runtime_unavailable_because(context: impl Into<String>) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Internal,
+        PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
+        context,
+    )
 }
 
 pub(super) fn runtime_unavailable_with(
@@ -125,6 +136,93 @@ pub(super) fn runtime_unavailable_with(
     )
 }
 
+/// Builds the error reported when no installed plugin supplies the requested agent.
+pub(super) fn agent_not_installed(context: impl Into<String>) -> BackendError {
+    BackendError::new(
+        ErrorClassification::NotFound,
+        PublicError::AgentNotInstalled(EmptyErrorParams {}),
+        context,
+    )
+}
+
+/// Builds the error reported when an installed agent exists but its process could not be started.
+///
+/// `detail` is authored by the plugin behind the agent, so it stays in the private context that
+/// reaches logs only. Routing it into the public error would render unvalidated third-party text
+/// in the user's own language-selected UI, so `AgentStartFailed` carries no parameters.
+///
+/// Classified `Unprocessable` rather than `Internal`: a CLI that is missing, unusable, or
+/// misconfigured on this machine is an expected local condition the user can act on, not an Ora
+/// defect worth an ERROR-level completion record and a request ID to report.
+pub(super) fn agent_start_failed(detail: impl Into<String>) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Unprocessable,
+        PublicError::AgentStartFailed(EmptyErrorParams {}),
+        detail,
+    )
+}
+
+/// Builds the error reported when an agent did not answer within a runtime deadline.
+///
+/// Every deadline in the runtime — process start, ACP initialize, session load, config exchange —
+/// collapses onto one public error because the user's response to all of them is to retry. The
+/// phase that actually expired stays in `context` for logs, where it distinguishes them.
+pub(super) fn agent_timed_out(context: &'static str) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Unprocessable,
+        PublicError::AgentTimedOut(EmptyErrorParams {}),
+        context,
+    )
+}
+
+/// Builds the error reported when an agent could not enumerate the models it offers.
+///
+/// Model discovery runs against the agent's own process, so a failure is that agent's condition
+/// rather than an Ora defect; the underlying transport or plugin error is kept as the source.
+pub(super) fn agent_model_discovery_failed(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> BackendError {
+    BackendError::with_source(
+        ErrorClassification::Unprocessable,
+        PublicError::AgentModelDiscoveryFailed(EmptyErrorParams {}),
+        "agent model discovery failed",
+        source,
+    )
+}
+
+/// Builds the conflict reported when a session's recorded history cannot be read back.
+pub(super) fn session_history_unreadable() -> BackendError {
+    BackendError::new(
+        ErrorClassification::Conflict,
+        PublicError::SessionHistoryDegraded(EmptyErrorParams {}),
+        "session history could not be read",
+    )
+}
+
+/// Builds the internal failure raised when a bounded session queue dropped ordered events.
+///
+/// Overflow means Ora sized a channel too small or stalled its own consumer, so it stays
+/// `InternalError`: the user cannot act on it, and the request ID is what makes it reportable.
+pub(super) fn session_event_overflow(context: &'static str) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Internal,
+        PublicError::InternalError(EmptyErrorParams {}),
+        context,
+    )
+}
+
+/// Builds the internal failure raised when an agent breaks the ACP contract Ora relies on.
+///
+/// Kept on the same public error as [`map_acp_error`] so a violation detected by Ora's own
+/// invariants and one surfaced by the transport read identically to the client.
+pub(super) fn protocol_violation(context: &'static str) -> BackendError {
+    BackendError::new(
+        ErrorClassification::Internal,
+        PublicError::InternalError(EmptyErrorParams {}),
+        context,
+    )
+}
+
 /// Hides transport internals behind the backend's stable protocol error.
 pub(super) fn map_acp_error(error: ora_acp::AcpError) -> BackendError {
     BackendError::with_source(
@@ -135,32 +233,12 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> BackendError {
     )
 }
 
-/// Builds an internal runtime error with a caller-selected stable code.
-pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -> BackendError {
-    let (classification, public_error) = match code {
-        "agent_not_installed" => (
-            ErrorClassification::NotFound,
-            PublicError::AgentNotInstalled(EmptyErrorParams {}),
-        ),
-        "agent_runtime_unavailable" => (
-            ErrorClassification::Internal,
-            PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
-        ),
-        "session_history_unreadable" => (
-            ErrorClassification::Conflict,
-            PublicError::SessionHistoryDegraded(EmptyErrorParams {}),
-        ),
-        _ => (
-            ErrorClassification::Internal,
-            PublicError::InternalError(EmptyErrorParams {}),
-        ),
-    };
-    BackendError::new(classification, public_error, message)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{pick_auto_allow_option, runtime_internal};
+    use super::{
+        agent_model_discovery_failed, agent_start_failed, agent_timed_out, pick_auto_allow_option,
+        session_event_overflow, session_history_unreadable,
+    };
     use crate::ErrorClassification;
     use agent_client_protocol_schema::v1::{PermissionOption, PermissionOptionKind};
     use ora_contracts::{EmptyErrorParams, PublicError};
@@ -169,15 +247,77 @@ mod tests {
     /// Keeps unreadable session history on the same typed recovery path as a failed write.
     #[test]
     fn maps_unreadable_session_history_to_degraded_error() {
-        let error = runtime_internal(
-            "session_history_unreadable",
-            "session history could not be read",
-        );
+        let error = session_history_unreadable();
 
         assert_eq!(error.classification(), ErrorClassification::Conflict);
         assert_eq!(
             error.public_error(),
             &PublicError::SessionHistoryDegraded(EmptyErrorParams {})
+        );
+    }
+
+    /// Keeps a plugin-authored startup detail out of the contract the frontend renders.
+    ///
+    /// The detail is unvalidated third-party text, so it must reach logs only. A parameter-carrying
+    /// public error here would put it in the user's toast in whichever language the plugin wrote.
+    #[test]
+    fn reports_agent_start_failure_without_leaking_plugin_detail() {
+        let error = agent_start_failed("plugin said: /usr/bin/foo is not executable");
+
+        assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::AgentStartFailed(EmptyErrorParams {})
+        );
+    }
+
+    /// Retains the agent transport failure that explains why model enumeration failed.
+    #[test]
+    fn preserves_model_discovery_source() {
+        let error = agent_model_discovery_failed(std::io::Error::other("plugin channel closed"));
+
+        assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::AgentModelDiscoveryFailed(EmptyErrorParams {})
+        );
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("plugin channel closed".to_string())
+        );
+    }
+
+    /// Keeps every runtime deadline on one retryable public error instead of four near-identical ones.
+    #[test]
+    fn collapses_every_runtime_deadline_onto_one_public_error() {
+        let phases = [
+            "agent plugin start timed out",
+            "agent CLI session load timed out",
+            "agent CLI session creation timed out",
+            "agent initialization timed out",
+            "agent configuration timed out",
+        ];
+
+        for phase in phases {
+            let error = agent_timed_out(phase);
+
+            assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+            assert_eq!(
+                error.public_error(),
+                &PublicError::AgentTimedOut(EmptyErrorParams {})
+            );
+        }
+    }
+
+    /// Keeps queue overflow reportable: it is Ora's own defect, so the request ID must stay useful.
+    #[test]
+    fn reports_queue_overflow_as_an_internal_defect() {
+        let error = session_event_overflow("session event queue overflowed");
+
+        assert_eq!(error.classification(), ErrorClassification::Internal);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::InternalError(EmptyErrorParams {})
         );
     }
 

@@ -484,7 +484,7 @@ impl AgentRuntimeManager {
         let connection = supervisor.current()?;
         let models = plugin_agent::list_models(&connection.runtime, &cwd)
             .await
-            .map_err(|error| runtime_internal("agent_model_discovery_failed", error.to_string()))?;
+            .map_err(agent_model_discovery_failed)?;
         Ok(ora_contracts::ListAgentModelsResponse {
             models: models
                 .iter()
@@ -763,10 +763,7 @@ impl AgentRuntimeManager {
                     // a prompt to open its recorder is what stops the composer at the same moment
                     // the transcript stops being readable.
                     self.settle_record(session, RecordOutcome::JustFailed { reason });
-                    runtime_internal(
-                        "session_history_unreadable",
-                        "session history could not be read",
-                    )
+                    session_history_unreadable()
                 },
             );
         };
@@ -809,7 +806,7 @@ impl AgentRuntimeManager {
             ));
         }
         let prompt_bytes = serde_json::to_vec(&prompt)
-            .map_err(|_| runtime_internal("prompt_encoding_failed", "failed to encode prompt"))?
+            .map_err(|error| BackendError::internal("failed to encode prompt", error))?
             .len();
         if prompt_bytes > MAX_PROMPT_BYTES {
             return Err(BackendError::new(

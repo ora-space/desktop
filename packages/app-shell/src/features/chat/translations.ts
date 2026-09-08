@@ -4,6 +4,10 @@ export const chatTranslations = {
     "errors.session_not_found": "未找到该会话。",
     "errors.agent_not_installed": "未安装提供该 Agent 的插件。",
     "errors.agent_runtime_unavailable": "Agent 运行时当前不可用。",
+    "errors.agent_start_failed":
+      "无法启动该 Agent，请检查其插件与本机安装是否正常。",
+    "errors.agent_timed_out": "Agent 响应超时，请稍后重试。",
+    "errors.agent_model_discovery_failed": "无法获取该 Agent 的模型列表。",
     "errors.session_busy": "会话正在处理其他操作。",
     "errors.session_stopped": "会话与 Agent 的连接已断开，请重试。",
     "errors.session_load_unsupported": "所选 Agent 不支持加载会话。",
@@ -252,6 +256,11 @@ export const chatTranslations = {
     "errors.agent_not_installed":
       "The plugin that supplies this agent is not installed.",
     "errors.agent_runtime_unavailable": "The agent runtime is unavailable.",
+    "errors.agent_start_failed":
+      "This agent could not be started. Check its plugin and local installation.",
+    "errors.agent_timed_out": "The agent did not respond in time. Try again.",
+    "errors.agent_model_discovery_failed":
+      "The models for this agent could not be listed.",
     "errors.session_busy": "The session is busy with another operation.",
     "errors.session_stopped":
       "The session lost its connection to the agent. Try again.",

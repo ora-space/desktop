@@ -217,8 +217,7 @@ impl RuntimeActor {
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
-                    let _ = events.try_send(Err(runtime_internal(
-                        "agent_event_overflow",
+                    let _ = events.try_send(Err(session_event_overflow(
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
@@ -428,8 +427,7 @@ impl RuntimeActor {
                     self.end_turn(StopReason::Cancelled);
                     followers.finish(StopReason::Cancelled);
                     self.cancel(&client, &permissions).await;
-                    let _ = events.try_send(Err(runtime_internal(
-                        "agent_event_overflow",
+                    let _ = events.try_send(Err(session_event_overflow(
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
@@ -598,12 +596,7 @@ impl RuntimeActor {
                 // that cannot be read is reported rather than shown as an empty
                 // one. Completing here would state that nothing was ever said.
                 ora_warn!(session_id = %self.session.id, error = %error, "session history unreadable during load");
-                let _ = events
-                    .send(Err(runtime_internal(
-                        "session_history_unreadable",
-                        "session history could not be read",
-                    )))
-                    .await;
+                let _ = events.send(Err(session_history_unreadable())).await;
                 return Replay::Unreadable;
             }
         };

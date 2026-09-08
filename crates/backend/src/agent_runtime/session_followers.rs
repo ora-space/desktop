@@ -1,5 +1,5 @@
 use super::replay::replay_prefix;
-use super::support::runtime_internal;
+use super::support::{session_event_overflow, session_history_unreadable};
 use crate::BackendError;
 use agent_client_protocol_schema::v1::{SessionUpdate, StopReason};
 use ora_contracts::LoadSessionEvent;
@@ -71,8 +71,7 @@ impl SessionFollowers {
                         match signal {
                             Some(()) => {
                                 let _ = contract_sender
-                                    .send(Err(runtime_internal(
-                                        "session_follower_overflow",
+                                    .send(Err(session_event_overflow(
                                         "session load follower fell behind the active prompt",
                                     )))
                                     .await;
@@ -155,10 +154,7 @@ async fn send_replay_prefix(
             Ok(Ok(history)) => history,
             Ok(Err(_)) | Err(_) => {
                 let _ = contract_sender
-                    .send(Err(runtime_internal(
-                        "session_history_unreadable",
-                        "session history could not be read",
-                    )))
+                    .send(Err(session_history_unreadable()))
                     .await;
                 return false;
             }

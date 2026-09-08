@@ -7,7 +7,7 @@
     },
     "crates/backend/src/agent_runtime.rs": {
       "owner": "ora-backend",
-      "lines": 1076,
+      "lines": 1073,
       "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Durable record ownership now lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
     },
     "crates/backend/src/plugin.rs": {

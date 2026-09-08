@@ -7,7 +7,8 @@ use super::super::events::settle_idle_event;
 use super::super::routing::SessionEvent;
 use super::super::scheduling::{ActiveInput, ActiveInputState};
 use super::super::support::{
-    contract_session, map_acp_error, runtime_internal, runtime_unavailable, session_stopped,
+    agent_timed_out, contract_session, map_acp_error, protocol_violation, runtime_unavailable,
+    session_event_overflow, session_stopped,
 };
 use super::{RuntimeActor, permission_not_pending, session_busy};
 use crate::BackendError;
@@ -245,10 +246,7 @@ impl RuntimeActor {
                 _ = &mut deadline => {
                     self.cancel(&client, &HashMap::new()).await;
                     self.isolate_channel(channel).await;
-                    return Err(runtime_internal(
-                        "agent_load_timeout",
-                        "agent CLI session load timed out",
-                    ));
+                    return Err(agent_timed_out("agent CLI session load timed out"));
                 }
             };
             match input {
@@ -267,8 +265,7 @@ impl RuntimeActor {
                         )
                         .await;
                     self.isolate_channel(channel).await;
-                    return Err(runtime_internal(
-                        "agent_protocol_error",
+                    return Err(protocol_violation(
                         "permission request during session/load is unsupported",
                     ));
                 }
@@ -294,10 +291,7 @@ impl RuntimeActor {
                 }
                 ActiveInput::Control(super::routing::SessionControl::QueueOverflow) => {
                     self.isolate_channel(channel).await;
-                    return Err(runtime_internal(
-                        "agent_event_overflow",
-                        "session event queue overflowed",
-                    ));
+                    return Err(session_event_overflow("session event queue overflowed"));
                 }
                 ActiveInput::EventsClosed | ActiveInput::ControlsClosed => {
                     self.isolate_channel(channel).await;

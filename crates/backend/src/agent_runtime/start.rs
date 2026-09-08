@@ -2,7 +2,7 @@
 
 use super::connection::ConnectionSupervisors;
 use super::routing::SessionChannel;
-use super::support::{map_acp_error, runtime_internal};
+use super::support::{agent_timed_out, map_acp_error};
 use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, collect_setup_commands};
 use crate::BackendError;
 use crate::session_setup::{
@@ -128,12 +128,7 @@ pub(super) async fn create_provider_session(
         ),
     )
     .await
-    .map_err(|_| {
-        runtime_internal(
-            "agent_start_timeout",
-            "agent CLI session creation timed out",
-        )
-    })?
+    .map_err(|_| agent_timed_out("agent CLI session creation timed out"))?
     .map_err(map_acp_error)?;
     let agent_session_id = response.session_id.to_string();
     ora_debug!(
@@ -260,7 +255,7 @@ pub(super) async fn request_config_option(
             ),
     )
     .await
-    .map_err(|_| runtime_internal("agent_config_timeout", "agent configuration timed out"))?
+    .map_err(|_| agent_timed_out("agent configuration timed out"))?
     .map_err(map_acp_error)?;
     Ok(response.config_options)
 }

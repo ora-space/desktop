@@ -2,8 +2,8 @@ use super::plugin_agent::{self, LaunchedPluginAgent, PluginAcpTransport, PluginA
 use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
 use super::{
-    CANCELLATION_GRACE, CONTRACT_QUEUE_CAPACITY, INITIALIZE_TIMEOUT, map_acp_error,
-    runtime_internal,
+    CANCELLATION_GRACE, CONTRACT_QUEUE_CAPACITY, INITIALIZE_TIMEOUT, agent_not_installed,
+    agent_start_failed, agent_timed_out, map_acp_error, runtime_unavailable_because,
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
@@ -236,12 +236,7 @@ impl ConnectionSupervisors {
             .unwrap_or_else(PoisonError::into_inner)
             .get(agent_ref)
             .cloned()
-            .ok_or_else(|| {
-                runtime_internal(
-                    "agent_runtime_unavailable",
-                    format!("{agent_ref} is not installed"),
-                )
-            })
+            .ok_or_else(|| runtime_unavailable_because(format!("{agent_ref} is not installed")))
     }
 
     /// Reports every supervised agent with its live status, in stable identity order.
@@ -324,10 +319,10 @@ impl ConnectionSupervisor {
         match self.state.borrow().clone() {
             ConnectionState::Ready(connection) => Ok(connection),
             ConnectionState::Starting | ConnectionState::Unavailable | ConnectionState::Failing => {
-                Err(runtime_internal(
-                    "agent_runtime_unavailable",
-                    format!("{label} runtime is unavailable", label = self.label),
-                ))
+                Err(runtime_unavailable_because(format!(
+                    "{label} runtime is unavailable",
+                    label = self.label
+                )))
             }
         }
     }
@@ -340,10 +335,10 @@ impl ConnectionSupervisor {
     ) -> Result<SessionChannel, BackendError> {
         let connection = self.current()?;
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
-            return Err(runtime_internal(
-                "agent_runtime_unavailable",
-                format!("{label} runtime is recovering", label = self.label),
-            ));
+            return Err(runtime_unavailable_because(format!(
+                "{label} runtime is recovering",
+                label = self.label
+            )));
         }
         let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (controls_sender, controls) = mpsc::unbounded_channel();
@@ -358,10 +353,10 @@ impl ConnectionSupervisor {
         );
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
             drop(registration);
-            return Err(runtime_internal(
-                "agent_runtime_unavailable",
-                format!("{label} runtime is recovering", label = self.label),
-            ));
+            return Err(runtime_unavailable_because(format!(
+                "{label} runtime is recovering",
+                label = self.label
+            )));
         }
         Ok(SessionChannel {
             connection,
@@ -532,8 +527,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     run_process_generation(&mut process, &routes, &mut shutdown).await;
                 active_generation.store(0, Ordering::Release);
                 let _ = state.send(ConnectionState::Unavailable);
-                let error =
-                    runtime_internal("agent_runtime_unavailable", "agent connection was lost");
+                let error = runtime_unavailable_because("agent connection was lost");
                 routes.fail_generation(generation, error);
                 mark_running_sessions_stopped(&pool, clock, &agent_ref);
                 if shutting_down {
@@ -693,8 +687,7 @@ async fn spawn_initialized_process(
         }
         Err(_) => {
             process.terminate_and_reap().await;
-            return Err(StartFailure::Retryable(runtime_internal(
-                "agent_initialize_timeout",
+            return Err(StartFailure::Retryable(agent_timed_out(
                 "agent initialization timed out",
             )));
         }
@@ -754,9 +747,7 @@ async fn spawn_plugin_connection(
     };
     plugin_host
         .replace_agent_effect_declaration(plugin_id.clone(), effect_declaration)
-        .map_err(|error| {
-            StartFailure::Terminal(runtime_internal("agent_start_failed", error.to_string()))
-        })?;
+        .map_err(|error| StartFailure::Terminal(agent_start_failed(error.to_string())))?;
     let transport = PluginAcpTransport::new(runtime.clone());
     Ok(StartedAgent {
         process: AgentProcess {
@@ -775,17 +766,14 @@ async fn spawn_plugin_connection(
 /// logging while package discovery catches up.
 fn plugin_attach_error(error: ConnectionError) -> StartFailure {
     match error {
-        ConnectionError::NotFound | ConnectionError::NoProcess => {
-            StartFailure::Retryable(runtime_internal(
-                "agent_not_installed",
-                "the plugin behind this agent is not available",
-            ))
+        ConnectionError::NotFound | ConnectionError::NoProcess => StartFailure::Retryable(
+            agent_not_installed("the plugin behind this agent is not available"),
+        ),
+        ConnectionError::Timeout => {
+            StartFailure::Retryable(agent_timed_out("agent plugin start timed out"))
         }
-        ConnectionError::Failed(_)
-        | ConnectionError::Timeout
-        | ConnectionError::NotReady
-        | ConnectionError::NotRunning => {
-            StartFailure::Retryable(runtime_internal("agent_start_failed", error.to_string()))
+        ConnectionError::Failed(_) | ConnectionError::NotReady | ConnectionError::NotRunning => {
+            StartFailure::Retryable(agent_start_failed(error.to_string()))
         }
     }
 }
@@ -800,19 +788,16 @@ fn plugin_attach_error(error: ConnectionError) -> StartFailure {
 /// contract rather than retried behind a quiet `agent_not_installed`.
 fn plugin_start_error(error: PluginAgentError) -> StartFailure {
     match error {
-        PluginAgentError::AgentNotInstalled => StartFailure::Retryable(runtime_internal(
-            "agent_not_installed",
+        PluginAgentError::AgentNotInstalled => StartFailure::Retryable(agent_not_installed(
             "the agent behind this plugin is not installed",
         )),
         PluginAgentError::AgentUnusable(detail) => {
-            StartFailure::Terminal(runtime_internal("agent_start_failed", detail))
+            StartFailure::Terminal(agent_start_failed(detail))
         }
         PluginAgentError::ContractIncomplete(detail) => {
-            StartFailure::Terminal(runtime_internal("agent_start_failed", detail))
+            StartFailure::Terminal(agent_start_failed(detail))
         }
-        PluginAgentError::Failed(detail) => {
-            StartFailure::Retryable(runtime_internal("agent_start_failed", detail))
-        }
+        PluginAgentError::Failed(detail) => StartFailure::Retryable(agent_start_failed(detail)),
     }
 }
 
@@ -843,7 +828,7 @@ mod tests {
     use crate::clock::SystemClock;
     use crate::plugin::PluginApi;
     use crate::settings::Settings;
-    use ora_contracts::{PublicError, ScanPluginsRequest};
+    use ora_contracts::{EmptyErrorParams, PublicError, ScanPluginsRequest};
     use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
     use ora_domain::{AgentRef, PluginId};
     use pretty_assertions::assert_eq;
@@ -1027,6 +1012,10 @@ mod tests {
     }
 
     /// Verifies a plugin process that refused to start is retried as a genuine failure.
+    ///
+    /// The public error must name the startup failure rather than collapse into `InternalError`:
+    /// a missing runtime is the user's own local setup, so the toast has to say so instead of
+    /// asking them to report a request ID for a defect Ora did not cause.
     #[test]
     fn retries_a_plugin_whose_runtime_could_not_launch() {
         let failure = plugin_attach_error(ConnectionError::Failed("deno is missing".to_string()));
@@ -1034,9 +1023,23 @@ mod tests {
         let StartFailure::Retryable(error) = failure else {
             panic!("a failed launch must stay retryable");
         };
-        assert!(matches!(
+        assert_eq!(
             error.public_error(),
-            PublicError::InternalError(_)
-        ));
+            &PublicError::AgentStartFailed(EmptyErrorParams {})
+        );
+    }
+
+    /// Verifies a lifecycle deadline is reported consistently with every other runtime timeout.
+    #[test]
+    fn reports_a_plugin_start_timeout_as_timed_out() {
+        let failure = plugin_attach_error(ConnectionError::Timeout);
+
+        let StartFailure::Retryable(error) = failure else {
+            panic!("a plugin start timeout must stay retryable");
+        };
+        assert_eq!(
+            error.public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
     }
 }
