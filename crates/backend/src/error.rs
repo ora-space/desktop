@@ -20,6 +20,12 @@ pub enum ErrorClassification {
     /// Kept apart from `Conflict` so refusals do not dilute the conflict bucket, while still
     /// logging above the successful-request stream that `InvalidRequest` shares.
     Forbidden,
+    /// The host environment could not carry out an action Ora delegated to it.
+    ///
+    /// Distinct from `Internal`, which blames Ora's own runtime: a missing editor or a shell that
+    /// refuses a handoff is the operator's environment, and reporting it at `ERROR` would compete
+    /// with genuine backend faults.
+    HostUnavailable,
     Conflict,
     Unprocessable,
     Internal,

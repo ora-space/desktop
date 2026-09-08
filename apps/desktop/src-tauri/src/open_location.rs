@@ -96,12 +96,15 @@ pub async fn open_location(request: OpenLocationRequest) -> Result<(), CommandEr
 }
 
 /// Reports a location handoff that the host OS refused or could not launch.
+///
+/// The target application may simply not be installed, so this describes the host environment
+/// rather than an Ora fault and must not compete with genuine backend errors.
 fn open_location_error(
     target: LocationTarget,
     source: impl std::error::Error + Send + Sync + 'static,
 ) -> BackendError {
     BackendError::with_source(
-        ora_backend::ErrorClassification::Internal,
+        ora_backend::ErrorClassification::HostUnavailable,
         PublicError::OpenLocationFailed(OpenLocationFailedParams {
             target: match target {
                 LocationTarget::Explorer => OpenLocationTarget::Explorer,
@@ -230,10 +233,26 @@ fn open_location_blocking(target: LocationTarget, _path: &str) -> Result<(), Bac
 
 #[cfg(test)]
 mod tests {
-    use super::{ExplorerInvocation, explorer_invocation};
+    use super::{ExplorerInvocation, LocationTarget, explorer_invocation, open_location_error};
+    use ora_backend::ErrorClassification;
     use pretty_assertions::assert_eq;
     use std::fs;
+    use std::io;
     use std::path::Path;
+
+    /// A host that cannot launch the target is the operator's environment, not an Ora fault.
+    #[test]
+    fn reports_a_failed_handoff_against_the_host_rather_than_the_backend() {
+        let error = open_location_error(
+            LocationTarget::VsCode,
+            io::Error::other("open command exited with status: 1"),
+        );
+
+        assert_eq!(
+            (error.classification(), error.public_error().code()),
+            (ErrorClassification::HostUnavailable, "open_location_failed")
+        );
+    }
 
     /// Reveals a regular file so the default editor is not launched in its place.
     #[test]
