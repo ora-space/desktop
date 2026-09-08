@@ -42,9 +42,11 @@ impl StreamRegistry {
             ));
         }
         if registrations.contains_key(&id) {
+            // The id names a live registration, so the caller must retry under a fresh one; the
+            // public code has to say that rather than claim the request itself was malformed.
             return Err(BackendError::new(
                 ErrorClassification::Conflict,
-                PublicError::InvalidRequest(EmptyErrorParams {}),
+                PublicError::ResourceInUse(EmptyErrorParams {}),
                 "stream call id is already registered",
             ));
         }
@@ -97,7 +99,29 @@ impl Drop for StreamRegistration {
 #[cfg(test)]
 mod tests {
     use super::StreamRegistry;
+    use ora_backend::ErrorClassification;
     use ora_logging::with_trace_logging;
+    use pretty_assertions::assert_eq;
+
+    /// A duplicate id is contended state, so its classification and public code must agree.
+    #[test]
+    fn duplicate_registration_reports_a_conflicting_resource() {
+        with_trace_logging(|| {
+            let registry = StreamRegistry::default();
+            let _registration = registry
+                .register("fixture".to_string())
+                .expect("register stream");
+
+            let Err(error) = registry.register("fixture".to_string()) else {
+                panic!("duplicate id must be rejected");
+            };
+
+            assert_eq!(
+                (error.classification(), error.public_error().code()),
+                (ErrorClassification::Conflict, "resource_in_use")
+            );
+        });
+    }
 
     /// A cancelled creator retains its id until its resources have actually been released.
     #[test]
