@@ -107,9 +107,17 @@ pub enum ApplicationError {
         #[source]
         source: std::io::Error,
     },
+    /// Carries worktree lifecycle failures that have no more specific application meaning.
+    ///
+    /// Deliberately has no `#[from]`, and one must not be added. `#[from]` collapses *every*
+    /// source variant onto this one, but `NotARepository` and `BaseBranchNotFound` each have a
+    /// dedicated application error carrying a user-readable message, so a `?` or `.into()` taking
+    /// the generated `From` would silently downgrade both into this generic "operation failed"
+    /// case — with no compile-time or runtime warning. Convert through
+    /// [`ApplicationError::from_task_worktree_provisioner_error`] instead, which fans the source
+    /// variants out correctly.
     #[error(transparent)]
     TaskWorktreeProvisioner {
-        #[from]
         source: TaskWorktreeProvisionerError,
     },
     #[error("workspace diff operation failed")]
@@ -562,5 +570,48 @@ impl PartialEq for ApplicationError {
             ) => left_wf == right_wf && left_v == right_v,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationError;
+    use crate::TaskWorktreeProvisionerError;
+    use pretty_assertions::assert_eq;
+
+    /// Pins the fan-out that a `#[from]` on `TaskWorktreeProvisioner` would silently collapse.
+    ///
+    /// `NotARepository` and `BaseBranchNotFound` each reach the frontend as their own
+    /// `InvalidRequest` public error, so only `OperationFailed` may land on the internal
+    /// provisioner variant. A derived `From` would route all three to that internal case.
+    #[test]
+    fn worktree_provisioner_errors_keep_their_dedicated_application_variants() {
+        let mapped = [
+            TaskWorktreeProvisionerError::NotARepository,
+            TaskWorktreeProvisionerError::BaseBranchNotFound {
+                branch_name: "main".to_owned(),
+            },
+            TaskWorktreeProvisionerError::operation_failed(
+                "create task worktree",
+                std::io::Error::other("worktree add failed"),
+            ),
+        ]
+        .map(ApplicationError::from_task_worktree_provisioner_error);
+
+        assert_eq!(
+            mapped,
+            [
+                ApplicationError::TaskWorktreeRequiresGitRepository,
+                ApplicationError::TaskBaseBranchNotFound {
+                    branch_name: "main".to_owned(),
+                },
+                ApplicationError::TaskWorktreeProvisioner {
+                    source: TaskWorktreeProvisionerError::operation_failed(
+                        "create task worktree",
+                        std::io::Error::other("worktree add failed"),
+                    ),
+                },
+            ]
+        );
     }
 }
