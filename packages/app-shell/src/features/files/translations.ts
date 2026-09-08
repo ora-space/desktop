@@ -2,6 +2,7 @@
 export const filesTranslations = {
   "zh-CN": {
     "errors.file_system_path_not_found": "所选路径不存在。",
+    "errors.file_system_path_permission_denied": "没有访问所选路径的权限。",
     "files.files": "文件",
     "files.explorer": "资源管理器",
     "files.search": "搜索",
@@ -23,6 +24,8 @@ export const filesTranslations = {
   },
   "en-US": {
     "errors.file_system_path_not_found": "The selected path was not found.",
+    "errors.file_system_path_permission_denied":
+      "Permission to access the selected path was denied.",
     "files.files": "Files",
     "files.explorer": "Explorer",
     "files.search": "Search",

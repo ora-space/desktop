@@ -15,6 +15,11 @@ pub enum ErrorClassification {
     InvalidRequest,
     PayloadTooLarge,
     NotFound,
+    /// Access was refused by the host rather than by Ora's own request validation.
+    ///
+    /// Kept apart from `Conflict` so refusals do not dilute the conflict bucket, while still
+    /// logging above the successful-request stream that `InvalidRequest` shares.
+    Forbidden,
     Conflict,
     Unprocessable,
     Internal,
