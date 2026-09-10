@@ -19,6 +19,7 @@ import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
+import { MarketplaceAutoSyncBridge } from "./features/settings/marketplace-auto-sync-bridge";
 import { PluginOperationEventBridge } from "./features/settings/plugin-operation-event-bridge";
 import { SurfaceDownloadPrompt } from "./features/surface/surface-download-prompt";
 import { SurfaceDownloadToaster } from "./features/surface/surface-download-toaster";
@@ -214,6 +215,7 @@ function AppShellContent({
               <SettingsDialog />
               <DefaultAgentAdoption />
               <PluginOperationEventBridge />
+              <MarketplaceAutoSyncBridge />
               <SurfaceEventBridge />
               <SurfaceDownloadToaster />
               <SurfaceDownloadPrompt />

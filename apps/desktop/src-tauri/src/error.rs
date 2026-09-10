@@ -27,6 +27,8 @@ pub enum DesktopBootstrapError {
     RuntimePreference(#[source] BackendError),
     #[error("failed to initialize Desktop update service")]
     Update(#[source] crate::update::UpdateError),
+    #[error("failed to schedule automatic marketplace synchronization")]
+    MarketplaceSync(#[source] ora_scheduler::SchedulerError),
 }
 
 /// Serializes the transport-neutral contract directly across the Tauri command seam.

@@ -2,7 +2,8 @@ mod listing;
 mod logo_roots;
 mod marketplace;
 mod operations;
-pub use operations::Plugins;
+mod registry_sync;
+pub use operations::{AdmittedSync, Plugins};
 
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
@@ -11,21 +12,18 @@ use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{
     ConfiguredMarketplaceSource, MarketplaceSourceStore, map_marketplace_source_error,
 };
-use crate::plugin::listing::available_plugin;
 use crate::proxy;
 use crate::settings::Settings;
-use gitlancer::{CliGitRunner, Git};
 use ora_application::Clock;
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest,
     AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse,
     EmptyErrorParams, ImportPluginRequest, ImportPluginResponse, InstallOutcome,
-    ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
-    ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse,
-    MarketplaceArtifactRetrieval, PublicError, ReadPluginReadmeRequest, ReadPluginReadmeResponse,
-    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
-    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
-    UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
+    ListMarketplaceSourcesResponse, MarketplaceArtifactRetrieval, PublicError,
+    ReadPluginReadmeRequest, ReadPluginReadmeResponse, ScanPluginsRequest, ScanPluginsResponse,
+    StopPluginRequest, StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
+    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -42,10 +40,9 @@ use ora_plugin_lifecycle::{
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
-use ora_plugin_registry::{RegistryIndex, RegistrySync};
+use ora_plugin_registry::RegistryIndex;
 use ora_utils::http::{ProxyConfig, ReqwestDownloader, S3Config};
-use ora_utils::url::canonical_repository_url;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -177,6 +174,12 @@ pub(crate) struct PluginApi {
     pub(crate) effect_repository: SqliteEffectRepository,
     workspace_repository: SqliteWorkspaceRepository,
     agent_effect_declarations: Mutex<BTreeMap<PluginId, ConsumerDeclaration>>,
+    /// Admits at most one marketplace index rebuild at a time.
+    ///
+    /// A rebuild drives the Git CLI over shared source checkouts and then replaces one cache
+    /// file, so two of them must never overlap. It guards no value of its own: holding it *is*
+    /// the rebuild slot.
+    rebuilding: Mutex<()>,
     /// Set once the Effect worker exists, which is after this API the worker itself borrows.
     ///
     /// Its absence only costs latency: a declaration change is already durable before the wake
@@ -238,6 +241,7 @@ impl PluginApi {
             effect_repository: SqliteEffectRepository::new(pool.clone()),
             workspace_repository: SqliteWorkspaceRepository::new(pool),
             agent_effect_declarations: Mutex::new(BTreeMap::new()),
+            rebuilding: Mutex::new(()),
             effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
             clock,
@@ -285,45 +289,6 @@ impl PluginApi {
             }
         }
         Ok(())
-    }
-
-    /// Returns the cached marketplace registry index, excluding listings from disabled sources.
-    pub(crate) fn list_available_plugins(
-        &self,
-        _request: ListAvailablePluginsRequest,
-    ) -> Result<ListAvailablePluginsResponse, BackendError> {
-        let mut response = match RegistryIndex::load(&self.registry_index_path) {
-            Ok(index) => ListAvailablePluginsResponse {
-                updated_at: index.updated_at(),
-                plugins: index.plugins().iter().map(available_plugin).collect(),
-            },
-            // A cache this host cannot read is the same situation as one that was never written:
-            // the endpoint never reaches the network, so the only remedy either way is the user
-            // syncing once. Reporting an error instead would turn an index schema change into a
-            // marketplace that appears broken.
-            Err(error) if RegistryIndex::is_unusable_cache(&error) => {
-                ora_warn!(%error, "rebuilding an unusable plugin registry index cache");
-                ListAvailablePluginsResponse {
-                    updated_at: 0,
-                    plugins: Vec::new(),
-                }
-            }
-            Err(error) => {
-                return Err(BackendError::internal(
-                    "failed to load plugin registry index",
-                    error,
-                ));
-            }
-        };
-        let enabled_urls: HashSet<String> = self
-            .enabled_marketplace_sources()?
-            .into_iter()
-            .map(|source| canonical_repository_url(&source.source().url))
-            .collect();
-        response
-            .plugins
-            .retain(|plugin| enabled_urls.contains(&canonical_repository_url(&plugin.source_url)));
-        Ok(response)
     }
 
     /// Returns the user-configured marketplace source repositories in precedence order.
@@ -385,46 +350,6 @@ impl PluginApi {
             .update(request, self.clock.now_timestamp_millis())
             .map_err(map_marketplace_source_error)?;
         Ok(UpdateMarketplaceSourceResponse { sources })
-    }
-
-    /// Pulls every marketplace source, merges their registry indexes, and atomically replaces the
-    /// cache.
-    pub(crate) fn sync_available_plugins(
-        &self,
-        _request: SyncAvailablePluginsRequest,
-    ) -> Result<SyncAvailablePluginsResponse, BackendError> {
-        let git = Git::new(CliGitRunner);
-        let registry_sources = self.prepared_registry_sources()?;
-        for (source, _, _) in &registry_sources {
-            RegistrySync::sync(&git, source)
-                .map_err(|error| BackendError::internal("failed to sync plugin registry", error))?;
-        }
-        let synced: Vec<&ora_plugin_registry::RegistrySource> = registry_sources
-            .iter()
-            .map(|(source, _use_proxy, _s3_config)| source)
-            .collect();
-        let build =
-            RegistryIndex::build_all(&synced, ora_logging::clock::now_local().unix_timestamp());
-        if let Some(cache_directory) = self.registry_index_path.parent() {
-            std::fs::create_dir_all(cache_directory).map_err(|error| {
-                BackendError::internal("failed to create registry cache directory", error)
-            })?;
-        }
-        build
-            .index()
-            .write(&self.registry_index_path)
-            .map_err(|error| {
-                BackendError::internal("failed to write plugin registry index", error)
-            })?;
-        Ok(SyncAvailablePluginsResponse {
-            updated_at: build.index().updated_at(),
-            plugins: build
-                .index()
-                .plugins()
-                .iter()
-                .map(available_plugin)
-                .collect(),
-        })
     }
 
     /// Returns the README a marketplace listing publishes, resolved from the source checkouts.

@@ -13,6 +13,10 @@
       "exports": ["PluginLogoMark"],
       "purpose": "Agent pickers and surface launchers share plugin logo presentation."
     },
+    "./marketplace-auto-sync-bridge": {
+      "exports": ["MarketplaceAutoSyncBridge"],
+      "purpose": "The shell mounts one bridge for the marketplace refreshes the host runs on its own, which start long before the settings dialog is opened."
+    },
     "./plugin-operation-event-bridge": {
       "exports": ["PluginOperationEventBridge"],
       "purpose": "The shell mounts one plugin operation notification bridge."

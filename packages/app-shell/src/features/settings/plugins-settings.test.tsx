@@ -42,7 +42,12 @@ void appI18n;
 
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
-  act(() => useMarketplaceSyncStore.setState({ userSyncing: false }));
+  act(() =>
+    useMarketplaceSyncStore.setState({
+      hostRefreshing: false,
+      userSyncing: false,
+    }),
+  );
 });
 
 /** Renders plugin settings with isolated query, contracts-client, and platform state. */
@@ -235,6 +240,7 @@ it("shows marketplace plugin download progress", async () => {
         reportProgress = listener;
         return () => undefined;
       },
+      onAutoSyncChanged: async () => () => undefined,
     },
   };
   renderSettings(client, platform);
@@ -282,6 +288,7 @@ it("shows marketplace plugin update download progress", async () => {
         reportProgress = listener;
         return () => undefined;
       },
+      onAutoSyncChanged: async () => () => undefined,
     },
   };
   renderSettings(client, platform);
