@@ -85,6 +85,25 @@ describe("classifyChatCandidate", () => {
     ).toMatchObject({ kind: "directory", path: "docs" });
   });
 
+  it("does not treat a bare href miss as a file the workspace cannot open", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "packages",
+        index: { edited: [], referenced: [] },
+        hasNavigation: true,
+      }),
+    ).toEqual({ kind: "none" });
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "app-shell",
+        index: { edited: [], referenced: [] },
+        hasNavigation: true,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
   it("keeps only explicit trailing-slash href misses as directories", () => {
     expect(
       classifyChatCandidate({

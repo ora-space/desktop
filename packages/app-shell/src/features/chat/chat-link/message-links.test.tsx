@@ -1125,6 +1125,32 @@ describe("session-wide chat links", () => {
     );
   });
 
+  it("does not link directory names in running prose that are not files", async () => {
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [
+            directoryListingTool(
+              "d----        packages\nd----        app-shell",
+            ),
+            searchTool("README.md"),
+          ],
+          "TS packages, app-shell (layout) and README.md",
+        ),
+      ],
+      { workspaceRoot: "C:/repo" },
+    );
+
+    expect(screen.queryByRole("button", { name: /packages/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /app-shell/ })).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: /打开文件 README\.md|Open file README\.md/,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("does not turn shell commands in prose into file links", async () => {
     await renderMessageList(
       [
