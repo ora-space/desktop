@@ -14,6 +14,7 @@ import { ContractsClientContext } from "../../contracts-client-context";
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { createStubPlatform } from "../../test/stub-platform";
 import { usePluginOperationStore } from "../../state/stores/plugin-operation-store";
+import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import {
   createTestClient,
   type TestHandlers,
@@ -41,6 +42,7 @@ void appI18n;
 
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
+  act(() => useMarketplaceSyncStore.setState({ userSyncing: false }));
 });
 
 /** Renders plugin settings with isolated query, contracts-client, and platform state. */
@@ -883,4 +885,50 @@ it("keeps marketplace descriptions to a single truncated line", async () => {
   const description = await screen.findByText("Weather plugin");
   expect(description).toHaveClass("truncate");
   expect(description).not.toHaveClass("line-clamp-2");
+});
+
+/**
+ * The rebuild outlives this page, so leaving it mid-sync and coming back must not restore a
+ * button that looks ready: pressing it again would start a second rebuild.
+ */
+it("keeps the sync action disabled across leaving and reopening the page", async () => {
+  const user = userEvent.setup();
+  const { client, handlers } = clientWithWeather();
+  let settle: (() => void) | undefined;
+  vi.spyOn(handlers, "syncAvailablePlugins").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        settle = () => resolve({ updatedAt: 0n, plugins: [] });
+      }),
+  );
+  const view = renderSettings(client);
+
+  await user.click(
+    await screen.findByRole("button", {
+      name: /同步插件市场|Sync plugin marketplace/,
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", {
+        name: /同步插件市场|Sync plugin marketplace/,
+      }),
+    ).toBeDisabled(),
+  );
+
+  // Leaving the settings page tears the mutation down; the rebuild behind it keeps going.
+  view.unmount();
+  renderSettings(client);
+
+  const reopened = await screen.findByRole("button", {
+    name: /同步插件市场|Sync plugin marketplace/,
+  });
+  expect(reopened).toBeDisabled();
+
+  await act(async () => {
+    settle?.();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => expect(reopened).toBeEnabled());
 });
