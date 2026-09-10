@@ -1,6 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   cloneElement,
-  useRef,
   useState,
   type MouseEvent,
   type ReactElement,
@@ -154,7 +154,8 @@ function blobFromCanvas(img: HTMLImageElement): Promise<Blob | null> {
   }
   context.drawImage(img, 0, 0);
   return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(blob), "image/png");
+    // canvas.toBlob may pass null if the canvas is tainted or allocation fails.
+    canvas.toBlob((blob) => resolve(blob ?? null), "image/png");
   });
 }
 
@@ -210,16 +211,14 @@ function copyImageViaNativeSelection(img: HTMLImageElement): boolean {
   range.selectNode(img);
   selection.removeAllRanges();
   selection.addRange(range);
-  let copied = false;
   try {
-    copied = document.execCommand("copy");
+    return document.execCommand("copy");
   } finally {
     selection.removeAllRanges();
     for (const restored of previous) {
       selection.addRange(restored);
     }
   }
-  return copied;
 }
 
 /**
@@ -240,10 +239,9 @@ export function TextEditContextMenu({
   onSelectAll,
 }: TextEditContextMenuProps) {
   const { t } = useTranslation();
-  const parkedImageRef = useRef<HTMLImageElement | null>(null);
-  const [hasImage, setHasImage] = useState(false);
+  const [parkedImage, setParkedImage] = useState<HTMLImageElement | null>(null);
   const cutDisabled = !editable || !hasSelection;
-  const copyDisabled = !hasSelection && !hasImage;
+  const copyDisabled = !hasSelection && parkedImage === null;
   const pasteDisabled = !editable;
 
   return (
@@ -255,8 +253,7 @@ export function TextEditContextMenu({
           onContextMenu: (event) => {
             event.preventDefault();
             const image = copyableImageFromEvent(event);
-            parkedImageRef.current = image;
-            setHasImage(image !== null);
+            setParkedImage(image);
             trigger.props.onContextMenu?.(event);
           },
         })}
@@ -270,9 +267,8 @@ export function TextEditContextMenu({
         <ContextMenuItem
           disabled={copyDisabled}
           onClick={() => {
-            const image = parkedImageRef.current;
-            if (image !== null) {
-              void copyImageElement(image);
+            if (parkedImage !== null) {
+              void copyImageElement(parkedImage);
               return;
             }
             onCopy();

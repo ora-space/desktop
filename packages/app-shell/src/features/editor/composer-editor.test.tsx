@@ -1383,4 +1383,31 @@ describe("ComposerEditor", () => {
 
     await waitFor(() => expect(composerText(textbox)).toBe("hello world"));
   });
+
+  it("pastes files with accompanying single-line text inline on Ctrl+V", async () => {
+    const user = userEvent.setup();
+    const onPasteFiles = vi.fn();
+    renderWithI18n(
+      <ComposerEditor
+        ariaLabel="Message"
+        onPasteFiles={onPasteFiles}
+        onSubmit={vi.fn()}
+      />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("hello ");
+
+    const file = new File(["dummy"], "screenshot.png", { type: "image/png" });
+    fireEvent.paste(textbox, {
+      clipboardData: {
+        files: [file],
+        getData: (format: string) => (format === "text/plain" ? "world\n" : ""),
+      },
+    });
+
+    expect(onPasteFiles).toHaveBeenCalledWith([file]);
+    await waitFor(() => expect(composerText(textbox)).toBe("hello world"));
+  });
 });

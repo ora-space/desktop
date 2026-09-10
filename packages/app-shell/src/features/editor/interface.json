@@ -13,6 +13,17 @@
         "queryStatesEqual"
       ],
       "purpose": "Chat owns suggestions while the editor owns query-state interpretation."
+    },
+    "./text-edit-context-menu": {
+      "exports": [
+        "TextEditContextMenu",
+        "copyImageElement",
+        "readClipboardFiles",
+        "readClipboardText",
+        "selectElementContents",
+        "writeClipboardText"
+      ],
+      "purpose": "Reusable text and image editing context menu shared across chat, transcript, and composer."
     }
   }
 }

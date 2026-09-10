@@ -470,11 +470,10 @@ export const ComposerEditor = forwardRef<
             event.stopPropagation();
             onPasteFilesRef.current(files);
             if (text.length > 0) {
-              editor
-                .chain()
-                .focus()
-                .insertContent(markdownToComposerContent(text).content ?? [])
-                .run();
+              const insert = composerPasteInsert(text);
+              if (typeof insert !== "string" || insert.length > 0) {
+                editor.chain().focus().insertContent(insert).run();
+              }
             }
           }}
         />

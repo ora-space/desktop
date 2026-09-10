@@ -76,6 +76,14 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
   (drag, node selection, `user-select`).
   Future edit remounts `ComposerEditor` on that same string; history rows do
   not keep a TipTap instance.
+- Provide a reusable `TextEditContextMenu` for cursor-style Cut, Copy, Paste,
+  and Select All across prompt editors, transcripts, attachment strips, and
+  image previews. Read-only surfaces keep Cut and Paste disabled. Right-clicking
+  a `[data-copyable-image]` element copies the bitmap (preferring native selection
+  copy, with canvas-rasterized PNG `ClipboardItem` fallback for WebView2). Pasting
+  via either keyboard shortcut or context menu normalizes text insertion through
+  `composerPasteInsert` so single-line text stays inline, and restores parked carets
+  before inserting file chips and accompanying text.
 
 ## Non-responsibilities
 
