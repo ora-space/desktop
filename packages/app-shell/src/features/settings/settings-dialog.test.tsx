@@ -16,6 +16,7 @@ import {
   type TestHandlers,
 } from "../../test/contracts-transport";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import {
   createSettingsMemory,
   settingsHandlers,
@@ -25,7 +26,11 @@ import { SettingsDialog } from "./settings-dialog";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
-  return { ...createPluginMemory(), ...createSettingsMemory() };
+  return {
+    ...createPluginMemory(),
+    ...createSettingsMemory(),
+    ...createSkillMemory(),
+  };
 }
 
 type FixtureState = ReturnType<typeof createFixtureState>;
@@ -35,6 +40,7 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
   return {
     ...pluginHandlers(state),
     ...settingsHandlers(state),
+    ...skillHandlers(state),
   };
 }
 
@@ -248,6 +254,44 @@ describe("SettingsDialog developer options", () => {
     expect(
       screen.queryByRole("heading", { name: "Appearance" }),
     ).not.toBeInTheDocument();
+    expect(useUiStore.getState().settingsCategory).toBe("plugins");
+  });
+
+  it("navigates from a plugin-provided Skill to the source plugin details", async () => {
+    const state = createFixtureState();
+    state.availablePlugins.push({
+      id: "official/weather",
+      name: "weather",
+      title: "Weather",
+      kind: "skill",
+      namespace: "official",
+      sourceUrl: "https://github.com/ora-space/marketplace",
+      version: "1.2.0",
+      description: "Weather skills",
+      logo: null,
+      compatibility: "compatible",
+    });
+    state.skills.push({
+      id: "plugin:official/weather:forecast",
+      namespace: "official/weather",
+      name: "forecast",
+      description: "Read the forecast",
+      source: { kind: "plugin", pluginId: "official/weather" },
+      availability: "available",
+    });
+    const user = userEvent.setup();
+    renderDialog(createTestClient(createFixtureHandlers(state)));
+
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "View source plugin details",
+      }),
+    );
+
+    expect(
+      await screen.findByText("official/weather · 1.2.0 · skill"),
+    ).toBeInTheDocument();
     expect(useUiStore.getState().settingsCategory).toBe("plugins");
   });
 });
