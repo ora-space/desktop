@@ -58,7 +58,13 @@ Long-lived streams, including task workspace watching, mark the response as defe
 
 Ora frontend requests receive a canonical UUID v4 at the Tauri or stream entry seam. The same identifier correlates the request span, public error payload or stream error frame, and completion event. Client-provided request identifiers are never canonical.
 
-Each request records exactly one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the original `error.message`, `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts use `WARN`, `InvalidRequest` / `NotFound` / `PayloadTooLarge` / `Unprocessable` use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.
+Each request records exactly one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the original `error.message`, `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts, `Forbidden` and `HostUnavailable` use `WARN`, `InvalidRequest` / `NotFound` / `PayloadTooLarge` / `Unprocessable` use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.
+
+`Forbidden` covers access the host refused — a workspace file the user cannot read — and sits at `WARN` rather than `INFO` because successful requests already occupy `INFO`, so a refusal logged there would be buried in ordinary traffic; it stays out of `Conflict` so the conflict bucket keeps meaning contended state.
+
+`HostUnavailable` covers an action Ora delegated to the host environment that the host did not carry out — opening a location in an editor that is not installed, for example. It is the operator's environment rather than an Ora runtime fault, so it stays out of `ERROR` where it would compete with genuine backend failures.
+
+A store or Git failure encountered while routing a task is `Internal`, never `Conflict`: those mean the backend could not answer, and classifying them as task state would log an outage such as a locked SQLite file at `WARN` where operators alerting on `ERROR` would miss it. Only a worktree that Git confirms is absent is a genuine `Conflict`.
 
 `RequestLifecycle` guarantees that closing record structurally rather than by convention: when its last handle is dropped without any explicit completion, it emits `outcome = "abandoned"` at `DEBUG`. That covers a seam that forgets to complete and a deferred stream future that is dropped when its transport disappears, so a request can never leave only an opening record. The distinct outcome keeps those cases greppable instead of hiding them inside `cancelled`.
 

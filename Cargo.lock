@@ -3343,6 +3343,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-node-protocol"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "ora-plugin-config"
 version = "0.0.0"
 dependencies = [

@@ -169,6 +169,7 @@ pub enum PublicError {
     WorkspaceUnavailable(EmptyErrorParams),
     TaskWorktreeUnavailable(EmptyErrorParams),
     FileSystemPathNotFound(EmptyErrorParams),
+    FileSystemPathPermissionDenied(EmptyErrorParams),
     WorktreeRootNotAbsolute(EmptyErrorParams),
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
@@ -290,6 +291,7 @@ impl PublicError {
             Self::WorkspaceUnavailable(_) => "workspace_unavailable",
             Self::TaskWorktreeUnavailable(_) => "task_worktree_unavailable",
             Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
+            Self::FileSystemPathPermissionDenied(_) => "file_system_path_permission_denied",
             Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
@@ -477,6 +479,7 @@ mod tests {
             PublicError::WorkspaceUnavailable(empty),
             PublicError::TaskWorktreeUnavailable(empty),
             PublicError::FileSystemPathNotFound(empty),
+            PublicError::FileSystemPathPermissionDenied(empty),
             PublicError::WorktreeRootNotAbsolute(empty),
             PublicError::WorktreeRootNotDirectory(empty),
             PublicError::OpenLocationFailed(OpenLocationFailedParams {
@@ -585,6 +588,7 @@ mod tests {
                 | PublicError::WorkspaceUnavailable(_)
                 | PublicError::TaskWorktreeUnavailable(_)
                 | PublicError::FileSystemPathNotFound(_)
+                | PublicError::FileSystemPathPermissionDenied(_)
                 | PublicError::WorktreeRootNotAbsolute(_)
                 | PublicError::WorktreeRootNotDirectory(_)
                 | PublicError::OpenLocationFailed(_)

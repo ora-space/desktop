@@ -300,7 +300,10 @@ export function createChatStore(
             if (configOptions) {
               staged.configOptions = configOptions;
             } else {
-              staged.applyUpdate(event.update);
+              staged.applyUpdate(
+                event.update,
+                recordedAtMillis(event.recordedAt),
+              );
               batchPreview =
                 (event.update.sessionUpdate === "user_message_chunk" ||
                   event.update.sessionUpdate === "agent_message_chunk" ||
@@ -313,7 +316,10 @@ export function createChatStore(
             // Preserve the final text batch while the turn is still live; ending it first would
             // make preview deliberately decline to publish a non-responding intermediate state.
             if (pendingPreviewTimer !== null) flushPendingPreview();
-            staged.endTurn(event.stopReason);
+            staged.endTurn(
+              event.stopReason,
+              recordedAtMillis(event.recordedAt),
+            );
           } else if (event.type === "history_notice") {
             staged.addHistoryNotice(event.notice);
           } else {
@@ -732,9 +738,9 @@ class HistoryBuilder {
     private readonly now: () => number,
   ) {}
 
-  applyUpdate(update: acp.SessionUpdate): void {
+  applyUpdate(update: acp.SessionUpdate, recordedAt?: number): void {
     if (update.sessionUpdate === "user_message_chunk") {
-      this.appendUserChunk(update);
+      this.appendUserChunk(update, recordedAt);
       return;
     }
     if (isConversationUpdate(update)) {
@@ -745,8 +751,10 @@ class HistoryBuilder {
       return;
     }
     if (isDeferredConversationUpdate(update)) return;
-    const turn = this.currentTurn();
-    this.replaceLast(applyAgentUpdate(turn, update, this.createId, this.now()));
+    const turn = this.currentTurn(recordedAt);
+    this.replaceLast(
+      applyAgentUpdate(turn, update, this.createId, this.timestamp(recordedAt)),
+    );
   }
 
   addPermission(request: SessionPermissionRequest): void {
@@ -759,7 +767,7 @@ class HistoryBuilder {
   }
 
   /** Settles the open turn with the outcome the record captured for it. */
-  endTurn(stopReason: acp.StopReason): void {
+  endTurn(stopReason: acp.StopReason, recordedAt?: number): void {
     const last = this.turns.at(-1);
     this.hasOpenTurn = false;
     if (last === undefined) return;
@@ -769,7 +777,11 @@ class HistoryBuilder {
       stopReason,
     };
     this.replaceLast(
-      settleActiveToolCalls(settled, impliedToolStatus(stopReason), this.now()),
+      settleActiveToolCalls(
+        settled,
+        impliedToolStatus(stopReason),
+        this.timestamp(recordedAt),
+      ),
     );
   }
 
@@ -821,7 +833,7 @@ class HistoryBuilder {
     };
   }
 
-  private appendUserChunk(chunk: acp.ContentChunk): void {
+  private appendUserChunk(chunk: acp.ContentChunk, recordedAt?: number): void {
     const last = this.turns.at(-1);
     const protocolMessageId = chunk.messageId ?? undefined;
     const continuesUser =
@@ -850,7 +862,7 @@ class HistoryBuilder {
       });
       return;
     }
-    const createdAt = this.now();
+    const createdAt = this.timestamp(recordedAt);
     this.turns.push({
       id: this.createId(),
       userMessage: {
@@ -874,10 +886,10 @@ class HistoryBuilder {
   }
 
   /** Ensures an agent update always has a turn, even before any user message replays. */
-  private currentTurn(): ChatTurn {
+  private currentTurn(recordedAt?: number): ChatTurn {
     const last = this.turns.at(-1);
     if (this.hasOpenTurn && last !== undefined) return last;
-    const createdAt = this.now();
+    const createdAt = this.timestamp(recordedAt);
     const turn: ChatTurn = {
       id: this.createId(),
       userMessage: {
@@ -900,6 +912,11 @@ class HistoryBuilder {
 
   private replaceLast(turn: ChatTurn): void {
     this.turns[this.turns.length - 1] = turn;
+  }
+
+  /** Prefers the history line's time when replay supplied one. */
+  private timestamp(recordedAt?: number): number {
+    return recordedAt ?? this.now();
   }
 }
 
@@ -1417,12 +1434,12 @@ export async function loadSessionConversation(
       if (configOptions) {
         staged.configOptions = configOptions;
       } else {
-        staged.applyUpdate(event.update);
+        staged.applyUpdate(event.update, recordedAtMillis(event.recordedAt));
       }
     } else if (event.type === "permission_request") {
       staged.addPermission(event);
     } else if (event.type === "turn_ended") {
-      staged.endTurn(event.stopReason);
+      staged.endTurn(event.stopReason, recordedAtMillis(event.recordedAt));
     } else {
       completed = true;
     }
@@ -1483,4 +1500,13 @@ function isAbortError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Agent request failed";
+}
+
+/** Parses a history-line RFC 3339 stamp. Invalid or missing values fall through to `now()`. */
+function recordedAtMillis(recordedAt: string | undefined): number | undefined {
+  if (recordedAt === undefined || recordedAt.length === 0) {
+    return undefined;
+  }
+  const parsed = Date.parse(recordedAt);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }

@@ -114,6 +114,11 @@ pub(crate) fn workspace_file_backend_error(error: WorkspaceFileSystemError) -> B
             PublicError::FileSystemPathNotFound(EmptyErrorParams {}),
             "workspace path was not found",
         ),
+        WorkspaceFileSystemError::PermissionDenied { .. } => (
+            ErrorClassification::Forbidden,
+            PublicError::FileSystemPathPermissionDenied(EmptyErrorParams {}),
+            "workspace path access was denied",
+        ),
         WorkspaceFileSystemError::PathNotRelative { .. }
         | WorkspaceFileSystemError::PathOutsideWorkspace { .. }
         | WorkspaceFileSystemError::NotDirectory { .. }
@@ -147,4 +152,43 @@ pub(crate) fn workspace_file_backend_error(error: WorkspaceFileSystemError) -> B
         ),
     };
     BackendError::with_source(classification, public_error, context, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::io;
+    use std::path::PathBuf;
+
+    /// A denial is a user-visible access refusal, so it must not surface as an internal fault.
+    #[test]
+    fn maps_permission_denials_to_a_forbidden_public_error() {
+        let error = workspace_file_backend_error(WorkspaceFileSystemError::PermissionDenied {
+            path: PathBuf::from("workspace/secret"),
+            source: io::Error::from(io::ErrorKind::PermissionDenied),
+        });
+
+        assert_eq!(
+            (error.classification(), error.public_error().code()),
+            (
+                ErrorClassification::Forbidden,
+                "file_system_path_permission_denied"
+            )
+        );
+    }
+
+    /// Opaque I/O faults stay internal so a denial's dedicated code keeps its meaning.
+    #[test]
+    fn keeps_other_io_faults_internal() {
+        let error = workspace_file_backend_error(WorkspaceFileSystemError::Io {
+            path: PathBuf::from("workspace/file"),
+            source: io::Error::from(io::ErrorKind::NotADirectory),
+        });
+
+        assert_eq!(
+            (error.classification(), error.public_error().code()),
+            (ErrorClassification::Internal, "internal_error")
+        );
+    }
 }

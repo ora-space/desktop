@@ -4,6 +4,13 @@
 changing its contents. It primarily contains ADRs, core test cases, and domain documentation; see
 `specs/AGENTS.md` for its detailed conventions.
 
+## Documentation
+
+- Every new document under `docs/` must have an English version and a Chinese version. Place
+  bidirectional links to the two versions immediately below the title at the top of each document;
+  use `English | [中文](sibling.zh.md)` in the English version and `[English](sibling.md) | 中文`
+  in the Chinese version. When updating a document, update both language versions in the same change.
+
 # Rust/crates
 
 1. **Code Documentation**: Unless it is a standard, self-explanatory method (e.g., `new()`), every function must include a comment above the signature describing its purpose. Provide inline comments for any complex logic, non-trivial algorithms, or specialized branching within function bodies. Write comments in English.

@@ -198,6 +198,9 @@ export const contractErrorSchema = z.object({
         "code": z.literal("file_system_path_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("file_system_path_permission_denied"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("worktree_root_not_absolute"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -519,6 +522,9 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("file_system_path_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("file_system_path_permission_denied"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("worktree_root_not_absolute"),

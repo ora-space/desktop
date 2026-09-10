@@ -130,7 +130,9 @@ impl RequestLifecycle {
                 error.chain_depth = report.chain_depth(),
                 "request completed"
             ),
-            ErrorClassification::Conflict => ora_warn!(
+            ErrorClassification::Forbidden
+            | ErrorClassification::HostUnavailable
+            | ErrorClassification::Conflict => ora_warn!(
                 operation = self.inner.operation.as_ref(),
                 request_id = %self.inner.request_id,
                 outcome = "failure",
@@ -305,6 +307,16 @@ mod tests {
                 PublicError::ResourceInUse(empty),
             ),
             (
+                ErrorClassification::Forbidden,
+                PublicError::FileSystemPathPermissionDenied(empty),
+            ),
+            (
+                ErrorClassification::HostUnavailable,
+                PublicError::OpenLocationFailed(ora_contracts::OpenLocationFailedParams {
+                    target: ora_contracts::OpenLocationTarget::Explorer,
+                }),
+            ),
+            (
                 ErrorClassification::InvalidRequest,
                 PublicError::InvalidRequest(empty),
             ),
@@ -325,6 +337,8 @@ mod tests {
         for (classification, _) in &cases {
             match classification {
                 ErrorClassification::Internal
+                | ErrorClassification::Forbidden
+                | ErrorClassification::HostUnavailable
                 | ErrorClassification::Conflict
                 | ErrorClassification::InvalidRequest
                 | ErrorClassification::NotFound
@@ -340,7 +354,9 @@ mod tests {
     fn expected_level(classification: ErrorClassification) -> Level {
         match classification {
             ErrorClassification::Internal => Level::ERROR,
-            ErrorClassification::Conflict => Level::WARN,
+            ErrorClassification::Forbidden
+            | ErrorClassification::HostUnavailable
+            | ErrorClassification::Conflict => Level::WARN,
             ErrorClassification::InvalidRequest
             | ErrorClassification::NotFound
             | ErrorClassification::PayloadTooLarge

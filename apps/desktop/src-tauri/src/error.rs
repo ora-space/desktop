@@ -30,12 +30,27 @@ pub enum DesktopBootstrapError {
 }
 
 /// Serializes the transport-neutral contract directly across the Tauri command seam.
+///
+/// Deliberately has no `From<BackendError>` impl, and one must not be added. Such an impl makes
+/// `?` compile inside commands that already own a `RequestLifecycle`, and the conversion has no
+/// lifecycle to reach, so it must mint a throwaway one to complete against. That silently breaks
+/// both request invariants documented in `docs/runtime-logging.md`: the request records two
+/// completion events instead of one (a `failure` under the throwaway id, plus an `abandoned` one
+/// at `DEBUG` when the real lifecycle drops unclaimed), and the id handed to the frontend stops
+/// matching the request span, so the id the user is asked to quote for support resolves to a
+/// record carrying neither the real operation name nor its duration. Requiring an explicit choice
+/// between the two constructors below keeps that decision visible in review.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct CommandError(ContractError);
 
 impl CommandError {
     /// Completes one Tauri request and projects its typed public payload.
+    ///
+    /// Only for seams that have no ambient lifecycle to complete against, such as managed-state
+    /// accessors and surface commands. A command that owns a lifecycle must use
+    /// [`Self::from_backend_with_lifecycle`] instead, so the request keeps one id and one
+    /// completion event.
     pub fn from_backend(error: BackendError) -> Self {
         let lifecycle = RequestLifecycle::start("tauri_command", &UuidRequestIdGenerator);
         Self::from_backend_with_lifecycle(error, &lifecycle)
@@ -45,11 +60,5 @@ impl CommandError {
     pub fn from_backend_with_lifecycle(error: BackendError, lifecycle: &RequestLifecycle) -> Self {
         lifecycle.complete_failure(&error);
         Self(error.contract_error(lifecycle.request_id()))
-    }
-}
-
-impl From<BackendError> for CommandError {
-    fn from(error: BackendError) -> Self {
-        Self::from_backend(error)
     }
 }

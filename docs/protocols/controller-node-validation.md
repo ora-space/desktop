@@ -1,0 +1,33 @@
+# Controller–Node validation evidence
+
+English | [中文](controller-node-validation.zh.md)
+
+All tests below use the public codec in `crates/node-protocol/tests/protocol.rs` and its
+`protocol/` submodules. Invalid receive inputs are framed directly, without the public writer.
+The review baseline had 12 tests; the Completed repair adds one, and the rejection matrix adds four.
+
+| Protocol guarantee                                                                                                       | Baseline evidence                                                                                                                         | Added direct evidence                                                                                                                                                                                                                    | Current status |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Every message preserves identities and facts under fragmented I/O                                                        | `round_trips_every_controller_message`, `round_trips_every_node_message`                                                                  | Same tests retained                                                                                                                                                                                                                      | Covered        |
+| Clean EOF differs from truncated header/payload                                                                          | `returns_none_at_clean_eof`, `rejects_truncated_header`, `rejects_truncated_payload`                                                      | Same tests retained                                                                                                                                                                                                                      | Covered        |
+| Zero/oversized length, unknown frame type, malformed JSON are rejected                                                   | `rejects_zero_length_frame`, `rejects_oversized_frame`, `rejects_unknown_frame_type`, `distinguishes_malformed_json_from_invalid_message` | `rejects_oversized_outbound_message_without_writing`                                                                                                                                                                                     | Covered        |
+| Required identities and opaque domain fields cannot be absent, empty or whitespace                                       | Only empty operation identity directly tested                                                                                             | `rejects_missing_and_empty_fields`: every envelope, command spec, result and nested Completed variant; optional request identity may be absent, but not empty                                                                            | Covered        |
+| Envelope versions and handshake declarations are self-consistent                                                         | Missing direct semantic counterexamples                                                                                                   | `rejects_inconsistent_handshakes_and_versions`: every envelope's version, empty/duplicate/unadvertised versions, selected version mismatch, empty/duplicate capabilities                                                                 | Covered        |
+| Wrong direction, incompatible payload shapes, missing envelope fields, illegal execution state combinations are rejected | `rejects_wrong_direction_message` covered one direction                                                                                   | `rejects_structural_contradictions`: both directions for every message, unrelated payload, missing type/version/payload/sequence, Completed without result, nonterminal state with result, unknown state and incomplete terminal payload | Covered        |
+| Completed belongs to the reporting Node while preserving historical incarnation                                          | Missing                                                                                                                                   | `completed_results_preserve_incarnations_and_reject_other_nodes`: all four terminal variants, whole-message equality, cross-Node receive/send rejection                                                                                  | Covered        |
+| Outbound semantic rejection writes no bytes                                                                              | Missing                                                                                                                                   | `reject_semantics` checks the exact validation error and empty output for every empty-field and handshake/version case; Completed and oversized-send tests also check empty output                                                       | Covered        |
+
+The current crate has 17 passing integration tests. Validation: `cargo test -p ora-node-protocol`
+and `cargo clippy -p ora-node-protocol --all-targets -- -D warnings`.
+
+The matrix exercises current message legality, not every possible malformed JSON document. Payload
+compatibility means the selected variant's required structure is satisfied; identically shaped
+create/remove payloads are valid for either message. Unknown extension fields are not generally
+forbidden. JSON serialization failure is not induced: current typed values have no fallible custom
+serializer. Arbitrary transport I/O failures and atomic rollback after partial writes are not proved
+by the zero-write validation checks. There is no exhaustive mutation-testing claim.
+
+Session binding, negotiated-session version enforcement, dispatch authorization, durable deduplication,
+persist-before-side-effect, persist-before-ack, replay, and crash recovery remain later Node,
+Controller and session slice responsibilities. These tests provide no direct evidence for them.
+Protocol logging remains deferred under `todo-87602f0b`; source TODO coverage is documented separately.

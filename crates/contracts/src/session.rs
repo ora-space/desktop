@@ -266,18 +266,55 @@ pub enum LoadSessionEvent {
     SessionUpdate {
         #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
+        /// RFC 3339 local time from the history line this update was replayed from.
+        ///
+        /// Live follow-on updates and in-memory pending records omit it so the
+        /// client stamps them with the wall clock instead of inventing a file time.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "recordedAt"
+        )]
+        #[ts(optional)]
+        recorded_at: Option<String>,
     },
     PermissionRequest(SessionPermissionRequest),
     TurnEnded {
         #[serde(rename = "stopReason")]
         #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
+        /// RFC 3339 local time from the history line that closed this turn.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "recordedAt"
+        )]
+        #[ts(optional)]
+        recorded_at: Option<String>,
     },
     /// Reports a known hole without pretending that the surviving transcript is continuous.
     HistoryNotice {
         notice: SessionHistoryNotice,
     },
     Completed,
+}
+
+impl LoadSessionEvent {
+    /// A session update with no history timestamp (live follow or session chrome).
+    pub fn session_update(update: SessionUpdate) -> Self {
+        Self::SessionUpdate {
+            update,
+            recorded_at: None,
+        }
+    }
+
+    /// A turn boundary with no history timestamp (live follow of an in-flight prompt).
+    pub fn turn_ended(stop_reason: StopReason) -> Self {
+        Self::TurnEnded {
+            stop_reason,
+            recorded_at: None,
+        }
+    }
 }
 
 /// Streams one prompt turn and ends with the provider's typed stop reason.

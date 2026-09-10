@@ -2,6 +2,7 @@ use crate::WorkspaceFileSystemError;
 use ora_process::TokioProcessSpawner;
 use ora_utils::path::{CanonicalPathRoot, PathContainmentError, PortableRelativePath};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -78,29 +79,22 @@ impl<S> WorkspaceFileSystem<S> {
         let mut entries = Vec::new();
         // Canonical containment describes the checked link topology only; read_dir cannot retain a
         // race-proof handle if an untrusted process replaces a symlink after resolution.
-        let directory = fs::read_dir(&resolved).map_err(|source| WorkspaceFileSystemError::Io {
-            path: resolved.clone(),
-            source,
-        })?;
+        let directory = fs::read_dir(&resolved)
+            .map_err(|source| WorkspaceFileSystemError::from_path_io(resolved.clone(), source))?;
         for entry in directory {
-            let entry = entry.map_err(|source| WorkspaceFileSystemError::Io {
-                path: resolved.clone(),
-                source,
+            let entry = entry.map_err(|source| {
+                WorkspaceFileSystemError::from_path_io(resolved.clone(), source)
             })?;
             if entry.file_name() == ".git" {
                 continue;
             }
             let path = entry.path();
-            let link_metadata =
-                fs::symlink_metadata(&path).map_err(|source| WorkspaceFileSystemError::Io {
-                    path: path.clone(),
-                    source,
-                })?;
+            let link_metadata = fs::symlink_metadata(&path)
+                .map_err(|source| WorkspaceFileSystemError::from_path_io(path.clone(), source))?;
             let is_symbolic_link = link_metadata.file_type().is_symlink();
             let metadata = if is_symbolic_link {
-                fs::metadata(&path).map_err(|source| WorkspaceFileSystemError::Io {
-                    path: path.clone(),
-                    source,
+                fs::metadata(&path).map_err(|source| {
+                    WorkspaceFileSystemError::from_path_io(path.clone(), source)
                 })?
             } else {
                 link_metadata
@@ -112,12 +106,9 @@ impl<S> WorkspaceFileSystem<S> {
             } else {
                 continue;
             };
-            let canonical_path =
-                path.canonicalize()
-                    .map_err(|source| WorkspaceFileSystemError::Io {
-                        path: path.clone(),
-                        source,
-                    })?;
+            let canonical_path = path
+                .canonicalize()
+                .map_err(|source| WorkspaceFileSystemError::from_path_io(path.clone(), source))?;
             let relative_path = match relative_string(&root, &canonical_path) {
                 Ok(relative_path) => relative_path,
                 Err(WorkspaceFileSystemError::PathOutsideWorkspace { .. }) => continue,
@@ -158,10 +149,8 @@ impl<S> WorkspaceFileSystem<S> {
         let resolved = resolve_existing(&root, relative_path)?;
         // Canonical containment rejects the current symlink target, but these path-based metadata
         // and read calls remain subject to replacement between the check and use (TOCTOU).
-        let metadata = fs::metadata(&resolved).map_err(|source| WorkspaceFileSystemError::Io {
-            path: resolved.clone(),
-            source,
-        })?;
+        let metadata = fs::metadata(&resolved)
+            .map_err(|source| WorkspaceFileSystemError::from_path_io(resolved.clone(), source))?;
         if !metadata.is_file() {
             return Err(WorkspaceFileSystemError::NotFile { path: resolved });
         }
@@ -172,10 +161,8 @@ impl<S> WorkspaceFileSystem<S> {
             });
         }
 
-        let bytes = fs::read(&resolved).map_err(|source| WorkspaceFileSystemError::Io {
-            path: resolved.clone(),
-            source,
-        })?;
+        let bytes = fs::read(&resolved)
+            .map_err(|source| WorkspaceFileSystemError::from_path_io(resolved.clone(), source))?;
         if bytes.contains(&0) {
             return Err(WorkspaceFileSystemError::BinaryFile { path: resolved });
         }
@@ -237,6 +224,12 @@ fn parse_relative(path: &Path) -> Result<PortableRelativePath, WorkspaceFileSyst
 /// Maps generic containment failures into the stable workspace filesystem error surface.
 pub(crate) fn map_containment_error(error: PathContainmentError) -> WorkspaceFileSystemError {
     match error {
+        // A denial on the root itself is still an access condition, not a missing workspace.
+        PathContainmentError::RootUnavailable { path, source }
+            if source.kind() == io::ErrorKind::PermissionDenied =>
+        {
+            WorkspaceFileSystemError::PermissionDenied { path, source }
+        }
         PathContainmentError::RootUnavailable { path, source } => {
             WorkspaceFileSystemError::WorkspaceUnavailable { path, source }
         }
@@ -252,7 +245,9 @@ pub(crate) fn map_containment_error(error: PathContainmentError) -> WorkspaceFil
         PathContainmentError::OutsideRoot { path } => {
             WorkspaceFileSystemError::PathOutsideWorkspace { path }
         }
-        PathContainmentError::Io { path, source } => WorkspaceFileSystemError::Io { path, source },
+        PathContainmentError::Io { path, source } => {
+            WorkspaceFileSystemError::from_path_io(path, source)
+        }
     }
 }
 

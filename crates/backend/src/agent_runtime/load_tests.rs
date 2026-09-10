@@ -31,12 +31,21 @@ use pretty_assertions::assert_eq;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
+use time::format_description::well_known::Rfc3339;
 use time::macros::datetime;
 use tokio::sync::mpsc;
 
 const SESSION_ID: &str = "session-1";
 /// An agent identity no package in these fixtures supplies, so nothing supervises it.
 const AGENT: &str = "ora-space.opencode";
+const HISTORY_CLOCK: time::OffsetDateTime = datetime!(2026-09-02 09:15:00.000 +08:00);
+
+/// RFC 3339 stamp the fixture recorder writes onto every history line.
+fn history_recorded_at() -> String {
+    HISTORY_CLOCK
+        .format(&Rfc3339)
+        .expect("format fixture timestamp")
+}
 
 fn test_pool(root: &Path) -> RepositoryPool {
     // These tests drive the runtime directly rather than through `Backend`, so nothing else has
@@ -117,7 +126,7 @@ fn record_conversation(sessions_root: &Path, session: &Session) {
         SESSION_ID,
         0,
         &HistoryState::Writable,
-        FixedHistoryClock::new(datetime!(2026-09-02 09:15:00.000 +08:00)),
+        FixedHistoryClock::new(HISTORY_CLOCK),
     )
     .expect("open recorder");
     recorder.record_meta(session, Path::new("/project"));
@@ -170,14 +179,17 @@ fn a_session_whose_agent_is_unreachable_still_serves_its_transcript() {
                             update: SessionUpdate::UserMessageChunk(ContentChunk::new(
                                 ContentBlock::Text(TextContent::new("hello"))
                             )),
+                            recorded_at: Some(history_recorded_at()),
                         },
                         LoadSessionEvent::SessionUpdate {
                             update: SessionUpdate::AgentMessageChunk(ContentChunk::new(
                                 ContentBlock::Text(TextContent::new("hi"))
                             )),
+                            recorded_at: Some(history_recorded_at()),
                         },
                         LoadSessionEvent::TurnEnded {
                             stop_reason: StopReason::EndTurn,
+                            recorded_at: Some(history_recorded_at()),
                         },
                         LoadSessionEvent::Completed,
                     ],

@@ -208,7 +208,8 @@ fn workflow_cancellation_stops_the_live_node_session() -> TestResult {
             if matches!(
                 event,
                 LoadSessionEvent::SessionUpdate {
-                    update: SessionUpdate::AgentMessageChunk(_)
+                    update: SessionUpdate::AgentMessageChunk(_),
+                    ..
                 }
             ) {
                 break;

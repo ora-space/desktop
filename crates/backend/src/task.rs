@@ -4,7 +4,7 @@ use crate::git_cleanup::{GatedWorktreeProvisioner, GitCleanupHandle, KeyedResour
 use crate::repository_work::spawn_repository_work;
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
-use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
+use gitlancer::{CliGitRunner, Git, GitlancerError, RepoRoot, Repository};
 use ora_application::{
     ApplicationError, Clock, CreateTaskHandler, GetTaskHandler, GitTaskWorktreeProvisioner,
     ListTasksHandler, ProjectRepository, RepositoryError, TaskRepository, UpdateTaskHandler,
@@ -27,6 +27,8 @@ use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod routing_tests;
 
 /// Groups task handlers while resolving each Git repository from the task's owning project.
 pub struct TaskApi {
@@ -250,11 +252,11 @@ pub(crate) fn resolve_task_cwd(
 ) -> Result<PathBuf, BackendError> {
     let task = SqliteTaskRepository::new(pool.clone())
         .find_task(task_id)
-        .map_err(task_worktree_unavailable_with)?
+        .map_err(task_repository_error)?
         .ok_or_else(task_worktree_unavailable)?;
     let worktree = SqliteWorktreeRepository::new(pool.clone())
         .find_worktree(&task.workspace_id)
-        .map_err(task_worktree_unavailable_with)?
+        .map_err(task_repository_error)?
         .ok_or_else(task_worktree_unavailable)?;
     if worktree.activity != WorktreeActivity::Active {
         return Err(task_worktree_unavailable());
@@ -262,7 +264,7 @@ pub(crate) fn resolve_task_cwd(
     let branch_name = worktree.branch_name.ok_or_else(task_worktree_unavailable)?;
     let workspace = SqliteWorkspaceRepository::new(pool.clone())
         .find_main_workspace(&task.project_id)
-        .map_err(task_worktree_unavailable_with)?
+        .map_err(task_repository_error)?
         .ok_or_else(task_worktree_unavailable)?;
     let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
         return Err(task_worktree_unavailable());
@@ -274,7 +276,7 @@ pub(crate) fn resolve_task_cwd(
             repository: &repository,
             branch_name: &branch_name,
         })
-        .map_err(task_worktree_unavailable_with)?;
+        .map_err(resolve_worktree_error)?;
     let cwd = resolved.worktree_root().as_path().to_path_buf();
     if !cwd.is_dir() {
         return Err(task_worktree_unavailable());
@@ -320,7 +322,7 @@ pub(crate) fn get_task_workspace(
         })?;
     let branch_name = SqliteWorktreeRepository::new(pool.clone())
         .find_worktree(&task.workspace_id)
-        .map_err(task_worktree_unavailable_with)?
+        .map_err(task_repository_error)?
         .filter(|worktree| worktree.activity == WorktreeActivity::Active)
         .and_then(|worktree| worktree.branch_name)
         .ok_or_else(task_worktree_unavailable)?;
@@ -380,15 +382,36 @@ fn task_worktree_unavailable() -> BackendError {
     )
 }
 
-fn task_worktree_unavailable_with(
-    source: impl std::error::Error + Send + Sync + 'static,
-) -> BackendError {
-    BackendError::with_source(
-        ErrorClassification::Conflict,
-        PublicError::TaskWorktreeUnavailable(EmptyErrorParams {}),
-        "task worktree is unavailable",
-        source,
-    )
+/// Reports a task-routing database failure as infrastructure rather than task state.
+///
+/// A repository error means the store could not answer, not that the task lost its worktree;
+/// classifying it as a conflict would log it at WARN and hide outages such as a locked SQLite
+/// file from operators alerting on ERROR.
+fn task_repository_error(source: impl std::error::Error + Send + Sync + 'static) -> BackendError {
+    BackendError::internal("task routing repository operation failed", source)
+}
+
+/// Splits worktree resolution failures so only a genuinely absent worktree stays a conflict.
+///
+/// `Domain` means Git answered and the branch owns no worktree, which is real task state. Every
+/// other variant means Git itself could not be run or understood, which is an infrastructure
+/// failure and must not be downgraded to WARN.
+fn resolve_worktree_error(source: GitlancerError) -> BackendError {
+    match &source {
+        GitlancerError::Domain(_) => BackendError::with_source(
+            ErrorClassification::Conflict,
+            PublicError::TaskWorktreeUnavailable(EmptyErrorParams {}),
+            "task worktree is unavailable",
+            source,
+        ),
+        GitlancerError::Exec(_)
+        | GitlancerError::Parse(_)
+        | GitlancerError::Io(_)
+        | GitlancerError::CommitMetadataUnavailable { .. }
+        | GitlancerError::DiffTooLarge { .. } => {
+            BackendError::internal("task worktree resolution failed", source)
+        }
+    }
 }
 
 /// Builds the conflict used when a workspace has no usable local directory.

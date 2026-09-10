@@ -99,11 +99,22 @@ export type LoadSessionEvent =
   | {
     "type": "session_update";
     update: import("@agentclientprotocol/sdk").SessionUpdate;
+    /**
+     * RFC 3339 local time from the history line this update was replayed from.
+     *
+     * Live follow-on updates and in-memory pending records omit it so the
+     * client stamps them with the wall clock instead of inventing a file time.
+     */
+    recordedAt?: string;
   }
   | { "type": "permission_request" } & SessionPermissionRequest
   | {
     "type": "turn_ended";
     stopReason: import("@agentclientprotocol/sdk").StopReason;
+    /**
+     * RFC 3339 local time from the history line that closed this turn.
+     */
+    recordedAt?: string;
   }
   | { "type": "history_notice"; notice: SessionHistoryNotice }
   | { "type": "completed" };

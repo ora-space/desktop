@@ -15,6 +15,7 @@ function textEvent(
   role: "user_message_chunk" | "agent_message_chunk",
   text: string,
   messageId: string,
+  recordedAt?: string,
 ): LoadSessionEvent {
   return {
     type: "session_update",
@@ -23,6 +24,7 @@ function textEvent(
       messageId,
       content: { type: "text", text },
     },
+    ...(recordedAt === undefined ? {} : { recordedAt }),
   };
 }
 
@@ -109,6 +111,35 @@ test("loads provider history and reconstructs turns from message boundaries", as
     pendingPermissions: [],
     error: null,
   });
+});
+
+test("restores bubble times from recordedAt instead of the load clock", async () => {
+  const recordedAt = "2026-09-02T09:15:00+08:00";
+  const expected = Date.parse(recordedAt);
+  const client: ChatSessionClient = {
+    load: () =>
+      events([
+        textEvent("user_message_chunk", "hello", "user-1", recordedAt),
+        textEvent("agent_message_chunk", "hi", "agent-1", recordedAt),
+        { type: "turn_ended", stopReason: "end_turn", recordedAt },
+        { type: "completed" },
+      ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, {
+    createId: () => `local-${++nextId}`,
+    now: () => 42,
+  });
+
+  await store.getState().loadSession("ora-1");
+
+  const conversation = store.getState().conversations["ora-1"];
+  assert.equal(conversation?.turns[0]?.createdAt, expected);
+  assert.equal(conversation?.turns[0]?.userMessage.createdAt, expected);
+  assert.equal(conversation?.turns[0]?.items[0]?.createdAt, expected);
 });
 
 test("publishes an active prompt incrementally while its session loads", async () => {
