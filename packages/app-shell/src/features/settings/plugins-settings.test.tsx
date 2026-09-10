@@ -939,3 +939,26 @@ it("keeps the sync action disabled across leaving and reopening the page", async
 
   await waitFor(() => expect(reopened).toBeEnabled());
 });
+
+/**
+ * The host admits one marketplace rebuild at a time and discards the rest, so the Sync action
+ * stands down while the host is refreshing on its own rather than letting a click be dropped.
+ */
+it("disables the sync action while the host is refreshing the marketplace", async () => {
+  const { client } = clientWithWeather();
+  renderSettings(client);
+
+  const sync = await screen.findByRole("button", {
+    name: /同步插件市场|Sync plugin marketplace/,
+  });
+  expect(sync).toBeEnabled();
+
+  act(() => useMarketplaceSyncStore.getState().setHostRefreshing(true));
+
+  await waitFor(() => expect(sync).toBeDisabled());
+  expect(within(sync).getByText(/正在同步…|Syncing…/)).toBeInTheDocument();
+
+  act(() => useMarketplaceSyncStore.getState().setHostRefreshing(false));
+
+  await waitFor(() => expect(sync).toBeEnabled());
+});
