@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 100);
+        assert_eq!(samples.len(), 101);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
