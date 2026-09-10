@@ -848,6 +848,59 @@ it("opens the README page when a marketplace card is clicked", async () => {
   ).toBeInTheDocument();
 });
 
+/** An uninstalled listing keeps the marketplace install command available on its detail page. */
+it("installs an uninstalled plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
+  expect(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  ).toBeInTheDocument();
+});
+
+/** An older installed release exposes update, then changes to uninstall after refreshing. */
+it("updates an outdated plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: /更新|Update/ }));
+
+  await waitFor(() => expect(state.installedPlugins[0]?.version).toBe("1.2.0"));
+  expect(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  ).toBeInTheDocument();
+});
+
+/** A current installed release uses the existing confirmation flow before uninstalling. */
+it("uninstalls a current plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installedPlugins.push(weatherInstalled());
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /卸载|Uninstall/ }),
+  );
+
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(0));
+  expect(
+    await screen.findByRole("button", { name: /安装|Install/ }),
+  ).toBeInTheDocument();
+});
+
 /** The README page breadcrumb returns to the marketplace grid. */
 it("returns from the README page to the marketplace grid", async () => {
   const user = userEvent.setup();
