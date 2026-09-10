@@ -156,4 +156,5 @@ itself; `Failing` is not, because the restart circuit is open for the rest of th
 stored preference naming an agent that is no longer reachable is carried forward unexamined rather
 than dropped — the frontend does not validate agent identities against a closed set — and a
 session's own binding is always reported as written, since that is what the conversation genuinely
-runs on.
+runs on. A first run that has never stored a preference adopts the first agent detection reports
+reaching, once, so later install or restart changes cannot silently move it.

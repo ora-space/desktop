@@ -34,6 +34,10 @@ export interface AgentSelection {
  * open, and using the first available agent as a fallback would silently change
  * the user's selection when a plugin is installed or removed. A surface that has
  * never chosen an agent therefore resolves to `null` instead of inventing one.
+ * Giving a first run something to send on is `useDefaultAgentAdoption`'s job:
+ * it writes the shared default once, so what arrives here is always a real
+ * preference rather than a guess this resolver would have to make again on
+ * every render.
  */
 export function useTargetAgentCli(selection: AgentSelection): string | null {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
