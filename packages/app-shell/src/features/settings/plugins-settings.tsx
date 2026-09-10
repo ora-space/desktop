@@ -185,6 +185,7 @@ export function PluginsSettings({
     return (
       <PluginReadmeView
         plugin={readmePlugin}
+        installed={installedById.get(readmePlugin.id)}
         onBack={() => setReadmePlugin(null)}
       />
     );
