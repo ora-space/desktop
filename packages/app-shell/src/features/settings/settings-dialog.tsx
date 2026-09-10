@@ -69,6 +69,7 @@ export function SettingsDialog() {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingSettingsNavigation | null>(null);
+  const [pluginDetailId, setPluginDetailId] = useState<string | null>(null);
   const pluginConfigurationGuard =
     useRef<PluginConfigurationNavigationGuard | null>(null);
   const developerMode = useDeveloperMode();
@@ -85,7 +86,10 @@ export function SettingsDialog() {
   const applyNavigation = (navigation: PendingSettingsNavigation) => {
     setPendingNavigation(null);
     if (navigation.kind === "close") setOpen(false);
-    else setCategory(navigation.category);
+    else {
+      if (navigation.category !== "plugins") setPluginDetailId(null);
+      setCategory(navigation.category);
+    }
   };
 
   /** Defers Settings navigation while the active plugin editor owns unsaved input. */
@@ -190,10 +194,19 @@ export function SettingsDialog() {
                   />
                 )}
                 {category === "roles" && <RolesSettings />}
-                {category === "skills" && <SkillsSettings />}
+                {category === "skills" && (
+                  <SkillsSettings
+                    onOpenPlugin={(pluginId) => {
+                      setPluginDetailId(pluginId);
+                      setCategory("plugins");
+                    }}
+                  />
+                )}
                 {category === "plugins" && (
                   <PluginsSettings
                     onNavigationGuardChange={registerPluginConfigurationGuard}
+                    detailPluginId={pluginDetailId}
+                    onDetailClose={() => setPluginDetailId(null)}
                   />
                 )}
                 {category === "proxy" && <ProxySettings />}
