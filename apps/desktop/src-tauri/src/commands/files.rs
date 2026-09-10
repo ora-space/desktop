@@ -220,3 +220,221 @@ fn read_project_file_backend(
         .read_file(&root, Path::new(&request.path))
         .map_err(workspace_file_backend_error)
 }
+
+/// Creates one empty file or directory in the selected task workspace.
+#[tauri::command]
+pub async fn create_workspace_entry(
+    state: State<'_, DesktopState>,
+    request: CreateWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "create_workspace_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| create_workspace_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Creates one empty file or directory in the selected project checkout root.
+#[tauri::command]
+pub async fn create_project_entry(
+    state: State<'_, DesktopState>,
+    request: CreateProjectEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "create_project_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| create_project_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Resolves a task workspace and creates the requested relative file or directory.
+fn create_workspace_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: CreateWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_task_cwd(&request.task_id)?;
+    workspace_files
+        .create_entry(&root, Path::new(&request.path), request.kind)
+        .map_err(workspace_file_backend_error)
+}
+
+/// Resolves a project checkout and creates the requested relative file or directory.
+fn create_project_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: CreateProjectEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_project_cwd(&request.project_id)?;
+    workspace_files
+        .create_entry(&root, Path::new(&request.path), request.kind)
+        .map_err(workspace_file_backend_error)
+}
+
+/// Copies one empty-or-existing path onto a missing destination in the selected task workspace.
+#[tauri::command]
+pub async fn copy_workspace_entry(
+    state: State<'_, DesktopState>,
+    request: CopyWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "copy_workspace_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| copy_workspace_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Copies one path onto a missing destination in the selected project checkout root.
+#[tauri::command]
+pub async fn copy_project_entry(
+    state: State<'_, DesktopState>,
+    request: CopyProjectEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "copy_project_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| copy_project_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Moves or renames one path in the selected task workspace.
+#[tauri::command]
+pub async fn move_workspace_entry(
+    state: State<'_, DesktopState>,
+    request: MoveWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "move_workspace_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| move_workspace_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Moves or renames one path in the selected project checkout root.
+#[tauri::command]
+pub async fn move_project_entry(
+    state: State<'_, DesktopState>,
+    request: MoveProjectEntryRequest,
+) -> Result<WorkspaceEntry, CommandError> {
+    run_backend(
+        "move_project_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| move_project_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Resolves a task workspace and copies the requested relative path.
+fn copy_workspace_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: CopyWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_task_cwd(&request.task_id)?;
+    workspace_files
+        .copy_entry(&root, Path::new(&request.from), Path::new(&request.path))
+        .map_err(workspace_file_backend_error)
+}
+
+/// Resolves a project checkout and copies the requested relative path.
+fn copy_project_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: CopyProjectEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_project_cwd(&request.project_id)?;
+    workspace_files
+        .copy_entry(&root, Path::new(&request.from), Path::new(&request.path))
+        .map_err(workspace_file_backend_error)
+}
+
+/// Resolves a task workspace and moves or renames the requested relative path.
+fn move_workspace_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: MoveWorkspaceEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_task_cwd(&request.task_id)?;
+    workspace_files
+        .move_entry(&root, Path::new(&request.from), Path::new(&request.path))
+        .map_err(workspace_file_backend_error)
+}
+
+/// Resolves a project checkout and moves or renames the requested relative path.
+fn move_project_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: MoveProjectEntryRequest,
+) -> Result<WorkspaceEntry, BackendError> {
+    let root = backend.resolve_project_cwd(&request.project_id)?;
+    workspace_files
+        .move_entry(&root, Path::new(&request.from), Path::new(&request.path))
+        .map_err(workspace_file_backend_error)
+}
+
+/// Deletes one path in the selected task workspace.
+#[tauri::command]
+pub async fn delete_workspace_entry(
+    state: State<'_, DesktopState>,
+    request: DeleteWorkspaceEntryRequest,
+) -> Result<DeleteFileSystemEntryResponse, CommandError> {
+    run_backend(
+        "delete_workspace_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| delete_workspace_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Deletes one path in the selected project checkout root.
+#[tauri::command]
+pub async fn delete_project_entry(
+    state: State<'_, DesktopState>,
+    request: DeleteProjectEntryRequest,
+) -> Result<DeleteFileSystemEntryResponse, CommandError> {
+    run_backend(
+        "delete_project_entry",
+        (state.backend.workspaces(), state.workspace_files.clone()),
+        request,
+        |(backend, files), request| delete_project_entry_backend(backend, files, request),
+    )
+    .await
+}
+
+/// Resolves a task workspace and deletes the requested relative path.
+fn delete_workspace_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: DeleteWorkspaceEntryRequest,
+) -> Result<DeleteFileSystemEntryResponse, BackendError> {
+    let root = backend.resolve_task_cwd(&request.task_id)?;
+    workspace_files
+        .delete_entry(&root, Path::new(&request.path))
+        .map_err(workspace_file_backend_error)?;
+    Ok(DeleteFileSystemEntryResponse {})
+}
+
+/// Resolves a project checkout and deletes the requested relative path.
+fn delete_project_entry_backend(
+    backend: &WorkspaceApi,
+    workspace_files: &WorkspaceFileApi,
+    request: DeleteProjectEntryRequest,
+) -> Result<DeleteFileSystemEntryResponse, BackendError> {
+    let root = backend.resolve_project_cwd(&request.project_id)?;
+    workspace_files
+        .delete_entry(&root, Path::new(&request.path))
+        .map_err(workspace_file_backend_error)?;
+    Ok(DeleteFileSystemEntryResponse {})
+}

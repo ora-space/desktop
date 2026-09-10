@@ -1,10 +1,11 @@
 # Task Workspace Files
 
-Desktop's task workspace file feature provides a read-only view of the active
-task workspace. It supports directory browsing, bounded text viewing,
-filename/content search, line quoting into chat via gutter `+` (click or drag,
-or Ctrl/Cmd+Enter on a focused line number), and native file-change
-refreshes.
+Desktop's task workspace file feature provides directory browsing, bounded
+text viewing, filename/content search, line quoting into chat via gutter `+`
+(click or drag, or Ctrl/Cmd+Enter on a focused line number), native
+file-change refreshes, and bounded create of a new empty file or directory
+from the explorer tree, plus cut/copy/paste, rename, and confirmed delete.
+The viewer itself stays read-only.
 
 ## Ownership and flow
 
@@ -55,16 +56,35 @@ These operations reuse the same `ora-fs` list/search/read bounds and relative-pa
 
 ## Desktop operations
 
-| Operation                | Request                               | Delivery                        |
-| ------------------------ | ------------------------------------- | ------------------------------- |
-| `listWorkspaceDirectory` | `taskId`, optional relative `path`    | `list_workspace_directory`      |
-| `readWorkspaceFile`      | `taskId`, relative `path`             | `read_workspace_file`           |
-| `searchWorkspace`        | task id and bounded search query      | `search_workspace`              |
-| `watchWorkspace`         | `taskId`                              | `stream_contract` Tauri channel |
-| `listProjectDirectory`   | `projectId`, optional relative `path` | `list_project_directory`        |
-| `readProjectFile`        | `projectId`, relative `path`          | `read_project_file`             |
-| `searchProject`          | project id and bounded search query   | `search_project`                |
-| `watchProject`           | `projectId`                           | `stream_contract` Tauri channel |
+| Operation                | Request                                 | Delivery                        |
+| ------------------------ | --------------------------------------- | ------------------------------- |
+| `listWorkspaceDirectory` | `taskId`, optional relative `path`      | `list_workspace_directory`      |
+| `readWorkspaceFile`      | `taskId`, relative `path`               | `read_workspace_file`           |
+| `searchWorkspace`        | task id and bounded search query        | `search_workspace`              |
+| `watchWorkspace`         | `taskId`                                | `stream_contract` Tauri channel |
+| `listProjectDirectory`   | `projectId`, optional relative `path`   | `list_project_directory`        |
+| `readProjectFile`        | `projectId`, relative `path`            | `read_project_file`             |
+| `searchProject`          | project id and bounded search query     | `search_project`                |
+| `watchProject`           | `projectId`                             | `stream_contract` Tauri channel |
+| `createWorkspaceEntry`   | `taskId`, relative `path`, `kind`       | `create_workspace_entry`        |
+| `createProjectEntry`     | `projectId`, relative `path`, `kind`    | `create_project_entry`          |
+| `copyWorkspaceEntry`     | `taskId`, `from`, destination `path`    | `copy_workspace_entry`          |
+| `copyProjectEntry`       | `projectId`, `from`, destination `path` | `copy_project_entry`            |
+| `moveWorkspaceEntry`     | `taskId`, `from`, destination `path`    | `move_workspace_entry`          |
+| `moveProjectEntry`       | `projectId`, `from`, destination `path` | `move_project_entry`            |
+| `deleteWorkspaceEntry`   | `taskId`, relative `path`               | `delete_workspace_entry`        |
+| `deleteProjectEntry`     | `projectId`, relative `path`            | `delete_project_entry`          |
+
+Create refuses to replace an existing path (`file_system_path_already_exists`).
+The parent directory must already exist. Explorer context menus create inside a
+folder, or in the parent of a file (Cursor's Files panel). Blank tree space
+creates at the checkout root. Cut / Copy / Paste operate on the entry itself
+(paste into a folder, or into a file's parent; a same-folder copy gets a
+`name copy` suffix). Rename is an inline move of the basename. Delete asks for
+confirmation, then permanently removes the path (files, folders, and
+unfollowed symlinks).
+Copy Path / Copy Relative Path / Reveal in File Manager reuse
+`joinOsAbsolutePath` and `locationActions.open("explorer", …)`.
 
 All returned paths are slash-separated and relative to the resolved checkout.
 `watchWorkspace` and `watchProject` emit `data`, `error`, and `end` frames. Their error
@@ -76,8 +96,11 @@ shutdown is emitted as `error` rather than a successful `end`.
 
 Workspace roots are resolved from persisted task or project identity. Paths are
 validated as relative paths, canonicalized before containment checks, and
-bounded before reads or searches. The filesystem service is read-only and
-watcher changes are cache-invalidating batches rather than an event log.
+bounded before reads, searches, or creates. Create is a contained write of a
+new empty file (`create_new`) or directory (`create_dir`); copy, move, and
+delete refuse to escape the checkout and do not follow symbolic links. Delete
+asks for confirmation in the explorer, then permanently removes the path. Watcher
+changes are cache-invalidating batches rather than an event log.
 
 The viewer keeps mounting every row for files up to 400 lines. Larger files
 render only the window around the viewport (plus overscan) so a multi-megabyte

@@ -5,6 +5,10 @@
       "exports": ["WorkspaceFileIcon"],
       "purpose": "Composer file references reuse file-kind presentation without duplicating icons."
     },
+    "./workspace-file-tree": {
+      "exports": ["DirectoryTree", "FileExplorerSession", "FileTreeRootMenu"],
+      "purpose": "Explorer rows own the file-manager context menu, clipboard, and inline create/rename drafts."
+    },
     "./workspace-files-view": {
       "exports": [
         "WorkspaceArtifactRequest",

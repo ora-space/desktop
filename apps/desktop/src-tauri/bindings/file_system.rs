@@ -41,4 +41,44 @@ pub(super) const BINDINGS: &[Binding] = &[
         operation: "watchProject",
         handler: "commands::files::start_project_watch",
     },
+    Binding::Unary {
+        operation: "createWorkspaceEntry",
+        handler: "commands::files::create_workspace_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "createProjectEntry",
+        handler: "commands::files::create_project_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "copyWorkspaceEntry",
+        handler: "commands::files::copy_workspace_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "copyProjectEntry",
+        handler: "commands::files::copy_project_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "moveWorkspaceEntry",
+        handler: "commands::files::move_workspace_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "moveProjectEntry",
+        handler: "commands::files::move_project_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "deleteWorkspaceEntry",
+        handler: "commands::files::delete_workspace_entry",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "deleteProjectEntry",
+        handler: "commands::files::delete_project_entry",
+        permission: Permission::MainWebview,
+    },
 ];

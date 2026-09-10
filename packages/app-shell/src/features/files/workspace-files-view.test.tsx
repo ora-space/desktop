@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import {
   RemoteContractError,
@@ -28,6 +29,7 @@ import { emptyFilesHandlers } from "../../test/memory/files";
 import "../../i18n/i18n-instance";
 import { createStubPlatform } from "../../test/stub-platform";
 import { WorkspaceFilesView } from "./workspace-files-view";
+import userEvent from "@testing-library/user-event";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -42,6 +44,28 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...workspaceHandlers(state),
     ...emptyFilesHandlers(),
   };
+}
+
+/** Wraps Files views so explorer rows can read location actions. */
+function withFilesProviders(
+  client: ReturnType<typeof createTestClient>,
+  queryClient: QueryClient,
+  platform = createStubPlatform(),
+) {
+  return ({ children }: { children: ReactNode }) =>
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        ContractsClientContext.Provider,
+        { value: client },
+        createElement(
+          AppI18nProvider,
+          null,
+          createElement(PlatformProvider, { adapter: platform, children }),
+        ),
+      ),
+    );
 }
 
 /** Renders Files with a chat-driven path that the workspace cannot resolve. */
@@ -69,7 +93,14 @@ function renderMissingFile() {
       createElement(
         ContractsClientContext.Provider,
         { value: client },
-        createElement(AppI18nProvider, null, children),
+        createElement(
+          AppI18nProvider,
+          null,
+          createElement(PlatformProvider, {
+            adapter: createStubPlatform(),
+            children,
+          }),
+        ),
       ),
     );
   return render(
@@ -121,7 +152,14 @@ function renderRequestedFile(path: string, line?: number, endLine?: number) {
       createElement(
         ContractsClientContext.Provider,
         { value: client },
-        createElement(AppI18nProvider, null, children),
+        createElement(
+          AppI18nProvider,
+          null,
+          createElement(PlatformProvider, {
+            adapter: createStubPlatform(),
+            children,
+          }),
+        ),
       ),
     );
   const view = render(
@@ -234,7 +272,14 @@ describe("WorkspaceFilesView file requests", () => {
         createElement(
           ContractsClientContext.Provider,
           { value: client },
-          createElement(AppI18nProvider, null, children),
+          createElement(
+            AppI18nProvider,
+            null,
+            createElement(PlatformProvider, {
+              adapter: createStubPlatform(),
+              children,
+            }),
+          ),
         ),
       );
     const { rerender } = render(
@@ -299,12 +344,14 @@ describe("WorkspaceFilesView directory requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              directoryRequest={{ path: "C:/repo/docs", requestId: 1 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                directoryRequest={{ path: "C:/repo/docs", requestId: 1 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -355,12 +402,14 @@ describe("WorkspaceFilesView artifact requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              artifactRequest={{ path: "install", requestId: 1 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                artifactRequest={{ path: "install", requestId: 1 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -377,12 +426,14 @@ describe("WorkspaceFilesView artifact requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              artifactRequest={{ path: "cli", requestId: 2 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                artifactRequest={{ path: "cli", requestId: 2 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -433,12 +484,14 @@ describe("WorkspaceFilesView artifact requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              {...requests}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                {...requests}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>
@@ -484,12 +537,14 @@ describe("WorkspaceFilesView artifact requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              artifactRequest={{ path: "missing", requestId: 1 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                artifactRequest={{ path: "missing", requestId: 1 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -520,12 +575,14 @@ describe("WorkspaceFilesView artifact requests", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              taskId="task-1"
-              hideHeader
-              artifactRequest={{ path: "broken", requestId: 1 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                taskId="task-1"
+                hideHeader
+                artifactRequest={{ path: "broken", requestId: 1 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -564,7 +621,14 @@ describe("WorkspaceFilesView project scope", () => {
         createElement(
           ContractsClientContext.Provider,
           { value: client },
-          createElement(AppI18nProvider, null, children),
+          createElement(
+            AppI18nProvider,
+            null,
+            createElement(PlatformProvider, {
+              adapter: createStubPlatform(),
+              children,
+            }),
+          ),
         ),
       );
 
@@ -619,11 +683,13 @@ describe("WorkspaceFilesView project scope", () => {
       <QueryClientProvider client={queryClient}>
         <ContractsClientContext.Provider value={client}>
           <AppI18nProvider>
-            <WorkspaceFilesView
-              projectId="project-1"
-              hideHeader
-              artifactRequest={{ path: "install", requestId: 1 }}
-            />
+            <PlatformProvider adapter={createStubPlatform()}>
+              <WorkspaceFilesView
+                projectId="project-1"
+                hideHeader
+                artifactRequest={{ path: "install", requestId: 1 }}
+              />
+            </PlatformProvider>
           </AppI18nProvider>
         </ContractsClientContext.Provider>
       </QueryClientProvider>,
@@ -662,7 +728,14 @@ describe("WorkspaceFilesView project scope", () => {
         createElement(
           ContractsClientContext.Provider,
           { value: client },
-          createElement(AppI18nProvider, null, children),
+          createElement(
+            AppI18nProvider,
+            null,
+            createElement(PlatformProvider, {
+              adapter: createStubPlatform(),
+              children,
+            }),
+          ),
         ),
       );
 
@@ -718,20 +791,7 @@ describe("WorkspaceFilesView project scope", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        createElement(
-          ContractsClientContext.Provider,
-          { value: client },
-          createElement(
-            AppI18nProvider,
-            null,
-            createElement(PlatformProvider, { adapter: platform, children }),
-          ),
-        ),
-      );
+    const wrapper = withFilesProviders(client, queryClient, platform);
 
     render(
       <WorkspaceFilesView
@@ -791,7 +851,14 @@ describe("WorkspaceFilesView project scope", () => {
         createElement(
           ContractsClientContext.Provider,
           { value: client },
-          createElement(AppI18nProvider, null, children),
+          createElement(
+            AppI18nProvider,
+            null,
+            createElement(PlatformProvider, {
+              adapter: createStubPlatform(),
+              children,
+            }),
+          ),
         ),
       );
 
@@ -815,5 +882,343 @@ describe("WorkspaceFilesView project scope", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(readProjectFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceFilesView explorer tree", () => {
+  it("still opens a file for read-only viewing from a tree click", async () => {
+    const user = userEvent.setup();
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = async () => ({
+      path: "",
+      entries: [
+        {
+          name: "README.md",
+          path: "README.md",
+          kind: "file",
+          isSymbolicLink: false,
+        },
+      ],
+    });
+    const readWorkspaceFile = vi.fn(async (request: { path: string }) => ({
+      path: request.path,
+      content: "hello",
+      version: "test",
+      sizeBytes: 5,
+    }));
+    clientHandlers.readWorkspaceFile = readWorkspaceFile;
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient) },
+    );
+
+    await user.click(await screen.findByRole("button", { name: /README.md/ }));
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenCalledWith(
+        { taskId: "task-1", path: "README.md" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+    expect(await screen.findByText("hello")).toBeTruthy();
+  });
+});
+
+describe("WorkspaceFilesView explorer context menu", () => {
+  it("copies the absolute path and reveals the file in the host file manager", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText, readText: vi.fn() },
+    });
+    const open = vi.fn(async () => undefined);
+    const platform = {
+      ...createStubPlatform(),
+      locationActions: {
+        ...createStubPlatform().locationActions,
+        open,
+      },
+    };
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    clientHandlers.listWorkspaceDirectory = async () => ({
+      path: "",
+      entries: [
+        {
+          name: "README.md",
+          path: "README.md",
+          kind: "file",
+          isSymbolicLink: false,
+        },
+      ],
+    });
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient, platform) },
+    );
+
+    const row = await screen.findByRole("button", { name: /README.md/ });
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: /^复制路径$|^Copy Path$/,
+      }),
+    );
+    expect(writeText).toHaveBeenCalledWith("C:/repo/README.md");
+
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: /在资源管理器中显示|Reveal in File Manager/,
+      }),
+    );
+    expect(open).toHaveBeenCalledWith("explorer", "C:/repo/README.md");
+  });
+
+  it("creates a new file in the parent of the right-clicked file", async () => {
+    const user = userEvent.setup();
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    let entries = [
+      {
+        name: "README.md",
+        path: "README.md",
+        kind: "file" as const,
+        isSymbolicLink: false,
+      },
+    ];
+    clientHandlers.listWorkspaceDirectory = async ({ path }) => ({
+      path: path ?? "",
+      entries: path === undefined || path === "" ? entries : [],
+    });
+    const createWorkspaceEntry = vi.fn(async ({ path, kind }) => {
+      const created = {
+        name: path.split("/").pop() ?? path,
+        path,
+        kind,
+        isSymbolicLink: false,
+      };
+      entries = [...entries, created];
+      return created;
+    });
+    clientHandlers.createWorkspaceEntry = createWorkspaceEntry;
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient) },
+    );
+
+    const row = await screen.findByRole("button", { name: /README.md/ });
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", { name: /^新建文件$|^New File$/ }),
+    );
+    const nameField = await screen.findByRole("textbox", {
+      name: /新建文件|New File/,
+    });
+    await user.type(nameField, "notes.txt{Enter}");
+    await waitFor(() =>
+      expect(createWorkspaceEntry).toHaveBeenCalledWith(
+        { taskId: "task-1", path: "notes.txt", kind: "file" },
+        undefined,
+      ),
+    );
+    expect(
+      await screen.findByRole("button", { name: /notes.txt/ }),
+    ).toBeTruthy();
+  });
+
+  it("copies a file then pastes a uniquely named sibling", async () => {
+    const user = userEvent.setup();
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    let entries = [
+      {
+        name: "README.md",
+        path: "README.md",
+        kind: "file" as const,
+        isSymbolicLink: false,
+      },
+    ];
+    clientHandlers.listWorkspaceDirectory = async ({ path }) => ({
+      path: path ?? "",
+      entries: path === undefined || path === "" ? entries : [],
+    });
+    const copyWorkspaceEntry = vi.fn(async ({ from, path }) => {
+      const created = {
+        name: path.split("/").pop() ?? path,
+        path,
+        kind: "file" as const,
+        isSymbolicLink: false,
+      };
+      entries = [...entries, created];
+      expect(from).toBe("README.md");
+      return created;
+    });
+    clientHandlers.copyWorkspaceEntry = copyWorkspaceEntry;
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient) },
+    );
+
+    const row = await screen.findByRole("button", { name: /README.md/ });
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", { name: /^复制$|^Copy$/ }),
+    );
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", { name: /^粘贴$|^Paste$/ }),
+    );
+    await waitFor(() =>
+      expect(copyWorkspaceEntry).toHaveBeenCalledWith(
+        { taskId: "task-1", from: "README.md", path: "README copy.md" },
+        undefined,
+      ),
+    );
+    expect(
+      await screen.findByRole("button", { name: /README copy.md/ }),
+    ).toBeTruthy();
+  });
+
+  it("renames a file through the inline draft", async () => {
+    const user = userEvent.setup();
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    let entries = [
+      {
+        name: "README.md",
+        path: "README.md",
+        kind: "file" as const,
+        isSymbolicLink: false,
+      },
+    ];
+    clientHandlers.listWorkspaceDirectory = async ({ path }) => ({
+      path: path ?? "",
+      entries: path === undefined || path === "" ? entries : [],
+    });
+    const moveWorkspaceEntry = vi.fn(async ({ from, path }) => {
+      const created = {
+        name: path.split("/").pop() ?? path,
+        path,
+        kind: "file" as const,
+        isSymbolicLink: false,
+      };
+      entries = entries.map((entry) => (entry.path === from ? created : entry));
+      return created;
+    });
+    clientHandlers.moveWorkspaceEntry = moveWorkspaceEntry;
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient) },
+    );
+
+    const row = await screen.findByRole("button", { name: /README.md/ });
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", { name: /^重命名$|^Rename$/ }),
+    );
+    const nameField = await screen.findByRole("textbox", {
+      name: /重命名|Rename/,
+    });
+    await user.clear(nameField);
+    await user.type(nameField, "HELLO.md{Enter}");
+    await waitFor(() =>
+      expect(moveWorkspaceEntry).toHaveBeenCalledWith(
+        { taskId: "task-1", from: "README.md", path: "HELLO.md" },
+        undefined,
+      ),
+    );
+    expect(
+      await screen.findByRole("button", { name: /HELLO.md/ }),
+    ).toBeTruthy();
+  });
+
+  it("deletes a file after confirming in the dialog", async () => {
+    const user = userEvent.setup();
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const client = createTestClient(clientHandlers);
+    let entries = [
+      {
+        name: "README.md",
+        path: "README.md",
+        kind: "file" as const,
+        isSymbolicLink: false,
+      },
+    ];
+    clientHandlers.listWorkspaceDirectory = async ({ path }) => ({
+      path: path ?? "",
+      entries: path === undefined || path === "" ? entries : [],
+    });
+    const deleteWorkspaceEntry = vi.fn(async ({ path }) => {
+      entries = entries.filter((entry) => entry.path !== path);
+      return {};
+    });
+    clientHandlers.deleteWorkspaceEntry = deleteWorkspaceEntry;
+    clientHandlers.getTaskWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <WorkspaceFilesView projectId="project-1" taskId="task-1" hideHeader />,
+      { wrapper: withFilesProviders(client, queryClient) },
+    );
+
+    const row = await screen.findByRole("button", { name: /README.md/ });
+    await user.pointer({ keys: "[MouseRight>]", target: row });
+    await user.click(
+      await screen.findByRole("menuitem", { name: /^删除$|^Delete$/ }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^删除$|^Delete$/ }),
+    );
+    await waitFor(() =>
+      expect(deleteWorkspaceEntry).toHaveBeenCalledWith(
+        { taskId: "task-1", path: "README.md" },
+        undefined,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /README.md/ })).toBeNull(),
+    );
   });
 });

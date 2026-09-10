@@ -17,6 +17,8 @@ pub enum WorkspaceFileSystemError {
     PathOutsideWorkspace { path: PathBuf },
     #[error("workspace path was not found: {path:?}")]
     PathNotFound { path: PathBuf },
+    #[error("workspace path already exists: {path:?}")]
+    AlreadyExists { path: PathBuf },
     #[error("workspace path is not a directory: {path:?}")]
     NotDirectory { path: PathBuf },
     #[error("workspace path is not a file: {path:?}")]

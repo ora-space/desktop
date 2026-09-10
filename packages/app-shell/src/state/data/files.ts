@@ -101,6 +101,56 @@ export function filesScopeApi(client: ContractsClient, scope: FilesScope) {
             { signal },
           );
     },
+    createEntry(path: string, kind: "file" | "directory") {
+      return scope.kind === "task"
+        ? client.fileSystem.createWorkspaceEntry({
+            taskId: scope.taskId,
+            path,
+            kind,
+          })
+        : client.fileSystem.createProjectEntry({
+            projectId: scope.projectId,
+            path,
+            kind,
+          });
+    },
+    copyEntry(from: string, path: string) {
+      return scope.kind === "task"
+        ? client.fileSystem.copyWorkspaceEntry({
+            taskId: scope.taskId,
+            from,
+            path,
+          })
+        : client.fileSystem.copyProjectEntry({
+            projectId: scope.projectId,
+            from,
+            path,
+          });
+    },
+    moveEntry(from: string, path: string) {
+      return scope.kind === "task"
+        ? client.fileSystem.moveWorkspaceEntry({
+            taskId: scope.taskId,
+            from,
+            path,
+          })
+        : client.fileSystem.moveProjectEntry({
+            projectId: scope.projectId,
+            from,
+            path,
+          });
+    },
+    deleteEntry(path: string) {
+      return scope.kind === "task"
+        ? client.fileSystem.deleteWorkspaceEntry({
+            taskId: scope.taskId,
+            path,
+          })
+        : client.fileSystem.deleteProjectEntry({
+            projectId: scope.projectId,
+            path,
+          });
+    },
   };
 }
 
@@ -161,6 +211,11 @@ export async function invalidateScopedFileQueries(
 export function parentPath(path: string): string {
   const separator = path.lastIndexOf("/");
   return separator <= 0 ? "" : path.slice(0, separator);
+}
+
+/** Joins one new name onto a workspace-relative parent directory. */
+export function joinWorkspaceChild(parent: string, name: string): string {
+  return parent === "" ? name : `${parent}/${name}`;
 }
 
 /** Cache identity owned by files data; consumers never repeat its tuples. */
