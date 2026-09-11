@@ -68,10 +68,14 @@ const MARKETPLACE_KIND_LABELS: Record<string, string> = {
  */
 export function PluginsSettings({
   onNavigationGuardChange,
+  detailPluginId = null,
+  onDetailClose,
 }: {
   onNavigationGuardChange?: (
     guard: PluginConfigurationNavigationGuard | null,
   ) => void;
+  detailPluginId?: string | null;
+  onDetailClose?: () => void;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -190,11 +194,19 @@ export function PluginsSettings({
     }
   };
 
-  if (readmePlugin !== null) {
+  const detailPlugin =
+    (detailPluginId === null ? undefined : availableById.get(detailPluginId)) ??
+    readmePlugin;
+
+  if (detailPlugin !== null && detailPlugin !== undefined) {
     return (
       <PluginReadmeView
-        plugin={readmePlugin}
-        onBack={() => setReadmePlugin(null)}
+        plugin={detailPlugin}
+        installed={installedById.get(detailPlugin.id)}
+        onBack={() => {
+          setReadmePlugin(null);
+          onDetailClose?.();
+        }}
       />
     );
   }

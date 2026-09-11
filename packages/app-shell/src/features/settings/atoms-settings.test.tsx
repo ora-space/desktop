@@ -43,6 +43,7 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
 function renderSettings(
   kind: "agent" | "skill",
   configure?: (handlers: TestHandlers) => void,
+  onOpenPlugin?: (pluginId: string) => void,
 ) {
   const state = createFixtureState();
   if (kind === "agent") {
@@ -92,7 +93,11 @@ function renderSettings(
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            {kind === "agent" ? <RolesSettings /> : <SkillsSettings />}
+            {kind === "agent" ? (
+              <RolesSettings />
+            ) : (
+              <SkillsSettings onOpenPlugin={onOpenPlugin} />
+            )}
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -137,14 +142,54 @@ describe("atom settings content", () => {
     );
   });
 
-  it("collapses long plugin sources to an icon and reveals the full id on hover", async () => {
+  it("opens a long plugin source from a compact button with a friendly tooltip", async () => {
     const user = userEvent.setup();
     const pluginId = "official/review-pack-with-a-name-that-does-not-fit";
+    const onOpenPlugin = vi.fn();
+    renderSettings(
+      "skill",
+      (handlers) => {
+        handlers.listSkills = async () => ({
+          skills: [
+            {
+              id: "plugin:" + pluginId + ":review",
+              namespace: pluginId,
+              name: "review",
+              description: "Reviews changes",
+              source: { kind: "plugin", pluginId },
+              availability: "available",
+            },
+          ],
+        });
+      },
+      onOpenPlugin,
+    );
+
+    const item = await screen.findByRole("listitem");
+    const sourceIcon = within(item).getByRole("button", {
+      name: "查看来源插件详情",
+    });
+    expect(within(item).queryByText(pluginId)).toBeNull();
+
+    await user.hover(sourceIcon);
+    const tooltip = await screen.findByText("查看来源插件详情");
+    expect(tooltip).toBeVisible();
+    expect(tooltip).toHaveTextContent("查看来源插件详情");
+    expect(tooltip).not.toHaveTextContent(pluginId);
+
+    await user.click(sourceIcon);
+    expect(onOpenPlugin).toHaveBeenCalledWith(pluginId);
+  });
+
+  it("uninstalls a source plugin after warning that all of its Skills are deleted", async () => {
+    const user = userEvent.setup();
+    const pluginId = "official/review-pack";
+    const uninstallPlugin = vi.fn(async () => ({ pluginId }));
     renderSettings("skill", (handlers) => {
       handlers.listSkills = async () => ({
         skills: [
           {
-            id: "plugin:" + pluginId + ":review",
+            id: `plugin:${pluginId}:review`,
             namespace: pluginId,
             name: "review",
             description: "Reviews changes",
@@ -154,20 +199,35 @@ describe("atom settings content", () => {
         ],
       });
       handlers.listInstalledPlugins = async () => ({ plugins: [] });
+      handlers.listAvailablePlugins = async () => ({
+        updatedAt: 0n,
+        plugins: [],
+      });
+      handlers.uninstallPlugin = uninstallPlugin;
     });
 
-    const item = await screen.findByRole("listitem");
-    const sourceIcon = within(item).getByRole("button", { name: pluginId });
-    expect(within(item).queryByText(pluginId)).toBeNull();
+    const deleteButton = await screen.findByRole("button", {
+      name: "删除该插件引入的所有 Skill",
+    });
+    await user.hover(deleteButton);
+    expect(await screen.findByText("删除该插件引入的所有 Skill")).toBeVisible();
+    await user.click(deleteButton);
 
-    await user.hover(sourceIcon);
-    const tooltip = await screen.findByText(pluginId);
-    expect(tooltip).toBeVisible();
-    expect(tooltip).toHaveClass(
-      "max-w-64",
-      "whitespace-normal",
-      "break-all",
-      "text-left",
+    const dialog = await screen.findByRole("alertdialog", {
+      name: `卸载“${pluginId}”？`,
+    });
+    expect(dialog).toHaveTextContent(
+      "这会卸载该插件，并删除它引入的所有 Skill。此操作无法撤销。",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "卸载并删除 Skills" }),
+    );
+
+    await waitFor(() =>
+      expect(uninstallPlugin).toHaveBeenCalledWith(
+        { pluginId, dataDisposition: "delete" },
+        undefined,
+      ),
     );
   });
 
