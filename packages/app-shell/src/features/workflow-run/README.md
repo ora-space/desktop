@@ -224,7 +224,9 @@ Keep these stacks separate — shared chrome only where noted.
   Node conversation uses the ordinary `ChatView` / `MessageList` transcript, so a
   long node session is row-windowed the same way as task chat. Off-screen turns
   (and live tool rows) unmount; chat inline artifact links stay on task review
-  chat, not the Theater card.
+  chat, not the Theater card. A failed session load (plugin crash, unavailable
+  agent) is shown once and not retried, so Theater does not jitter between the
+  loading placeholder and the transcript.
 
 ## Demo path checklist
 

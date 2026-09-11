@@ -70,6 +70,12 @@ export function RunNodeSessionChat({
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
+    // Plugin / runtime faults must not retry forever: each load toggles
+    // isLoading, remounts the transcript, and jitters Theater. Ordinary chat
+    // already stops once `error` is set; keep the same brake here.
+    if (existing?.error != null) {
+      return;
+    }
     // Workflow attachment can seed an empty, "loaded" conversation before its automatic prompt
     // is published. A missing or incomplete conversation loads immediately.
     if (existing === undefined || (!existing.isLoading && !existing.isLoaded)) {
@@ -99,6 +105,7 @@ export function RunNodeSessionChat({
     return () => window.clearTimeout(retry);
   }, [
     chatStore,
+    conversation?.error,
     conversation?.isLoaded,
     conversation?.isLoading,
     conversation?.isResponding,
@@ -109,13 +116,12 @@ export function RunNodeSessionChat({
 
   const turns = conversation?.turns ?? [];
   const isResponding = conversation?.isResponding ?? false;
+  const loadFailed = (conversation?.error ?? null) !== null;
   // The session id is persisted before the workflow-owned first prompt is recorded. Empty replay
   // attempts during that gap must remain one stable loading state; otherwise each retry briefly
   // exposes ChatView's empty-history state and makes the node session appear to flash.
   const isWaitingForFirstTurn =
-    status === "running" &&
-    turns.length === 0 &&
-    (conversation?.error ?? null) === null;
+    status === "running" && turns.length === 0 && !loadFailed;
   const lastTurn = turns.at(-1);
   const isStreaming = isResponding && (lastTurn?.items.length ?? 0) > 0;
   // Loading a running node follows the workflow-owned first turn. Keep the short
@@ -170,9 +176,11 @@ export function RunNodeSessionChat({
         isResponding={isResponding}
         isStreaming={isStreaming}
         isLoading={
-          conversation === undefined ||
-          conversation.isLoading ||
-          isWaitingForFirstTurn
+          !loadFailed &&
+          turns.length === 0 &&
+          (conversation === undefined ||
+            conversation.isLoading ||
+            isWaitingForFirstTurn)
         }
         error={conversation?.error ?? null}
         pendingPermissions={conversation?.pendingPermissions ?? []}
