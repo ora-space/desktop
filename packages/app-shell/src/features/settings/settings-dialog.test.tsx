@@ -1,6 +1,6 @@
 import { createChatStore } from "@ora/chat";
 import type { ContractsClient } from "@ora/contracts";
-import { PlatformProvider } from "../../platform";
+import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -162,6 +162,50 @@ describe("SettingsDialog developer options", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals the log download only while developer mode is enabled on a host that exports logs", async () => {
+    const state = createFixtureState();
+    state.developerMode = { enabled: true };
+    const downloadToday = vi.fn(async () => true);
+    renderDialog(createTestClient(createFixtureHandlers(state)), {
+      ...createStubPlatform(),
+      diagnosticLogs: { downloadToday },
+    });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Developer options" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Download logs" }),
+    );
+    await waitFor(() => expect(downloadToday).toHaveBeenCalledOnce());
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Developer mode" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Download logs" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("hides the log download when the host cannot export logs", async () => {
+    const state = createFixtureState();
+    state.developerMode = { enabled: true };
+    renderDialog(createTestClient(createFixtureHandlers(state)));
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Developer options" }),
+    );
+
+    expect(
+      await screen.findByRole("combobox", { name: "Log level" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Download logs" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("protects unsaved plugin configuration when switching settings categories", async () => {
     const state = createFixtureState();
     state.installedPlugins.push({
@@ -297,7 +341,10 @@ describe("SettingsDialog developer options", () => {
 });
 
 /** Renders the real settings dialog with shared client, query, chat, i18n, and platform providers. */
-function renderDialog(client: ContractsClient) {
+function renderDialog(
+  client: ContractsClient,
+  platform: PlatformAdapter = createStubPlatform(),
+) {
   const queryClient = createTestQueryClient();
   const AppProviders = createHookWrapper(
     client,
@@ -307,7 +354,7 @@ function renderDialog(client: ContractsClient) {
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <PlatformProvider adapter={createStubPlatform()}>
+      <PlatformProvider adapter={platform}>
         <AppProviders>{children}</AppProviders>
       </PlatformProvider>
     );

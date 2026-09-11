@@ -46,6 +46,7 @@ import { SettingsHeading } from "./settings-heading";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
 import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
+import { DiagnosticLogsSettings } from "./diagnostic-logs-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 import { useUiStore, type SettingsCategory } from "../../state/stores/ui-store";
 import {
@@ -479,7 +480,12 @@ function DeveloperSettings({
         description={t("settings.developer.description")}
       />
       <DeveloperModeSettings controller={developerMode} />
-      {developerModeEnabled && <RuntimeLogLevelSettings />}
+      {developerModeEnabled && (
+        <>
+          <RuntimeLogLevelSettings />
+          <DiagnosticLogsSettings />
+        </>
+      )}
     </div>
   );
 }
