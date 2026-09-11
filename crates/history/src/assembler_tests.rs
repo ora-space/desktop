@@ -1,5 +1,5 @@
 use crate::assembler::{AssembledRecord, HistoryAssembler};
-use crate::record::HistoryRecord;
+use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use agent_client_protocol_schema::v1::{ContentChunk, MessageId, SessionUpdate};
@@ -527,4 +527,31 @@ fn pending_records_excludes_written_tools() {
         panic!("expected a tool call");
     };
     assert_eq!(call.tool_call_id, ToolCallId::new("t2"));
+}
+
+#[test]
+fn turn_end_flushes_the_latest_timing_for_an_open_tool() {
+    let mut assembler = HistoryAssembler::new(0);
+    let opening = SessionUpdate::ToolCall(
+        ToolCall::new("timed", "Long test").status(ToolCallStatus::InProgress),
+    );
+    let started = ToolCallTiming {
+        started_at: "2026-09-11T10:00:00+08:00".to_string(),
+        duration_ms: None,
+    };
+    assert_eq!(
+        assembler.push_timed_update(&opening, started.clone()),
+        vec![]
+    );
+    let finished = ToolCallTiming {
+        duration_ms: Some(90_000),
+        ..started
+    };
+    assembler.update_tool_timing(&ToolCallId::new("timed"), finished.clone());
+
+    let records = assembler.end_turn(StopReason::Cancelled);
+    let HistoryRecord::Update { tool_timing, .. } = &records[0].record else {
+        panic!("expected tool update");
+    };
+    assert_eq!(tool_timing, &Some(finished));
 }

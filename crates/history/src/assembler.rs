@@ -121,6 +121,13 @@ impl HistoryAssembler {
         self.push_update_inner(update, Some(timing))
     }
 
+    /// Replaces timing for an open tool before a turn boundary flushes its final snapshot.
+    pub fn update_tool_timing(&mut self, tool_call_id: &ToolCallId, timing: ToolCallTiming) {
+        if let Some(index) = self.tool_index(tool_call_id) {
+            self.tools[index].timing = Some(timing);
+        }
+    }
+
     /// Shares update assembly while keeping timing an explicit tool-only API at call sites.
     fn push_update_inner(
         &mut self,
