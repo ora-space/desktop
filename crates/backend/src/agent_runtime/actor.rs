@@ -5,6 +5,7 @@ use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::session_followers::SessionFollowers;
+use super::prompt_liveness::PromptLiveness;
 use super::title_acquisition::PollAttempt;
 use super::*;
 #[path = "actor_mcp.rs"]
@@ -309,20 +310,40 @@ impl RuntimeActor {
         let mut permissions = HashMap::new();
         let mut followers = SessionFollowers::new();
         let mut input_state = ActiveInputState::default();
+        let mut liveness = PromptLiveness::new(PROMPT_INACTIVITY_TIMEOUT);
         loop {
-            match input_state
-                .recv(
+            let input = tokio::select! {
+                input = input_state.recv(
                     &mut channel.events,
                     &mut channel.controls,
                     &mut self.commands,
+                ) => Some(input),
+                () = liveness.wait() => None,
+            };
+            let Some(input) = input else {
+                ora_warn!(session_id = %self.session.id, operation_id = operation_id, "prompt inactive; cancelling session");
+                self.cancel(&client, &permissions).await;
+                let settled = timeout(
+                    CANCELLATION_GRACE,
+                    settle_cancelled_prompt(self, &mut channel, &client, pending, &events),
                 )
-                .await
-            {
+                .await;
+                if !matches!(settled, Ok(Some(_))) {
+                    drain_queued_prompt_events(self, &mut channel, &client, &events).await;
+                }
+                self.end_turn(StopReason::Cancelled);
+                followers.finish(StopReason::Cancelled);
+                let _ = events.try_send(Err(agent_timed_out("agent prompt made no progress")));
+                self.isolate_channel(channel).await;
+                return;
+            };
+            match input {
                 ActiveInput::Event(SessionEvent::Update(update)) => {
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
                     self.observe_session_update(&update.update);
                     let update = update.update;
+                    liveness.observe(&update);
                     let outcome = self.recorder.record_update(&update);
                     self.settle_record(outcome);
                     followers.send_update(&update);
@@ -384,6 +405,7 @@ impl RuntimeActor {
                         self.isolate_channel(channel).await;
                         return;
                     }
+                    liveness.permission_settled();
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {

@@ -7,6 +7,7 @@ mod history;
 mod load;
 mod operations;
 pub(crate) mod plugin_agent;
+mod prompt_liveness;
 mod record;
 mod replay;
 mod restart_circuit;
@@ -78,6 +79,7 @@ use tokio::sync::{mpsc, oneshot};
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
+const PROMPT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
 const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
