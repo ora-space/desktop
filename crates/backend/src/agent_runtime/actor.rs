@@ -234,6 +234,7 @@ impl RuntimeActor {
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: notification.update,
+                    tool_timing: None,
                 }))
                 .is_err()
             {
@@ -326,7 +327,10 @@ impl RuntimeActor {
                     self.settle_record(outcome);
                     followers.send_update(&update);
                     if events
-                        .try_send(Ok(PromptSessionEvent::SessionUpdate { update }))
+                        .try_send(Ok(PromptSessionEvent::SessionUpdate {
+                            update,
+                            tool_timing: None,
+                        }))
                         .is_err()
                     {
                         self.end_turn(StopReason::Cancelled);
@@ -1002,7 +1006,10 @@ fn publish_setup(
 ) -> bool {
     setup.into_iter().all(|update| {
         events
-            .try_send(Ok(PromptSessionEvent::SessionUpdate { update }))
+            .try_send(Ok(PromptSessionEvent::SessionUpdate {
+                update,
+                tool_timing: None,
+            }))
             .is_ok()
     })
 }

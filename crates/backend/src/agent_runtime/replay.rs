@@ -20,9 +20,16 @@ fn integrity_notice(integrity: HistoryIntegrity) -> Option<LoadSessionEvent> {
 /// Pending in-memory records pass `None` because they have not been written yet.
 fn map_record(record: HistoryRecord, recorded_at: Option<String>) -> Option<LoadSessionEvent> {
     match record {
-        HistoryRecord::Update { update, .. } => Some(LoadSessionEvent::SessionUpdate {
+        HistoryRecord::Update {
+            update,
+            tool_timing,
+        } => Some(LoadSessionEvent::SessionUpdate {
             update: *update,
             recorded_at,
+            tool_timing: tool_timing.map(|timing| ora_contracts::ToolCallTiming {
+                started_at: timing.started_at,
+                duration_ms: timing.duration_ms,
+            }),
         }),
         HistoryRecord::TurnEnded { stop_reason } => Some(LoadSessionEvent::TurnEnded {
             stop_reason,
@@ -178,6 +185,7 @@ mod tests {
             seq: 0,
             record: HistoryRecord::Update {
                 update: Box::new(update.clone()),
+                tool_timing: None,
             },
         }];
 
@@ -189,6 +197,7 @@ mod tests {
                 LoadSessionEvent::SessionUpdate {
                     update,
                     recorded_at: None,
+                    tool_timing: None,
                 },
                 LoadSessionEvent::TurnEnded {
                     stop_reason: StopReason::EndTurn,

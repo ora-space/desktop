@@ -360,7 +360,7 @@ async fn drive_agent_node(
         let mut stop_reason = None;
         while let Some(event) = stream.recv().await {
             match event? {
-                PromptSessionEvent::SessionUpdate { update } => {
+                PromptSessionEvent::SessionUpdate { update, .. } => {
                     accumulator.consume(&update);
                 }
                 PromptSessionEvent::PermissionRequest(_) => {}

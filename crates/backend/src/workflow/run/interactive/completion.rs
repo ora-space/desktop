@@ -309,6 +309,7 @@ mod tests {
             0,
             HistoryRecord::Update {
                 update: Box::new(update),
+                tool_timing: None,
             },
         )
     }
