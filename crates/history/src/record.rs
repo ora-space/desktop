@@ -5,7 +5,16 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Identifies the on-disk record schema so a later format change stays detectable.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// Timing captured while Ora observed one tool call's lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallTiming {
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
 
 /// One complete line of a session history file.
 ///
@@ -45,7 +54,11 @@ pub enum HistoryRecord {
     /// Opens the file and pins the schema and provider binding it started with.
     Meta(SessionMeta),
     /// One settled conversation item.
-    Update { update: Box<SessionUpdate> },
+    Update {
+        update: Box<SessionUpdate>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_timing: Option<ToolCallTiming>,
+    },
     /// Closes one prompt turn with the provider's typed stop reason.
     ///
     /// Without this a replayed turn cannot be told apart from a completed one,

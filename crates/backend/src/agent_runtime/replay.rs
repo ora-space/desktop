@@ -20,7 +20,7 @@ fn integrity_notice(integrity: HistoryIntegrity) -> Option<LoadSessionEvent> {
 /// Pending in-memory records pass `None` because they have not been written yet.
 fn map_record(record: HistoryRecord, recorded_at: Option<String>) -> Option<LoadSessionEvent> {
     match record {
-        HistoryRecord::Update { update } => Some(LoadSessionEvent::SessionUpdate {
+        HistoryRecord::Update { update, .. } => Some(LoadSessionEvent::SessionUpdate {
             update: *update,
             recorded_at,
         }),

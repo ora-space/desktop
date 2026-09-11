@@ -231,7 +231,7 @@ pub(crate) fn prepare_completion(
 /// Returns the final settled assistant message from a session's durable history.
 fn assistant_output_from_history(history: &SessionHistory) -> Option<String> {
     history.lines.iter().rev().find_map(|line| {
-        let HistoryRecord::Update { update } = &line.record else {
+        let HistoryRecord::Update { update, .. } = &line.record else {
             return None;
         };
         assistant_text(update.as_ref()).map(str::to_string)
