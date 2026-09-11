@@ -8,6 +8,7 @@ use tokio::time::Instant;
 struct StartedTool {
     started_at: String,
     started: Instant,
+    duration_ms: Option<u64>,
 }
 
 /// Tracks tool lifecycles inside one prompt; callers create one tracker per session operation.
@@ -20,7 +21,10 @@ impl ToolTimings {
     /// Observes a tool update and returns timing only when a real nonterminal start was seen.
     pub(super) fn observe(&mut self, update: &SessionUpdate) -> Option<ContractTiming> {
         let (id, status) = tool_identity(update)?;
-        let terminal = matches!(status, Some(ToolCallStatus::Completed | ToolCallStatus::Failed));
+        let terminal = matches!(
+            status,
+            Some(ToolCallStatus::Completed | ToolCallStatus::Failed)
+        );
         if !self.calls.contains_key(id) && !terminal {
             self.calls.insert(
                 id.clone(),
@@ -29,13 +33,17 @@ impl ToolTimings {
                         .format(&Rfc3339)
                         .unwrap_or_default(),
                     started: Instant::now(),
+                    duration_ms: None,
                 },
             );
         }
-        let started = self.calls.get(id)?;
+        let started = self.calls.get_mut(id)?;
+        if terminal && started.duration_ms.is_none() {
+            started.duration_ms = Some(elapsed_ms(started.started));
+        }
         Some(ContractTiming {
             started_at: started.started_at.clone(),
-            duration_ms: terminal.then(|| elapsed_ms(started.started)),
+            duration_ms: if terminal { started.duration_ms } else { None },
         })
     }
 
@@ -48,7 +56,11 @@ impl ToolTimings {
                     id.clone(),
                     HistoryTiming {
                         started_at: started.started_at.clone(),
-                        duration_ms: Some(elapsed_ms(started.started)),
+                        duration_ms: Some(
+                            started
+                                .duration_ms
+                                .unwrap_or_else(|| elapsed_ms(started.started)),
+                        ),
                     },
                 )
             })
@@ -73,6 +85,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod tests {
     use super::ToolTimings;
     use agent_client_protocol_schema::v1::{SessionUpdate, ToolCall, ToolCallStatus};
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[test]
     fn isolates_calls_and_does_not_invent_a_terminal_start() {
@@ -82,15 +96,18 @@ mod tests {
             ToolCall::new("done", "Done").status(ToolCallStatus::Completed),
         );
         assert_eq!(timings.observe(&direct_terminal), None);
-        let running = SessionUpdate::ToolCall(
-            ToolCall::new("run", "Run").status(ToolCallStatus::InProgress),
-        );
+        let running =
+            SessionUpdate::ToolCall(ToolCall::new("run", "Run").status(ToolCallStatus::InProgress));
         let started = timings.observe(&running).expect("timing starts");
-        let completed = SessionUpdate::ToolCall(
-            ToolCall::new("run", "Run").status(ToolCallStatus::Completed),
-        );
+        let completed =
+            SessionUpdate::ToolCall(ToolCall::new("run", "Run").status(ToolCallStatus::Completed));
         let finished = timings.observe(&completed).expect("timing finishes");
         assert_eq!(finished.started_at, started.started_at);
         assert!(finished.duration_ms.is_some());
+
+        std::thread::sleep(Duration::from_millis(5));
+        let persisted = timings.finish_all();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].1.duration_ms, finished.duration_ms);
     }
 }
