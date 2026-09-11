@@ -1,5 +1,5 @@
 import { toast } from "@ora/ui";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
@@ -43,12 +43,11 @@ describe("DiagnosticLogsSettings", () => {
 
     expect(downloadToday).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "Downloading…" })).toBeDisabled();
-    finishDownload?.(true);
-    await waitFor(() =>
-      expect(successToast).toHaveBeenCalledWith(
-        "Today's logs were downloaded.",
-      ),
-    );
+    // Resolve inside act so the hook's pending-state reset stays within the test boundary.
+    await act(async () => {
+      finishDownload?.(true);
+    });
+    expect(successToast).toHaveBeenCalledWith("Today's logs were downloaded.");
     expect(screen.getByRole("button", { name: "Download logs" })).toBeEnabled();
   });
 
