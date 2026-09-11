@@ -6,6 +6,7 @@ export {
   type DesktopUpdateCapability,
   type DiagnosticLogsCapability,
   type DesktopUpdateStatus,
+  type MarketplaceAutoSyncEvent,
   type PluginInstallProgress,
   type PluginMarketplaceCapability,
   type ManualUpdateReason,

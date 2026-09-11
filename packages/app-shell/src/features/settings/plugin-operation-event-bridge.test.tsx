@@ -19,6 +19,7 @@ it("records install progress independently of the marketplace page lifecycle", a
         report = listener;
         return stop;
       }),
+      onAutoSyncChanged: vi.fn(async () => () => undefined),
     },
   };
   usePluginOperationStore.getState().begin("official/weather", "install");
@@ -57,6 +58,7 @@ it("records update progress in the same durable operation state as installs", as
         report = listener;
         return () => undefined;
       }),
+      onAutoSyncChanged: vi.fn(async () => () => undefined),
     },
   };
   usePluginOperationStore.getState().begin("official/weather", "update");

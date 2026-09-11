@@ -32,6 +32,7 @@ import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { usePluginImport } from "../../state/hooks/use-plugin-import";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
+import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import { PluginLogo } from "./plugin-logo";
 import { PluginSourcesManager } from "./plugin-sources-manager";
 import { PluginManager } from "./plugin-manager";
@@ -91,6 +92,14 @@ export function PluginsSettings({
   const installed = useInstalledPlugins();
   const sync = usePluginRegistrySync();
   const importPlugin = usePluginImport();
+  // The host admits one rebuild at a time and discards the rest, so a click made while its own
+  // refresh is running would be dropped rather than served. The action stands down instead.
+  // `sync.isPending` covers the user's own sync and, unlike the mutation, survives this page
+  // being left and reopened mid-sync.
+  const hostRefreshing = useMarketplaceSyncStore(
+    (state) => state.hostRefreshing,
+  );
+  const syncing = sync.isPending || hostRefreshing;
 
   const installedById = useMemo(() => {
     const byId = new Map<string, InstalledPlugin>();
@@ -264,7 +273,7 @@ export function PluginsSettings({
             variant="ghost"
             size="sm"
             className="shrink-0 min-w-32"
-            disabled={sync.isPending}
+            disabled={syncing}
             onClick={() =>
               sync.mutate(undefined, {
                 onError: (cause) => {
@@ -274,13 +283,15 @@ export function PluginsSettings({
             }
             aria-label={t("settings.plugins.syncMarketplace")}
           >
-            {sync.isPending ? (
+            {syncing ? (
               <IconLoader2 className="animate-spin" />
             ) : (
               <IconRefresh />
             )}
             <span className="hidden sm:inline">
-              {t("settings.plugins.syncMarketplace")}
+              {syncing
+                ? t("settings.plugins.syncingMarketplace")
+                : t("settings.plugins.syncMarketplace")}
             </span>
           </Button>
         </div>
