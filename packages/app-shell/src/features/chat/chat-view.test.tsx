@@ -2422,6 +2422,69 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("shows explicit turn and tool durations and omits missing timing labels", async () => {
+    const user = userEvent.setup();
+    const timedTurn: ChatTurn = {
+      id: "timed-turn",
+      userMessage: {
+        kind: "message",
+        id: "user-timed",
+        role: "user",
+        content: "run tests",
+        createdAt: 1_000,
+      },
+      items: [
+        {
+          kind: "toolCall",
+          id: "timed-tool",
+          title: "Tests",
+          status: "completed",
+          content: [],
+          locations: [],
+          createdAt: 2_000,
+          updatedAt: 6_000,
+          startedAt: 2_000,
+          durationMs: 4_000,
+        },
+        {
+          kind: "toolCall",
+          id: "untimed-tool",
+          title: "Legacy",
+          status: "completed",
+          content: [],
+          locations: [],
+          createdAt: 2_000,
+          updatedAt: 3_000,
+        },
+        {
+          kind: "message",
+          id: "assistant-timed",
+          role: "assistant",
+          content: "done",
+          createdAt: 7_000,
+        },
+      ],
+      status: "completed",
+      stopReason: "end_turn",
+      error: null,
+      createdAt: 1_000,
+      durationMs: 6_000,
+    };
+
+    renderWithI18n(
+      <MessageList turns={[timedTurn]} userName="Eric" isResponding={false} />,
+    );
+    await user.click(
+      screen.getByText(appI18n.t("chat.activityPhase.title.completed")),
+    );
+
+    const renderedText = document.body.textContent ?? "";
+    expect(renderedText).toContain(`${appI18n.t("chat.totalTime")} 4s`);
+    expect(renderedText).toContain(`${appI18n.t("chat.totalTime")} 6s`);
+    expect(
+      renderedText.match(new RegExp(appI18n.t("chat.totalTime"), "g")),
+    ).toHaveLength(2);
+  });
   it("keeps the ordinary conversation navigator at its viewport threshold", () => {
     renderWithI18n(
       <MessageList
@@ -2773,6 +2836,8 @@ describe("MessageList", () => {
   });
 
   it("shows the running indicator while working but hides it as the answer streams", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(32_100);
     const view = renderWithI18n(
       <MessageList
         turns={[turn("turn-1", "hello", 100, [], "streaming")]}
@@ -2782,6 +2847,13 @@ describe("MessageList", () => {
     );
     // Waiting for the first output: the indicator stands in for the empty turn.
     expect(screen.getByLabelText(/正在运行|is working/)).toBeInTheDocument();
+    expect(document.body).toHaveTextContent(
+      `${appI18n.t("chat.elapsedTime")} 32s`,
+    );
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(document.body).toHaveTextContent(
+      `${appI18n.t("chat.elapsedTime")} 33s`,
+    );
 
     // Answer body streaming in: the growing text is signal enough, so it hides.
     view.rerender(
