@@ -104,7 +104,7 @@ function CollapsedActivityPhase({
 }
 
 /** Dispatches one non-text turn item to its existing dedicated renderer. */
-function NonTextItemView({
+export function NonTextItemView({
   item,
   turnStatus,
   isLatestActivity,

@@ -1,19 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   selectElementContents,
   TextEditContextMenu,
   writeClipboardText,
 } from "../editor/text-edit-context-menu";
-import { AgentActivityDots } from "../../components/agent-activity-dots";
-import { useTranslation } from "react-i18next";
-import { AnchorHighlight } from "./anchor-highlight";
 import {
   ConversationNavigator,
   type ConversationNavigationPresentation,
 } from "./conversation-navigator";
 import { useConversationNavigation } from "./conversation-navigation";
-import { MessageBubble } from "./message-bubble";
-import { ResponseTurn } from "./response-turn";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
 import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
@@ -21,7 +17,17 @@ import {
   collectCumulativeArtifactIndices,
   type TurnArtifactCacheEntry,
 } from "./chat-link/artifact-index";
-import { ChatLinkContext } from "./chat-link/context";
+import {
+  ChatLinkContext,
+  type ChatLinkContextValue,
+} from "./chat-link/context";
+import { MessageListRowView } from "./message-list-row";
+import {
+  buildMessageListRows,
+  estimateMessageListRowSize,
+  MESSAGE_LIST_VIRTUALIZE_MIN_ROWS,
+  rowIndexForAnchor,
+} from "./message-list-rows";
 
 interface MessageListProps {
   turns: ChatTurn[];
@@ -37,6 +43,7 @@ interface MessageListProps {
 }
 
 const EMPTY_MODEL_CHANGES: ChatModelChange[] = [];
+
 /** The scrollable turn thread, kept pinned to live ACP activity unless the reader scrolls away. */
 export function MessageList({
   turns,
@@ -60,6 +67,7 @@ export function MessageList({
   const [artifactCache] = useState(
     () => new Map<string, TurnArtifactCacheEntry>(),
   );
+  const [viewportHeight, setViewportHeight] = useState(0);
   const artifactIndices = useMemo(
     () => collectCumulativeArtifactIndices(turns, artifactCache),
     [artifactCache, turns],
@@ -90,119 +98,168 @@ export function MessageList({
   const streamingBody =
     lastItem?.kind === "message" && lastItem.role === "assistant";
   const showRunning = isResponding && !streamingBody;
+  const rows = useMemo(
+    () => buildMessageListRows(turns, modelChanges, showRunning),
+    [modelChanges, showRunning, turns],
+  );
+  const windowed =
+    viewportHeight > 0 && rows.length >= MESSAGE_LIST_VIRTUALIZE_MIN_ROWS;
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return;
+    const sync = () => {
+      const next = element.clientHeight;
+      setViewportHeight((current) => (current === next ? current : next));
+    };
+    sync();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer instance is consumed during render (getTotalSize / getVirtualItems); compiler memoization of this list is not required
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    enabled: windowed,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => estimateMessageListRowSize(rows[index]!),
+    overscan: 6,
+    getItemKey: (index) => rows[index]?.key ?? index,
+    // Scroll restoration and follow-tail write scrollTop from layout effects.
+    // A sync flush there trips React's "flushSync was called from inside a
+    // lifecycle method" warning and the clean-stderr test gate.
+    useFlushSync: false,
+  });
+
+  const ensureAnchorMounted = useCallback(
+    (anchorId: string) => {
+      if (!windowed) return;
+      const index = rowIndexForAnchor(rows, turns, anchorId);
+      if (index < 0) return;
+      virtualizer.scrollToIndex(index, { align: "start" });
+    },
+    [rows, turns, virtualizer, windowed],
+  );
+
   const navigation = useConversationNavigation({
     scrollRef,
     contentRef,
     followTailKey: `${turns.length}:${lastUserMessageId ?? ""}`,
     lastAnchorId,
+    ensureAnchorMounted,
   });
+
+  const chatLinkForTurn = useCallback(
+    (turnIndex: number): ChatLinkContextValue | null => {
+      const turnIndexValue = artifactIndices[turnIndex] ?? {
+        edited: [],
+        referenced: [],
+      };
+      if (taskId !== undefined) {
+        return { index: turnIndexValue, taskId, cwd };
+      }
+      if (projectId !== undefined) {
+        return { index: turnIndexValue, cwd };
+      }
+      return null;
+    },
+    [artifactIndices, cwd, projectId, taskId],
+  );
+
+  const renderedRows = windowed
+    ? virtualizer.getVirtualItems().map((virtualItem) => {
+        const row = rows[virtualItem.index];
+        if (row === undefined) return null;
+        return (
+          <div
+            key={row.key}
+            data-index={virtualItem.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full"
+            style={{ transform: `translateY(${virtualItem.start}px)` }}
+          >
+            <MessageListRowView
+              row={row}
+              turns={turns}
+              userName={userName}
+              chatLinkForTurn={chatLinkForTurn}
+            />
+          </div>
+        );
+      })
+    : rows.map((row) => (
+        <MessageListRowView
+          key={row.key}
+          row={row}
+          turns={turns}
+          userName={userName}
+          chatLinkForTurn={chatLinkForTurn}
+        />
+      ));
 
   return (
     <ChatLinkContext.Provider value={chatLinkValue}>
-      <div className="relative min-h-0 flex-1">
-        <TextEditContextMenu
-          editable={false}
-          hasSelection={menuHasSelection}
-          trigger={
-            <div
-              ref={scrollRef}
-              onScroll={navigation.handleScroll}
-              onWheel={(event) => navigation.handleWheel(event.deltaY)}
-              onPointerDown={navigation.beginPointerScroll}
-              onPointerUp={navigation.endPointerScroll}
-              onPointerCancel={navigation.endPointerScroll}
-              onTouchStart={navigation.beginPointerScroll}
-              onTouchEnd={navigation.endPointerScroll}
-              onTouchCancel={navigation.endPointerScroll}
-              data-testid="message-list"
-              aria-live="polite"
-              className="scrollbar-hide h-full min-h-0 animate-in overflow-y-auto fade-in duration-500"
-              onContextMenu={() => {
-                const text = window.getSelection()?.toString() ?? "";
-                parkedSelectionTextRef.current = text;
-                setMenuHasSelection(text.length > 0);
-              }}
-            />
-          }
-          onCut={() => undefined}
-          onCopy={() => {
-            const text = parkedSelectionTextRef.current;
-            if (text.length === 0) {
-              return;
-            }
-            void writeClipboardText(text);
-          }}
-          onPaste={() => undefined}
-          onSelectAll={() => {
-            const root = contentRef.current;
-            if (root === null) {
-              return;
-            }
-            selectElementContents(root);
-            parkedSelectionTextRef.current =
-              window.getSelection()?.toString() ?? "";
-            setMenuHasSelection(parkedSelectionTextRef.current.length > 0);
-          }}
-        >
-          <div
-            ref={contentRef}
-            className="mx-auto w-full max-w-[760px] px-3 pb-4 pt-5 sm:px-5 sm:pt-8"
-          >
-            {turns.map((turn, index) => {
-              const turnIndex = artifactIndices[index] ?? {
-                edited: [],
-                referenced: [],
-              };
-              const turnChatLinkValue =
-                taskId !== undefined
-                  ? { index: turnIndex, taskId, cwd }
-                  : projectId !== undefined
-                    ? { index: turnIndex, cwd }
-                    : null;
-              return (
-                <div key={turn.id}>
-                  {modelChangesAt(modelChanges, index).map((change) => (
-                    <ModelChangeDivider
-                      key={change.id}
-                      modelName={change.modelName}
-                    />
-                  ))}
-                  <div data-turn-anchor={turn.id}>
-                    <div
-                      data-turn-user
-                      data-conversation-anchor={`${turn.id}:user`}
-                    >
-                      <MessageBubble
-                        message={turn.userMessage}
-                        userName={userName}
-                      />
-                    </div>
-                    {(turn.items.length > 0 || turn.status !== "streaming") && (
-                      <ChatLinkContext.Provider value={turnChatLinkValue}>
-                        <div
-                          data-turn-response
-                          data-conversation-anchor={`${turn.id}:response`}
-                          className="relative overflow-visible rounded-xl"
-                        >
-                          <AnchorHighlight />
-                          <ResponseTurn turn={turn} userName={userName} />
-                        </div>
-                      </ChatLinkContext.Provider>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {modelChangesAt(modelChanges, turns.length).map((change) => (
-              <ModelChangeDivider
-                key={change.id}
-                modelName={change.modelName}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <TextEditContextMenu
+            editable={false}
+            hasSelection={menuHasSelection}
+            trigger={
+              <div
+                ref={scrollRef}
+                onScroll={navigation.handleScroll}
+                onWheel={(event) => navigation.handleWheel(event.deltaY)}
+                onPointerDown={navigation.beginPointerScroll}
+                onPointerUp={navigation.endPointerScroll}
+                onPointerCancel={navigation.endPointerScroll}
+                onTouchStart={navigation.beginPointerScroll}
+                onTouchEnd={navigation.endPointerScroll}
+                onTouchCancel={navigation.endPointerScroll}
+                data-testid="message-list"
+                aria-live="polite"
+                className="scrollbar-hide h-full min-h-0 flex-1 animate-in overflow-y-auto fade-in duration-500"
+                onContextMenu={() => {
+                  const text = window.getSelection()?.toString() ?? "";
+                  parkedSelectionTextRef.current = text;
+                  setMenuHasSelection(text.length > 0);
+                }}
               />
-            ))}
-            {showRunning && <RunningIndicator />}
-            <div className="h-8" />
-          </div>
-        </TextEditContextMenu>
+            }
+            onCut={() => undefined}
+            onCopy={() => {
+              const text = parkedSelectionTextRef.current;
+              if (text.length === 0) {
+                return;
+              }
+              void writeClipboardText(text);
+            }}
+            onPaste={() => undefined}
+            onSelectAll={() => {
+              const root = contentRef.current;
+              if (root === null) {
+                return;
+              }
+              selectElementContents(root);
+              parkedSelectionTextRef.current =
+                window.getSelection()?.toString() ?? "";
+              setMenuHasSelection(parkedSelectionTextRef.current.length > 0);
+            }}
+          >
+            <div
+              ref={contentRef}
+              className="mx-auto w-full max-w-[760px] px-3 pb-4 pt-5 sm:px-5 sm:pt-8"
+              style={
+                windowed
+                  ? { height: virtualizer.getTotalSize(), position: "relative" }
+                  : undefined
+              }
+            >
+              {renderedRows}
+            </div>
+          </TextEditContextMenu>
+        </div>
         <ConversationNavigator
           {...conversationNavigation}
           turns={turns}
@@ -213,103 +270,5 @@ export function MessageList({
         />
       </div>
     </ChatLinkContext.Provider>
-  );
-}
-
-/** Selects the switches recorded after a given number of turns. */
-function modelChangesAt(
-  modelChanges: ChatModelChange[],
-  turnCount: number,
-): ChatModelChange[] {
-  return modelChanges.filter((change) => change.afterTurnCount === turnCount);
-}
-
-/**
- * Marks where the answering model changed, so replies above and below a divider
- * are not mistaken for the work of one model.
- */
-function ModelChangeDivider({ modelName }: { modelName: string }) {
-  const { t } = useTranslation();
-  return (
-    <div
-      role="separator"
-      aria-label={t("chat.modelChange", { model: modelName })}
-      className="flex items-center gap-3 py-4"
-    >
-      <span className="h-px flex-1 bg-border" />
-      <span className="whitespace-nowrap text-xs text-muted-foreground">
-        {t("chat.modelChange", { model: modelName })}
-      </span>
-      <span className="h-px flex-1 bg-border" />
-    </div>
-  );
-}
-
-/** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
-const RUNNING_WORD_INTERVAL_MS = 5000;
-/** Jitter applied to each rotation so the cadence doesn't feel metronomic (golden ratio, in ms). */
-const RUNNING_WORD_JITTER_MS = 618;
-
-/**
- * A playful "still working" line pinned to the foot of the live turn.
- *
- * Unlike the old typing dots, this stays for the whole response — through every
- * tool call and the quiet gaps between them — so the thread never looks frozen
- * while the agent is busy. The nine-dot grid carries the motion; the rotating
- * phrase reassures that time is passing rather than that anything has stalled.
- */
-function RunningIndicator() {
-  const { t } = useTranslation();
-  const words = useMemo(
-    () =>
-      t("chat.runningWords")
-        .split("|")
-        .map((word) => word.trim())
-        .filter(Boolean),
-    [t],
-  );
-  const [index, setIndex] = useState(0);
-
-  useEffect(() => {
-    if (
-      words.length <= 1 ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    )
-      return;
-    let timer: ReturnType<typeof setTimeout>;
-    const scheduleNext = () => {
-      const delay =
-        RUNNING_WORD_INTERVAL_MS +
-        (Math.random() * 2 - 1) * RUNNING_WORD_JITTER_MS;
-      timer = setTimeout(() => {
-        setIndex((current) => (current + 1) % words.length);
-        scheduleNext();
-      }, delay);
-    };
-    scheduleNext();
-    return () => clearTimeout(timer);
-  }, [words]);
-
-  const word = words[index % words.length] ?? words[0] ?? "";
-  return (
-    <div
-      className="flex items-center gap-3 py-4"
-      role="status"
-      aria-label={t("chat.typing")}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        <AgentActivityDots
-          label={t("common.running")}
-          dotClassName="size-[3.5px]"
-        />
-      </span>
-      {/* Keyed so each phrase crossfades in as the rotation advances. */}
-      <span
-        key={word}
-        className="animate-in text-sm text-muted-foreground fade-in duration-500"
-      >
-        {word}
-      </span>
-    </div>
   );
 }

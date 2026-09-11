@@ -8,7 +8,10 @@ import type { ChatTurn } from "@ora/chat";
 import { ActivityPhase } from "./activity-phase";
 import { MessageBubble } from "./message-bubble";
 import { ContentBlock } from "./content-block";
-import { buildTurnDisplayItems } from "./turn-item-grouping";
+import {
+  buildTurnDisplayItems,
+  type DisplayTurnItem,
+} from "./turn-item-grouping";
 import { TurnDiffSummary } from "./turn-diff-summary";
 
 interface ResponseTurnProps {
@@ -23,34 +26,16 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   return (
     <section className="py-3" aria-label={t("chat.assistantReplied")}>
       <div className="min-w-0 space-y-2.5">
-        {displayItems.map((item, index) => {
-          switch (item.kind) {
-            case "activityPhase":
-              return (
-                <ActivityPhase
-                  key={item.id}
-                  phase={item}
-                  turnStatus={turn.status}
-                  isLatestActivity={index === displayItems.length - 1}
-                />
-              );
-            case "message":
-              return (
-                <MessageBubble
-                  key={item.id}
-                  message={item}
-                  userName={userName}
-                  embeddedAssistant
-                  streaming={
-                    turn.status === "streaming" &&
-                    index === displayItems.length - 1
-                  }
-                />
-              );
-            case "content":
-              return <ContentBlock key={item.id} content={item.content} />;
-          }
-        })}
+        {displayItems.map((item, index) => (
+          <DisplayTurnItemView
+            key={item.id}
+            item={item}
+            turn={turn}
+            userName={userName}
+            displayIndex={index}
+            displayCount={displayItems.length}
+          />
+        ))}
         <TurnEnding turn={turn} />
         <TurnDiffSummary turn={turn} />
       </div>
@@ -58,8 +43,47 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   );
 }
 
+/** Renders one grouped response block so the thread list can window it independently. */
+export function DisplayTurnItemView({
+  item,
+  turn,
+  userName,
+  displayIndex,
+  displayCount,
+}: {
+  item: DisplayTurnItem;
+  turn: ChatTurn;
+  userName: string;
+  displayIndex: number;
+  displayCount: number;
+}) {
+  switch (item.kind) {
+    case "activityPhase":
+      return (
+        <ActivityPhase
+          phase={item}
+          turnStatus={turn.status}
+          isLatestActivity={displayIndex === displayCount - 1}
+        />
+      );
+    case "message":
+      return (
+        <MessageBubble
+          message={item}
+          userName={userName}
+          embeddedAssistant
+          streaming={
+            turn.status === "streaming" && displayIndex === displayCount - 1
+          }
+        />
+      );
+    case "content":
+      return <ContentBlock content={item.content} />;
+  }
+}
+
 /** Explains non-standard turn endings without treating them as transport failures. */
-function TurnEnding({ turn }: { turn: ChatTurn }) {
+export function TurnEnding({ turn }: { turn: ChatTurn }) {
   const { t } = useTranslation();
   if (turn.status === "cancelled") {
     return (
