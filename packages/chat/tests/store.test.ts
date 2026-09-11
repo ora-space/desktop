@@ -321,6 +321,52 @@ test("flushes batched replay text together with a following tool boundary", asyn
   await loading;
 });
 
+test("restores explicit turn and tool timing without receipt-time fallbacks", async () => {
+  const client: ChatSessionClient = {
+    load: () =>
+      events<LoadSessionEvent>([
+        textEvent(
+          "user_message_chunk",
+          "run",
+          "user-1",
+          "2026-09-11T10:00:00+08:00",
+        ),
+        {
+          type: "session_update",
+          recordedAt: "2026-09-11T10:00:02+08:00",
+          toolTiming: {
+            startedAt: "2026-09-11T10:00:01+08:00",
+            durationMs: 4_000n,
+          },
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Test",
+            status: "completed",
+          },
+        },
+        {
+          type: "turn_ended",
+          stopReason: "end_turn",
+          recordedAt: "2026-09-11T10:00:06+08:00",
+        },
+        { type: "completed" },
+      ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, { now: () => 99_999 });
+
+  await store.getState().loadSession("timed-session");
+
+  const turn = store.getState().conversations["timed-session"]!.turns[0]!;
+  const tool = turn.items.find((item) => item.kind === "toolCall");
+  assert.equal(turn.durationMs, 6_000);
+  assert.equal(tool?.startedAt, Date.parse("2026-09-11T10:00:01+08:00"));
+  assert.equal(tool?.durationMs, 4_000);
+});
+
 test("retains durable-history notices after a successful replay", async () => {
   const client: ChatSessionClient = {
     load: () =>
@@ -1079,6 +1125,7 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       stopReason: null,
       error: null,
       createdAt: 42,
+      durationMs: 0,
     },
   ]);
   assert.equal(conversation?.isResponding, false);
@@ -1185,6 +1232,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
     stopReason: "cancelled",
     error: null,
     createdAt: 42,
+    durationMs: 0,
   });
 });
 
