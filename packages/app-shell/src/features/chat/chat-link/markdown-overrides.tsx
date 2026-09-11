@@ -23,6 +23,7 @@ const WEB_LINK_CLASS =
   "font-medium text-primary underline decoration-primary/45 underline-offset-4 transition-colors hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 const artifactBasenameCache = new WeakMap<SessionArtifactIndex, Set<string>>();
+const fileBasenameCache = new WeakMap<SessionArtifactIndex, Set<string>>();
 
 /** Reads a single path token from react-markdown inline `code` children. */
 function singleTextChild(children: ReactNode): string | null {
@@ -99,7 +100,7 @@ export function ChatMarkdownParagraph({
   const artifactIndex = useChatLinkContext()?.index;
   return (
     <p className="my-3 first:mt-0 last:mb-0" {...props}>
-      {linkifyChildren(children, artifactIndex)}
+      {linkifyChildren(children, artifactIndex, false)}
     </p>
   );
 }
@@ -112,7 +113,7 @@ export function ChatMarkdownListItem({
   const artifactIndex = useChatLinkContext()?.index;
   return (
     <li className="my-1 pl-1" {...props}>
-      {linkifyChildren(children, artifactIndex)}
+      {linkifyChildren(children, artifactIndex, true)}
     </li>
   );
 }
@@ -125,7 +126,7 @@ export function ChatMarkdownTableCell({
   const artifactIndex = useChatLinkContext()?.index;
   return (
     <td className="border-t border-border/70 px-3 py-2 align-top" {...props}>
-      {linkifyChildren(children, artifactIndex)}
+      {linkifyChildren(children, artifactIndex, true)}
     </td>
   );
 }
@@ -146,7 +147,7 @@ function PathLinkLines({
         const token = pathTokenFromOutputLine(line) ?? stripped;
         const wholeLineLink =
           token !== "" &&
-          shouldAttemptArtifactLink(token, artifactIndex) &&
+          shouldAttemptArtifactLink(token, artifactIndex, true) &&
           (token !== stripped || !/\s/.test(stripped));
         return (
           <div key={index} className={lineClassName}>
@@ -155,7 +156,7 @@ function PathLinkLines({
                 {line}
               </ChatFileLink>
             ) : (
-              linkifyText(line, artifactIndex) || "\u00a0"
+              linkifyText(line, artifactIndex, true) || "\u00a0"
             )}
           </div>
         );
@@ -235,8 +236,9 @@ function isIndexedArtifactList(
   const tokens = lines.flatMap(artifactTextTokens);
   return (
     tokens.length > 1 &&
-    tokens.filter((token) => shouldAttemptArtifactLink(token, artifactIndex))
-      .length >= 2
+    tokens.filter((token) =>
+      shouldAttemptArtifactLink(token, artifactIndex, true),
+    ).length >= 2
   );
 }
 
@@ -275,17 +277,18 @@ function fencedChildText(children: ReactNode): string {
 function linkifyChildren(
   children: ReactNode,
   artifactIndex: SessionArtifactIndex | undefined,
+  includeNonFiles: boolean,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string" || typeof child === "number") {
-      return linkifyText(String(child), artifactIndex);
+      return linkifyText(String(child), artifactIndex, includeNonFiles);
     }
     if (!isValidElement<{ children?: ReactNode }>(child)) return child;
     if (shouldSkipLinkify(child.type)) return child;
     return cloneElement(
       child,
       undefined,
-      linkifyChildren(child.props.children, artifactIndex),
+      linkifyChildren(child.props.children, artifactIndex, includeNonFiles),
     );
   });
 }
@@ -311,6 +314,7 @@ function shouldSkipLinkify(type: unknown): boolean {
 function linkifyText(
   text: string,
   artifactIndex: SessionArtifactIndex | undefined,
+  includeNonFiles: boolean,
 ): ReactNode {
   const stripped = stripListMarker(text);
   if (stripped !== "" && isPathLikeToken(stripped) && !/\s/.test(stripped)) {
@@ -330,7 +334,7 @@ function linkifyText(
     const token = mention[0];
     if (start > offset) rendered.push(text.slice(offset, start));
     rendered.push(
-      shouldAttemptArtifactLink(token, artifactIndex) ? (
+      shouldAttemptArtifactLink(token, artifactIndex, includeNonFiles) ? (
         <ChatFileLink
           key={mentionIndex}
           source="inline-code"
@@ -367,18 +371,23 @@ function artifactTextTokens(text: string): string[] {
 function shouldAttemptArtifactLink(
   raw: string,
   artifactIndex: SessionArtifactIndex | undefined,
+  includeNonFiles: boolean,
 ): boolean {
   if (isPathLikeToken(raw)) return true;
   if (artifactIndex === undefined) return false;
-  let basenames = artifactBasenameCache.get(artifactIndex);
+  const cache = includeNonFiles ? artifactBasenameCache : fileBasenameCache;
+  let basenames = cache.get(artifactIndex);
   if (basenames === undefined) {
+    const paths = includeNonFiles
+      ? [
+          ...artifactIndex.edited,
+          ...artifactIndex.referenced,
+          ...(artifactIndex.directories ?? []),
+          ...(artifactIndex.unknown ?? []),
+        ]
+      : [...artifactIndex.edited, ...artifactIndex.referenced];
     basenames = new Set(
-      [
-        ...artifactIndex.edited,
-        ...artifactIndex.referenced,
-        ...(artifactIndex.directories ?? []),
-        ...(artifactIndex.unknown ?? []),
-      ].map((path) =>
+      paths.map((path) =>
         path
           .replaceAll("\\", "/")
           .replace(/\/+$/, "")
@@ -387,7 +396,7 @@ function shouldAttemptArtifactLink(
           .toLowerCase(),
       ),
     );
-    artifactBasenameCache.set(artifactIndex, basenames);
+    cache.set(artifactIndex, basenames);
   }
   const token = raw
     .replace(/[,;.，；。！？、：]+$/, "")
