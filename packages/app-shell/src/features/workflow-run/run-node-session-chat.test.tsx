@@ -240,6 +240,44 @@ describe("RunNodeSessionChat", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not retry a failed node session load after a runtime fault", async () => {
+    const clientHandlers: TestHandlers =
+      createFixtureHandlers(createFixtureState());
+    const loadSpy = vi.fn(async function* () {
+      yield* [];
+      throw new Error("agent session unavailable");
+    });
+    clientHandlers.loadSession = loadSpy;
+    const client = createTestClient(clientHandlers);
+    const chatStore = createChatStore(client.session);
+
+    render(
+      <RunNodeSessionChat
+        sessionId={sessionId}
+        status="running"
+        sessionActions={<button type="button">返回阶段摘要</button>}
+      />,
+      {
+        wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
+      },
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "agent session unavailable",
+    );
+    expect(
+      screen.queryByRole("status", { name: "正在加载历史记录…" }),
+    ).toBeNull();
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 500);
+      });
+    });
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps replaying an empty running session until its automatic prompt appears", async () => {
     const clientHandlers: TestHandlers =
       createFixtureHandlers(createFixtureState());

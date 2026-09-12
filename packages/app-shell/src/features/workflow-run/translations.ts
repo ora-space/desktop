@@ -68,6 +68,7 @@ export const workflowRunTranslations = {
     "workflowRun.conversation.agentReply": "Agent",
     "workflowRun.conversation.inputPending":
       "节点开始运行后，输入会显示在这里。",
+    "workflowRun.conversation.idle": "Agent 尚未启动",
     "workflowRun.conversation.waiting": "Agent 正在处理",
     "workflowRun.theater.outputPending": "等待输出结果",
     "workflowRun.conversation.empty": "尚无消息",
@@ -267,6 +268,7 @@ export const workflowRunTranslations = {
     "workflowRun.conversation.agentReply": "Agent",
     "workflowRun.conversation.inputPending":
       "Input appears here after this node starts.",
+    "workflowRun.conversation.idle": "Agent has not started",
     "workflowRun.conversation.waiting": "Agent is working",
     "workflowRun.theater.outputPending": "Waiting for output",
     "workflowRun.conversation.empty": "No messages yet",

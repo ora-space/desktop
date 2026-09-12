@@ -184,7 +184,9 @@ describe("RunTheaterActCard conversation", () => {
     );
 
     expect(
-      screen.queryByText(/Agent (正在处理|is working)/),
+      screen.queryByText(
+        /Agent (正在处理|is working|尚未启动|has not started)/,
+      ),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /查看节点会话|View node session/ }),
@@ -192,6 +194,37 @@ describe("RunTheaterActCard conversation", () => {
     expect(
       screen.getByText(/src\/vs\/base\/common\/numbers\.ts/),
     ).toHaveTextContent('"start_line": 15');
+  });
+
+  it("shows not-started copy when the session is open before the run starts", () => {
+    render(
+      <RunTheaterActCard
+        data={NODE_DATA}
+        state={{ status: "idle" }}
+        live={false}
+        conversationOpen
+        onConversationOpenChange={vi.fn()}
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("Agent 尚未启动")).toBeInTheDocument();
+    expect(screen.queryByText("Agent 正在处理")).not.toBeInTheDocument();
+  });
+
+  it("keeps working copy while the node is running without a session yet", () => {
+    render(
+      <RunTheaterActCard
+        data={NODE_DATA}
+        state={{ status: "running" }}
+        live
+        conversationOpen
+        onConversationOpenChange={vi.fn()}
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("Agent 正在处理")).toBeInTheDocument();
   });
 
   it("marks automatic and interactive Agent nodes beside the title", () => {

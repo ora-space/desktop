@@ -28,6 +28,11 @@ export interface ConversationNavigationOptions {
   followTailKey: string;
   /** Last anchor currently represented by the projection. */
   lastAnchorId: string | null;
+  /**
+   * Windowed lists must scroll the virtualizer before the anchor node exists.
+   * Called synchronously at the start of a navigator jump.
+   */
+  ensureAnchorMounted?: (anchorId: string) => void;
 }
 
 export interface ConversationNavigationResult {
@@ -50,6 +55,7 @@ export function useConversationNavigation({
   contentRef,
   followTailKey,
   lastAnchorId,
+  ensureAnchorMounted,
 }: ConversationNavigationOptions): ConversationNavigationResult {
   const followTailRef = useRef(true);
   const pointerScrollRef = useRef(false);
@@ -150,25 +156,42 @@ export function useConversationNavigation({
     (anchorId: string) => {
       const element = scrollRef.current;
       if (!element) return;
-      const anchor = Array.from(
-        element.querySelectorAll<HTMLElement>("[data-conversation-anchor]"),
-      ).find((candidate) => candidate.dataset.conversationAnchor === anchorId);
-      if (!anchor) return;
+      ensureAnchorMounted?.(anchorId);
+      const jump = () => {
+        const anchor = Array.from(
+          element.querySelectorAll<HTMLElement>("[data-conversation-anchor]"),
+        ).find(
+          (candidate) => candidate.dataset.conversationAnchor === anchorId,
+        );
+        if (!anchor) return false;
 
-      followTailRef.current = false;
-      const top = Math.max(0, anchor.offsetTop - NAVIGATION_TOP_OFFSET_PX);
-      pendingNavigationRef.current = { scrollTop: top };
-      setNavigation({ activeAnchorId: anchorId, lastAnchorId });
-      const reduceMotion = window.matchMedia(
-        "(prefers-reduced-motion: reduce)",
-      ).matches;
-      const behavior = reduceMotion ? "auto" : "smooth";
-      if (typeof element.scrollTo === "function")
-        element.scrollTo({ top, behavior });
-      else element.scrollTop = top;
-      highlightConversationAnchor(anchor, reduceMotion);
+        followTailRef.current = false;
+        const top = Math.max(
+          0,
+          anchorScrollOffset(element, anchor) - NAVIGATION_TOP_OFFSET_PX,
+        );
+        pendingNavigationRef.current = { scrollTop: top };
+        setNavigation({ activeAnchorId: anchorId, lastAnchorId });
+        const reduceMotion = window.matchMedia(
+          "(prefers-reduced-motion: reduce)",
+        ).matches;
+        const behavior = reduceMotion ? "auto" : "smooth";
+        if (typeof element.scrollTo === "function")
+          element.scrollTo({ top, behavior });
+        else element.scrollTop = top;
+        highlightConversationAnchor(anchor, reduceMotion);
+        return true;
+      };
+      if (jump()) return;
+      // The virtualizer commits the target row on the next frame.
+      requestAnimationFrame(() => {
+        if (!jump())
+          requestAnimationFrame(() => {
+            jump();
+          });
+      });
     },
-    [lastAnchorId, scrollRef],
+    [ensureAnchorMounted, lastAnchorId, scrollRef],
   );
 
   const navigateToTail = useCallback(() => {
@@ -214,10 +237,22 @@ function findActiveAnchorId(element: HTMLDivElement): string | null {
   const readingLine = element.scrollTop + NAVIGATION_TOP_OFFSET_PX;
   let activeAnchorId = anchors[0]?.dataset.conversationAnchor ?? null;
   for (const anchor of anchors) {
-    if (anchor.offsetTop > readingLine) break;
+    if (anchorScrollOffset(element, anchor) > readingLine) break;
     activeAnchorId = anchor.dataset.conversationAnchor ?? activeAnchorId;
   }
   return activeAnchorId;
+}
+
+/** Scroll offset of an anchor even when it is `position: absolute` inside a virtualized list. */
+function anchorScrollOffset(
+  scrollParent: HTMLElement,
+  anchor: HTMLElement,
+): number {
+  return (
+    anchor.getBoundingClientRect().top -
+    scrollParent.getBoundingClientRect().top +
+    scrollParent.scrollTop
+  );
 }
 
 /** Briefly outlines an anchor after a navigator jump. */

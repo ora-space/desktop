@@ -49,7 +49,7 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 
 ## Interactions
 
-- `MessageList` provides a per-turn `ChatLinkContext` around each `ResponseTurn` for task or project-only drafts. `ChatView` remounts the list when `taskId` / `projectId` changes so the per-turn artifact cache cannot leak across checkouts.
+- `MessageList` provides a per-turn `ChatLinkContext` around each response block for task or project-only drafts. Long threads (and live tool lists) are row-windowed with `@tanstack/react-virtual`; off-screen turns unmount. `ChatView` remounts the list when `taskId` / `projectId` changes so the per-turn artifact cache cannot leak across checkouts.
 - `TaskChangesNavigation.openDiff` / `openWorkspaceFile` take an optional
   `FileNavigationLocation` (`{ line, column }`) rather than positional
   line/column. `openWorkspaceDirectory` / `openWorkspaceArtifact` stay as
