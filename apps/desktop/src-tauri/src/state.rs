@@ -225,9 +225,12 @@ impl DesktopState {
     }
 }
 
-/// Retains process-scoped writer guards for the full Tauri application lifetime.
+/// Retains process-scoped writer guards and background registrations for the full Tauri
+/// application lifetime.
 pub struct DesktopRuntimeGuard {
     pub _logging: ora_logging::LoggingGuard,
+    /// Dropping this cancels the scheduled marketplace index refreshes.
+    pub _marketplace_sync: crate::marketplace_sync::MarketplaceSyncService,
 }
 
 #[cfg(all(test, debug_assertions))]

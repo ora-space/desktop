@@ -83,6 +83,10 @@ function seededConversation(
     isLoading: false,
     isResponding,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   };
 }

@@ -10,7 +10,7 @@ Developer mode controls discoverability only. It does not grant permissions, cha
 
 ## Developer options
 
-The Developer options navigation category remains available regardless of the developer-mode value so users can always reach its switch. When developer mode is enabled, the same page reveals the process-wide log-level selector; disabling it hides and unmounts that selector without navigating away.
+The Developer options navigation category remains available regardless of the developer-mode value so users can always reach its switch. When developer mode is enabled, the same page reveals the process-wide log-level selector and a **Download logs** button that exports today's diagnostic log through the host's native save dialog; disabling it hides and unmounts both without navigating away. The download button only appears on hosts that expose the diagnostic-logs capability (Desktop), and it reuses the same export and toast messaging as the error-toast action described in [Runtime Logging](runtime-logging.md).
 
 Log-level changes take effect for the current Desktop process and are persisted in `user_config.log_level`. The selector displays the authoritative effective level, including an active startup override, without naming `ORA_LOG_LEVEL` or exposing startup-source details. Trace and Debug include a high-volume warning.
 

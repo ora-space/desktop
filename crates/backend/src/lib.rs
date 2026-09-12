@@ -39,7 +39,7 @@ pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};
 pub use effects::Effects;
 pub use error::{BackendError, ErrorClassification};
 pub use identity::resolve_git_identity;
-pub use plugin::Plugins;
+pub use plugin::{AdmittedSync, Plugins};
 pub use plugin_gateway::{GatewayError, PluginGateway};
 pub use project::ProjectApi;
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};

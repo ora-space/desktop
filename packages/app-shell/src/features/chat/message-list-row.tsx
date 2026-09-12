@@ -8,11 +8,17 @@ import {
   type ChatLinkContextValue,
 } from "./chat-link/context";
 import { MessageBubble } from "./message-bubble";
-import { DisplayTurnItemView, TurnEnding } from "./response-turn";
+import {
+  DisplayTurnItemView,
+  TurnEnding,
+  TurnTotalDuration,
+} from "./response-turn";
 import { TurnDiffSummary } from "./turn-diff-summary";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
 import type { ChatTurn } from "@ora/chat";
 import type { MessageListRow } from "./message-list-rows";
+import { useElapsedDuration } from "./elapsed-clock";
+import { formatElapsedDuration } from "../../lib/format";
 
 /** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
 const RUNNING_WORD_INTERVAL_MS = 5000;
@@ -71,6 +77,12 @@ export const MessageListRowView = memo(function MessageListRowView({
             userName={userName}
             displayIndex={row.displayIndex}
             displayCount={displayItems.length}
+            durationMs={
+              row.displayIndex ===
+              displayItems.findLastIndex((entry) => entry.kind === "message")
+                ? turn.durationMs
+                : undefined
+            }
           />
         </ResponseRow>
       );
@@ -110,6 +122,7 @@ export const MessageListRowView = memo(function MessageListRowView({
       if (turn === undefined) {
         return null;
       }
+      const displayItems = buildTurnDisplayItems(turn.items, turn.status);
       return (
         <ResponseRow
           turn={turn}
@@ -117,12 +130,15 @@ export const MessageListRowView = memo(function MessageListRowView({
           responseAnchor={row.responseAnchor}
         >
           <TurnEnding turn={turn} />
+          {!displayItems.some((item) => item.kind === "message") && (
+            <TurnTotalDuration durationMs={turn.durationMs} />
+          )}
           <TurnDiffSummary turn={turn} />
         </ResponseRow>
       );
     }
     case "running":
-      return <RunningIndicator />;
+      return <RunningIndicator startedAt={row.startedAt} />;
     case "pad":
       return <div className="h-8" />;
   }
@@ -189,7 +205,7 @@ function ModelChangeDivider({ modelName }: { modelName: string }) {
  * while the agent is busy. The nine-dot grid carries the motion; the rotating
  * phrase reassures that time is passing rather than that anything has stalled.
  */
-function RunningIndicator() {
+function RunningIndicator({ startedAt }: { startedAt: number }) {
   const { t } = useTranslation();
   const words = useMemo(
     () =>
@@ -222,6 +238,9 @@ function RunningIndicator() {
   }, [words]);
 
   const word = words[index % words.length] ?? words[0] ?? "";
+  const elapsed = formatElapsedDuration(
+    useElapsedDuration(startedAt, undefined),
+  );
   return (
     <div
       className="flex items-center gap-3 py-4"
@@ -240,6 +259,7 @@ function RunningIndicator() {
         className="animate-in text-sm text-muted-foreground fade-in duration-500"
       >
         {word}
+        {elapsed !== null && ` · ${t("chat.elapsedTime")} ${elapsed}`}
       </span>
     </div>
   );

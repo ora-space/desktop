@@ -2,7 +2,7 @@ use super::replay::replay_prefix;
 use super::support::{session_event_overflow, session_history_unreadable};
 use crate::BackendError;
 use agent_client_protocol_schema::v1::{SessionUpdate, StopReason};
-use ora_contracts::LoadSessionEvent;
+use ora_contracts::{LoadSessionEvent, ToolCallTiming};
 use ora_history::{AssembledRecord, read_session_history_up_to};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -101,9 +101,13 @@ impl SessionFollowers {
     }
 
     /// Mirrors one provider update to every view that still has the session open.
-    pub(super) fn send_update(&mut self, update: &SessionUpdate) {
+    pub(super) fn send_update(&mut self, update: &SessionUpdate, timing: Option<ToolCallTiming>) {
         self.followers.retain(|_, follower| {
-            let event = LoadSessionEvent::session_update(update.clone());
+            let event = LoadSessionEvent::SessionUpdate {
+                update: update.clone(),
+                recorded_at: None,
+                tool_timing: timing.clone(),
+            };
             match follower.events.try_send(Ok(event)) {
                 Ok(()) => true,
                 Err(mpsc::error::TrySendError::Full(_)) => {
@@ -207,7 +211,7 @@ mod tests {
             Err(error) => panic!("valid session update: {error}"),
         };
 
-        followers.send_update(&update);
+        followers.send_update(&update, None);
         followers.finish(StopReason::EndTurn);
 
         assert_eq!(
@@ -263,7 +267,7 @@ mod tests {
         };
 
         for _ in 0..=FOLLOWER_QUEUE_CAPACITY {
-            followers.send_update(&update);
+            followers.send_update(&update, None);
         }
 
         let terminal_error = tokio::time::timeout(std::time::Duration::from_secs(1), async {

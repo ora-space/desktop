@@ -126,4 +126,16 @@ describe("buildMessageListRows", () => {
     );
     expect(rows.length).toBeLessThan(MESSAGE_LIST_VIRTUALIZE_MIN_ROWS);
   });
+
+  it("carries the latest turn start into the running row and omits it without turns", () => {
+    const turn = completedTurn("turn-1", "Hi");
+    expect(buildMessageListRows([turn], [], true).at(-2)).toEqual({
+      type: "running",
+      key: "running",
+      startedAt: turn.createdAt,
+    });
+    expect(buildMessageListRows([], [], true)).not.toContainEqual(
+      expect.objectContaining({ type: "running" }),
+    );
+  });
 });

@@ -1,5 +1,5 @@
 use crate::assembler::{AssembledRecord, HistoryAssembler};
-use crate::record::HistoryRecord;
+use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use agent_client_protocol_schema::v1::{ContentChunk, MessageId, SessionUpdate};
@@ -32,6 +32,7 @@ fn message_at(seq: u32, text: &str, message_id: Option<&str>) -> AssembledRecord
         seq,
         record: HistoryRecord::Update {
             update: Box::new(agent_text(text, message_id)),
+            tool_timing: None,
         },
     }
 }
@@ -117,6 +118,7 @@ fn keeps_messages_and_thoughts_on_independent_streams() {
                 seq: 1,
                 record: HistoryRecord::Update {
                     update: Box::new(thought_text("reasoning continues", None)),
+                    tool_timing: None,
                 },
             },
             AssembledRecord {
@@ -154,6 +156,7 @@ fn keeps_text_that_resumed_after_a_tool_call_behind_it() {
                     update: Box::new(SessionUpdate::ToolCall(
                         ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
                     )),
+                    tool_timing: None,
                 },
             },
         ],
@@ -220,6 +223,7 @@ fn writes_a_tool_call_once_it_reaches_a_terminal_status() {
             seq: 0,
             record: HistoryRecord::Update {
                 update: Box::new(SessionUpdate::ToolCall(settled)),
+                tool_timing: None,
             },
         }],
     );
@@ -247,6 +251,7 @@ fn reissues_a_settled_tool_call_under_its_original_position() {
                 update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t1", "Run tests").status(ToolCallStatus::Failed),
                 )),
+                tool_timing: None,
             },
         }],
     );
@@ -272,6 +277,7 @@ fn preserves_appearance_order_when_a_tool_settles_after_a_later_message() {
                 update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t1", "Search").status(ToolCallStatus::Completed),
                 )),
+                tool_timing: None,
             },
         }],
     );
@@ -298,6 +304,7 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
                     update: Box::new(SessionUpdate::ToolCall(
                         ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
                     )),
+                    tool_timing: None,
                 },
             },
             message_at(1, "here is what I found", Some("m1")),
@@ -337,6 +344,7 @@ fn keeps_an_unfinished_tool_call_unfinished_when_the_turn_was_cut_short() {
                         update: Box::new(SessionUpdate::ToolCall(
                             ToolCall::new("t1", "Run tests").status(ToolCallStatus::InProgress),
                         )),
+                        tool_timing: None,
                     },
                 },
                 AssembledRecord {
@@ -386,6 +394,7 @@ fn synthesizes_a_tool_call_from_an_update_that_arrived_without_its_opening() {
                 update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t9", "Tool call").status(ToolCallStatus::Completed),
                 )),
+                tool_timing: None,
             },
         }],
     );
@@ -417,6 +426,7 @@ fn keeps_only_the_final_plan_snapshot() {
                 seq: 0,
                 record: HistoryRecord::Update {
                     update: Box::new(SessionUpdate::Plan(final_plan)),
+                    tool_timing: None,
                 },
             },
             AssembledRecord {
@@ -447,6 +457,7 @@ fn records_the_prompt_ora_kept_and_ignores_the_provider_echo() {
                 update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
                     ContentBlock::Text(TextContent::new("what the user typed")),
                 ))),
+                tool_timing: None,
             },
         }],
     );
@@ -487,6 +498,7 @@ fn settles_content_that_cannot_merge_where_it_arrived() {
             seq: 0,
             record: HistoryRecord::Update {
                 update: Box::new(SessionUpdate::AgentMessageChunk(expected_chunk)),
+                tool_timing: None,
             },
         }],
     );
@@ -508,11 +520,38 @@ fn pending_records_excludes_written_tools() {
 
     let pending = assembler.pending_records();
     assert_eq!(pending.len(), 1);
-    let HistoryRecord::Update { update } = &pending[0].record else {
+    let HistoryRecord::Update { update, .. } = &pending[0].record else {
         panic!("expected an update record");
     };
     let SessionUpdate::ToolCall(call) = update.as_ref() else {
         panic!("expected a tool call");
     };
     assert_eq!(call.tool_call_id, ToolCallId::new("t2"));
+}
+
+#[test]
+fn turn_end_flushes_the_latest_timing_for_an_open_tool() {
+    let mut assembler = HistoryAssembler::new(0);
+    let opening = SessionUpdate::ToolCall(
+        ToolCall::new("timed", "Long test").status(ToolCallStatus::InProgress),
+    );
+    let started = ToolCallTiming {
+        started_at: "2026-09-11T10:00:00+08:00".to_string(),
+        duration_ms: None,
+    };
+    assert_eq!(
+        assembler.push_timed_update(&opening, started.clone()),
+        vec![]
+    );
+    let finished = ToolCallTiming {
+        duration_ms: Some(90_000),
+        ..started
+    };
+    assembler.update_tool_timing(&ToolCallId::new("timed"), finished.clone());
+
+    let records = assembler.end_turn(StopReason::Cancelled);
+    let HistoryRecord::Update { tool_timing, .. } = &records[0].record else {
+        panic!("expected tool update");
+    };
+    assert_eq!(tool_timing, &Some(finished));
 }

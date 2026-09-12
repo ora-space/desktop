@@ -27,5 +27,43 @@ export function emptyFilesHandlers() {
       (async function* () {
         yield* [];
       })(),
+    createWorkspaceEntry: async ({ path, kind }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind,
+      isSymbolicLink: false,
+    }),
+    createProjectEntry: async ({ path, kind }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind,
+      isSymbolicLink: false,
+    }),
+    copyWorkspaceEntry: async ({ path }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind: "file",
+      isSymbolicLink: false,
+    }),
+    copyProjectEntry: async ({ path }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind: "file",
+      isSymbolicLink: false,
+    }),
+    moveWorkspaceEntry: async ({ path }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind: "file",
+      isSymbolicLink: false,
+    }),
+    moveProjectEntry: async ({ path }) => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      kind: "file",
+      isSymbolicLink: false,
+    }),
+    deleteWorkspaceEntry: async () => ({}),
+    deleteProjectEntry: async () => ({}),
   } satisfies TestHandlers;
 }

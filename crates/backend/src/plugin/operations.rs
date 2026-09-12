@@ -119,11 +119,26 @@ impl Plugins {
     }
 
     /// Pulls the marketplace source and rebuilds the cache used by plugin discovery.
+    ///
+    /// A rebuild already in flight answers this request from the cached index instead of running
+    /// a second identical one.
     pub fn sync_available(
         &self,
         request: SyncAvailablePluginsRequest,
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         self.host.sync_available_plugins(request)
+    }
+
+    /// Admits one automatic rebuild, or reports that another rebuild already covers it.
+    ///
+    /// Automatic rebuilds are announced to the user before they start, so they claim admission
+    /// and run as two steps: an announcement can then never describe work that was discarded.
+    /// Dropping the returned value without running it releases the slot untouched.
+    pub fn admit_auto_sync(&self) -> Option<AdmittedSync<'_>> {
+        self.host.try_begin_rebuild().map(|slot| AdmittedSync {
+            host: self.host.as_ref(),
+            _slot: slot,
+        })
     }
 
     /// Reads the README one marketplace listing publishes for its detail page.
@@ -235,5 +250,22 @@ impl Plugins {
         let response = self.host.import(request).await?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
+    }
+}
+
+/// One admitted marketplace rebuild, held from admission until it runs.
+///
+/// Holding this value *is* holding the rebuild slot, so no other rebuild can start while it is
+/// alive. Dropping it without calling [`AdmittedSync::run`] releases the slot and leaves the
+/// cached index untouched.
+pub struct AdmittedSync<'a> {
+    host: &'a PluginApi,
+    _slot: std::sync::MutexGuard<'a, ()>,
+}
+
+impl AdmittedSync<'_> {
+    /// Pulls every configured source and atomically replaces the cached registry index.
+    pub fn run(self) -> Result<SyncAvailablePluginsResponse, BackendError> {
+        self.host.rebuild_registry_index()
     }
 }

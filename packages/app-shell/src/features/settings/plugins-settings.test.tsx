@@ -14,6 +14,7 @@ import { ContractsClientContext } from "../../contracts-client-context";
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { createStubPlatform } from "../../test/stub-platform";
 import { usePluginOperationStore } from "../../state/stores/plugin-operation-store";
+import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import {
   createTestClient,
   type TestHandlers,
@@ -41,6 +42,12 @@ void appI18n;
 
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
+  act(() =>
+    useMarketplaceSyncStore.setState({
+      hostRefreshing: false,
+      userSyncing: false,
+    }),
+  );
 });
 
 /** Renders plugin settings with isolated query, contracts-client, and platform state. */
@@ -233,6 +240,7 @@ it("shows marketplace plugin download progress", async () => {
         reportProgress = listener;
         return () => undefined;
       },
+      onAutoSyncChanged: async () => () => undefined,
     },
   };
   renderSettings(client, platform);
@@ -280,6 +288,7 @@ it("shows marketplace plugin update download progress", async () => {
         reportProgress = listener;
         return () => undefined;
       },
+      onAutoSyncChanged: async () => () => undefined,
     },
   };
   renderSettings(client, platform);
@@ -848,6 +857,59 @@ it("opens the README page when a marketplace card is clicked", async () => {
   ).toBeInTheDocument();
 });
 
+/** An uninstalled listing keeps the marketplace install command available on its detail page. */
+it("installs an uninstalled plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
+  expect(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  ).toBeInTheDocument();
+});
+
+/** An older installed release exposes update, then changes to uninstall after refreshing. */
+it("updates an outdated plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: /更新|Update/ }));
+
+  await waitFor(() => expect(state.installedPlugins[0]?.version).toBe("1.2.0"));
+  expect(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  ).toBeInTheDocument();
+});
+
+/** A current installed release uses the existing confirmation flow before uninstalling. */
+it("uninstalls a current plugin from its detail header", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.installedPlugins.push(weatherInstalled());
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(
+    await screen.findByRole("button", { name: /卸载|Uninstall/ }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /卸载|Uninstall/ }),
+  );
+
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(0));
+  expect(
+    await screen.findByRole("button", { name: /安装|Install/ }),
+  ).toBeInTheDocument();
+});
+
 /** The README page breadcrumb returns to the marketplace grid. */
 it("returns from the README page to the marketplace grid", async () => {
   const user = userEvent.setup();
@@ -883,4 +945,73 @@ it("keeps marketplace descriptions to a single truncated line", async () => {
   const description = await screen.findByText("Weather plugin");
   expect(description).toHaveClass("truncate");
   expect(description).not.toHaveClass("line-clamp-2");
+});
+
+/**
+ * The rebuild outlives this page, so leaving it mid-sync and coming back must not restore a
+ * button that looks ready: pressing it again would start a second rebuild.
+ */
+it("keeps the sync action disabled across leaving and reopening the page", async () => {
+  const user = userEvent.setup();
+  const { client, handlers } = clientWithWeather();
+  let settle: (() => void) | undefined;
+  vi.spyOn(handlers, "syncAvailablePlugins").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        settle = () => resolve({ updatedAt: 0n, plugins: [] });
+      }),
+  );
+  const view = renderSettings(client);
+
+  await user.click(
+    await screen.findByRole("button", {
+      name: /同步插件市场|Sync plugin marketplace/,
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", {
+        name: /同步插件市场|Sync plugin marketplace/,
+      }),
+    ).toBeDisabled(),
+  );
+
+  // Leaving the settings page tears the mutation down; the rebuild behind it keeps going.
+  view.unmount();
+  renderSettings(client);
+
+  const reopened = await screen.findByRole("button", {
+    name: /同步插件市场|Sync plugin marketplace/,
+  });
+  expect(reopened).toBeDisabled();
+
+  await act(async () => {
+    settle?.();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => expect(reopened).toBeEnabled());
+});
+
+/**
+ * The host admits one marketplace rebuild at a time and discards the rest, so the Sync action
+ * stands down while the host is refreshing on its own rather than letting a click be dropped.
+ */
+it("disables the sync action while the host is refreshing the marketplace", async () => {
+  const { client } = clientWithWeather();
+  renderSettings(client);
+
+  const sync = await screen.findByRole("button", {
+    name: /同步插件市场|Sync plugin marketplace/,
+  });
+  expect(sync).toBeEnabled();
+
+  act(() => useMarketplaceSyncStore.getState().setHostRefreshing(true));
+
+  await waitFor(() => expect(sync).toBeDisabled());
+  expect(within(sync).getByText(/正在同步…|Syncing…/)).toBeInTheDocument();
+
+  act(() => useMarketplaceSyncStore.getState().setHostRefreshing(false));
+
+  await waitFor(() => expect(sync).toBeEnabled());
 });

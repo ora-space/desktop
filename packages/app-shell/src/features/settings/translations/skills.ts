@@ -96,6 +96,12 @@ export const skillTranslations = {
     "settings.skills.importRestoreMissing":
       "导入内容里没有名为“{{name}}”的技能。",
     "settings.skills.importCompletedWithFailures": "{{count}} 个技能导入失败。",
+    "settings.skills.viewSourcePlugin": "查看来源插件详情",
+    "settings.skills.deletePluginSkills": "删除该插件引入的所有 Skill",
+    "settings.skills.deletePluginTitle": "卸载“{{pluginId}}”？",
+    "settings.skills.deletePluginDescription":
+      "这会卸载该插件，并删除它引入的所有 Skill。此操作无法撤销。",
+    "settings.skills.deletePluginConfirm": "卸载并删除 Skills",
     "settings.skills.importStatus.ready": "待导入",
     "settings.skills.importStatus.conflict": "同名冲突",
     "settings.skills.importStatus.invalid": "无效",
@@ -239,6 +245,13 @@ export const skillTranslations = {
       "This import does not include a skill named “{{name}}”.",
     "settings.skills.importCompletedWithFailures":
       "{{count}} skill(s) failed to import.",
+    "settings.skills.viewSourcePlugin": "View source plugin details",
+    "settings.skills.deletePluginSkills":
+      "Delete all Skills provided by this plugin",
+    "settings.skills.deletePluginTitle": "Uninstall {{pluginId}}?",
+    "settings.skills.deletePluginDescription":
+      "This uninstalls the plugin and deletes every Skill it provides. This cannot be undone.",
+    "settings.skills.deletePluginConfirm": "Uninstall and delete Skills",
     "settings.skills.importStatus.ready": "Ready",
     "settings.skills.importStatus.conflict": "Name conflict",
     "settings.skills.importStatus.invalid": "Invalid",

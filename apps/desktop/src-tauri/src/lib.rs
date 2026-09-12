@@ -1,6 +1,7 @@
 mod commands;
 mod diagnostic_logs;
 mod error;
+mod marketplace_sync;
 mod open_external;
 mod open_location;
 mod state;
@@ -198,6 +199,14 @@ fn bootstrap_desktop(
         },
     )
     .map_err(DesktopBootstrapError::Update)?;
+    // Unlike release updates, a marketplace refresh only rebuilds a cached listing, so it runs in
+    // development builds too rather than staying untested until a packaged release.
+    let marketplace_sync = marketplace_sync::MarketplaceSyncService::start(
+        app.clone(),
+        backend.plugins(),
+        resolved_timezone.timezone,
+    )
+    .map_err(DesktopBootstrapError::MarketplaceSync)?;
     let runtime_log_level = RuntimeLogLevelManager::new(
         level_control,
         backend.settings().preferred_log_level_store(),
@@ -216,6 +225,7 @@ fn bootstrap_desktop(
         },
         DesktopRuntimeGuard {
             _logging: logging_guard,
+            _marketplace_sync: marketplace_sync,
         },
     ))
 }

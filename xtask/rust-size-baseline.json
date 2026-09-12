@@ -7,13 +7,8 @@
     },
     "crates/backend/src/agent_runtime.rs": {
       "owner": "ora-backend",
-      "lines": 1073,
+      "lines": 1072,
       "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Durable record ownership now lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
-    },
-    "crates/backend/src/plugin.rs": {
-      "owner": "ora-backend",
-      "lines": 803,
-      "split_plan": "Marketplace release resolution and package transfer now live in plugin/marketplace.rs, and the cached-entry to marketplace-summary projection in plugin/listing.rs. Split the remaining private plugin-host configuration and gateway responsibilities while retaining Plugins as the public operations interface. Preserve registry identity, runtime synchronization and Effect generation semantics."
     },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",

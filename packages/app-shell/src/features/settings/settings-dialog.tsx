@@ -46,6 +46,7 @@ import { SettingsHeading } from "./settings-heading";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
 import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
+import { DiagnosticLogsSettings } from "./diagnostic-logs-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 import { useUiStore, type SettingsCategory } from "../../state/stores/ui-store";
 import {
@@ -69,6 +70,7 @@ export function SettingsDialog() {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingSettingsNavigation | null>(null);
+  const [pluginDetailId, setPluginDetailId] = useState<string | null>(null);
   const pluginConfigurationGuard =
     useRef<PluginConfigurationNavigationGuard | null>(null);
   const developerMode = useDeveloperMode();
@@ -85,7 +87,10 @@ export function SettingsDialog() {
   const applyNavigation = (navigation: PendingSettingsNavigation) => {
     setPendingNavigation(null);
     if (navigation.kind === "close") setOpen(false);
-    else setCategory(navigation.category);
+    else {
+      if (navigation.category !== "plugins") setPluginDetailId(null);
+      setCategory(navigation.category);
+    }
   };
 
   /** Defers Settings navigation while the active plugin editor owns unsaved input. */
@@ -190,10 +195,19 @@ export function SettingsDialog() {
                   />
                 )}
                 {category === "roles" && <RolesSettings />}
-                {category === "skills" && <SkillsSettings />}
+                {category === "skills" && (
+                  <SkillsSettings
+                    onOpenPlugin={(pluginId) => {
+                      setPluginDetailId(pluginId);
+                      setCategory("plugins");
+                    }}
+                  />
+                )}
                 {category === "plugins" && (
                   <PluginsSettings
                     onNavigationGuardChange={registerPluginConfigurationGuard}
+                    detailPluginId={pluginDetailId}
+                    onDetailClose={() => setPluginDetailId(null)}
                   />
                 )}
                 {category === "proxy" && <ProxySettings />}
@@ -466,7 +480,12 @@ function DeveloperSettings({
         description={t("settings.developer.description")}
       />
       <DeveloperModeSettings controller={developerMode} />
-      {developerModeEnabled && <RuntimeLogLevelSettings />}
+      {developerModeEnabled && (
+        <>
+          <RuntimeLogLevelSettings />
+          <DiagnosticLogsSettings />
+        </>
+      )}
     </div>
   );
 }

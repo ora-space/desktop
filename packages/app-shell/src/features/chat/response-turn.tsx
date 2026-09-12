@@ -13,6 +13,7 @@ import {
   type DisplayTurnItem,
 } from "./turn-item-grouping";
 import { TurnDiffSummary } from "./turn-diff-summary";
+import { formatElapsedDuration } from "../../lib/format";
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -23,6 +24,10 @@ interface ResponseTurnProps {
 export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
   const displayItems = buildTurnDisplayItems(turn.items, turn.status);
+  const lastAssistantIndex = displayItems.findLastIndex(
+    (item) => item.kind === "message",
+  );
+  const formattedDuration = formatElapsedDuration(turn.durationMs);
   return (
     <section className="py-3" aria-label={t("chat.assistantReplied")}>
       <div className="min-w-0 space-y-2.5">
@@ -34,9 +39,15 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
             userName={userName}
             displayIndex={index}
             displayCount={displayItems.length}
+            durationMs={
+              index === lastAssistantIndex ? turn.durationMs : undefined
+            }
           />
         ))}
         <TurnEnding turn={turn} />
+        {lastAssistantIndex === -1 && formattedDuration !== null && (
+          <TurnTotalDuration durationMs={turn.durationMs} />
+        )}
         <TurnDiffSummary turn={turn} />
       </div>
     </section>
@@ -50,12 +61,14 @@ export function DisplayTurnItemView({
   userName,
   displayIndex,
   displayCount,
+  durationMs,
 }: {
   item: DisplayTurnItem;
   turn: ChatTurn;
   userName: string;
   displayIndex: number;
   displayCount: number;
+  durationMs?: number;
 }) {
   switch (item.kind) {
     case "activityPhase":
@@ -75,11 +88,24 @@ export function DisplayTurnItemView({
           streaming={
             turn.status === "streaming" && displayIndex === displayCount - 1
           }
+          durationMs={durationMs}
         />
       );
     case "content":
       return <ContentBlock content={item.content} />;
   }
+}
+
+/** Shows a completed turn's duration when it has no assistant text to carry the timing label. */
+export function TurnTotalDuration({ durationMs }: { durationMs?: number }) {
+  const { t } = useTranslation();
+  const formattedDuration = formatElapsedDuration(durationMs);
+  if (formattedDuration === null) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {t("chat.totalTime")} {formattedDuration}
+    </p>
+  );
 }
 
 /** Explains non-standard turn endings without treating them as transport failures. */

@@ -102,6 +102,10 @@ function loadedConversation(): SessionConversation {
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   };
 }
@@ -180,7 +184,9 @@ describe("RunTheaterActCard conversation", () => {
     );
 
     expect(
-      screen.queryByText(/Agent (正在处理|is working|尚未启动|has not started)/),
+      screen.queryByText(
+        /Agent (正在处理|is working|尚未启动|has not started)/,
+      ),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /查看节点会话|View node session/ }),

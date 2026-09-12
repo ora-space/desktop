@@ -155,6 +155,90 @@ pub struct WatchProjectRequest {
     pub project_id: String,
 }
 
+/// Creates one file or directory inside a task's managed worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct CreateWorkspaceEntryRequest {
+    pub task_id: String,
+    pub path: String,
+    pub kind: WorkspaceEntryKind,
+}
+
+/// Creates one file or directory inside a project's checkout root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct CreateProjectEntryRequest {
+    pub project_id: String,
+    pub path: String,
+    pub kind: WorkspaceEntryKind,
+}
+
+/// Copies one existing path onto a missing destination inside a task worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct CopyWorkspaceEntryRequest {
+    pub task_id: String,
+    pub from: String,
+    pub path: String,
+}
+
+/// Copies one existing path onto a missing destination inside a project checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct CopyProjectEntryRequest {
+    pub project_id: String,
+    pub from: String,
+    pub path: String,
+}
+
+/// Moves or renames one existing path onto a missing destination inside a task worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct MoveWorkspaceEntryRequest {
+    pub task_id: String,
+    pub from: String,
+    pub path: String,
+}
+
+/// Moves or renames one existing path onto a missing destination inside a project checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct MoveProjectEntryRequest {
+    pub project_id: String,
+    pub from: String,
+    pub path: String,
+}
+
+/// Deletes one existing path inside a task's managed worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct DeleteWorkspaceEntryRequest {
+    pub task_id: String,
+    pub path: String,
+}
+
+/// Deletes one existing path inside a project's checkout root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct DeleteProjectEntryRequest {
+    pub project_id: String,
+    pub path: String,
+}
+
+/// Confirms a contained filesystem delete completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct DeleteFileSystemEntryResponse {}
+
 /// Describes cache-invalidating changes emitted by the native workspace watcher.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -192,6 +276,15 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     SearchWorkspaceResponse::export(config)?;
     WatchWorkspaceRequest::export(config)?;
     WatchProjectRequest::export(config)?;
+    CreateWorkspaceEntryRequest::export(config)?;
+    CreateProjectEntryRequest::export(config)?;
+    CopyWorkspaceEntryRequest::export(config)?;
+    CopyProjectEntryRequest::export(config)?;
+    MoveWorkspaceEntryRequest::export(config)?;
+    MoveProjectEntryRequest::export(config)?;
+    DeleteWorkspaceEntryRequest::export(config)?;
+    DeleteProjectEntryRequest::export(config)?;
+    DeleteFileSystemEntryResponse::export(config)?;
     WorkspaceFileChange::export(config)?;
     WorkspaceFileEventBatch::export(config)?;
     Ok(())

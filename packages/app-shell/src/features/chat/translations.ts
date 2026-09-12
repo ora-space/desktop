@@ -49,6 +49,50 @@ export const chatTranslations = {
     "chat.contextBar.searchProjects": "搜索项目",
     "chat.contextBar.noProjectsFound": "未找到项目。",
     "chat.contextBar.defaultBranch": "main",
+    "chat.usage.waiting": "等待用量",
+    "chat.usage.awaiting": "正在等待用量",
+    "chat.usage.unavailable": "用量不可用",
+    "chat.usage.referenceInfo": "用量统计说明",
+    "chat.usage.disclaimer":
+      "统计仅供参考。数据不会随历史记录保存，更新可能存在延迟；完整性、准确性和统计口径取决于 Agent 本身的实现。",
+    "chat.usage.contextTitle": "当前上下文用量",
+    "chat.usage.reloadEmpty":
+      "用量数据不会随历史记录保存。发送一条消息后，如果当前 Agent 支持 ACP 用量上报，这里会显示最新数据。",
+    "chat.usage.awaitingDetails":
+      "正在等待 Agent 上报用量；数据可能在响应过程中或响应结束后更新。",
+    "chat.usage.contextUnavailable":
+      "当前 Agent 在上一轮交互后仍未上报上下文用量。",
+    "chat.usage.lastTurnTitle": "上一轮对话 Token 使用",
+    "chat.usage.tokenAwaiting": "正在等待上一轮响应完成并提供 Token 数据。",
+    "chat.usage.tokenUnavailable":
+      "当前 Agent 未提供上一轮对话的 Token 使用明细。",
+    "chat.usage.tokenNeedsInteraction":
+      "完成一轮对话后，如果 Agent 支持上报，这里会显示该轮 Token 使用。",
+    "chat.usage.used": "已用",
+    "chat.usage.limit": "上限",
+    "chat.usage.remaining": "剩余",
+    "chat.usage.percent": "占比",
+    "chat.usage.total": "总计",
+    "chat.usage.updated": "{{time}}更新",
+    "chat.usage.justNow": "刚刚",
+    "chat.usage.minutesAgo_one": "{{count}} 分钟前",
+    "chat.usage.minutesAgo_other": "{{count}} 分钟前",
+    "chat.usage.contextSummary": "上下文 {{percent}}% · {{used}} / {{size}}",
+    "chat.usage.composition": "上一轮 Token 构成",
+    "chat.usage.segment.input": "Input",
+    "chat.usage.segment.output": "Output",
+    "chat.usage.segment.thought": "Thought",
+    "chat.usage.segment.cachedRead": "Cache read",
+    "chat.usage.segment.cachedWrite": "Cache write",
+    "chat.usage.segment.unclassified": "未分类",
+    "chat.usage.segmentTooltip": "{{name}}：{{value}}（{{percent}}%）",
+    "chat.usage.formulaExact": "总计 {{total}} = {{parts}}",
+    "chat.usage.formulaGap":
+      "总计 {{total}} = 已上报分项 {{known}} + 未分类 {{gap}}。未分类表示 Agent 的总计中包含未单独提供的 Token 类别。",
+    "chat.usage.formulaOverlap":
+      "已上报分项合计 {{known}}，大于 Agent 上报的总计 {{total}}。部分字段可能存在包含或重叠关系，因此无法可靠相加。",
+    "chat.usage.zeroTotal":
+      "Agent 上报的总计为 0，因此不绘制构成图；上方仍保留其原始字段。",
     "chat.moreActions": "更多对话操作",
     "chat.permission.label": "权限模式",
     "chat.permission.always": "每次询问",
@@ -111,6 +155,8 @@ export const chatTranslations = {
     "chat.loadingHistory": "正在加载历史记录…",
     "chat.emptyHistory": "尚无消息",
     "chat.typing": "助手正在运行",
+    "chat.elapsedTime": "耗时",
+    "chat.totalTime": "用时",
     "chat.runningWords":
       "思考中…|冥思中…|构思中…|酝酿中…|推演中…|琢磨中…|捣鼓中…|开动脑筋…|苦思冥想…|灵光闪现…|运转中…|加载脑洞…|盘算中…|推敲中…|排查中…|摸索中…|绞尽脑汁…|拼命运转…|一顿操作…|正在思索…|脑力全开…|深度思考…",
     "chat.thinking": "正在分析",
@@ -314,6 +360,51 @@ export const chatTranslations = {
     "chat.contextBar.searchProjects": "Search projects",
     "chat.contextBar.noProjectsFound": "No projects found.",
     "chat.contextBar.defaultBranch": "main",
+    "chat.usage.waiting": "Waiting for usage",
+    "chat.usage.awaiting": "Awaiting usage",
+    "chat.usage.unavailable": "Usage unavailable",
+    "chat.usage.referenceInfo": "About usage statistics",
+    "chat.usage.disclaimer":
+      "Usage statistics are for reference only. They are not saved with conversation history and may update with a delay; completeness, accuracy, and accounting semantics depend on the agent's implementation.",
+    "chat.usage.contextTitle": "Current context usage",
+    "chat.usage.reloadEmpty":
+      "Usage data is not saved with conversation history. Send a message and, if the current agent supports ACP usage reporting, the latest data will appear here.",
+    "chat.usage.awaitingDetails":
+      "Waiting for the agent to report usage. Data may update during the response or after it finishes.",
+    "chat.usage.contextUnavailable":
+      "The current agent still did not report context usage after the previous interaction.",
+    "chat.usage.lastTurnTitle": "Previous-turn token usage",
+    "chat.usage.tokenAwaiting":
+      "Waiting for the previous response to finish and provide token data.",
+    "chat.usage.tokenUnavailable":
+      "The current agent did not provide token details for the previous turn.",
+    "chat.usage.tokenNeedsInteraction":
+      "After one turn completes, its token usage appears here if the agent reports it.",
+    "chat.usage.used": "Used",
+    "chat.usage.limit": "Limit",
+    "chat.usage.remaining": "Remaining",
+    "chat.usage.percent": "Percent",
+    "chat.usage.total": "Total",
+    "chat.usage.updated": "Updated {{time}}",
+    "chat.usage.justNow": "just now",
+    "chat.usage.minutesAgo_one": "{{count}} minute ago",
+    "chat.usage.minutesAgo_other": "{{count}} minutes ago",
+    "chat.usage.contextSummary": "Context {{percent}}% · {{used}} / {{size}}",
+    "chat.usage.composition": "Previous-turn token composition",
+    "chat.usage.segment.input": "Input",
+    "chat.usage.segment.output": "Output",
+    "chat.usage.segment.thought": "Thought",
+    "chat.usage.segment.cachedRead": "Cache read",
+    "chat.usage.segment.cachedWrite": "Cache write",
+    "chat.usage.segment.unclassified": "Unclassified",
+    "chat.usage.segmentTooltip": "{{name}}: {{value}} ({{percent}}%)",
+    "chat.usage.formulaExact": "Total {{total}} = {{parts}}",
+    "chat.usage.formulaGap":
+      "Total {{total}} = reported categories {{known}} + unclassified {{gap}}. Unclassified means the agent's total includes token categories it did not report separately.",
+    "chat.usage.formulaOverlap":
+      "Reported categories total {{known}}, which exceeds the agent-reported total of {{total}}. Some fields may include or overlap others, so they cannot be added reliably.",
+    "chat.usage.zeroTotal":
+      "The agent reported a total of zero, so no composition bar is shown; the raw fields remain above.",
     "chat.moreActions": "More conversation actions",
     "chat.permission.label": "Permission mode",
     "chat.permission.always": "Ask every time",
@@ -385,6 +476,8 @@ export const chatTranslations = {
     "chat.loadingHistory": "Loading history…",
     "chat.emptyHistory": "No messages yet",
     "chat.typing": "Assistant is working",
+    "chat.elapsedTime": "Elapsed",
+    "chat.totalTime": "Took",
     "chat.runningWords":
       "Thinking…|Pondering…|Imagining…|Conjuring…|Percolating…|Noodling…|Tinkering…|Brewing…|Musing…|Summoning…|Cooking…|Computing…|Ruminating…|Scheming…|Mulling…|Sifting…|Untangling…|Crunching…|Puzzling…|Deliberating…|Synthesizing…|Weighing options…",
     "chat.thinking": "Analyzing",

@@ -28,7 +28,7 @@ export type MessageListRow =
       turnIndex: number;
       responseAnchor: boolean;
     }
-  | { type: "running"; key: "running" }
+  | { type: "running"; key: "running"; startedAt: number }
   | { type: "pad"; key: "pad" };
 
 /** Flattens turns into independently measurable rows so a long live tool list can window. */
@@ -99,8 +99,13 @@ export function buildMessageListRows(
       modelName: change.modelName,
     });
   }
-  if (showRunning) {
-    rows.push({ type: "running", key: "running" });
+  const lastTurn = turns.at(-1);
+  if (showRunning && lastTurn !== undefined) {
+    rows.push({
+      type: "running",
+      key: "running",
+      startedAt: lastTurn.createdAt,
+    });
   }
   rows.push({ type: "pad", key: "pad" });
   return rows;

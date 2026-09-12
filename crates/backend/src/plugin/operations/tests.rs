@@ -372,3 +372,63 @@ fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> std::io::
     }
     Ok(())
 }
+
+/// Verifies that the rebuild slot admits one holder at a time and is released on drop.
+///
+/// The admission is what keeps an automatic rebuild from starting on top of a running one, so it
+/// is asserted directly rather than through a rebuild that would need a network and a checkout.
+#[tokio::test]
+async fn marketplace_rebuild_admits_one_holder_at_a_time() {
+    use pretty_assertions::assert_eq;
+
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let data_directory = temporary.path().to_path_buf();
+    let backend = Backend::open(backend_paths(&data_directory, &data_directory))
+        .expect("open shared backend");
+    let plugins = backend.plugins();
+
+    let admitted = plugins
+        .admit_auto_sync()
+        .expect("first admission is granted");
+    assert_eq!(
+        plugins.admit_auto_sync().is_none(),
+        true,
+        "a second rebuild is refused while the first holds the slot"
+    );
+    drop(admitted);
+    assert_eq!(
+        plugins.admit_auto_sync().is_some(),
+        true,
+        "the slot is released when an admission is dropped without running"
+    );
+}
+
+/// Verifies that a manual sync arriving during a rebuild is answered from the cached index.
+///
+/// Holding the slot for the whole call proves the cached branch is taken: a rebuild would drive
+/// the Git CLI against the configured sources, which this fixture has never cloned.
+#[tokio::test]
+async fn manual_sync_during_a_rebuild_answers_from_the_cache() {
+    use ora_contracts::{SyncAvailablePluginsRequest, SyncAvailablePluginsResponse};
+    use pretty_assertions::assert_eq;
+
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let data_directory = temporary.path().to_path_buf();
+    let backend = Backend::open(backend_paths(&data_directory, &data_directory))
+        .expect("open shared backend");
+    let plugins = backend.plugins();
+
+    let _admitted = plugins.admit_auto_sync().expect("admission is granted");
+    let response = plugins
+        .sync_available(SyncAvailablePluginsRequest {})
+        .expect("a refused sync still answers from the cache");
+
+    assert_eq!(
+        response,
+        SyncAvailablePluginsResponse {
+            updated_at: 0,
+            plugins: Vec::new(),
+        },
+        "an unsynced fixture caches an empty index"
+    );
+}

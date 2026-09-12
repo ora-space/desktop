@@ -40,6 +40,7 @@ import {
 } from "@ora/ui";
 import {
   IconAlertTriangle,
+  IconLoader2,
   IconPencil,
   IconPlus,
   IconPuzzle,
@@ -51,12 +52,14 @@ import {
 } from "@tabler/icons-react";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   localizeSkillImportReason,
   localizeSkillImportResultReason,
   localizeSkillImportStatus,
 } from "../../i18n/skill-import-reason";
 import { useAgents } from "../../state/hooks/use-agents";
+import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { useSkills } from "../../state/hooks/use-skills";
 import {
   useCreateAgent,
@@ -173,34 +176,11 @@ export function RolesSettings() {
 const EMPTY_SKILLS: Skill[] = [];
 const MAX_INLINE_PLUGIN_ID_LENGTH = 24;
 
-function PluginSourceBadge({ pluginId }: { pluginId: string }) {
-  if (pluginId.length <= MAX_INLINE_PLUGIN_ID_LENGTH) {
-    return (
-      <Badge variant="secondary" className="max-w-52 normal-case">
-        <IconPuzzle aria-hidden="true" />
-        {pluginId}
-      </Badge>
-    );
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        aria-label={pluginId}
-        className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground"
-      >
-        <IconPuzzle className="size-3" aria-hidden="true" />
-      </TooltipTrigger>
-      <TooltipContent
-        align="end"
-        className="max-w-64 whitespace-normal break-all text-left"
-      >
-        {pluginId}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-export function SkillsSettings() {
+export function SkillsSettings({
+  onOpenPlugin,
+}: {
+  onOpenPlugin?: (pluginId: string) => void;
+}) {
   const { t } = useTranslation();
   const skillsQuery = useSkills();
   const createSkill = useCreateSkill();
@@ -212,6 +192,9 @@ export function SkillsSettings() {
   const [restoreName, setRestoreName] = useState<string | null>(null);
   const [recoverTarget, setRecoverTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
+  const [pluginDeleteTarget, setPluginDeleteTarget] = useState<string | null>(
+    null,
+  );
   const skills = skillsQuery.data ?? EMPTY_SKILLS;
   const unavailableCount = skills.filter(
     (skill) => skill.availability === "unavailable",
@@ -284,9 +267,14 @@ export function SkillsSettings() {
           if (!("source" in item) || item.source.kind !== "plugin") {
             return undefined;
           }
+          const pluginId = item.source.pluginId;
           return (
             <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
-              <PluginSourceBadge pluginId={item.source.pluginId} />
+              <PluginSkillActions
+                pluginId={pluginId}
+                onOpen={() => onOpenPlugin?.(pluginId)}
+                onDelete={() => setPluginDeleteTarget(pluginId)}
+              />
             </div>
           );
         }}
@@ -328,6 +316,10 @@ export function SkillsSettings() {
           deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined)
         }
       />
+      <DeletePluginSkillsDialog
+        pluginId={pluginDeleteTarget}
+        onOpenChange={(open) => !open && setPluginDeleteTarget(null)}
+      />
       <SkillImportDialog
         open={importOpen}
         restoreName={restoreName}
@@ -339,6 +331,118 @@ export function SkillsSettings() {
         onCompleted={() => void invalidateSkills(queryClient)}
       />
     </>
+  );
+}
+
+/** Links a read-only skill to its owning plugin and offers package-wide removal. */
+function PluginSkillActions({
+  pluginId,
+  onOpen,
+  onDelete,
+}: {
+  pluginId: string;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useTranslation();
+  const compact = pluginId.length > MAX_INLINE_PLUGIN_ID_LENGTH;
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          aria-label={t("settings.skills.viewSourcePlugin")}
+          className={cn(
+            "inline-flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-full bg-secondary text-xs font-medium text-secondary-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+            compact ? "w-6" : "max-w-52 px-2",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+        >
+          <IconPuzzle className="size-3" aria-hidden="true" />
+          {!compact && <span className="truncate">{pluginId}</span>}
+        </TooltipTrigger>
+        <TooltipContent>{t("settings.skills.viewSourcePlugin")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          aria-label={t("settings.skills.deletePluginSkills")}
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-destructive outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+        >
+          <IconTrash className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent>
+          {t("settings.skills.deletePluginSkills")}
+        </TooltipContent>
+      </Tooltip>
+    </>
+  );
+}
+
+/** Confirms package removal because plugin-provided skills cannot be deleted independently. */
+function DeletePluginSkillsDialog({
+  pluginId,
+  onOpenChange,
+}: {
+  pluginId: string | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
+  const queryClient = useQueryClient();
+  const mutations = usePluginMutations(pluginId ?? "");
+  const uninstalling = mutations.uninstall.isPending;
+
+  return (
+    <AlertDialog open={pluginId !== null} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t("settings.skills.deletePluginTitle", {
+              pluginId: pluginId ?? "",
+            })}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("settings.skills.deletePluginDescription")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={uninstalling}>
+            {t("common.cancel")}
+          </AlertDialogCancel>
+          <Button
+            variant="destructive"
+            disabled={uninstalling}
+            onClick={() =>
+              mutations.uninstall.mutate("delete", {
+                onError: (cause) =>
+                  showContractError(
+                    cause,
+                    t("settings.plugins.uninstallFailed"),
+                  ),
+                onSuccess: () => {
+                  void invalidateSkills(queryClient);
+                  onOpenChange(false);
+                },
+              })
+            }
+          >
+            {uninstalling ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconTrash />
+            )}
+            {t("settings.skills.deletePluginConfirm")}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

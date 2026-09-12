@@ -4,7 +4,7 @@ use agent_client_protocol_schema::v1::StopReason;
 use ora_domain::{AgentRef, HistoryState, Session};
 use ora_history::{
     AgentSwitch, AssembledRecord, HistoryAssembler, HistoryClock, HistoryError, HistoryRecord,
-    HistoryWriter, SCHEMA_VERSION, SessionMeta,
+    HistoryWriter, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
 };
 use ora_logging::ora_warn;
 use std::path::{Path, PathBuf};
@@ -116,6 +116,34 @@ impl<C: HistoryClock> SessionRecorder<C> {
     pub(super) fn record_update(&mut self, update: &SessionUpdate) -> RecordOutcome {
         let records = self.assembler.push_update(update);
         self.append(&records)
+    }
+
+    /// Records a tool update with timing supplied by the session-local runtime tracker.
+    pub(super) fn record_timed_update(
+        &mut self,
+        update: &SessionUpdate,
+        timing: &ora_contracts::ToolCallTiming,
+    ) -> RecordOutcome {
+        let records = self.assembler.push_timed_update(
+            update,
+            ToolCallTiming {
+                started_at: timing.started_at.clone(),
+                duration_ms: timing.duration_ms,
+            },
+        );
+        self.append(&records)
+    }
+
+    /// Freezes open tool timing before the ordinary turn-boundary flush.
+    pub(super) fn finish_tool_timings(
+        &mut self,
+        timings: impl IntoIterator<
+            Item = (agent_client_protocol_schema::v1::ToolCallId, ToolCallTiming),
+        >,
+    ) {
+        for (tool_call_id, timing) in timings {
+            self.assembler.update_tool_timing(&tool_call_id, timing);
+        }
     }
 
     /// Closes the turn, flushing every item still open.

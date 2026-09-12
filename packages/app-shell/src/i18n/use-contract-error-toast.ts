@@ -1,7 +1,7 @@
 import { toast } from "@ora/ui";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useOptionalPlatform } from "../platform";
+import { useDiagnosticLogDownload } from "../state/hooks/use-diagnostic-log-download";
 import {
   hasDiagnosticRequestId,
   localizeContractError,
@@ -13,23 +13,16 @@ export function useContractErrorToast(): (
   title?: string,
 ) => void {
   const { t } = useTranslation();
-  const diagnosticLogs = useOptionalPlatform()?.diagnosticLogs;
+  const logDownload = useDiagnosticLogDownload();
 
   return useCallback(
     (error: unknown, title?: string) => {
       const message = localizeContractError(error, t);
       const action =
-        diagnosticLogs !== undefined && hasDiagnosticRequestId(error)
+        logDownload !== undefined && hasDiagnosticRequestId(error)
           ? {
               label: t("errors.downloadLogs"),
-              onClick: () => {
-                void diagnosticLogs
-                  .downloadToday()
-                  .then((downloaded) => {
-                    if (downloaded) toast.success(t("errors.logsDownloaded"));
-                  })
-                  .catch(() => toast.error(t("errors.logsDownloadFailed")));
-              },
+              onClick: () => void logDownload.download(),
             }
           : undefined;
 
@@ -38,6 +31,6 @@ export function useContractErrorToast(): (
         action,
       });
     },
-    [diagnosticLogs, t],
+    [logDownload, t],
   );
 }
