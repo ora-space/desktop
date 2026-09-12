@@ -3,7 +3,7 @@
 use super::{
     AgentSessionMcpCapabilities, InstalledMcpCandidate, McpConfigurationEligibility,
     SessionMcpCatalog, SessionMcpConfigurationSource, SessionMcpError, SessionMcpMemberRevision,
-    SessionMcpRevision, SessionMcpSnapshot, SessionMcpTransportKind,
+    SessionMcpRevision, SessionMcpSelection, SessionMcpSnapshot, SessionMcpTransportKind,
 };
 use agent_client_protocol_schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
@@ -22,8 +22,9 @@ const MAX_REVISION_RETRIES: usize = 3;
 pub(crate) fn resolve_session_mcp_revision(
     catalog: &impl SessionMcpCatalog,
     configurations: &impl SessionMcpConfigurationSource,
+    selection: &SessionMcpSelection,
 ) -> Result<SessionMcpRevision, SessionMcpError> {
-    let selected = select_effective_set(catalog, configurations)?;
+    let selected = select_effective_set(catalog, configurations, selection)?;
     Ok(revision_from_selected(&selected))
 }
 
@@ -37,11 +38,12 @@ pub(crate) fn resolve_session_mcp(
     configurations: &impl SessionMcpConfigurationSource,
     cwd: &Path,
     capabilities: AgentSessionMcpCapabilities,
+    selection: &SessionMcpSelection,
 ) -> Result<SessionMcpSnapshot, SessionMcpError> {
     for _ in 0..MAX_REVISION_RETRIES {
-        let selected = select_effective_set(catalog, configurations)?;
+        let selected = select_effective_set(catalog, configurations, selection)?;
         let snapshot = build_snapshot(&selected, cwd, capabilities)?;
-        let current = select_effective_set(catalog, configurations)?;
+        let current = select_effective_set(catalog, configurations, selection)?;
         if identities_match(&selected, &current) {
             return Ok(snapshot);
         }
@@ -59,15 +61,39 @@ struct SelectedMcp {
 fn select_effective_set(
     catalog: &impl SessionMcpCatalog,
     configurations: &impl SessionMcpConfigurationSource,
+    selection: &SessionMcpSelection,
 ) -> Result<Vec<SelectedMcp>, SessionMcpError> {
+    // An explicit empty set must work even when unrelated installed plugins are broken.
+    if matches!(selection, SessionMcpSelection::Explicit(ids) if ids.is_empty()) {
+        return Ok(Vec::new());
+    }
     let mut candidates = catalog
         .installed_mcps()
         .map_err(|_| SessionMcpError::CatalogUnavailable)?;
+    if let SessionMcpSelection::Explicit(ids) = selection {
+        for id in ids {
+            if !candidates
+                .iter()
+                .any(|candidate| candidate.plugin_id.canonical() == *id)
+            {
+                return Err(SessionMcpError::SelectedPluginUnavailable {
+                    plugin_id: id.clone(),
+                });
+            }
+        }
+        candidates.retain(|candidate| ids.contains(&candidate.plugin_id.canonical()));
+    }
     candidates.sort_by_key(|candidate| candidate.plugin_id.canonical());
     let mut selected = Vec::new();
     for candidate in candidates {
         match configurations.eligibility(&candidate)? {
-            McpConfigurationEligibility::Incomplete => {}
+            McpConfigurationEligibility::Incomplete => {
+                if matches!(selection, SessionMcpSelection::Explicit(_)) {
+                    return Err(SessionMcpError::ConfigurationIncomplete {
+                        plugin_id: candidate.plugin_id,
+                    });
+                }
+            }
             McpConfigurationEligibility::NoSettings => selected.push(SelectedMcp {
                 candidate,
                 configuration_revision: 0,

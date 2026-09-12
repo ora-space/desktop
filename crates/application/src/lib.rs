@@ -64,8 +64,8 @@ pub use workflow::{
     UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
-    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill,
-    AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
+    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentMcp, AgentOutputContract,
+    AgentSkill, AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
     BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CreateWorkflowRunHandler,
     DeleteWorkflowRunHandler, DeleteWorkflowRunResult, EngineError, ExecutionContext, FileChange,
     GetWorkflowRunHandler, GraphError, ListWorkflowNodeRunsHandler,

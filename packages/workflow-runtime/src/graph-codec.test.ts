@@ -155,3 +155,36 @@ describe("workflow timestamp projection", () => {
     expect(workflowTimestampToIso(isoToWorkflowTimestamp(iso))).toBe(iso);
   });
 });
+
+// Saved drafts, published snapshots, and exported graphs share this envelope codec.
+it("preserves canonical MCP IDs and disabled bindings across graph round trips", () => {
+  const agent: WorkflowDefinitionNode = {
+    id: "agent-1",
+    type: "workflow",
+    position: { x: 0, y: 0 },
+    data: {
+      kind: "agent",
+      title: "Agent",
+      description: "",
+      agentConfig: {
+        schemaVersion: 3,
+        executor: { agentCli: "official/agent", modelId: "model" },
+        roleId: "",
+        skills: [],
+        prompt: "",
+        mcps: [
+          { mcpId: "official/tools", enabled: true },
+          { mcpId: "local/tools", enabled: false },
+        ],
+      },
+    },
+  };
+  const input = {
+    nodes: [agent],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    annotations: [],
+    globalVariables: [],
+  };
+  expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
+});

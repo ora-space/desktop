@@ -6,6 +6,14 @@ export interface WorkflowChoice {
   label: string;
 }
 
+/** Availability is descriptive: authors can save bindings before configuring the plugin. */
+export interface WorkflowMcpChoice extends WorkflowChoice {
+  unavailableReason?:
+    | "configurationIncomplete"
+    | "configurationUnavailable"
+    | "invalidDeclaration";
+}
+
 export type WorkflowConfigField =
   | "agent"
   | "initialPrompt"
@@ -30,7 +38,7 @@ export interface WorkflowCapabilities {
   roles: WorkflowChoice[];
   skills: WorkflowChoice[];
   /** MCP catalog choices for Agent node attachments (optional per node). */
-  mcps: WorkflowChoice[];
+  mcps: WorkflowMcpChoice[];
   tools: WorkflowChoice[];
   /** Comparison operators offered by Condition nodes, keyed by stable value. */
   conditionOperators: WorkflowChoice[];

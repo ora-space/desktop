@@ -206,6 +206,7 @@ fn parses_agent_config_into_the_model() {
         instruction: None,
         input_variables: Vec::new(),
         agent_config: Some(AgentConfig {
+            mcps: Vec::new(),
             executor: AgentExecutor {
                 agent_cli: "open_code".to_string(),
                 model_id: "model-1".to_string(),

@@ -8,6 +8,8 @@ mod operations;
 mod prerequisites;
 mod prompt;
 mod recovery;
+mod session_mcp;
+pub(crate) use session_mcp::WorkflowSessionMcpSelectionSource;
 #[cfg(test)]
 mod test_fixture;
 mod worktree;

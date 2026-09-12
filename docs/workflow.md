@@ -1,5 +1,7 @@
 # Workflow
 
+English | [中文](workflow.zh.md)
+
 `ora-application` owns the workflow definition use cases, with persistence in `ora-db` and public contracts in `ora-contracts`. Workflows manage editable agent orchestration graphs with draft-as-workspace semantics and immutable published snapshots.
 
 ## Entities and tables
@@ -34,6 +36,26 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 ## Graph storage
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string. The [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
+
+## Agent-node MCP bindings
+
+The Agent inspector reads installed `kind: "mcp"` plugins, displaying their names, canonical IDs,
+and configuration availability. Authors can add, enable, disable, and remove bindings independently
+for each node. Adding enables the binding. Loading failures offer retry and preserve existing
+bindings; missing plugins remain visible by ID and can still be disabled or removed.
+
+Bindings use `mcps: [{ mcpId, enabled }]` in the graph, where `mcpId` is the full installed plugin
+ID. Draft save, publish, duplicate, and import/export retain these values, including disabled
+bindings. No selection (including old graphs without `mcps`) means no MCP servers for that node.
+Legacy demo IDs are retained without guessing a replacement. Empty IDs, duplicate IDs, and invalid
+field types are rejected when parsing the executable graph.
+
+Execution uses the frozen run's enabled IDs throughout Session creation, restore, rebuild, and
+refresh. Editing a draft affects later runs only. An unavailable enabled dependency fails the node
+with an explicit error; it is never silently skipped. Unselected plugins cannot block the node.
+Ordinary chats keep automatic discovery. Package and configuration updates for selected plugins
+still use the existing safe refresh boundary; no credentials are persisted in the graph. See
+[Session MCP](session-mcp.md) for runtime delivery and refresh behavior.
 
 ## Handlers
 

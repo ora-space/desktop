@@ -24,7 +24,10 @@ category.
 - `WorkflowEditorList` replaces the project tree in the app sidebar for that mode.
 - Selection and flush-before-switch actions live in `workflow-editor-store`.
 - `useWorkflowLibrary` is also consumed by the workspace create menu to start runs.
-- Agent-node MCP attachments read `MCP_CATALOG` from this feature, not Settings.
+- Agent-node MCP choices derive from `useInstalledPlugins` (`kind: "mcp"`) and share plugin-query
+  invalidation with Settings. Canonical IDs and enabled flags persist in the graph; availability
+  is display metadata. Missing or unavailable bindings stay editable, and discovery failure
+  offers retry without claiming that installed plugins disappeared.
 
 ## Key invariants
 

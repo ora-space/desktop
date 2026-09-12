@@ -6,6 +6,7 @@
 
 // The design places the run engine in `engine/engine.rs`, so the nested module name matches the
 // containing directory on purpose.
+mod agent_config;
 mod branch_projection;
 mod condition;
 #[allow(clippy::module_inception)]
@@ -20,6 +21,7 @@ mod variable_pool;
 mod variable_template;
 mod variable_value;
 
+pub use agent_config::AgentMcp;
 pub use engine::{
     EngineError, NodeExecutor, WorkflowRunCallback, WorkflowRunEngine, WorkflowValidationError,
 };

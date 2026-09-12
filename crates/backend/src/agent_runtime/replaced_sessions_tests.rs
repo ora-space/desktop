@@ -64,6 +64,7 @@ fn test_manager(
         .expect("open plugin host"),
     );
     AgentRuntimeManager::new(AgentRuntimeSetup {
+        mcp_selections: Arc::new(crate::session_setup::SessionMcpSelection::Automatic),
         plugin_host,
         pool: pool.clone(),
         home_directory: root.to_path_buf(),

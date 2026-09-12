@@ -82,7 +82,8 @@ import { organizeWorkflowNodes } from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
-import { MCP_CATALOG } from "./mcp-catalog";
+import { workflowMcpChoices } from "./mcp-catalog";
+import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import {
   useWorkflowEditorStore,
   type WorkflowEditorLibraryActions,
@@ -268,6 +269,7 @@ function WorkflowEditorContent({
   const client = useContractsClient();
   const agentsQuery = useAgents();
   const skillsQuery = useSkills();
+  const pluginsQuery = useInstalledPlugins();
   const agentModelsCatalog = useWorkflowAgentModels();
   const { deleteElements, toObject } = useReactFlow<WorkflowCanvasNode, Edge>();
   const locale =
@@ -291,10 +293,7 @@ function WorkflowEditorContent({
       value: skill.name,
       label: skill.name,
     }));
-    const mcps = MCP_CATALOG.map((mcp) => ({
-      value: mcp.id,
-      label: mcp.name,
-    }));
+    const mcps = workflowMcpChoices(pluginsQuery.data ?? []);
     const agentModels = agentModelsCatalog.agentModels;
     const defaultExecutor = agentModels[0];
     return {
@@ -324,6 +323,7 @@ function WorkflowEditorContent({
     capabilitiesOverride,
     locale,
     skillsQuery.data,
+    pluginsQuery.data,
   ]);
   const agentModelsLoading =
     capabilitiesOverride === undefined && agentModelsCatalog.isLoading;
@@ -1916,6 +1916,17 @@ function WorkflowEditorContent({
                 node={selectedNode}
                 capabilities={capabilities}
                 variableCatalog={variableCatalog}
+                mcpCatalog={
+                  capabilitiesOverride === undefined
+                    ? {
+                        isLoading: pluginsQuery.isPending,
+                        isError: pluginsQuery.isError,
+                        onRetry: () => {
+                          void pluginsQuery.refetch();
+                        },
+                      }
+                    : undefined
+                }
                 agentModelsLoading={agentModelsLoading}
                 agentModelsError={agentModelsError}
                 onRetryAgentModels={agentModelsCatalog.refetch}

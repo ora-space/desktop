@@ -150,6 +150,9 @@ impl Backend {
         let relative_path_base = paths.relative_path_base;
         let agent_runtime = Arc::new(
             AgentRuntimeManager::new(AgentRuntimeSetup {
+                mcp_selections: Arc::new(
+                    crate::workflow::run::WorkflowSessionMcpSelectionSource::new(pool.clone()),
+                ),
                 plugin_host: plugin.clone(),
                 pool: pool.clone(),
                 home_directory: paths.home_directory,

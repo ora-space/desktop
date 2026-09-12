@@ -46,6 +46,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
     );
     let runtime = Arc::new(
         AgentRuntimeManager::new(AgentRuntimeSetup {
+            mcp_selections: Arc::new(crate::session_setup::SessionMcpSelection::Automatic),
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),

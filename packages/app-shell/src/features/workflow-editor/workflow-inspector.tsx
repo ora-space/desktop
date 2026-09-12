@@ -1,3 +1,5 @@
+import { WorkflowMcpFields } from "./workflow-mcp-fields";
+import type { WorkflowMcpCatalogStatus } from "./mcp-catalog";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -61,6 +63,7 @@ import {
 interface WorkflowInspectorProps {
   node: Node<WorkflowNodeData, "workflow"> | null;
   capabilities: WorkflowCapabilities;
+  mcpCatalog?: WorkflowMcpCatalogStatus;
   variableCatalog: WorkflowVariableCatalogEntry[];
   agentModelsLoading?: boolean;
   agentModelsError?: boolean;
@@ -85,6 +88,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
     <WorkflowNodeInspector
       node={props.node}
       capabilities={props.capabilities}
+      mcpCatalog={props.mcpCatalog}
       variableCatalog={props.variableCatalog}
       agentModelsLoading={props.agentModelsLoading ?? false}
       agentModelsError={props.agentModelsError ?? false}
@@ -134,6 +138,7 @@ function WorkflowInspectorEmpty() {
 function WorkflowNodeInspector({
   node,
   capabilities,
+  mcpCatalog,
   variableCatalog,
   agentModelsLoading,
   agentModelsError,
@@ -150,6 +155,7 @@ function WorkflowNodeInspector({
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
+  mcpCatalog?: WorkflowMcpCatalogStatus;
   variableCatalog: WorkflowVariableCatalogEntry[];
   agentModelsLoading: boolean;
   agentModelsError: boolean;
@@ -213,6 +219,7 @@ function WorkflowNodeInspector({
                   key={node.id}
                   config={agentConfig}
                   capabilities={capabilities}
+                  mcpCatalog={mcpCatalog}
                   modelsLoading={agentModelsLoading}
                   modelsError={agentModelsError}
                   onRetryModels={onRetryAgentModels}
@@ -394,6 +401,7 @@ function WorkflowNodeInspector({
 function AgentConfigurationFields({
   config: rawConfig,
   capabilities,
+  mcpCatalog,
   modelsLoading,
   modelsError,
   onRetryModels,
@@ -408,6 +416,7 @@ function AgentConfigurationFields({
 }: {
   config: WorkflowAgentConfig;
   capabilities: WorkflowCapabilities;
+  mcpCatalog?: WorkflowMcpCatalogStatus;
   modelsLoading: boolean;
   modelsError: boolean;
   onRetryModels?: () => void;
@@ -424,7 +433,6 @@ function AgentConfigurationFields({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  const [mcpPickerOpen, setMcpPickerOpen] = useState(false);
   const [structuredOutputDialogOpen, setStructuredOutputDialogOpen] =
     useState(false);
   // Older drafts may omit `mcps`; normalize before any list access.
@@ -470,11 +478,6 @@ function AgentConfigurationFields({
   const enabledSkillCount = config.skills.filter(
     (skill) => skill.enabled,
   ).length;
-  const configuredMcpIds = new Set(config.mcps.map((mcp) => mcp.mcpId));
-  const availableMcps = (capabilities.mcps ?? []).filter(
-    (mcp) => !configuredMcpIds.has(mcp.value),
-  );
-  const enabledMcpCount = config.mcps.filter((mcp) => mcp.enabled).length;
   const configuredRole = capabilities.roles.find(
     (role) => role.value === config.roleId,
   );
@@ -514,33 +517,6 @@ function AgentConfigurationFields({
     onChange({
       ...config,
       skills: config.skills.filter((skill) => skill.skillId !== skillId),
-    });
-  }
-
-  /** Adds a new MCP in its enabled state, preserving configuration order. */
-  function addMcp(mcpId: string): void {
-    onChange({
-      ...config,
-      mcps: [...config.mcps, { mcpId, enabled: true }],
-    });
-    setMcpPickerOpen(false);
-  }
-
-  /** Updates only the enabled state of a configured MCP. */
-  function setMcpEnabled(mcpId: string, enabled: boolean): void {
-    onChange({
-      ...config,
-      mcps: config.mcps.map((mcp) =>
-        mcp.mcpId === mcpId ? { ...mcp, enabled } : mcp,
-      ),
-    });
-  }
-
-  /** Removes a configured MCP without affecting the remaining selection order. */
-  function removeMcp(mcpId: string): void {
-    onChange({
-      ...config,
-      mcps: config.mcps.filter((mcp) => mcp.mcpId !== mcpId),
     });
   }
 
@@ -927,105 +903,12 @@ function AgentConfigurationFields({
           )}
         </div>
       </fieldset>
-      <fieldset className="min-w-0 space-y-2">
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-          <legend className="min-w-0 text-[11px] font-medium">
-            {t("settings.workflow.field.mcps")}
-          </legend>
-          <div className="flex shrink-0 items-center gap-1">
-            <span className="whitespace-nowrap text-[10px] text-muted-foreground">
-              {t("settings.workflow.enabledMcpCount", {
-                enabled: enabledMcpCount,
-                total: config.mcps.length,
-              })}
-            </span>
-            <Popover open={mcpPickerOpen} onOpenChange={setMcpPickerOpen}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    id="workflow-add-mcp"
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={(capabilities.mcps ?? []).length === 0}
-                    aria-label={t("settings.workflow.addMcp")}
-                  />
-                }
-              >
-                <IconPlus />
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-72 p-0">
-                <Command>
-                  <CommandInput
-                    aria-label={t("settings.workflow.searchAvailableMcps")}
-                    placeholder={t("settings.workflow.searchAvailableMcps")}
-                    className="text-sm"
-                  />
-                  <CommandList className="max-h-60">
-                    <CommandEmpty className="py-6 text-center text-xs">
-                      {t("settings.workflow.noAvailableMcps")}
-                    </CommandEmpty>
-                    <CommandGroup>
-                      {availableMcps.map((mcp) => (
-                        <CommandItem
-                          key={mcp.value}
-                          value={`${mcp.label} ${mcp.value}`}
-                          onSelect={() => addMcp(mcp.value)}
-                        >
-                          {mcp.label}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-        </div>
-        <div className="min-w-0 divide-y overflow-hidden rounded-md border border-border">
-          {config.mcps.map((configuredMcp) => {
-            const mcp = (capabilities.mcps ?? []).find(
-              (candidate) => candidate.value === configuredMcp.mcpId,
-            ) ?? { value: configuredMcp.mcpId, label: configuredMcp.mcpId };
-            return (
-              <div
-                key={configuredMcp.mcpId}
-                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2"
-              >
-                <span className="min-w-0 truncate text-xs">{mcp.label}</span>
-                <Switch
-                  size="sm"
-                  className="shrink-0 data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
-                  checked={configuredMcp.enabled}
-                  aria-label={t("settings.workflow.toggleMcp", {
-                    name: mcp.label,
-                  })}
-                  onCheckedChange={(enabled) =>
-                    setMcpEnabled(configuredMcp.mcpId, enabled)
-                  }
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={t("settings.workflow.removeMcp", {
-                    name: mcp.label,
-                  })}
-                  onClick={() => removeMcp(configuredMcp.mcpId)}
-                >
-                  <IconTrash />
-                </Button>
-              </div>
-            );
-          })}
-          {config.mcps.length === 0 && (
-            <p className="px-2.5 py-3 text-xs text-muted-foreground">
-              {t("settings.workflow.noConfiguredMcps")}
-            </p>
-          )}
-        </div>
-      </fieldset>
+      <WorkflowMcpFields
+        config={config}
+        choices={capabilities.mcps ?? []}
+        catalog={mcpCatalog}
+        onChange={onChange}
+      />
       <InspectorField
         label={t("settings.workflow.field.interactive")}
         htmlFor="workflow-agent-interactive"

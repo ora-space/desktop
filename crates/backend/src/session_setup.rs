@@ -9,9 +9,12 @@ mod mcp;
 pub(crate) use barrier::{AgentSessionBarriers, BarrierGuard, BarrierReason};
 pub(crate) use mcp::{
     AgentSessionMcpCapabilities, LiveMcpEvent, LiveMcpPromptAdmission, LiveMcpState,
-    SessionMcpError, SessionMcpHost, SessionMcpRevision, SessionMcpSnapshot, resolve_session_mcp,
+    SessionMcpError, SessionMcpHost, SessionMcpRevision, SessionMcpSelection,
+    SessionMcpSelectionSource, SessionMcpSnapshot, resolve_session_mcp,
     resolve_session_mcp_revision,
 };
+#[cfg(test)]
+pub(crate) use mcp::{SessionMcpMemberRevision, SessionMcpTransportKind};
 
 use crate::plugin::PluginApi;
 use std::path::Path;
@@ -31,7 +34,7 @@ impl SessionSetup {
         capabilities: AgentSessionMcpCapabilities,
     ) -> Result<Self, SessionMcpError> {
         Ok(Self {
-            mcp: resolve_session_mcp(host, host, cwd, capabilities)?,
+            mcp: resolve_session_mcp(host, host, cwd, capabilities, &host.selection)?,
         })
     }
 }

@@ -4,7 +4,11 @@ mod error;
 mod host;
 mod live;
 mod resolve;
+mod selection;
+pub(crate) use selection::{SessionMcpSelection, SessionMcpSelectionSource};
 
+#[cfg(test)]
+mod selection_tests;
 #[cfg(test)]
 mod tests;
 

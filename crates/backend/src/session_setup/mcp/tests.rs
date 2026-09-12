@@ -26,14 +26,14 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use url::Url;
 
-struct Fixture {
+pub(super) struct Fixture {
     _dir: TempDir,
-    package_root: PathBuf,
+    pub(super) package_root: PathBuf,
     command: PathBuf,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = TempDir::new().expect("tempdir");
         let package_root = dir.path().join("pkg");
         let command = package_root.join("assets").join("server");
@@ -54,18 +54,18 @@ impl Fixture {
 }
 
 #[derive(Clone)]
-struct FakeCatalog {
+pub(super) struct FakeCatalog {
     inner: Arc<Mutex<Vec<Vec<InstalledMcpCandidate>>>>,
 }
 
 impl FakeCatalog {
-    fn new(candidates: Vec<InstalledMcpCandidate>) -> Self {
+    pub(super) fn new(candidates: Vec<InstalledMcpCandidate>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(vec![candidates])),
         }
     }
 
-    fn then(&self, candidates: Vec<InstalledMcpCandidate>) {
+    pub(super) fn then(&self, candidates: Vec<InstalledMcpCandidate>) {
         self.inner.lock().expect("catalog").push(candidates);
     }
 }
@@ -81,8 +81,8 @@ impl SessionMcpCatalog for FakeCatalog {
     }
 }
 
-struct FakeConfigurations {
-    by_id: BTreeMap<String, McpConfigurationEligibility>,
+pub(super) struct FakeConfigurations {
+    pub(super) by_id: BTreeMap<String, McpConfigurationEligibility>,
 }
 
 impl SessionMcpConfigurationSource for FakeConfigurations {
@@ -98,11 +98,11 @@ impl SessionMcpConfigurationSource for FakeConfigurations {
     }
 }
 
-fn plugin(name: &str) -> PluginId {
+pub(super) fn plugin(name: &str) -> PluginId {
     PluginId::new("ora-space", name).expect("plugin id")
 }
 
-fn stdio_config() -> CompiledMcpConfiguration {
+pub(super) fn stdio_config() -> CompiledMcpConfiguration {
     CompiledMcpConfiguration {
         schema_version: 1,
         settings: None,
@@ -135,7 +135,7 @@ fn http_config() -> CompiledMcpConfiguration {
     }
 }
 
-fn candidate(
+pub(super) fn candidate(
     name: &str,
     version: Version,
     package_root: &Path,
@@ -149,7 +149,7 @@ fn candidate(
     }
 }
 
-fn capabilities(load_session: bool, http: bool) -> AgentSessionMcpCapabilities {
+pub(super) fn capabilities(load_session: bool, http: bool) -> AgentSessionMcpCapabilities {
     AgentSessionMcpCapabilities::new(load_session, http)
 }
 
@@ -209,6 +209,7 @@ fn maps_stdio_and_http_in_canonical_plugin_id_order_with_exact_revisions() {
         &configurations,
         &cwd,
         capabilities(/*load_session*/ true, /*http*/ true),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect("snapshot");
 
@@ -284,6 +285,7 @@ fn omits_incomplete_mcp_without_failing_complete_peers() {
         &configurations,
         &fixture.package_root,
         capabilities(/*load_session*/ true, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect("snapshot");
     assert_eq!(snapshot.servers().len(), 1);
@@ -317,6 +319,7 @@ fn fails_closed_when_http_capability_is_missing() {
         &configurations,
         &fixture.package_root,
         capabilities(/*load_session*/ true, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect_err("http capability");
     assert_eq!(error.code().as_str(), "mcp_http_capability_missing");
@@ -347,6 +350,7 @@ fn fails_before_send_when_load_capability_is_missing_for_a_non_empty_set() {
         &configurations,
         &fixture.package_root,
         capabilities(/*load_session*/ false, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect_err("load capability");
     assert!(matches!(error, SessionMcpError::LoadCapabilityMissing));
@@ -363,6 +367,7 @@ fn empty_set_does_not_require_load_capability() {
         &configurations,
         Path::new("/tmp"),
         capabilities(/*load_session*/ false, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect("empty snapshot");
     assert!(snapshot.servers().is_empty());
@@ -398,6 +403,7 @@ fn regenerates_when_package_version_changes_during_resolve() {
         &configurations,
         &fixture.package_root,
         capabilities(/*load_session*/ true, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect("retry snapshot");
     assert_eq!(
@@ -428,7 +434,12 @@ fn desired_revision_excludes_setting_values() {
         )]),
     };
 
-    let revision = resolve_session_mcp_revision(&catalog, &configurations).expect("revision");
+    let revision = resolve_session_mcp_revision(
+        &catalog,
+        &configurations,
+        &super::SessionMcpSelection::Automatic,
+    )
+    .expect("revision");
     let debug = format!("{revision:?}");
     assert!(!debug.contains("never-in-revision"));
     assert_eq!(revision.members()[0].configuration_revision, 3);
@@ -562,6 +573,7 @@ fn resolver_does_not_create_workspace_files() {
         },
         workspace.path(),
         capabilities(/*load_session*/ true, /*http*/ false),
+        &super::SessionMcpSelection::Automatic,
     )
     .expect("snapshot");
     assert_eq!(snapshot.servers().len(), 1);
