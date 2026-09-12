@@ -1,5 +1,7 @@
 # ACP Agent Runtime
 
+English | [中文](agent-runtime.zh.md)
+
 `ora-backend` starts one independently supervised ACP connection for each installed [agent plugin](../crates/backend/src/agent_runtime/plugin_agent/README.md) when a Backend instance opens — every agent Ora can reach is supplied by a plugin package, and there is no other source. Every persisted Ora Session owns a serialized actor, but actors targeting the same agent share its application-scoped ACP connection and route events by the private provider session id. One Session accepts only one prompt owner at a time, while load streams may follow that prompt and different Sessions remain concurrent. Session-scoped prompt cancellation reaches that owner without granting a load stream ownership or unloading the reusable Session.
 
 ## Process and Session Lifecycle
@@ -55,6 +57,8 @@ Ora records every conversation itself, in one append-only JSONL file per Session
 - The runtime records what it chose to keep, not what it sent. A prompt is recorded from the request blocks before the agent is called, and the provider's echoed `user_message_chunk` is ignored, so context Ora injected never enters the record.
 - Streamed updates are recorded before they are forwarded. A client that disconnects mid-turn costs the stream, never the record of what the agent produced.
 - Every prompt turn closes with its `stopReason`. Provider replay never carried this, so a cancelled turn used to be indistinguishable from a completed one; replaying Ora's record restores it, along with the tool calls that never finished.
+- Tool timing follows the ACP lifecycle rather than transport receipt time. The first nonterminal `pending` or `in_progress` update anchors `startedAt`; repeated and partial updates keep that anchor, and `completed`, `failed`, or the turn boundary freezes `durationMs` using a monotonic clock. A direct terminal snapshot has no timing because Ora never observed its start. These optional fields are persisted only with the final compressed tool snapshot, so older history remains readable and missing timing is never invented during replay.
+- Turn duration is reconstructed from the recorded timestamps of the user message and matching `TurnEnded`. The live client starts at optimistic prompt creation and freezes when its own operation settles. The renderer receives anchors and terminal durations only: one shared local one-second clock repaints visible labels, without polling the backend or emitting per-second protocol traffic, and switching Sessions cannot discard or reset timing owned by another conversation.
 - The turn boundary settles tool calls the agent left open. ACP does not require an agent to report a terminal status, and an agent that opens a call and moves on would otherwise record work that appears to still be running forever. Only a turn the agent ended on its own terms records those calls as completed. Every other ending — cancelled, out of tokens, refused — leaves them unfinished, because the call may have been interrupted rather than finished and `stopReason` already says which. Since the runtime records a lost connection, a failed prompt, an overflowing queue, and a disconnected client all as cancelled, a tool interrupted by any of them keeps its unfinished status rather than being credited with a result nobody saw. Readers settle what the record leaves unfinished: the conversation view shows a cut-short turn's open calls as interrupted, and the handoff transcript names their outcome as unreported rather than claiming the tool never ran.
 - Ordered session events make the response a turn fence. Updates and permission requests observed before it are consumed by the same operation, and the turn is recorded only after that fence is settled. Cancellation keeps consuming through the matching response during its grace period; if the provider does not settle, the actor records the accepted event snapshot before isolating the route.
 - Writes are batched per settled item, flushed but not synced. A crash costs at most the item in flight.
@@ -100,28 +104,31 @@ Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-
 
 Permission requests are part of the ordered session FIFO, so a prompt consumes them in the same order in which the provider emitted them and can correlate the user's response to the active operation. A permission request arriving during `session/load` or while the session is idle is answered as cancelled; the operation reports the backend's typed internal error when protocol traffic violates that lifecycle boundary. Connection loss and queue overflow remain separate terminal controls.
 
-Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. A session-level timeout unloads and stops only that Session; it never restarts the shared process. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
+Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. A prompt inactivity timeout sends the same cancellation, waits through the five-second settlement grace, then unloads and stops only that Session; it never restarts the shared process or affects another Session sharing the connection. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
 
 History replay is the one stream that applies backpressure instead of failing fast. A recorded conversation is far larger than the 256-item queue, and a consumer that has not drained it yet is not a disconnected one.
 
 ## Timeouts and Limits
 
-| Bound                                | Value                                        |
-| ------------------------------------ | -------------------------------------------- |
-| `initialize` handshake               | 15 s                                         |
-| Plugin-owned model discovery         | 60 s                                         |
-| Load and prompt inactivity deadline  | 30 s, reset by each session update           |
-| Cancellation settlement grace        | 5 s                                          |
-| Connection retry backoff             | 250 ms, doubling to a 30 s cap               |
-| Connection crash circuit             | Opens after more than 3 failures in 1 minute |
-| Session-list title request           | 5 s per attempt                              |
-| First-title fallback window          | 3 s and 10 s after the first eligible prompt |
-| Session update and event queue depth | 256 items                                    |
-| JSON-RPC frame size                  | 8 MiB                                        |
-| Serialized structured prompt size    | 16 MiB                                       |
-| Handoff transcript size              | unbounded                                    |
+| Bound                                | Value                                         |
+| ------------------------------------ | --------------------------------------------- |
+| `initialize` handshake               | 15 s                                          |
+| Plugin-owned model discovery         | 60 s                                          |
+| Session setup/load inactivity        | 30 s, reset by each session update            |
+| Prompt meaningful-activity deadline  | 5 min, paused by running tools and permission |
+| Cancellation settlement grace        | 5 s                                           |
+| Connection retry backoff             | 250 ms, doubling to a 30 s cap                |
+| Connection crash circuit             | Opens after more than 3 failures in 1 minute  |
+| Session-list title request           | 5 s per attempt                               |
+| First-title fallback window          | 3 s and 10 s after the first eligible prompt  |
+| Session update and event queue depth | 256 items                                     |
+| JSON-RPC frame size                  | 8 MiB                                         |
+| Serialized structured prompt size    | 16 MiB                                        |
+| Handoff transcript size              | unbounded                                     |
 
-The load and prompt deadline is an inactivity timer rather than a total budget: a provider that keeps streaming updates can run indefinitely, while one that goes silent for 30 seconds fails that Session alone. Prompts are passed through as ordered ACP `ContentBlock` values, including text, images, audio, resource links, and embedded resources. An empty list or a list containing only blank text is rejected, and the 16 MiB limit is measured from the serialized JSON payload before it reaches the provider.
+The prompt deadline is an inactivity timer rather than a total budget. Agent messages, thoughts, plans, and tool lifecycle updates prove progress and rearm it. Session chrome (`available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, and `usage_update`) does not, because those notifications can continue while the prompt itself is stuck. The first pending observation rearms once; any `in_progress` tool pauses the deadline until the last parallel running tool settles, and permission waits pause it until the decision returns. A legitimately long tool can therefore run for hours without timing out, while a prompt that produces no meaningful activity for five minutes fails only its own Session. There is no absolute prompt runtime limit.
+
+Prompts are passed through as ordered ACP `ContentBlock` values, including text, images, audio, resource links, and embedded resources. An empty list or a list containing only blank text is rejected, and the 16 MiB limit is measured from the serialized JSON payload before it reaches the provider.
 
 ## Ownership Boundaries
 
