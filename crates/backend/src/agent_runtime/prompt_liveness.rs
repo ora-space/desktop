@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn meaningful_activity_rearms_but_session_chrome_does_not() {
         let base = Instant::now();
-        let timeout = Duration::from_secs(300);
+        let timeout = Duration::from_secs(60);
         let mut liveness = PromptLiveness::new_at(timeout, base);
         let initial = base + timeout;
 
@@ -122,20 +122,20 @@ mod tests {
             &SessionUpdate::Plan(Plan::new(Vec::new())),
             base + Duration::from_secs(60),
         );
-        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(360)));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(120)));
     }
 
     #[test]
     fn pending_rearms_once_and_direct_terminal_rearms() {
         let base = Instant::now();
-        let timeout = Duration::from_secs(300);
+        let timeout = Duration::from_secs(60);
         let mut liveness = PromptLiveness::new_at(timeout, base);
         let pending =
             SessionUpdate::ToolCall(ToolCall::new("tool", "Tool").status(ToolCallStatus::Pending));
 
         liveness.observe_at(&pending, base + Duration::from_secs(10));
         liveness.observe_at(&pending, base + Duration::from_secs(20));
-        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(310)));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(70)));
 
         liveness.observe_at(
             &SessionUpdate::ToolCall(
@@ -143,13 +143,13 @@ mod tests {
             ),
             base + Duration::from_secs(30),
         );
-        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(330)));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(90)));
     }
 
     #[test]
     fn parallel_running_tools_pause_only_their_own_prompt_window() {
         let base = Instant::now();
-        let timeout = Duration::from_secs(300);
+        let timeout = Duration::from_secs(60);
         let mut first = PromptLiveness::new_at(timeout, base);
         let second = PromptLiveness::new_at(timeout, base);
         first.observe_at(
@@ -180,6 +180,6 @@ mod tests {
             ),
             base + Duration::from_secs(40),
         );
-        assert_eq!(first.deadline(), Some(base + Duration::from_secs(340)));
+        assert_eq!(first.deadline(), Some(base + Duration::from_secs(100)));
     }
 }

@@ -94,7 +94,7 @@ history replay 是唯一主动施加背压而非快速失败的 stream，因为�
 | `initialize` 握手                     | 15 秒                               |
 | 插件模型发现                          | 60 秒                               |
 | Session setup/load inactivity         | 30 秒，每个 session update 重置     |
-| Prompt meaningful-activity inactivity | 5 分钟；工具运行和权限等待期间暂停  |
+| Prompt meaningful-activity inactivity | 1 分钟；工具运行和权限等待期间暂停  |
 | 取消收敛 grace                        | 5 秒                                |
 | 连接重试退避                          | 250 ms 起，倍增至 30 秒上限         |
 | 连接失败熔断                          | 1 分钟内超过 3 次失败               |
@@ -107,7 +107,7 @@ history replay 是唯一主动施加背压而非快速失败的 stream，因为�
 
 Prompt deadline 是 inactivity timer，不是总预算。Agent message、thought、plan 和 tool lifecycle update 会证明 prompt 前进并重置窗口。`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update` 属于 session chrome：即使 prompt 卡住也可能继续出现，因此不刷新 deadline。
 
-第一次观察到 pending 会重置一次；只要任意工具为 `in_progress` 就暂停，最后一个并行工具结束后重新获得完整窗口；等待权限期间同样暂停，权限返回后重新计时。因此合法长工具可以运行数小时而不超时，静默五分钟的 prompt 只失败自身 Session。系统不设 prompt 绝对运行上限。
+第一次观察到 pending 会重置一次；只要任意工具为 `in_progress` 就暂停，最后一个并行工具结束后重新获得完整窗口；等待权限期间同样暂停，权限返回后重新计时。因此合法长工具可以运行数小时而不超时，静默一分钟的 prompt 只失败自身 Session。系统不设 prompt 绝对运行上限。
 
 Prompt 以有序 ACP `ContentBlock` 传递，包括文本、图片、音频、resource link 和 embedded resource。空列表、纯空白文本会被拒绝，16 MiB 限制在发送到 provider 前按序列化 JSON 计算。
 

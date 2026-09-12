@@ -115,7 +115,7 @@ History replay is the one stream that applies backpressure instead of failing fa
 | `initialize` handshake               | 15 s                                          |
 | Plugin-owned model discovery         | 60 s                                          |
 | Session setup/load inactivity        | 30 s, reset by each session update            |
-| Prompt meaningful-activity deadline  | 5 min, paused by running tools and permission |
+| Prompt meaningful-activity deadline  | 1 min, paused by running tools and permission |
 | Cancellation settlement grace        | 5 s                                           |
 | Connection retry backoff             | 250 ms, doubling to a 30 s cap                |
 | Connection crash circuit             | Opens after more than 3 failures in 1 minute  |
@@ -126,7 +126,7 @@ History replay is the one stream that applies backpressure instead of failing fa
 | Serialized structured prompt size    | 16 MiB                                        |
 | Handoff transcript size              | unbounded                                     |
 
-The prompt deadline is an inactivity timer rather than a total budget. Agent messages, thoughts, plans, and tool lifecycle updates prove progress and rearm it. Session chrome (`available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, and `usage_update`) does not, because those notifications can continue while the prompt itself is stuck. The first pending observation rearms once; any `in_progress` tool pauses the deadline until the last parallel running tool settles, and permission waits pause it until the decision returns. A legitimately long tool can therefore run for hours without timing out, while a prompt that produces no meaningful activity for five minutes fails only its own Session. There is no absolute prompt runtime limit.
+The prompt deadline is an inactivity timer rather than a total budget. Agent messages, thoughts, plans, and tool lifecycle updates prove progress and rearm it. Session chrome (`available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, and `usage_update`) does not, because those notifications can continue while the prompt itself is stuck. The first pending observation rearms once; any `in_progress` tool pauses the deadline until the last parallel running tool settles, and permission waits pause it until the decision returns. A legitimately long tool can therefore run for hours without timing out, while a prompt that produces no meaningful activity for one minute fails only its own Session. There is no absolute prompt runtime limit.
 
 Prompts are passed through as ordered ACP `ContentBlock` values, including text, images, audio, resource links, and embedded resources. An empty list or a list containing only blank text is rejected, and the 16 MiB limit is measured from the serialized JSON payload before it reaches the provider.
 
