@@ -7,6 +7,8 @@ import { appI18n } from "../../i18n/i18n-instance";
 import { ContractsClientContext } from "../../contracts-client-context";
 import { createTestClient } from "../../test/contracts-transport";
 import { fileKeys } from "../../state/data/files";
+import { PlatformProvider } from "../../platform";
+import { createStubPlatform } from "../../test/stub-platform";
 import { WorkspaceFilesView } from "./workspace-files-view";
 
 it("releases the old file stream on workspace switch and keeps cached listings isolated", async () => {
@@ -50,7 +52,11 @@ it("releases the old file stream on workspace switch and keeps cached listings i
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <ContractsClientContext.Provider value={client}>
-        <I18nextProvider i18n={appI18n}>{children}</I18nextProvider>
+        <I18nextProvider i18n={appI18n}>
+          <PlatformProvider adapter={createStubPlatform()}>
+            {children}
+          </PlatformProvider>
+        </I18nextProvider>
       </ContractsClientContext.Provider>
     </QueryClientProvider>
   );

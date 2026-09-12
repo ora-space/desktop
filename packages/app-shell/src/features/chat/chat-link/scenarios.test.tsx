@@ -263,7 +263,14 @@ function renderMissingFilesPreview(path: string) {
       createElement(
         ContractsClientContext.Provider,
         { value: client },
-        createElement(AppI18nProvider, null, children),
+        createElement(
+          AppI18nProvider,
+          null,
+          createElement(PlatformProvider, {
+            adapter: createStubPlatform(),
+            children,
+          }),
+        ),
       ),
     );
   return render(

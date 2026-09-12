@@ -1,30 +1,37 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  WorkspaceEntry,
   WorkspaceSearchKind,
   WorkspaceSearchResult,
 } from "@ora/contracts";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Button,
   Input,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
   ScrollArea,
+  toast,
 } from "@ora/ui";
 import {
-  IconChevronDown,
-  IconChevronRight,
   IconCodeDots,
   IconFileSearch,
-  IconFolder,
   IconFolderOpen,
   IconRefresh,
   IconSearch,
+  IconTrash,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { useContractsClient } from "../../contracts-client-context";
 import { displayPath } from "../chat/turn-diff-files";
 import {
@@ -50,10 +57,19 @@ import {
   filesScopeApi,
   invalidateFilesScope,
   invalidateScopedFileQueries,
+  joinWorkspaceChild,
+  parentPath,
   resolveFilesScope,
   searchQueryKey,
-  type FilesScope,
 } from "../../state/data/files";
+import {
+  DirectoryTree,
+  FileExplorerSession,
+  FileTreeRootMenu,
+  type FileCreateDraft,
+  type FileExplorerClipboard,
+} from "./workspace-file-tree";
+import { isWorkspacePathInside, uniqueCopyName } from "./unique-copy-name";
 
 interface WorkspaceFilesViewProps {
   projectId: string;
@@ -87,18 +103,6 @@ export interface WorkspaceDirectoryRequest {
 
 /** External request whose real file/directory kind is resolved from its parent listing. */
 export type WorkspaceArtifactRequest = WorkspaceFileRequest;
-
-interface DirectoryTreeProps {
-  scope: FilesScope;
-  /** Shared scope API from the parent; avoids re-creating it in every recursive node. */
-  scopeApi: ReturnType<typeof filesScopeApi>;
-  path: string;
-  depth: number;
-  expanded: ReadonlySet<string>;
-  selectedPath: string | null;
-  onToggleDirectory: (path: string) => void;
-  onSelectFile: (path: string) => void;
-}
 
 const MAX_VISIBLE_SEARCH_RESULTS = 500;
 
@@ -188,6 +192,18 @@ export function WorkspaceFilesView({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [fileFilterText, setFileFilterText] = useState("");
   const [debouncedFileFilter, setDebouncedFileFilter] = useState("");
+  const [createDraft, setCreateDraft] = useState<FileCreateDraft | null>(null);
+  const [renamePath, setRenamePath] = useState<string | null>(null);
+  const [clipboard, setClipboard] = useState<FileExplorerClipboard | null>(
+    null,
+  );
+  const [pendingDelete, setPendingDelete] = useState<{
+    path: string;
+    name: string;
+    kind: "file" | "directory";
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const showContractError = useContractErrorToast();
 
   if (
     fileRequest !== undefined &&
@@ -448,6 +464,126 @@ export function WorkspaceFilesView({
       return next;
     });
   };
+  const beginCreate = (parent: string, kind: FileCreateDraft["kind"]) => {
+    if (parent !== "") {
+      setExpanded((current) => new Set(current).add(parent));
+    }
+    setRenamePath(null);
+    setCreateDraft({ parentPath: parent, kind });
+  };
+  const commitCreate = async (path: string, kind: FileCreateDraft["kind"]) => {
+    const created = await scopeApi.createEntry(path, kind);
+    setCreateDraft(null);
+    await queryClient.invalidateQueries({
+      queryKey: directoryQueryKey(scope, parentPath(created.path)),
+    });
+    if (created.kind === "file") {
+      setSelectedDirectory(null);
+      setSelectedPath(created.path);
+      setSelectedTarget(null);
+      return;
+    }
+    setSelectedPath(null);
+    setSelectedTarget(null);
+    setSelectedDirectory(created.path);
+    setExpanded((current) => new Set(current).add(created.path));
+  };
+  const selectCreated = (path: string, kind: "file" | "directory") => {
+    if (kind === "file") {
+      setSelectedDirectory(null);
+      setSelectedPath(path);
+      setSelectedTarget(null);
+      return;
+    }
+    setSelectedPath(null);
+    setSelectedTarget(null);
+    setSelectedDirectory(path);
+    setExpanded((current) => new Set(current).add(path));
+  };
+  const commitRename = async (from: string, name: string) => {
+    const to = joinWorkspaceChild(parentPath(from), name);
+    const moved = await scopeApi.moveEntry(from, to);
+    setRenamePath(null);
+    await invalidateFilesScope(queryClient, scope);
+    selectCreated(moved.path, moved.kind);
+  };
+  const pasteEntry = async (
+    targetPath: string,
+    targetKind: "file" | "directory" | "root",
+  ) => {
+    if (clipboard === null) return;
+    const destParent =
+      targetKind === "file" ? parentPath(targetPath) : targetPath;
+    if (
+      clipboard.path !== "" &&
+      isWorkspacePathInside(clipboard.path, destParent)
+    ) {
+      toast.error(t("files.pasteIntoSelf"));
+      return;
+    }
+    if (clipboard.mode === "cut" && parentPath(clipboard.path) === destParent) {
+      setClipboard(null);
+      return;
+    }
+    const listing =
+      queryClient.getQueryData<{
+        path: string;
+        entries: Array<{ name: string }>;
+      }>(directoryQueryKey(scope, destParent)) ??
+      (await scopeApi.listDirectory(destParent));
+    const occupied = new Set(listing.entries.map((entry) => entry.name));
+    const baseName = clipboard.path.split("/").pop() ?? clipboard.path;
+    const destPath = joinWorkspaceChild(
+      destParent,
+      uniqueCopyName(baseName, occupied),
+    );
+    try {
+      const relocated =
+        clipboard.mode === "copy"
+          ? await scopeApi.copyEntry(clipboard.path, destPath)
+          : await scopeApi.moveEntry(clipboard.path, destPath);
+      if (clipboard.mode === "cut") setClipboard(null);
+      if (destParent !== "") {
+        setExpanded((current) => new Set(current).add(destParent));
+      }
+      await invalidateFilesScope(queryClient, scope);
+      selectCreated(relocated.path, relocated.kind);
+    } catch (cause) {
+      showContractError(cause);
+    }
+  };
+  const confirmDelete = async () => {
+    if (pendingDelete === null || deleting) return;
+    setDeleting(true);
+    try {
+      await scopeApi.deleteEntry(pendingDelete.path);
+      if (
+        selectedPath !== null &&
+        isWorkspacePathInside(pendingDelete.path, selectedPath)
+      ) {
+        setSelectedPath(null);
+        setSelectedTarget(null);
+      }
+      if (
+        selectedDirectory !== null &&
+        isWorkspacePathInside(pendingDelete.path, selectedDirectory)
+      ) {
+        setSelectedDirectory(null);
+      }
+      if (
+        clipboard !== null &&
+        isWorkspacePathInside(pendingDelete.path, clipboard.path)
+      ) {
+        setClipboard(null);
+      }
+      setPendingDelete(null);
+      await invalidateFilesScope(queryClient, scope);
+    } catch (cause) {
+      showContractError(cause);
+    } finally {
+      setDeleting(false);
+    }
+  };
   const refresh = () => invalidateFilesScope(queryClient, scope);
 
   const body = (
@@ -568,29 +704,60 @@ export function WorkspaceFilesView({
                       onSelect={openSearchResult}
                     />
                   ) : (
-                    <DirectoryTree
-                      scope={scope}
-                      scopeApi={scopeApi}
-                      path=""
-                      depth={0}
-                      expanded={expanded}
-                      selectedPath={selectedDirectory ?? selectedPath}
-                      onToggleDirectory={(path) => {
-                        setPendingArtifact(null);
-                        setArtifactResolutionMessage(null);
-                        setSelectedPath(null);
-                        setSelectedTarget(null);
-                        setSelectedDirectory(path);
-                        toggleDirectory(path);
-                      }}
-                      onSelectFile={(path) => {
-                        setPendingArtifact(null);
-                        setArtifactResolutionMessage(null);
-                        setSelectedDirectory(null);
-                        setSelectedPath(path);
-                        setSelectedTarget(null);
-                      }}
-                    />
+                    <div className="flex min-h-full flex-col">
+                      <FileExplorerSession
+                        value={{
+                          cwd,
+                          clipboard,
+                          createDraft,
+                          renamePath,
+                          onBeginCreate: beginCreate,
+                          onCommitCreate: commitCreate,
+                          onCancelCreate: () => setCreateDraft(null),
+                          onBeginRename: (path) => {
+                            setCreateDraft(null);
+                            setRenamePath(path);
+                          },
+                          onCommitRename: commitRename,
+                          onCancelRename: () => setRenamePath(null),
+                          onCopy: (path) =>
+                            setClipboard({ mode: "copy", path }),
+                          onCut: (path) => setClipboard({ mode: "cut", path }),
+                          onPaste: (targetPath, targetKind) => {
+                            void pasteEntry(targetPath, targetKind);
+                          },
+                          onDelete: (path, name, kind) =>
+                            setPendingDelete({ path, name, kind }),
+                        }}
+                      >
+                        <DirectoryTree
+                          scope={scope}
+                          scopeApi={scopeApi}
+                          path=""
+                          depth={0}
+                          expanded={expanded}
+                          selectedPath={selectedDirectory ?? selectedPath}
+                          onToggleDirectory={(path) => {
+                            setPendingArtifact(null);
+                            setArtifactResolutionMessage(null);
+                            setSelectedPath(null);
+                            setSelectedTarget(null);
+                            setSelectedDirectory(path);
+                            toggleDirectory(path);
+                          }}
+                          onSelectFile={(path) => {
+                            setPendingArtifact(null);
+                            setArtifactResolutionMessage(null);
+                            setSelectedDirectory(null);
+                            setSelectedPath(path);
+                            setSelectedTarget(null);
+                          }}
+                        />
+                        <FileTreeRootMenu>
+                          <div className="min-h-8 flex-1" />
+                        </FileTreeRootMenu>
+                      </FileExplorerSession>
+                    </div>
                   )
                 ) : (
                   <SearchResults
@@ -618,10 +785,49 @@ export function WorkspaceFilesView({
     </div>
   );
 
+  const deleteDialog = (
+    <AlertDialog
+      open={pendingDelete !== null}
+      onOpenChange={(open) => {
+        if (!open && !deleting) setPendingDelete(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t("files.deleteTitle", { name: pendingDelete?.name ?? "" })}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {pendingDelete?.kind === "directory"
+              ? t("files.deleteFolderDescription")
+              : t("files.deleteFileDescription")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>
+            {t("common.cancel")}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={(event) => {
+              event.preventDefault();
+              void confirmDelete();
+            }}
+          >
+            <IconTrash />
+            {deleting ? t("files.deleting") : t("common.delete")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   if (hideHeader) {
     return (
       <section className="flex h-full min-h-0 flex-col bg-background">
         {body}
+        {deleteDialog}
       </section>
     );
   }
@@ -660,115 +866,8 @@ export function WorkspaceFilesView({
         {toolbar}
       </header>
       {body}
+      {deleteDialog}
     </section>
-  );
-}
-
-/** Loads one expanded directory lazily and renders its descendants recursively. */
-function DirectoryTree({
-  scope,
-  scopeApi,
-  path,
-  depth,
-  expanded,
-  selectedPath,
-  onToggleDirectory,
-  onSelectFile,
-}: DirectoryTreeProps) {
-  const { t } = useTranslation();
-  const directoryQuery = useQuery({
-    queryKey: directoryQueryKey(scope, path),
-    queryFn: ({ signal }) => scopeApi.listDirectory(path, signal),
-  });
-
-  if (directoryQuery.isLoading) {
-    return (
-      <p className="px-3 py-2 text-xs text-muted-foreground">
-        {t("files.loading")}
-      </p>
-    );
-  }
-  if (directoryQuery.error) {
-    return (
-      <p className="px-3 py-2 text-xs text-destructive">
-        {localizeContractError(directoryQuery.error, t)}
-      </p>
-    );
-  }
-
-  return directoryQuery.data?.entries.map((entry) => (
-    <WorkspaceTreeEntry
-      key={entry.path}
-      entry={entry}
-      scope={scope}
-      scopeApi={scopeApi}
-      depth={depth}
-      expanded={expanded}
-      selectedPath={selectedPath}
-      onToggleDirectory={onToggleDirectory}
-      onSelectFile={onSelectFile}
-    />
-  ));
-}
-
-/** Renders one tree row and mounts its lazy child query only while expanded. */
-function WorkspaceTreeEntry({
-  entry,
-  scope,
-  scopeApi,
-  depth,
-  expanded,
-  selectedPath,
-  onToggleDirectory,
-  onSelectFile,
-}: Omit<DirectoryTreeProps, "path"> & { entry: WorkspaceEntry }) {
-  const isDirectory = entry.kind === "directory";
-  const isExpanded = isDirectory && expanded.has(entry.path);
-  return (
-    <>
-      <button
-        type="button"
-        aria-expanded={isDirectory ? isExpanded : undefined}
-        aria-current={selectedPath === entry.path ? "page" : undefined}
-        className={`flex h-7 w-full items-center gap-1 border-l-2 pr-2 text-left text-xs hover:bg-muted ${
-          selectedPath === entry.path
-            ? "border-primary bg-accent/80 text-accent-foreground"
-            : "border-transparent"
-        }`}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
-        onClick={() =>
-          isDirectory ? onToggleDirectory(entry.path) : onSelectFile(entry.path)
-        }
-      >
-        {isDirectory ? (
-          isExpanded ? (
-            <IconChevronDown className="size-3.5" />
-          ) : (
-            <IconChevronRight className="size-3.5" />
-          )
-        ) : (
-          <span className="w-3.5" />
-        )}
-        {isDirectory ? (
-          <IconFolder className="size-4 shrink-0 text-amber-600" />
-        ) : (
-          <WorkspaceFileIcon path={entry.path} />
-        )}
-        <span className="truncate">{entry.name}</span>
-      </button>
-      {isExpanded && (
-        <DirectoryTree
-          scope={scope}
-          scopeApi={scopeApi}
-          path={entry.path}
-          depth={depth + 1}
-          expanded={expanded}
-          selectedPath={selectedPath}
-          onToggleDirectory={onToggleDirectory}
-          onSelectFile={onSelectFile}
-        />
-      )}
-    </>
   );
 }
 

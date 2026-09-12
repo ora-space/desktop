@@ -95,6 +95,7 @@ export type ContractError =
       "code": "file_system_path_permission_denied";
       "params": EmptyErrorParams;
     }
+    | { "code": "file_system_path_already_exists"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
@@ -289,6 +290,7 @@ export type PublicError =
   | { "code": "task_worktree_unavailable"; "params": EmptyErrorParams }
   | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
   | { "code": "file_system_path_permission_denied"; "params": EmptyErrorParams }
+  | { "code": "file_system_path_already_exists"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }

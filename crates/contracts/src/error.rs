@@ -170,6 +170,7 @@ pub enum PublicError {
     TaskWorktreeUnavailable(EmptyErrorParams),
     FileSystemPathNotFound(EmptyErrorParams),
     FileSystemPathPermissionDenied(EmptyErrorParams),
+    FileSystemPathAlreadyExists(EmptyErrorParams),
     WorktreeRootNotAbsolute(EmptyErrorParams),
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
@@ -292,6 +293,7 @@ impl PublicError {
             Self::TaskWorktreeUnavailable(_) => "task_worktree_unavailable",
             Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
             Self::FileSystemPathPermissionDenied(_) => "file_system_path_permission_denied",
+            Self::FileSystemPathAlreadyExists(_) => "file_system_path_already_exists",
             Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
@@ -480,6 +482,7 @@ mod tests {
             PublicError::TaskWorktreeUnavailable(empty),
             PublicError::FileSystemPathNotFound(empty),
             PublicError::FileSystemPathPermissionDenied(empty),
+            PublicError::FileSystemPathAlreadyExists(empty),
             PublicError::WorktreeRootNotAbsolute(empty),
             PublicError::WorktreeRootNotDirectory(empty),
             PublicError::OpenLocationFailed(OpenLocationFailedParams {
@@ -589,6 +592,7 @@ mod tests {
                 | PublicError::TaskWorktreeUnavailable(_)
                 | PublicError::FileSystemPathNotFound(_)
                 | PublicError::FileSystemPathPermissionDenied(_)
+                | PublicError::FileSystemPathAlreadyExists(_)
                 | PublicError::WorktreeRootNotAbsolute(_)
                 | PublicError::WorktreeRootNotDirectory(_)
                 | PublicError::OpenLocationFailed(_)
@@ -654,7 +658,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 101);
+        assert_eq!(samples.len(), 102);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
