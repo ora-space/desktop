@@ -63,3 +63,129 @@ pub(super) fn normalize_token_usage<D: UsageExtensionDecoder>(
         cached_write_tokens: usage.cached_write_tokens.or(supplement.cached_write_tokens),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    struct FixtureExtension;
+
+    impl UsageExtensionDecoder for FixtureExtension {
+        fn decode(
+            &self,
+            agent_ref: &AgentRef,
+            usage_meta: Option<&Meta>,
+            response_meta: Option<&Meta>,
+        ) -> UsageSupplement {
+            assert_eq!(agent_ref.as_str(), "fixture/agent");
+            assert_eq!(
+                usage_meta.and_then(|meta| meta.get("usage")),
+                Some(&json!(true))
+            );
+            assert_eq!(
+                response_meta.and_then(|meta| meta.get("response")),
+                Some(&json!(true))
+            );
+            UsageSupplement {
+                accounting_scope: Some(TokenAccountingScope::Turn),
+                thought_tokens: Some(999),
+                cached_read_tokens: Some(200),
+                cached_write_tokens: Some(100),
+            }
+        }
+    }
+
+    #[test]
+    fn normalizes_anonymized_agent_fixtures_without_guessing_scope() {
+        let fixtures = [
+            (
+                "opencode",
+                r#"{"inputTokens":149,"outputTokens":29,"totalTokens":11877,"thoughtTokens":51,"cachedReadTokens":11648}"#,
+                TokenUsageReport {
+                    accounting_scope: TokenAccountingScope::Unspecified,
+                    total_tokens: 11_877,
+                    input_tokens: 149,
+                    output_tokens: 29,
+                    thought_tokens: Some(51),
+                    cached_read_tokens: Some(11_648),
+                    cached_write_tokens: None,
+                },
+            ),
+            (
+                "claude",
+                r#"{"inputTokens":2,"outputTokens":53,"cachedReadTokens":35719,"cachedWriteTokens":2273,"totalTokens":38047}"#,
+                TokenUsageReport {
+                    accounting_scope: TokenAccountingScope::Unspecified,
+                    total_tokens: 38_047,
+                    input_tokens: 2,
+                    output_tokens: 53,
+                    thought_tokens: None,
+                    cached_read_tokens: Some(35_719),
+                    cached_write_tokens: Some(2_273),
+                },
+            ),
+            (
+                "codex",
+                r#"{"totalTokens":19163,"inputTokens":970,"cachedReadTokens":18176,"outputTokens":17,"thoughtTokens":0}"#,
+                TokenUsageReport {
+                    accounting_scope: TokenAccountingScope::Unspecified,
+                    total_tokens: 19_163,
+                    input_tokens: 970,
+                    output_tokens: 17,
+                    thought_tokens: Some(0),
+                    cached_read_tokens: Some(18_176),
+                    cached_write_tokens: None,
+                },
+            ),
+        ];
+
+        for (agent, fixture, expected) in fixtures {
+            let usage: Usage = serde_json::from_str(fixture)
+                .unwrap_or_else(|error| panic!("parse {agent} fixture: {error}"));
+            let agent_ref = AgentRef::parse(format!("fixture/{agent}"))
+                .unwrap_or_else(|error| panic!("parse fixture agent: {error}"));
+            assert_eq!(
+                normalize_token_usage(&agent_ref, Some(&usage), None, &NoUsageExtensions),
+                Some(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn returns_none_when_the_prompt_response_has_no_usage() {
+        let agent_ref = AgentRef::parse("fixture/agent").unwrap();
+        assert_eq!(
+            normalize_token_usage(&agent_ref, None, None, &NoUsageExtensions),
+            None,
+        );
+    }
+
+    #[test]
+    fn extensions_only_fill_fields_missing_from_standard_acp_usage() {
+        let mut usage = Usage::new(40, 10, 20);
+        usage.thought_tokens = Some(7);
+        usage.meta = Some(serde_json::from_value(json!({ "usage": true })).unwrap());
+        let response_meta = serde_json::from_value(json!({ "response": true })).unwrap();
+        let agent_ref = AgentRef::parse("fixture/agent").unwrap();
+
+        assert_eq!(
+            normalize_token_usage(
+                &agent_ref,
+                Some(&usage),
+                Some(&response_meta),
+                &FixtureExtension,
+            ),
+            Some(TokenUsageReport {
+                accounting_scope: TokenAccountingScope::Turn,
+                total_tokens: 40,
+                input_tokens: 10,
+                output_tokens: 20,
+                thought_tokens: Some(7),
+                cached_read_tokens: Some(200),
+                cached_write_tokens: Some(100),
+            }),
+        );
+    }
+}

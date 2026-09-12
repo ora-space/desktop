@@ -556,8 +556,11 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentRuntimeStatus, AgentStatus, PromptSessionRequest};
-    use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+    use super::{
+        AgentRuntimeStatus, AgentStatus, PromptSessionEvent, PromptSessionRequest,
+        TokenAccountingScope, TokenUsageReport,
+    };
+    use agent_client_protocol_schema::v1::{ContentBlock, StopReason, TextContent};
     use pretty_assertions::assert_eq;
     use serde_json::{Map, json};
 
@@ -595,6 +598,37 @@ mod tests {
                     "_meta": { "ora.dev/source": "composer" },
                 }],
             })
+        );
+    }
+
+    /// Verifies the completion event keeps missing optional counters absent on the wire.
+    #[test]
+    fn prompt_completion_serializes_the_agent_token_report() {
+        let event = PromptSessionEvent::Completed {
+            stop_reason: StopReason::EndTurn,
+            token_usage: Some(TokenUsageReport {
+                accounting_scope: TokenAccountingScope::Unspecified,
+                total_tokens: 1_000,
+                input_tokens: 800,
+                output_tokens: 200,
+                thought_tokens: None,
+                cached_read_tokens: None,
+                cached_write_tokens: None,
+            }),
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).expect("serialize prompt completion"),
+            json!({
+                "type": "completed",
+                "stopReason": "end_turn",
+                "tokenUsage": {
+                    "accountingScope": "unspecified",
+                    "totalTokens": 1_000,
+                    "inputTokens": 800,
+                    "outputTokens": 200,
+                },
+            }),
         );
     }
 }
