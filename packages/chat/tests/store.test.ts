@@ -1310,6 +1310,102 @@ test("shows the user turn before the session is persisted", async () => {
   assert.equal(conversation?.turns[0]?.status, "completed");
 });
 
+test("freezes turn duration when session preparation fails", async () => {
+  let timestamp = 100;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "turn",
+    now: () => timestamp,
+  });
+
+  await assert.rejects(
+    store.getState().sendMessage({
+      oraSessionId: "ora-1",
+      text: "hi",
+      prepare: async () => {
+        timestamp = 250;
+        throw new Error("prepare failed");
+      },
+    }),
+    /prepare failed/,
+  );
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0], {
+    id: "turn",
+    userMessage: {
+      kind: "message",
+      id: "turn",
+      role: "user",
+      content: "hi",
+      createdAt: 100,
+    },
+    items: [],
+    status: "failed",
+    stopReason: null,
+    error: "prepare failed",
+    createdAt: 100,
+    durationMs: 150,
+  });
+});
+
+test("freezes turn duration when startup is stopped during preparation", async () => {
+  let timestamp = 100;
+  let finishPrepare: () => void = () => {};
+  const prepared = new Promise<void>((resolve) => {
+    finishPrepare = resolve;
+  });
+  let prompted = false;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => {
+      prompted = true;
+      return events<PromptSessionEvent>([]);
+    },
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "turn",
+    now: () => timestamp,
+  });
+
+  const sending = store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "hi",
+    prepare: async () => {
+      await prepared;
+      return { availableCommands: [] };
+    },
+  });
+  store.getState().stopGeneration("ora-1");
+  timestamp = 300;
+  finishPrepare();
+  await sending;
+
+  assert.equal(prompted, false);
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0], {
+    id: "turn",
+    userMessage: {
+      kind: "message",
+      id: "turn",
+      role: "user",
+      content: "hi",
+      createdAt: 100,
+    },
+    items: [],
+    status: "cancelled",
+    stopReason: null,
+    error: null,
+    createdAt: 100,
+    durationMs: 200,
+  });
+});
+
 test("rolls back staged load updates when replay fails before completion", async () => {
   const client: ChatSessionClient = {
     load: () => ({

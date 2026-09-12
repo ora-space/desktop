@@ -508,6 +508,7 @@ export function createChatStore(
             ...current,
             status: "failed",
             error: message,
+            durationMs: elapsedDuration(current.createdAt, now()),
           }));
           updateConversation(set, key, (conversation) => ({
             ...conversation,
@@ -521,7 +522,11 @@ export function createChatStore(
           // Stopped mid-startup: the session exists but we never open its stream.
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
-              ? { ...current, status: "cancelled" }
+              ? {
+                  ...current,
+                  status: "cancelled",
+                  durationMs: elapsedDuration(current.createdAt, now()),
+                }
               : current,
           );
           updateConversation(set, key, (conversation) => ({
