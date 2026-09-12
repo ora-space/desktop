@@ -1,8 +1,7 @@
-import { useState } from "react";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 
-/** Renders a titled usage section whose explanation works with pointer, keyboard, and touch. */
+/** Renders a titled usage section whose explanation is available on hover or focus. */
 export function UsageHeading({
   id,
   title,
@@ -14,36 +13,29 @@ export function UsageHeading({
   tooltip: string;
   details: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
   return (
-    <>
-      <div className="flex items-center gap-1">
-        <h3 id={id} className="text-sm font-medium">
-          {title}
-        </h3>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={tooltip}
-                aria-expanded={expanded}
-                onClick={() => setExpanded((value) => !value)}
-              />
-            }
-          >
-            <IconInfoCircle className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>{tooltip}</TooltipContent>
-        </Tooltip>
-      </div>
-      {expanded && (
-        <p className="rounded-md bg-muted/60 p-2 text-[11px] leading-relaxed text-muted-foreground">
-          {details}
-        </p>
-      )}
-    </>
+    <div className="flex items-center gap-1">
+      <h3 id={id} className="text-sm font-medium">
+        {title}
+      </h3>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={tooltip}
+            />
+          }
+        >
+          <IconInfoCircle className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent className="max-w-80 space-y-1.5 leading-relaxed">
+          <p>{tooltip}</p>
+          <p>{details}</p>
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 

@@ -211,9 +211,6 @@ function TokenMetrics({
           time: relativeUsageTime(receivedAt, now, t),
         })}
       </p>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("chat.usage.independent")}
-      </p>
     </>
   );
 }

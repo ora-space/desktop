@@ -15,10 +15,20 @@ export function useMinuteClock(): number {
 
 /** Formats one context counter compactly for the 24px composer chrome. */
 export function formatCompactTokens(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale, {
-    notation: "compact",
+  const magnitude = Math.abs(value);
+  const unit =
+    magnitude >= 1_000_000_000
+      ? { divisor: 1_000_000_000, suffix: "B" }
+      : magnitude >= 1_000_000
+        ? { divisor: 1_000_000, suffix: "M" }
+        : magnitude >= 1_000
+          ? { divisor: 1_000, suffix: "K" }
+          : undefined;
+  if (!unit) return new Intl.NumberFormat(locale).format(value);
+  const amount = new Intl.NumberFormat(locale, {
     maximumFractionDigits: 1,
-  }).format(value);
+  }).format(value / unit.divisor);
+  return `${amount}${unit.suffix}`;
 }
 
 /** Formats one exact token counter without losing bigint precision. */

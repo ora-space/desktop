@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { IconHelpCircle } from "@tabler/icons-react";
 import type { ContextUsageSnapshot, SessionUsage } from "@ora/chat";
 import {
@@ -23,13 +22,12 @@ import { TokenSection } from "./session-token-usage";
 /** Displays volatile context and last-turn token telemetry above the composer. */
 export function SessionUsageIndicator({ usage }: { usage: SessionUsage }) {
   const { t, i18n } = useTranslation();
-  const [open, setOpen] = useState(false);
   const now = useMinuteClock();
   const triggerLabel = contextTriggerLabel(usage, i18n.language, t);
 
   return (
     <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -52,9 +50,6 @@ export function SessionUsageIndicator({ usage }: { usage: SessionUsage }) {
           <ContextSection usage={usage} now={now} locale={i18n.language} />
           <div className="h-px bg-border" />
           <TokenSection usage={usage} now={now} locale={i18n.language} />
-          <p className="border-t border-border pt-2 text-[11px] leading-relaxed text-muted-foreground">
-            {t("chat.usage.disclaimer")}
-          </p>
         </PopoverContent>
       </Popover>
       <Tooltip>
@@ -64,13 +59,15 @@ export function SessionUsageIndicator({ usage }: { usage: SessionUsage }) {
               type="button"
               className="flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t("chat.usage.referenceInfo")}
-              onClick={() => setOpen(true)}
             />
           }
         >
           <IconHelpCircle className="size-3.5" />
         </TooltipTrigger>
-        <TooltipContent>{t("chat.usage.disclaimer")}</TooltipContent>
+        <TooltipContent className="max-w-80 space-y-1.5 leading-relaxed">
+          <p>{t("chat.usage.independent")}</p>
+          <p>{t("chat.usage.disclaimer")}</p>
+        </TooltipContent>
       </Tooltip>
     </div>
   );
