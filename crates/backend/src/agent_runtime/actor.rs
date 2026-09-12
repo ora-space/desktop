@@ -6,10 +6,12 @@ use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::session_followers::SessionFollowers;
 use super::title_acquisition::PollAttempt;
-use super::usage::{NoUsageExtensions, normalize_token_usage};
 use super::*;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
+#[path = "usage.rs"]
+mod usage;
+use usage::{NoUsageExtensions, normalize_token_usage};
 #[path = "title_polling.rs"]
 mod title_polling;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
