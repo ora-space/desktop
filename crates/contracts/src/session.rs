@@ -277,6 +277,13 @@ pub enum LoadSessionEvent {
         )]
         #[ts(optional)]
         recorded_at: Option<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
+        #[ts(optional)]
+        tool_timing: Option<ToolCallTiming>,
     },
     PermissionRequest(SessionPermissionRequest),
     TurnEnded {
@@ -305,6 +312,7 @@ impl LoadSessionEvent {
         Self::SessionUpdate {
             update,
             recorded_at: None,
+            tool_timing: None,
         }
     }
 
@@ -317,6 +325,17 @@ impl LoadSessionEvent {
     }
 }
 
+/// Timing observed by Ora for one ACP tool-call lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ToolCallTiming {
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_ms: Option<u64>,
+}
+
 /// Streams one prompt turn and ends with the provider's typed stop reason.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -325,6 +344,13 @@ pub enum PromptSessionEvent {
     SessionUpdate {
         #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
+        #[ts(optional)]
+        tool_timing: Option<ToolCallTiming>,
     },
     PermissionRequest(SessionPermissionRequest),
     Completed {
@@ -492,6 +518,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PromptSessionRequest::export(config)?;
     SessionPermissionRequest::export(config)?;
     SessionHistoryNotice::export(config)?;
+    ToolCallTiming::export(config)?;
     LoadSessionEvent::export(config)?;
     PromptSessionEvent::export(config)?;
     RespondToPermissionRequest::export(config)?;
@@ -509,8 +536,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentRuntimeStatus, AgentStatus, PromptSessionRequest};
-    use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+    use super::{
+        AgentRuntimeStatus, AgentStatus, PromptSessionEvent, PromptSessionRequest, ToolCallTiming,
+    };
+    use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, TextContent, ToolCall};
     use pretty_assertions::assert_eq;
     use serde_json::{Map, json};
 
@@ -547,6 +576,41 @@ mod tests {
                     "text": "hello",
                     "_meta": { "ora.dev/source": "composer" },
                 }],
+            })
+        );
+    }
+
+    /// Verifies tool timing is additive and omitted completely for older event producers.
+    #[test]
+    fn session_update_serializes_optional_tool_timing() {
+        let update = SessionUpdate::ToolCall(ToolCall::new("tool-1", "Run tests"));
+        assert_eq!(
+            serde_json::to_value(PromptSessionEvent::SessionUpdate {
+                update: update.clone(),
+                tool_timing: None,
+            })
+            .expect("serialize untimed update"),
+            json!({
+                "type": "session_update",
+                "update": update,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(PromptSessionEvent::SessionUpdate {
+                update: update.clone(),
+                tool_timing: Some(ToolCallTiming {
+                    started_at: "2026-09-11T10:00:00+08:00".to_string(),
+                    duration_ms: Some(12_000),
+                }),
+            })
+            .expect("serialize timed update"),
+            json!({
+                "type": "session_update",
+                "update": update,
+                "toolTiming": {
+                    "startedAt": "2026-09-11T10:00:00+08:00",
+                    "durationMs": 12_000,
+                },
             })
         );
     }

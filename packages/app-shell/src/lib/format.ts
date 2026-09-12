@@ -39,3 +39,23 @@ export function formatRelativeTime(timestamp: number, now: number): string {
     day: "numeric",
   });
 }
+
+/** Formats a validated duration for compact chat status labels. */
+export function formatElapsedDuration(
+  durationMs: number | undefined,
+): string | null {
+  if (
+    durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  )
+    return null;
+  const seconds = Math.floor(durationMs / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60)
+    return `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${(minutes % 60).toString().padStart(2, "0")}m`;
+}

@@ -131,6 +131,7 @@ fn loads_recorded_history_without_the_session_agent() {
                                     ),
                                 ),
                             recorded_at: Some(history_recorded_at()),
+                            tool_timing: None,
                         },
                         LoadSessionEvent::TurnEnded {
                             stop_reason: StopReason::EndTurn,

@@ -52,6 +52,7 @@ async fn first_update(stream: &mut SessionEventStream<PromptSessionEvent>) -> Te
     while let Some(event) = stream.recv().await {
         if let PromptSessionEvent::SessionUpdate {
             update: SessionUpdate::AgentMessageChunk(_),
+            ..
         } = event?
         {
             return Ok(());

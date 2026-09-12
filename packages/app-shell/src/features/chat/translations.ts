@@ -111,6 +111,8 @@ export const chatTranslations = {
     "chat.loadingHistory": "正在加载历史记录…",
     "chat.emptyHistory": "尚无消息",
     "chat.typing": "助手正在运行",
+    "chat.elapsedTime": "耗时",
+    "chat.totalTime": "用时",
     "chat.runningWords":
       "思考中…|冥思中…|构思中…|酝酿中…|推演中…|琢磨中…|捣鼓中…|开动脑筋…|苦思冥想…|灵光闪现…|运转中…|加载脑洞…|盘算中…|推敲中…|排查中…|摸索中…|绞尽脑汁…|拼命运转…|一顿操作…|正在思索…|脑力全开…|深度思考…",
     "chat.thinking": "正在分析",
@@ -385,6 +387,8 @@ export const chatTranslations = {
     "chat.loadingHistory": "Loading history…",
     "chat.emptyHistory": "No messages yet",
     "chat.typing": "Assistant is working",
+    "chat.elapsedTime": "Elapsed",
+    "chat.totalTime": "Took",
     "chat.runningWords":
       "Thinking…|Pondering…|Imagining…|Conjuring…|Percolating…|Noodling…|Tinkering…|Brewing…|Musing…|Summoning…|Cooking…|Computing…|Ruminating…|Scheming…|Mulling…|Sifting…|Untangling…|Crunching…|Puzzling…|Deliberating…|Synthesizing…|Weighing options…",
     "chat.thinking": "Analyzing",
