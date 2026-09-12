@@ -22,6 +22,7 @@ import {
   type TurnArtifactCacheEntry,
 } from "./chat-link/artifact-index";
 import { ChatLinkContext } from "./chat-link/context";
+import type * as acp from "@agentclientprotocol/sdk";
 
 interface MessageListProps {
   turns: ChatTurn[];
@@ -32,6 +33,7 @@ interface MessageListProps {
   taskId?: string;
   projectId?: string;
   workspaceId?: string;
+  availableCommands?: acp.AvailableCommand[];
   /** Optional presentation override for chats embedded inside another surface. */
   conversationNavigation?: ConversationNavigationPresentation;
 }
@@ -46,6 +48,7 @@ export function MessageList({
   taskId,
   projectId,
   workspaceId,
+  availableCommands = [],
   conversationNavigation,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -175,6 +178,7 @@ export function MessageList({
                       <MessageBubble
                         message={turn.userMessage}
                         userName={userName}
+                        availableCommands={availableCommands}
                       />
                     </div>
                     {(turn.items.length > 0 || turn.status !== "streaming") && (

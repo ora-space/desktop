@@ -10,6 +10,26 @@
   white-space: pre-wrap;
 }
 
+/* Unknown commands remain editable and sendable; the marker is the
+   quiet affordance, while the title on the decorated range explains it. */
+.composer-editor-shell .composer-unsupported-command {
+  position: relative;
+  text-decoration: underline dotted var(--destructive);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.composer-editor-shell .composer-unsupported-command::after {
+  position: absolute;
+  top: -0.15em;
+  right: -0.3em;
+  width: 0.35em;
+  height: 0.35em;
+  border-radius: 9999px;
+  background: var(--destructive);
+  content: "";
+}
+
 .composer-editor-shell .tiptap > * {
   position: relative;
 }

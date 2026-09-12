@@ -17,6 +17,7 @@ import { MarkdownDocument, MarkdownMessage } from "./markdown-message";
 interface MessageBubbleProps {
   message: ChatMessage;
   userName: string;
+  availableCommands?: acp.AvailableCommand[];
   embeddedAssistant?: boolean;
   streaming?: boolean;
   /** Tighter rhythm for read-only embedded conversations such as workflow cards. */
@@ -33,6 +34,7 @@ type UserMessageBodyMode = "view" | "edit";
 
 interface UserMessageBodyProps {
   content: string;
+  availableCommands: acp.AvailableCommand[];
   structuredContent?: Array<Exclude<acp.ContentBlock, { type: "text" }>>;
   messageId: string;
   showAnchorHighlight: boolean;
@@ -46,6 +48,7 @@ interface UserMessageBodyProps {
  */
 function UserMessageBody({
   content,
+  availableCommands,
   structuredContent,
   messageId,
   showAnchorHighlight,
@@ -60,7 +63,11 @@ function UserMessageBody({
         <div className="relative w-fit max-w-full overflow-visible rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
           {showAnchorHighlight && <AnchorHighlight />}
           <div className="relative">
-            <MarkdownDocument content={content} density="compact" />
+            <MarkdownDocument
+              content={content}
+              density="compact"
+              availableCommands={availableCommands}
+            />
           </div>
         </div>
       )}
@@ -87,6 +94,7 @@ function useCopyMessage(content: string) {
 export function MessageBubble({
   message,
   userName,
+  availableCommands = [],
   embeddedAssistant = false,
   streaming = false,
   compact = false,
@@ -107,6 +115,7 @@ export function MessageBubble({
         {isUser ? (
           <UserMessageBody
             content={message.content}
+            availableCommands={availableCommands}
             structuredContent={message.structuredContent}
             messageId={message.id}
             showAnchorHighlight={showAnchorHighlight}

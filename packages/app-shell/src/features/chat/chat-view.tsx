@@ -191,6 +191,7 @@ export function ChatView({
           taskId={taskId}
           projectId={projectId}
           workspaceId={workspaceId}
+          availableCommands={availableCommands}
           conversationNavigation={conversationNavigation}
         />
       )}

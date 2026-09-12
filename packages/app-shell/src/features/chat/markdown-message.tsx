@@ -18,6 +18,7 @@ import {
 } from "@tabler/icons-react";
 import { Button, cn } from "@ora/ui";
 import type { Components, UrlTransform } from "react-markdown";
+import type * as acp from "@agentclientprotocol/sdk";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
@@ -64,6 +65,8 @@ interface MarkdownDocumentProps {
   components?: Components;
   /** Compact fits secondary user bubbles without oversized headings/margins. */
   density?: MarkdownDensity;
+  /** Commands the current Agent advertised; unknown slash tokens stay plain text. */
+  availableCommands?: acp.AvailableCommand[];
 }
 
 const LANGUAGE_CLASS_PATTERN = /(?:^|\s)language-([^\s]+)/;
@@ -334,14 +337,6 @@ const compactMarkdownComponents = {
   ...fileQuoteMarkdownComponents,
   ...promptTokenMarkdownComponents,
 };
-const compactRemarkPlugins = [
-  ...markdownRemarkPlugins,
-  remarkComposerHighlight,
-  remarkComposerFileReference,
-  remarkComposerPromptTokens,
-  remarkComposerFileQuote,
-];
-
 /**
  * Preserves assistant link destinations for chat-link while keeping media URLs
  * sanitized. A rejected media URL is dropped rather than emptied: `src=""` makes
@@ -374,6 +369,7 @@ export function MarkdownDocument({
   content,
   components,
   density = "default",
+  availableCommands = [],
 }: MarkdownDocumentProps) {
   const baseComponents =
     density === "compact" ? compactMarkdownComponents : markdownComponents;
@@ -384,8 +380,26 @@ export function MarkdownDocument({
         : { ...baseComponents, ...components },
     [baseComponents, components],
   );
-  const remarkPlugins =
-    density === "compact" ? compactRemarkPlugins : markdownRemarkPlugins;
+  const remarkPlugins = useMemo(() => {
+    if (density !== "compact") return markdownRemarkPlugins;
+    return [
+      ...markdownRemarkPlugins,
+      remarkComposerHighlight,
+      remarkComposerFileReference,
+      [
+        remarkComposerPromptTokens,
+        {
+          availableCommandNames: new Set(
+            availableCommands.map(({ name }) => name),
+          ),
+        },
+      ] as [
+        typeof remarkComposerPromptTokens,
+        { availableCommandNames: Set<string> },
+      ],
+      remarkComposerFileQuote,
+    ];
+  }, [availableCommands, density]);
   const parseable =
     density === "compact" ? prepareUserMessageMarkdown(content) : content;
   return (
