@@ -246,11 +246,21 @@ async fn drive_agent_node(
     // admission before workflow UI loads can discover the session; failures in the preparation
     // block below stop this session so cancellation cannot leave an unbound actor behind.
     let started = agent_runtime
-        .start_workflow_node_session(StartSessionRequest {
-            workspace_id: context.run.workspace_id.to_string(),
-            agent_ref,
-            model: Some(config.executor.model_id.clone()),
-        })
+        .start_workflow_node_session(
+            StartSessionRequest {
+                workspace_id: context.run.workspace_id.to_string(),
+                agent_ref,
+                model: Some(config.executor.model_id.clone()),
+            },
+            crate::session_setup::SessionMcpSelection::Explicit(
+                config
+                    .mcps
+                    .iter()
+                    .filter(|mcp| mcp.enabled)
+                    .map(|mcp| mcp.mcp_id.clone())
+                    .collect(),
+            ),
+        )
         .await?;
     let session_id = SessionId::new(started.session.id);
 

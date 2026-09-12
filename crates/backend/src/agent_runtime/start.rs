@@ -1,13 +1,17 @@
 //! Creates provider sessions only when a caller is ready to persist and use them.
 
 use super::connection::ConnectionSupervisors;
+use super::history::RecordOutcome;
 use super::routing::SessionChannel;
 use super::support::{agent_timed_out, map_acp_error};
+use super::support::{contract_session, domain_agent_ref};
+use super::{ActorSetup, HandoffDebt, SessionVisibility, TitleAcquisition};
 use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, collect_setup_commands};
 use crate::BackendError;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, SessionMcpHost, SessionMcpRevision, SessionSetup,
 };
+use crate::session_setup::{LiveMcpState, SessionMcpSelection};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
     DeleteSessionRequest, DeleteSessionResponse, NewSessionRequest, NewSessionResponse,
@@ -15,8 +19,12 @@ use agent_client_protocol_schema::v1::{
     SessionConfigOptionValue, SessionConfigSelectOptions, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse,
 };
+use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
+use ora_contracts::{StartSessionRequest, StartSessionResponse};
+use ora_db::SqliteSessionRepository;
 use ora_domain::{AgentRef, SessionId};
-use ora_logging::{ora_debug, ora_warn};
+use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
+use ora_logging::{ora_debug, ora_info, ora_warn};
 use std::path::Path;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -78,6 +86,111 @@ impl Drop for ProviderSessionRelease {
 }
 
 impl AgentRuntimeManager {
+    /// Runs the only path allowed to create and persist a provider session.
+    pub(super) async fn start_session_with_visibility(
+        &self,
+        request: StartSessionRequest,
+        visibility: SessionVisibility,
+        session_mcp: SessionMcpHost,
+    ) -> Result<StartSessionResponse, BackendError> {
+        let workspace_id = WorkspaceId::new(request.workspace_id);
+        let agent_ref = domain_agent_ref(request.agent_ref)?;
+        let cwd = self.workspace_cwd(&workspace_id)?;
+        let session_id = UuidSessionIdGenerator::new().generate_session_id();
+        let PendingProviderSession {
+            release,
+            agent_session_id,
+            list_session_supported,
+            channel,
+            available_commands,
+            config_options,
+            mcp_revision,
+        } = self
+            .create_provider_session(
+                &session_id,
+                &agent_ref,
+                &cwd,
+                request.model.as_deref(),
+                &session_mcp,
+            )
+            .await?;
+        let mut persisted = false;
+        let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
+
+        if unpublished {
+            self.unpublished_workflow_sessions_write()?
+                .insert(session_id.clone());
+        }
+        let result = async {
+            let _lifecycle = self.inner.lifecycle.lock().await;
+            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
+            let now = self.inner.clock.now_timestamp_millis();
+            let session = Session::new(
+                session_id.clone(),
+                workspace_id,
+                agent_ref,
+                agent_session_id,
+                SessionStatus::Running,
+                AuditFields::new(now, now, false),
+            );
+            let mut opened = self.open_recorder(&session)?;
+            let outcome = match opened.failure.take() {
+                Some(reason) => RecordOutcome::JustFailed { reason },
+                None => opened.recorder.record_meta(&session, &cwd),
+            };
+            SqliteSessionRepository::new(self.inner.pool.clone())
+                .create_session(session.clone())
+                .map_err(|source| {
+                    BackendError::internal("failed to persist agent CLI session", source)
+                })?;
+            persisted = true;
+            let session = self.settle_record(session, outcome);
+            let title_acquisition = TitleAcquisition::awaiting_first_prompt(list_session_supported);
+            self.insert_actor(
+                session.clone(),
+                ActorSetup {
+                    session_mcp,
+                    cwd,
+                    connection: supervisor,
+                    channel: Some(channel),
+                    recorder: opened.recorder,
+                    handoff: HandoffDebt::Settled,
+                    title_acquisition,
+                    live_mcp: LiveMcpState::Active(mcp_revision),
+                    config_options: config_options.clone(),
+                },
+            )?;
+            Ok::<_, BackendError>(StartSessionResponse {
+                session: contract_session(session),
+                available_commands,
+                config_options,
+            })
+        }
+        .await;
+
+        match result {
+            Ok(response) => {
+                release.commit();
+                Ok(response)
+            }
+            Err(error) => {
+                if persisted {
+                    let _ = SqliteSessionRepository::new(self.inner.pool.clone())
+                        .soft_delete_session(&session_id, self.inner.clock.now_timestamp_millis());
+                }
+                let _ = ora_history::remove_session_history(
+                    &self.inner.sessions_root,
+                    session_id.as_ref(),
+                );
+                if unpublished {
+                    self.unpublished_workflow_sessions_write()?
+                        .remove(&session_id);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Creates a provider session and keeps it unpublished until the caller persists ownership.
     pub(super) async fn create_provider_session(
         &self,
@@ -85,10 +198,11 @@ impl AgentRuntimeManager {
         agent_ref: &AgentRef,
         cwd: &Path,
         model: Option<&str>,
+        session_mcp: &SessionMcpHost,
     ) -> Result<PendingProviderSession, BackendError> {
         create_provider_session(
             &self.inner.connections,
-            &self.inner.session_mcp,
+            session_mcp,
             ora_session_id,
             agent_ref,
             cwd,
@@ -118,6 +232,14 @@ pub(super) async fn create_provider_session(
         ),
     )
     .map_err(crate::session_setup::SessionMcpError::into_backend)?;
+    log_session_mcp_request(
+        ora_session_id,
+        agent_ref,
+        None,
+        AGENT_METHOD_NAMES.session_new,
+        &session_mcp.selection,
+        &setup.mcp,
+    );
     let mcp_revision = setup.mcp.revision().clone();
     let _setup_registration = supervisor.begin_session_setup();
     let response = timeout(
@@ -169,6 +291,58 @@ pub(super) async fn create_provider_session(
         config_options,
         mcp_revision,
     })
+}
+
+/// One selected MCP member rendered for logs without executable configuration or credentials.
+struct SessionMcpLogMember {
+    plugin_id: String,
+    package_version: String,
+    configuration_revision: u64,
+    transport: &'static str,
+}
+
+impl std::fmt::Debug for SessionMcpLogMember {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionMcpLogMember")
+            .field("plugin_id", &self.plugin_id)
+            .field("package_version", &self.package_version)
+            .field("configuration_revision", &self.configuration_revision)
+            .field("transport", &self.transport)
+            .finish()
+    }
+}
+
+/// Logs the exact secret-free MCP identity sent at an ACP session boundary.
+pub(super) fn log_session_mcp_request(
+    ora_session_id: &SessionId,
+    agent_ref: &AgentRef,
+    agent_session_id: Option<&str>,
+    acp_method: &str,
+    selection: &SessionMcpSelection,
+    snapshot: &crate::session_setup::SessionMcpSnapshot,
+) {
+    let members = snapshot
+        .revision()
+        .members()
+        .iter()
+        .map(|member| SessionMcpLogMember {
+            plugin_id: member.plugin_id.canonical(),
+            package_version: member.package_version.to_string(),
+            configuration_revision: member.configuration_revision,
+            transport: member.transport.as_str(),
+        })
+        .collect::<Vec<_>>();
+    ora_info!(
+        session_id = %ora_session_id,
+        agent = %agent_ref,
+        agent_session_id,
+        acp_method,
+        mcp_selection = selection.mode(),
+        mcp_server_count = snapshot.servers().len(),
+        mcp_members = ?members,
+        "sending ACP session configuration"
+    );
 }
 
 /// Applies a model only when the session authoritatively offers that value.
@@ -299,13 +473,25 @@ async fn release_provider_session(
 
 #[cfg(test)]
 mod tests {
-    use super::model_config_id;
-    use agent_client_protocol_schema::v1::{
-        SessionConfigGroupId, SessionConfigId, SessionConfigKind, SessionConfigOption,
-        SessionConfigOptionCategory, SessionConfigSelect, SessionConfigSelectGroup,
-        SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId,
+    use super::{log_session_mcp_request, model_config_id};
+    use crate::session_setup::{
+        SessionMcpMemberRevision, SessionMcpRevision, SessionMcpSelection, SessionMcpSnapshot,
+        SessionMcpTransportKind,
     };
+    use agent_client_protocol_schema::v1::{
+        HttpHeader, McpServer, McpServerHttp, SessionConfigGroupId, SessionConfigId,
+        SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+        SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions,
+        SessionConfigValueId,
+    };
+    use ora_domain::{AgentRef, PluginId, SessionId};
+    use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
+    use semver::Version;
+    use std::collections::BTreeSet;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, Layer};
 
     fn select_option(value: &str, name: &str) -> SessionConfigSelectOption {
         SessionConfigSelectOption::new(
@@ -417,5 +603,117 @@ mod tests {
         ];
 
         assert_eq!(model_config_id(&options, "retired-model"), None);
+    }
+
+    /// ACP boundary diagnostics identify the selection without serializing server credentials.
+    #[test]
+    fn session_mcp_log_contains_revision_identity_and_omits_secrets() {
+        let plugin_id = PluginId::parse("official/tavily").expect("plugin id");
+        let snapshot = SessionMcpSnapshot::new(
+            vec![McpServer::Http(
+                McpServerHttp::new(plugin_id.canonical(), "https://secret.example.test/mcp")
+                    .headers(vec![HttpHeader::new(
+                        "Authorization",
+                        "Bearer super-secret",
+                    )]),
+            )],
+            SessionMcpRevision::new(vec![SessionMcpMemberRevision {
+                plugin_id: plugin_id.clone(),
+                package_version: Version::new(1, 2, 3),
+                configuration_revision: 7,
+                transport: SessionMcpTransportKind::Http,
+            }]),
+        );
+        let selection = SessionMcpSelection::Explicit(BTreeSet::from([plugin_id.canonical()]));
+        let recorder = EventTextRecorder::default();
+
+        with_recorded_trace_logging(recorder.layer(), || {
+            log_session_mcp_request(
+                &SessionId::new("ora-session"),
+                &AgentRef::parse("official/opencode").expect("agent ref"),
+                Some("provider-session"),
+                "session/new",
+                &selection,
+                &snapshot,
+            );
+        });
+
+        let recorded = recorder.text();
+        assert!(
+            recorded.contains("sending ACP session configuration"),
+            "{recorded}"
+        );
+        assert!(recorded.contains("official/tavily"), "{recorded}");
+        assert!(recorded.contains("1.2.3"), "{recorded}");
+        assert!(recorded.contains("configuration_revision: 7"), "{recorded}");
+        assert!(recorded.contains("explicit"), "{recorded}");
+        assert!(!recorded.contains("super-secret"));
+        assert!(!recorded.contains("secret.example.test"));
+        assert!(!recorded.contains("Authorization"));
+    }
+
+    /// Captures the rendered fields from one test-scoped logging event.
+    #[derive(Clone, Debug, Default)]
+    struct EventTextRecorder {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl EventTextRecorder {
+        /// Builds a subscriber layer sharing this recorder's output.
+        fn layer(&self) -> EventTextLayer {
+            EventTextLayer {
+                text: self.text.clone(),
+            }
+        }
+
+        /// Returns every field rendered by the captured event.
+        fn text(&self) -> String {
+            self.text.lock().expect("recorded event lock").clone()
+        }
+    }
+
+    /// Records field names and values without using the production formatter.
+    #[derive(Clone, Debug)]
+    struct EventTextLayer {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl<S> Layer<S> for EventTextLayer
+    where
+        S: tracing::Subscriber,
+    {
+        /// Appends each event field under the test-scoped TRACE subscriber.
+        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+            event.record(&mut EventTextVisitor {
+                text: self.text.clone(),
+            });
+        }
+    }
+
+    /// Renders structured values so the test can assert the complete leak boundary.
+    struct EventTextVisitor {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl Visit for EventTextVisitor {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            let mut text = self.text.lock().expect("recorded event lock");
+            text.push_str(field.name());
+            text.push('=');
+            text.push_str(value);
+            text.push('\n');
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.record_debug(field, &value);
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            let mut text = self.text.lock().expect("recorded event lock");
+            text.push_str(field.name());
+            text.push('=');
+            text.push_str(&format!("{value:?}"));
+            text.push('\n');
+        }
     }
 }

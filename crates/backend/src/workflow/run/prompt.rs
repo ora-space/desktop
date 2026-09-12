@@ -551,6 +551,7 @@ mod tests {
             instruction: None,
             input_variables: Vec::new(),
             agent_config: Some(AgentConfig {
+                mcps: Vec::new(),
                 executor: AgentExecutor {
                     agent_cli: "open_code".to_string(),
                     model_id: "m".to_string(),
@@ -643,6 +644,7 @@ mod tests {
             instruction: None,
             input_variables: Vec::new(),
             agent_config: Some(AgentConfig {
+                mcps: Vec::new(),
                 executor: AgentExecutor {
                     agent_cli: "open_code".to_string(),
                     model_id: "m".to_string(),

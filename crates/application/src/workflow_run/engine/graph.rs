@@ -1,3 +1,7 @@
+pub use super::agent_config::{
+    AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, StructuredTextExposure,
+};
+use super::agent_config::{AgentMcp, deserialize_bindings};
 use crate::workflow_run::engine::condition::{ConditionConfig, WireConditionCase};
 use crate::workflow_run::engine::node_type::{NodeType, UnknownNodeType};
 use crate::workflow_run::engine::structured_output::validate_structured_output_schema;
@@ -129,33 +133,6 @@ pub struct WorkflowGlobalVariable {
     pub value: Option<serde_json::Value>,
 }
 
-/// Whether an agent adds a structured variable beside its stable scalar `{node}.output`.
-///
-/// `Text` and `StructuredTextExposure` remain only to read snapshots written by the previous
-/// contract shape; current graphs use `None` for text-only output and `Structured` for both.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AgentOutputContract {
-    /// The node exposes only its stable `{node}.output` variable.
-    None,
-    /// Legacy spelling for a text-only node; its value is exposed as `{node}.output`.
-    Text,
-    /// The node exposes raw text as `{node}.output` and a validated object as
-    /// `{node}.structured_output`.
-    Structured {
-        schema: serde_json::Value,
-        text_exposure: StructuredTextExposure,
-    },
-}
-
-/// Legacy structured-output text setting retained only for snapshot decoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StructuredTextExposure {
-    /// Only `{node}.structured_output` is written; the raw text is withheld.
-    StructuredOnly,
-    /// Both `{node}.structured_output` and `{node}.text` are written.
-    IncludeFinalText,
-}
-
 /// The result bindings of an `output` node, each resolving a variable selector to a named result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputConfig {
@@ -167,37 +144,6 @@ pub struct OutputConfig {
 pub struct OutputBinding {
     pub name: String,
     pub variable_selector: VariableSelector,
-}
-
-/// The executable contract of an `agent` node.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AgentConfig {
-    pub executor: AgentExecutor,
-    pub role_id: Option<String>,
-    pub skills: Vec<AgentSkill>,
-    pub prompt: String,
-    /// When true the node is a persistent interactive session: its first turn pauses at
-    /// `Pending` (awaiting input) instead of completing, and the user drives completion.
-    pub interactive: bool,
-    /// Optional structured parsing performed in addition to persisting the raw output.
-    pub output_contract: Option<AgentOutputContract>,
-}
-
-/// The agent CLI and model an `agent` node must run with.
-///
-/// `agent_cli` stays a string here; validating it as an agent identity and checking
-/// runtime availability happens in the session driver (phase 4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentExecutor {
-    pub agent_cli: String,
-    pub model_id: String,
-}
-
-/// One skill an agent node declares; only `enabled` skills are materialized at start.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentSkill {
-    pub skill_id: String,
-    pub enabled: bool,
 }
 
 /// Structural failures discovered while deserializing and validating a frozen graph.
@@ -330,6 +276,8 @@ struct WireAgentConfig {
     role_id: Option<String>,
     #[serde(default)]
     skills: Vec<WireAgentSkill>,
+    #[serde(default, deserialize_with = "deserialize_bindings")]
+    mcps: Vec<AgentMcp>,
     #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
@@ -397,6 +345,7 @@ impl WireAgentConfig {
                     .unwrap_or_default(),
             },
             role_id: self.role_id,
+            mcps: self.mcps,
             skills: self
                 .skills
                 .into_iter()

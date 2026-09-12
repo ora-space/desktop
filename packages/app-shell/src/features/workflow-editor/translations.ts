@@ -275,6 +275,14 @@ export const workflowEditorTranslations = {
     "settings.workflow.removeSkill": "移除 {{name}}",
     "settings.workflow.field.mcps": "MCP",
     "settings.workflow.addMcp": "添加 MCP",
+    "settings.workflow.mcp.loading": "正在加载已安装的 MCP…",
+    "settings.workflow.mcp.loadError": "无法加载已安装的 MCP，已有配置已保留。",
+    "settings.workflow.mcp.retry": "重新加载 MCP",
+    "settings.workflow.mcp.installHint": "请先在插件设置中安装 MCP 插件。",
+    "settings.workflow.mcp.missing": "插件未安装或不可用",
+    "settings.workflow.mcp.configurationIncomplete": "插件配置未完成",
+    "settings.workflow.mcp.configurationUnavailable": "无法读取插件配置",
+    "settings.workflow.mcp.invalidDeclaration": "插件声明无效",
     "settings.workflow.searchAvailableMcps": "搜索可添加的 MCP",
     "settings.workflow.noAvailableMcps": "没有可添加的 MCP",
     "settings.workflow.noConfiguredMcps": "暂未配置 MCP（可选）",
@@ -638,6 +646,18 @@ export const workflowEditorTranslations = {
     "settings.workflow.removeSkill": "Remove {{name}}",
     "settings.workflow.field.mcps": "MCP",
     "settings.workflow.addMcp": "Add MCP",
+    "settings.workflow.mcp.loading": "Loading installed MCPs…",
+    "settings.workflow.mcp.loadError":
+      "Could not load installed MCPs. Existing bindings are preserved.",
+    "settings.workflow.mcp.retry": "Reload MCPs",
+    "settings.workflow.mcp.installHint":
+      "Install an MCP plugin in plugin settings first.",
+    "settings.workflow.mcp.missing": "Plugin is not installed or unavailable",
+    "settings.workflow.mcp.configurationIncomplete":
+      "Plugin configuration is incomplete",
+    "settings.workflow.mcp.configurationUnavailable":
+      "Plugin configuration could not be read",
+    "settings.workflow.mcp.invalidDeclaration": "Plugin declaration is invalid",
     "settings.workflow.searchAvailableMcps": "Search available MCPs",
     "settings.workflow.noAvailableMcps": "No available MCPs",
     "settings.workflow.noConfiguredMcps": "No MCPs configured (optional)",

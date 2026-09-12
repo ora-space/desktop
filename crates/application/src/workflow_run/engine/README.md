@@ -36,7 +36,7 @@ real Ora session.
 
 Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHandler`,
 `NodeExecutor`, `WorkflowRunCallback`, `WorkflowRunEngineRepository`, `WorkflowGraph`,
-`WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `NodeType`, `GraphError`,
+`WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `AgentMcp`, `NodeType`, `GraphError`,
 `UnknownNodeType`, `AgentSkillDeliveryProvider`, `SkillMaterializationReceipt`,
 `WorkflowRunPayload`, and the repository outcome enums including
 `BindWorkflowNodeSessionResult`.
@@ -72,3 +72,5 @@ test-only stub.
 `InvalidNode`, `UnknownNodeType`, `DanglingEdge`, `CycleDetected`, `MultipleStartNodes`, and
 `DuplicateNodeId`. An empty graph is legal; unsupported-but-known node types fail later at
 workflow start rather than at parse.
+
+Agent MCP bindings are parsed and validated by `agent_config`; absent bindings default to an empty node allowlist. Runtime availability remains a Session setup responsibility.

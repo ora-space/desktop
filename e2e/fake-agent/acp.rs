@@ -164,6 +164,7 @@ impl FakeAcpAgent {
                 },
             );
             record_acp_call(method, &session_id);
+            record_mcp_call(method, &session_id, &request.mcp_servers);
             return success(
                 NewSessionResponse::new(session_id).config_options(config_options(&model)),
             );
@@ -172,6 +173,7 @@ impl FakeAcpAgent {
             let request: LoadSessionRequest = parse_params(method, params)?;
             let session_id = request.session_id.to_string();
             record_acp_call(method, &session_id);
+            record_mcp_call(method, &session_id, &request.mcp_servers);
             if Path::new(LOAD_REFUSAL_MARKER).exists() {
                 return Err(AcpError::unknown_session(&session_id));
             }
@@ -393,4 +395,28 @@ fn success<Response: Serialize>(response: Response) -> Result<AcpCallResult, Acp
         notifications: Vec::new(),
         result,
     })
+}
+
+/// Records only server identities so integration assertions never journal MCP credentials.
+fn record_mcp_call(method: &str, session_id: &str, servers: &[McpServer]) {
+    let names: Vec<_> = servers
+        .iter()
+        .map(|server| match server {
+            McpServer::Stdio(server) => server.name.clone(),
+            McpServer::Http(server) => server.name.clone(),
+            McpServer::Sse(server) => server.name.clone(),
+            _ => panic!("unsupported fixture MCP transport"),
+        })
+        .collect();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("mcp_calls.jsonl")
+        .expect("MCP journal");
+    writeln!(
+        file,
+        "{}",
+        json!({"method": method, "sessionId": session_id, "servers": names})
+    )
+    .expect("record MCP call");
 }

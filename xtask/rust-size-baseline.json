@@ -2,13 +2,13 @@
   "modules": {
     "crates/application/src/workflow_run/engine/graph.rs": {
       "owner": "ora-application",
-      "lines": 879,
-      "split_plan": "Extract graph parsing/validation and indexed traversal into private modules, keeping accepted graph schemas and readiness rules covered by their existing tests."
+      "lines": 833,
+      "split_plan": "Extract graph parsing/validation and indexed traversal into private modules. Agent execution types now live in engine/agent_config.rs. Keep accepted graph schemas and readiness rules covered by their existing tests."
     },
     "crates/backend/src/agent_runtime.rs": {
       "owner": "ora-backend",
-      "lines": 1072,
-      "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Durable record ownership now lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
+      "lines": 1010,
+      "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Session creation now lives in agent_runtime/start.rs. Durable record ownership lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
     },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",

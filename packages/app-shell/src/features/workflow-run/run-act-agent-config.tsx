@@ -5,6 +5,7 @@ import { IconRobot } from "@tabler/icons-react";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
 import { useAgents } from "../../state/hooks/use-agents";
+import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { useSkills } from "../../state/hooks/use-skills";
 import { formatAgentExecutorLabel } from "./agent-config-display";
 import { RunBriefPopover } from "./run-brief-popover";
@@ -25,6 +26,12 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const agentCatalog = useAgentCatalog();
   const agentsQuery = useAgents();
   const skillsQuery = useSkills();
+  const pluginsQuery = useInstalledPlugins();
+  const mcpById = new Map(
+    (pluginsQuery.data ?? [])
+      .filter((plugin) => plugin.kind === "mcp")
+      .map((plugin) => [plugin.id, plugin]),
+  );
   // The workflow JSON stores role/skill by name, so resolve catalog descriptions by name.
   const agentByName = new Map(
     (agentsQuery.data ?? []).map((agent) => [agent.name, agent]),
@@ -149,14 +156,20 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
             {enabledMcps.map((mcp) => (
               <li key={mcp.mcpId}>
                 <RunBriefPopover
-                  title={mcp.mcpId}
-                  body={t("workflowRun.inspector.catalogNoDescription")}
+                  title={mcpById.get(mcp.mcpId)?.displayName ?? mcp.mcpId}
+                  body={
+                    mcpById.get(mcp.mcpId)?.description ||
+                    t("workflowRun.inspector.catalogNoDescription")
+                  }
                   openLabel={t("workflowRun.inspector.mcpOpen", {
-                    name: mcp.mcpId,
+                    name: mcpById.get(mcp.mcpId)?.displayName ?? mcp.mcpId,
                   })}
                 >
                   <span className="line-clamp-2 text-xs leading-4">
-                    {mcp.mcpId}
+                    {mcpById.get(mcp.mcpId)?.displayName ?? mcp.mcpId}
+                    <span className="block text-muted-foreground">
+                      {mcp.mcpId}
+                    </span>
                   </span>
                 </RunBriefPopover>
               </li>

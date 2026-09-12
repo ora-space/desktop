@@ -8,8 +8,8 @@ mod ports;
 mod tests;
 
 pub use engine::{
-    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill,
-    AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
+    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentMcp, AgentOutputContract,
+    AgentSkill, AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
     BindWorkflowNodeSessionResult, CancelWorkflowRunResult, EngineError, ExecutionContext,
     FileChange, GraphError, MaterializedSkillBinding, NodeExecutor, NodeRunToStart, NodeType,
     RestartWorkflowRunResult, SkillDiscoveryRoots, SkillMaterializationReceipt,

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::SessionMcpError;
+use super::{SessionMcpError, SessionMcpSelection};
 
 /// One statically valid installed MCP package version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,11 +59,23 @@ pub(crate) trait SessionMcpConfigurationSource {
 #[derive(Clone)]
 pub(crate) struct SessionMcpHost {
     plugin_host: Arc<PluginApi>,
+    pub(crate) selection: SessionMcpSelection,
 }
 
 impl SessionMcpHost {
     pub(crate) fn new(plugin_host: Arc<PluginApi>) -> Self {
-        Self { plugin_host }
+        Self {
+            plugin_host,
+            selection: SessionMcpSelection::Automatic,
+        }
+    }
+
+    /// Creates a session-local view without mutating the shared installed plugin source.
+    pub(crate) fn with_selection(&self, selection: SessionMcpSelection) -> Self {
+        Self {
+            plugin_host: self.plugin_host.clone(),
+            selection,
+        }
     }
 
     /// Translates a Session's persisted agent identity into the plugin that owns its barrier.

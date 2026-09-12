@@ -43,7 +43,10 @@ use title_acquisition::TitleAcquisition;
 
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
-use crate::session_setup::{AgentSessionBarriers, BarrierReason, LiveMcpState, SessionMcpHost};
+use crate::session_setup::{
+    AgentSessionBarriers, BarrierReason, LiveMcpState, SessionMcpHost, SessionMcpSelection,
+    SessionMcpSelectionSource,
+};
 use crate::task::resolve_workspace_cwd;
 use crate::{BackendError, ErrorClassification};
 use agent_client_protocol_schema::v1::AvailableCommand;
@@ -54,7 +57,7 @@ use agent_client_protocol_schema::v1::{
     SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
 };
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
-use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
+use ora_application::{Clock, SessionRepository};
 use ora_contracts::{
     CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionResponse,
     LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest,
@@ -65,8 +68,7 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
-    AgentRef, AuditFields, HistoryState, PluginId, Session, SessionId, SessionStatus, SessionTitle,
-    WorkspaceId,
+    AgentRef, HistoryState, PluginId, Session, SessionId, SessionStatus, SessionTitle, WorkspaceId,
 };
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::ora_debug;
@@ -157,6 +159,7 @@ pub(crate) struct AgentRuntimeManager {
 }
 
 struct ManagerInner {
+    mcp_selections: Arc<dyn SessionMcpSelectionSource>,
     pool: RepositoryPool,
     actors: RwLock<HashMap<SessionId, RuntimeActorHandle>>,
     /// Workflow sessions stay unpublished here until their durable node-run binding exists.
@@ -282,6 +285,7 @@ enum SessionVisibility {
 
 /// Groups the fixed dependencies the agent runtime is constructed from.
 pub(crate) struct AgentRuntimeSetup {
+    pub mcp_selections: Arc<dyn SessionMcpSelectionSource>,
     /// Owns the processes behind plugin-provided agents and the set of installed packages.
     pub plugin_host: Arc<PluginApi>,
     pub pool: RepositoryPool,
@@ -297,6 +301,7 @@ impl AgentRuntimeManager {
     /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
     pub(crate) fn new(setup: AgentRuntimeSetup) -> Result<Self, BackendError> {
         let AgentRuntimeSetup {
+            mcp_selections,
             plugin_host,
             pool,
             home_directory,
@@ -313,6 +318,7 @@ impl AgentRuntimeManager {
             ConnectionSupervisors::start(plugin_host, pool.clone(), home_directory, clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
+                mcp_selections,
                 pool,
                 actors: RwLock::new(HashMap::new()),
                 unpublished_workflow_sessions: RwLock::new(HashSet::new()),
@@ -335,114 +341,26 @@ impl AgentRuntimeManager {
         &self,
         request: StartSessionRequest,
     ) -> Result<StartSessionResponse, BackendError> {
-        self.start_session_with_visibility(request, SessionVisibility::Published)
-            .await
+        self.start_session_with_visibility(
+            request,
+            SessionVisibility::Published,
+            self.inner.session_mcp.clone(),
+        )
+        .await
     }
 
     /// Starts a workflow-owned session while keeping it out of ordinary list snapshots.
     pub(crate) async fn start_workflow_node_session(
         &self,
         request: StartSessionRequest,
+        selection: SessionMcpSelection,
     ) -> Result<StartSessionResponse, BackendError> {
-        self.start_session_with_visibility(request, SessionVisibility::UnpublishedWorkflow)
-            .await
-    }
-
-    /// Runs the only path allowed to create and persist a provider session.
-    async fn start_session_with_visibility(
-        &self,
-        request: StartSessionRequest,
-        visibility: SessionVisibility,
-    ) -> Result<StartSessionResponse, BackendError> {
-        let workspace_id = WorkspaceId::new(request.workspace_id);
-        let agent_ref = domain_agent_ref(request.agent_ref)?;
-        let cwd = self.workspace_cwd(&workspace_id)?;
-        let session_id = UuidSessionIdGenerator::new().generate_session_id();
-        let start::PendingProviderSession {
-            release,
-            agent_session_id,
-            list_session_supported,
-            channel,
-            available_commands,
-            config_options,
-            mcp_revision,
-        } = self
-            .create_provider_session(&session_id, &agent_ref, &cwd, request.model.as_deref())
-            .await?;
-        let mut persisted = false;
-        let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
-
-        if unpublished {
-            self.unpublished_workflow_sessions_write()?
-                .insert(session_id.clone());
-        }
-        let result = async {
-            let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
-            let now = self.inner.clock.now_timestamp_millis();
-            let session = Session::new(
-                session_id.clone(),
-                workspace_id,
-                agent_ref,
-                agent_session_id,
-                SessionStatus::Running,
-                AuditFields::new(now, now, false),
-            );
-            let mut opened = self.open_recorder(&session)?;
-            let outcome = match opened.failure.take() {
-                Some(reason) => RecordOutcome::JustFailed { reason },
-                None => opened.recorder.record_meta(&session, &cwd),
-            };
-            SqliteSessionRepository::new(self.inner.pool.clone())
-                .create_session(session.clone())
-                .map_err(|source| {
-                    BackendError::internal("failed to persist agent CLI session", source)
-                })?;
-            persisted = true;
-            let session = self.settle_record(session, outcome);
-            let title_acquisition = TitleAcquisition::awaiting_first_prompt(list_session_supported);
-            self.insert_actor(
-                session.clone(),
-                ActorSetup {
-                    cwd,
-                    connection: supervisor,
-                    channel: Some(channel),
-                    recorder: opened.recorder,
-                    handoff: HandoffDebt::Settled,
-                    title_acquisition,
-                    live_mcp: LiveMcpState::Active(mcp_revision),
-                    config_options: config_options.clone(),
-                },
-            )?;
-            Ok::<_, BackendError>(StartSessionResponse {
-                session: contract_session(session),
-                available_commands,
-                config_options,
-            })
-        }
-        .await;
-
-        match result {
-            Ok(response) => {
-                release.commit();
-                Ok(response)
-            }
-            Err(error) => {
-                if persisted {
-                    let _ = SqliteSessionRepository::new(self.inner.pool.clone())
-                        .soft_delete_session(&session_id, self.inner.clock.now_timestamp_millis());
-                }
-                let _ = ora_history::remove_session_history(
-                    &self.inner.sessions_root,
-                    session_id.as_ref(),
-                );
-                if unpublished {
-                    self.unpublished_workflow_sessions_write()?
-                        .remove(&session_id);
-                }
-                Err(error)
-            }
-        }
+        self.start_session_with_visibility(
+            request,
+            SessionVisibility::UnpublishedWorkflow,
+            self.inner.session_mcp.with_selection(selection),
+        )
+        .await
     }
 
     /// Wakes every Live Session so it re-reads the current Desired MCP revision.
@@ -626,6 +544,10 @@ impl AgentRuntimeManager {
         request: SwitchSessionAgentRequest,
     ) -> Result<SwitchSessionAgentResponse, BackendError> {
         let session = self.find_session(&request.session_id)?;
+        let session_mcp = self
+            .inner
+            .session_mcp
+            .with_selection(self.inner.mcp_selections.selection_for(&session.id)?);
         let target = domain_agent_ref(request.agent_ref)?;
         if target == session.agent_ref {
             return Err(BackendError::new(
@@ -647,7 +569,13 @@ impl AgentRuntimeManager {
             mcp_revision,
             ..
         } = self
-            .create_provider_session(&session.id, &target, &cwd, request.model.as_deref())
+            .create_provider_session(
+                &session.id,
+                &target,
+                &cwd,
+                request.model.as_deref(),
+                &session_mcp,
+            )
             .await?;
         // Only now is the move certain, so the old binding can be released. Its
         // context is not reusable afterwards: work done on the new agent would be
@@ -663,6 +591,7 @@ impl AgentRuntimeManager {
             self.insert_actor(
                 session.clone(),
                 ActorSetup {
+                    session_mcp,
                     cwd,
                     connection: supervisor,
                     channel: Some(channel),
@@ -952,6 +881,10 @@ impl AgentRuntimeManager {
         }
         let cwd = self.workspace_cwd(&session.workspace_id)?;
         let connection = self.inner.connections.for_agent(&session.agent_ref)?;
+        let session_mcp = self
+            .inner
+            .session_mcp
+            .with_selection(self.inner.mcp_selections.selection_for(&session.id)?);
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),
@@ -965,6 +898,7 @@ impl AgentRuntimeManager {
         self.insert_actor(
             session,
             ActorSetup {
+                session_mcp,
                 cwd,
                 connection,
                 channel: None,
@@ -1023,7 +957,7 @@ impl AgentRuntimeManager {
                 app_events: self.inner.app_events.clone(),
                 title_acquisition: setup.title_acquisition,
                 command_sender: commands.downgrade(),
-                session_mcp: self.inner.session_mcp.clone(),
+                session_mcp: setup.session_mcp,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
                 #[cfg(test)]
@@ -1058,6 +992,7 @@ impl AgentRuntimeManager {
 
 /// Groups the provider and persistence state needed to start one session actor.
 struct ActorSetup {
+    session_mcp: SessionMcpHost,
     cwd: PathBuf,
     connection: ConnectionSupervisor,
     channel: Option<SessionChannel>,
