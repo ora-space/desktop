@@ -1068,7 +1068,7 @@ test("applies live command and partial session-info updates outside the response
   });
 });
 
-test("keeps the latest context snapshot separate from last-turn token usage", async () => {
+test("keeps tool timing while completing context and token usage", async () => {
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
     prompt: () =>
@@ -1084,6 +1084,28 @@ test("keeps the latest context snapshot separate from last-turn token usage", as
             used: 25,
             size: 100,
             cost: { amount: 0.42, currency: "USD" },
+          },
+        },
+        {
+          type: "session_update",
+          toolTiming: { startedAt: "2026-09-12T10:00:01+08:00" },
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Inspect usage",
+            status: "in_progress",
+          },
+        },
+        {
+          type: "session_update",
+          toolTiming: {
+            startedAt: "2026-09-12T10:00:01+08:00",
+            durationMs: 2_000n,
+          },
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-1",
+            status: "completed",
           },
         },
         {
@@ -1108,6 +1130,20 @@ test("keeps the latest context snapshot separate from last-turn token usage", as
 
   await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" });
 
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0]?.items, [
+    {
+      kind: "toolCall",
+      id: "tool-1",
+      title: "Inspect usage",
+      status: "completed",
+      content: [],
+      locations: [],
+      createdAt: 42,
+      startedAt: Date.parse("2026-09-12T10:00:01+08:00"),
+      durationMs: 2_000,
+      updatedAt: 42,
+    },
+  ]);
   assert.deepEqual(store.getState().conversations["ora-1"]?.usage, {
     context: {
       status: "reported",
