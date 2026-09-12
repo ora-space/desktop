@@ -68,6 +68,7 @@ where
                 actor.settle_record(outcome);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: update.update,
+                    tool_timing: None,
                 }));
             }
             Some(SessionEvent::Permission(permission)) => {
@@ -110,6 +111,7 @@ pub(super) async fn drain_queued_prompt_events(
                 actor.settle_record(outcome);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: update.update,
+                    tool_timing: None,
                 }));
             }
             SessionEvent::Permission(permission) => {

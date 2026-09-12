@@ -22,6 +22,8 @@ import {
   type TurnArtifactCacheEntry,
 } from "./chat-link/artifact-index";
 import { ChatLinkContext } from "./chat-link/context";
+import { useElapsedDuration } from "./elapsed-clock";
+import { formatElapsedDuration } from "../../lib/format";
 
 interface MessageListProps {
   turns: ChatTurn[];
@@ -199,7 +201,9 @@ export function MessageList({
                 modelName={change.modelName}
               />
             ))}
-            {showRunning && <RunningIndicator />}
+            {showRunning && lastTurn !== undefined && (
+              <RunningIndicator startedAt={lastTurn.createdAt} />
+            )}
             <div className="h-8" />
           </div>
         </TextEditContextMenu>
@@ -258,7 +262,7 @@ const RUNNING_WORD_JITTER_MS = 618;
  * while the agent is busy. The nine-dot grid carries the motion; the rotating
  * phrase reassures that time is passing rather than that anything has stalled.
  */
-function RunningIndicator() {
+function RunningIndicator({ startedAt }: { startedAt: number }) {
   const { t } = useTranslation();
   const words = useMemo(
     () =>
@@ -291,6 +295,9 @@ function RunningIndicator() {
   }, [words]);
 
   const word = words[index % words.length] ?? words[0] ?? "";
+  const elapsed = formatElapsedDuration(
+    useElapsedDuration(startedAt, undefined),
+  );
   return (
     <div
       className="flex items-center gap-3 py-4"
@@ -309,6 +316,7 @@ function RunningIndicator() {
         className="animate-in text-sm text-muted-foreground fade-in duration-500"
       >
         {word}
+        {elapsed !== null && ` · ${t("chat.elapsedTime")} ${elapsed}`}
       </span>
     </div>
   );

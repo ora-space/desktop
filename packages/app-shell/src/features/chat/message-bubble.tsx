@@ -9,7 +9,7 @@ import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatMessage } from "@ora/chat";
 import type * as acp from "@agentclientprotocol/sdk";
-import { formatClock } from "../../lib/format";
+import { formatClock, formatElapsedDuration } from "../../lib/format";
 import { AnchorHighlight } from "./anchor-highlight";
 import { ContentBlock } from "./content-block";
 import { MarkdownDocument, MarkdownMessage } from "./markdown-message";
@@ -23,6 +23,7 @@ interface MessageBubbleProps {
   compact?: boolean;
   /** Lets an embedding surface own the highlight geometry for the whole message row. */
   showAnchorHighlight?: boolean;
+  durationMs?: number;
 }
 
 /**
@@ -91,11 +92,13 @@ export function MessageBubble({
   streaming = false,
   compact = false,
   showAnchorHighlight = true,
+  durationMs,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyMessage(message.content);
   const isUser = message.role === "user";
   const canCopy = message.content.length > 0;
+  const duration = formatElapsedDuration(durationMs);
 
   return (
     <div
@@ -124,6 +127,9 @@ export function MessageBubble({
           >
             <span className="text-xs text-muted-foreground">
               {formatClock(message.createdAt)}
+              {!isUser &&
+                duration !== null &&
+                ` · ${t("chat.totalTime")} ${duration}`}
             </span>
             <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
               {canCopy && (

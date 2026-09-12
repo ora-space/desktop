@@ -106,6 +106,7 @@ export type LoadSessionEvent =
      * client stamps them with the wall clock instead of inventing a file time.
      */
     recordedAt?: string;
+    toolTiming?: ToolCallTiming;
   }
   | { "type": "permission_request" } & SessionPermissionRequest
   | {
@@ -131,6 +132,7 @@ export type PromptSessionEvent =
   | {
     "type": "session_update";
     update: import("@agentclientprotocol/sdk").SessionUpdate;
+    toolTiming?: ToolCallTiming;
   }
   | { "type": "permission_request" } & SessionPermissionRequest
   | {
@@ -362,3 +364,8 @@ export type TokenUsageReport = {
   cachedReadTokens?: bigint;
   cachedWriteTokens?: bigint;
 };
+
+/**
+ * Timing observed by Ora for one ACP tool-call lifecycle.
+ */
+export type ToolCallTiming = { startedAt: string; durationMs?: bigint };

@@ -3,11 +3,11 @@ use crate::clock::FixedHistoryClock;
 use crate::error::HistoryError;
 use crate::path::history_path;
 use crate::reader::{HistoryIntegrity, read_session_history, read_session_history_up_to};
-use crate::record::{HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
+use crate::record::{HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta, ToolCallTiming};
 use crate::writer::{HistoryWriter, remove_session_history};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
+use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate, ToolCall, ToolCallStatus};
 use ora_domain::AgentRef;
 use pretty_assertions::assert_eq;
 use std::path::{Path, PathBuf};
@@ -28,11 +28,43 @@ fn writer(root: &Path) -> HistoryWriter<FixedHistoryClock> {
     HistoryWriter::open(root, SESSION_ID, clock()).expect("open history writer")
 }
 
+#[test]
+fn reads_v1_updates_without_tool_timing_and_round_trips_v2_timing() {
+    let old: HistoryLine = serde_json::from_str(
+        r#"{"at":"2026-08-03T14:22:31.418+08:00","seq":0,"type":"update","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Run","status":"completed","content":[],"locations":[]}}"#,
+    )
+    .expect("read v1 update");
+    let HistoryRecord::Update { tool_timing, .. } = old.record else {
+        panic!("expected update");
+    };
+    assert_eq!(tool_timing, None);
+
+    let timed = HistoryLine::new(
+        expected_timestamp(),
+        1,
+        HistoryRecord::Update {
+            update: Box::new(SessionUpdate::ToolCall(
+                ToolCall::new("t2", "Test").status(ToolCallStatus::Completed),
+            )),
+            tool_timing: Some(ToolCallTiming {
+                started_at: "2026-08-03T14:22:20+08:00".to_string(),
+                duration_ms: Some(11_418),
+            }),
+        },
+    );
+    let json = serde_json::to_string(&timed).expect("serialize v2 update");
+    let restored: HistoryLine = serde_json::from_str(&json).expect("deserialize v2 update");
+
+    assert_eq!(restored, timed);
+    assert_eq!(SCHEMA_VERSION, 2);
+}
+
 fn message(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
         update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
             ContentBlock::Text(TextContent::new(text)),
         ))),
+        tool_timing: None,
     }
 }
 

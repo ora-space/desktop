@@ -70,6 +70,7 @@ fn concurrent_completions_commit_once_and_leave_the_session_read_only() {
                 update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
                     ContentBlock::Text(TextContent::new("Final answer".to_string())),
                 ))),
+                tool_timing: None,
             },
         );
         fs::write(

@@ -59,6 +59,8 @@ export interface ChatToolCall {
   rawInput?: unknown;
   rawOutput?: unknown;
   createdAt: number;
+  startedAt?: number;
+  durationMs?: number;
   updatedAt: number;
 }
 
@@ -87,6 +89,7 @@ export interface ChatTurn {
   stopReason: acp.StopReason | null;
   error: string | null;
   createdAt: number;
+  durationMs?: number;
 }
 
 /**

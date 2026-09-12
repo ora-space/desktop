@@ -321,6 +321,7 @@ export function createChatStore(
               staged.applyUpdate(
                 event.update,
                 recordedAtMillis(event.recordedAt),
+                event.toolTiming,
               );
               batchPreview =
                 (event.update.sessionUpdate === "user_message_chunk" ||
@@ -527,6 +528,7 @@ export function createChatStore(
             ...current,
             status: "failed",
             error: message,
+            durationMs: elapsedDuration(current.createdAt, now()),
           }));
           updateConversation(set, key, (conversation) => ({
             ...conversation,
@@ -540,7 +542,11 @@ export function createChatStore(
           // Stopped mid-startup: the session exists but we never open its stream.
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
-              ? { ...current, status: "cancelled" }
+              ? {
+                  ...current,
+                  status: "cancelled",
+                  durationMs: elapsedDuration(current.createdAt, now()),
+                }
               : current,
           );
           updateConversation(set, key, (conversation) => ({
@@ -625,7 +631,13 @@ export function createChatStore(
             }
             flushPendingTextChunk();
             updateTurn(set, key, turnId, (current) =>
-              applyAgentUpdate(current, update, createId, now()),
+              applyAgentUpdate(
+                current,
+                update,
+                createId,
+                now(),
+                event.toolTiming,
+              ),
             );
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
@@ -643,6 +655,7 @@ export function createChatStore(
                       ? ("cancelled" as const)
                       : ("completed" as const),
                   stopReason: event.stopReason,
+                  durationMs: elapsedDuration(current.createdAt, now()),
                 },
                 impliedToolStatus(event.stopReason),
                 completedAt,
@@ -664,7 +677,11 @@ export function createChatStore(
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
               ? settleActiveToolCalls(
-                  { ...current, status: "cancelled" },
+                  {
+                    ...current,
+                    status: "cancelled",
+                    durationMs: elapsedDuration(current.createdAt, now()),
+                  },
                   "cancelled",
                   now(),
                 )
@@ -679,7 +696,12 @@ export function createChatStore(
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
               ? settleActiveToolCalls(
-                  { ...current, status: "failed", error: message },
+                  {
+                    ...current,
+                    status: "failed",
+                    error: message,
+                    durationMs: elapsedDuration(current.createdAt, now()),
+                  },
                   "cancelled",
                   now(),
                 )
@@ -706,7 +728,11 @@ export function createChatStore(
         updateTurn(set, key, turnId, (current) =>
           current.status === "streaming"
             ? settleActiveToolCalls(
-                { ...current, status: "completed" },
+                {
+                  ...current,
+                  status: "completed",
+                  durationMs: elapsedDuration(current.createdAt, now()),
+                },
                 "cancelled",
                 now(),
               )
@@ -784,13 +810,18 @@ class HistoryBuilder {
    * boundary is what tells them apart.
    */
   private hasOpenTurn = false;
+  private readonly recordedTurnStarts = new Map<string, number>();
 
   constructor(
     private readonly createId: () => string,
     private readonly now: () => number,
   ) {}
 
-  applyUpdate(update: acp.SessionUpdate, recordedAt?: number): void {
+  applyUpdate(
+    update: acp.SessionUpdate,
+    recordedAt?: number,
+    toolTiming?: import("@ora/contracts").ToolCallTiming,
+  ): void {
     if (update.sessionUpdate === "user_message_chunk") {
       this.appendUserChunk(update, recordedAt);
       return;
@@ -805,7 +836,13 @@ class HistoryBuilder {
     if (isDeferredConversationUpdate(update)) return;
     const turn = this.currentTurn(recordedAt);
     this.replaceLast(
-      applyAgentUpdate(turn, update, this.createId, this.timestamp(recordedAt)),
+      applyAgentUpdate(
+        turn,
+        update,
+        this.createId,
+        this.timestamp(recordedAt),
+        toolTiming,
+      ),
     );
   }
 
@@ -827,6 +864,14 @@ class HistoryBuilder {
       ...last,
       status: stopReason === "cancelled" ? "cancelled" : "completed",
       stopReason,
+      ...(recordedAt === undefined || !this.recordedTurnStarts.has(last.id)
+        ? {}
+        : {
+            durationMs: elapsedDuration(
+              this.recordedTurnStarts.get(last.id)!,
+              recordedAt,
+            ),
+          }),
     };
     this.replaceLast(
       settleActiveToolCalls(
@@ -937,6 +982,9 @@ class HistoryBuilder {
       error: null,
       createdAt,
     });
+    if (recordedAt !== undefined) {
+      this.recordedTurnStarts.set(this.turns.at(-1)!.id, recordedAt);
+    }
     this.hasOpenTurn = true;
   }
 
@@ -981,6 +1029,7 @@ function applyAgentUpdate(
   update: acp.SessionUpdate,
   createId: () => string,
   timestamp: number,
+  toolTiming?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
@@ -990,9 +1039,9 @@ function applyAgentUpdate(
     case "plan":
       return replacePlan(turn, update.entries, timestamp);
     case "tool_call":
-      return upsertToolCall(turn, update, timestamp);
+      return upsertToolCall(turn, update, timestamp, toolTiming);
     case "tool_call_update":
-      return updateToolCall(turn, update, timestamp);
+      return updateToolCall(turn, update, timestamp, toolTiming);
     default:
       return turn;
   }
@@ -1186,6 +1235,7 @@ function upsertToolCall(
   turn: ChatTurn,
   toolCall: acp.ToolCall,
   timestamp: number,
+  timing?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === toolCall.toolCallId,
@@ -1207,6 +1257,7 @@ function upsertToolCall(
         ? timestamp
         : (turn.items[toolIndex] as ChatToolCall).createdAt,
     updatedAt: timestamp,
+    ...toolTimingFields(timing),
   };
   if (toolIndex === -1) return { ...turn, items: [...turn.items, next] };
 
@@ -1220,6 +1271,7 @@ function updateToolCall(
   turn: ChatTurn,
   update: acp.ToolCallUpdate,
   timestamp: number,
+  timing?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === update.toolCallId,
@@ -1243,6 +1295,7 @@ function updateToolCall(
         : { rawOutput: update.rawOutput }),
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...toolTimingFields(timing),
     };
     return { ...turn, items: [...turn.items, tool] };
   }
@@ -1267,6 +1320,7 @@ function updateToolCall(
     ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
     ...(update.rawOutput === undefined ? {} : { rawOutput: update.rawOutput }),
     updatedAt: timestamp,
+    ...toolTimingFields(timing),
   };
   return { ...turn, items };
 }
@@ -1289,10 +1343,41 @@ function settleActiveToolCalls(
     items: turn.items.map((item) =>
       item.kind === "toolCall" &&
       (item.status === "pending" || item.status === "in_progress")
-        ? { ...item, status, updatedAt: timestamp }
+        ? {
+            ...item,
+            status,
+            updatedAt: timestamp,
+            ...(item.startedAt === undefined
+              ? {}
+              : { durationMs: elapsedDuration(item.startedAt, timestamp) }),
+          }
         : item,
     ),
   };
+}
+
+/** Converts optional transport timing without falling back to UI receipt timestamps. */
+function toolTimingFields(
+  timing: import("@ora/contracts").ToolCallTiming | undefined,
+): Pick<ChatToolCall, "startedAt" | "durationMs"> {
+  if (timing === undefined) return {};
+  const startedAt = Date.parse(timing.startedAt);
+  if (!Number.isFinite(startedAt)) return {};
+  const durationMs =
+    timing.durationMs === undefined ? undefined : Number(timing.durationMs);
+  return {
+    startedAt,
+    ...(durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+      ? {}
+      : { durationMs }),
+  };
+}
+
+/** Returns a validated non-negative duration between two epoch-millisecond boundaries. */
+function elapsedDuration(startedAt: number, finishedAt: number): number {
+  return Math.max(0, finishedAt - startedAt);
 }
 
 /**
@@ -1489,7 +1574,11 @@ export async function loadSessionConversation(
       if (configOptions) {
         staged.configOptions = configOptions;
       } else {
-        staged.applyUpdate(event.update, recordedAtMillis(event.recordedAt));
+        staged.applyUpdate(
+          event.update,
+          recordedAtMillis(event.recordedAt),
+          event.toolTiming,
+        );
       }
     } else if (event.type === "permission_request") {
       staged.addPermission(event);

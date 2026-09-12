@@ -203,7 +203,7 @@ fn collect_turns(history: &SessionHistory) -> Vec<HandoffTurn> {
     let mut current = HandoffTurn::default();
     for line in &history.lines {
         match &line.record {
-            HistoryRecord::Update { update } => absorb_update(&mut current, update),
+            HistoryRecord::Update { update, .. } => absorb_update(&mut current, update),
             HistoryRecord::TurnEnded { stop_reason } => {
                 current.stop_reason = Some(*stop_reason);
                 if !current.is_empty() {

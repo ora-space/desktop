@@ -10,6 +10,7 @@ import { MessageBubble } from "./message-bubble";
 import { ContentBlock } from "./content-block";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
 import { TurnDiffSummary } from "./turn-diff-summary";
+import { formatElapsedDuration } from "../../lib/format";
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -20,6 +21,10 @@ interface ResponseTurnProps {
 export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
   const displayItems = buildTurnDisplayItems(turn.items, turn.status);
+  const lastAssistantIndex = displayItems.findLastIndex(
+    (item) => item.kind === "message",
+  );
+  const formattedDuration = formatElapsedDuration(turn.durationMs);
   return (
     <section className="py-3" aria-label={t("chat.assistantReplied")}>
       <div className="min-w-0 space-y-2.5">
@@ -45,6 +50,9 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
                     turn.status === "streaming" &&
                     index === displayItems.length - 1
                   }
+                  durationMs={
+                    index === lastAssistantIndex ? turn.durationMs : undefined
+                  }
                 />
               );
             case "content":
@@ -52,6 +60,11 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
           }
         })}
         <TurnEnding turn={turn} />
+        {lastAssistantIndex === -1 && formattedDuration !== null && (
+          <p className="text-xs text-muted-foreground">
+            {t("chat.totalTime")} {formattedDuration}
+          </p>
+        )}
         <TurnDiffSummary turn={turn} />
       </div>
     </section>

@@ -130,6 +130,7 @@ fn a_settled_handoff_records_the_delivery_after_the_prompt_that_carried_it() {
                     update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
                         ContentBlock::Text(TextContent::new("carry on")),
                     ))),
+                    tool_timing: None,
                 },
             ),
             HistoryLine::new(
