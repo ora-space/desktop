@@ -138,6 +138,10 @@ export type PromptSessionEvent =
   | {
     "type": "completed";
     stopReason: import("@agentclientprotocol/sdk").StopReason;
+    /**
+     * Token counters attached to this prompt response, if the agent reported them.
+     */
+    tokenUsage?: TokenUsageReport;
   };
 
 /**
@@ -334,6 +338,31 @@ export type SwitchSessionAgentResponse = {
   session: Session;
   availableCommands: Array<import("@agentclientprotocol/sdk").AvailableCommand>;
   configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
+};
+
+/**
+ * Describes the accounting interval an agent declares for a token usage report.
+ *
+ * ACP does not currently define this discriminator, so reports decoded from the draft
+ * `PromptResponse.usage` field remain [`Self::Unspecified`] unless a future extension explicitly
+ * supplies stronger semantics.
+ */
+export type TokenAccountingScope = "unspecified" | "turn" | "session";
+
+/**
+ * Carries the token counters an agent attached to one completed prompt response.
+ *
+ * The required total, input, and output counters are preserved exactly as reported. Optional
+ * counters stay optional because absence means the agent did not report that category, not zero.
+ */
+export type TokenUsageReport = {
+  accountingScope: TokenAccountingScope;
+  totalTokens: bigint;
+  inputTokens: bigint;
+  outputTokens: bigint;
+  thoughtTokens?: bigint;
+  cachedReadTokens?: bigint;
+  cachedWriteTokens?: bigint;
 };
 
 /**

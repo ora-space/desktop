@@ -102,6 +102,10 @@ function loadedConversation(): SessionConversation {
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   };
 }

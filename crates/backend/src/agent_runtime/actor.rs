@@ -15,6 +15,7 @@ mod actor_history;
 mod actor_mcp;
 #[path = "title_polling.rs"]
 mod title_polling;
+mod usage;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::CancelNotification;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
@@ -422,12 +423,19 @@ impl RuntimeActor {
                     match pending.finish(response) {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
+                            let token_usage = usage::normalize_token_usage(
+                                &self.session.agent_ref,
+                                response.usage.as_ref(),
+                                response.meta.as_ref(),
+                                &usage::NoUsageExtensions,
+                            );
                             self.end_timed_turn(response.stop_reason, &tool_timings);
                             followers.finish(response.stop_reason);
                             self.maybe_start_title_acquisition(response.stop_reason);
                             if events
                                 .try_send(Ok(PromptSessionEvent::Completed {
                                     stop_reason: response.stop_reason,
+                                    token_usage,
                                 }))
                                 .is_ok()
                             {
@@ -509,6 +517,7 @@ impl RuntimeActor {
                         || events
                             .try_send(Ok(PromptSessionEvent::Completed {
                                 stop_reason: StopReason::Cancelled,
+                                token_usage: None,
                             }))
                             .is_ok();
                     if reusable && owner_notified {

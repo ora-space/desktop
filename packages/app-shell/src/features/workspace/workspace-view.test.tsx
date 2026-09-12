@@ -170,6 +170,126 @@ describe("WorkspaceView", () => {
     );
   });
 
+  it("shows reported usage in the conversation header but hides reload and waiting states", async () => {
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Usage header",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        workspaceId: "workspace-t1",
+        agentRef: AGENT_REF.opencode,
+        status: "running",
+        title: null,
+        historyState: { type: "writable" },
+      },
+    ];
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    clientHandlers.loadSession = vi.fn(async function* () {
+      yield { type: "completed" as const };
+    });
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: /Usage data is not saved|用量数据不会随历史记录保存/,
+      }),
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      chatStore.setState((current) => {
+        const conversation = current.conversations.s1;
+        if (!conversation) throw new Error("expected loaded conversation");
+        return {
+          conversations: {
+            ...current.conversations,
+            s1: {
+              ...conversation,
+              usage: {
+                context: { status: "awaiting_report" },
+                lastTurnTokens: { status: "awaiting_completion" },
+              },
+            },
+          },
+        };
+      });
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: /Waiting for the agent to report usage|正在等待 Agent 上报用量/,
+      }),
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      chatStore.setState((current) => {
+        const conversation = current.conversations.s1;
+        if (!conversation) throw new Error("expected loaded conversation");
+        return {
+          conversations: {
+            ...current.conversations,
+            s1: {
+              ...conversation,
+              usage: {
+                context: {
+                  status: "reported",
+                  snapshot: {
+                    usedTokens: 34_000,
+                    sizeTokens: 100_000,
+                    receivedAt: Date.now(),
+                  },
+                },
+                lastTurnTokens: { status: "none" },
+              },
+            },
+          },
+        };
+      });
+    });
+
+    const usageButton = screen.getByRole("button", {
+      name: /Context 34%|上下文 34%/,
+    });
+    const locationActions = screen.getByRole("group", {
+      name: /Open location|打开位置/,
+    });
+    const header = locationActions.parentElement;
+    expect(header).not.toBeNull();
+    expect(header).toContainElement(usageButton);
+    expect(
+      usageButton.compareDocumentPosition(locationActions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows the Changes button for a selected task's review panel", async () => {
     const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];

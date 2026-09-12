@@ -113,6 +113,10 @@ test("loads provider history and reconstructs turns from message boundaries", as
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -1010,6 +1014,10 @@ test("loads commands, session metadata, and structured content without creating 
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -1054,6 +1062,235 @@ test("applies live command and partial session-info updates outside the response
   assert.equal(conversation?.sessionTitle, "Plan the migration");
   assert.equal(conversation?.sessionUpdatedAt, null);
   assert.deepEqual(conversation?.turns[0]?.items, []);
+  assert.deepEqual(conversation?.usage, {
+    context: { status: "unavailable" },
+    lastTurnTokens: { status: "unavailable" },
+  });
+});
+
+test("keeps tool timing while completing context and token usage", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () =>
+      events<PromptSessionEvent>([
+        {
+          type: "session_update",
+          update: { sessionUpdate: "usage_update", used: 10, size: 100 },
+        },
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 25,
+            size: 100,
+            cost: { amount: 0.42, currency: "USD" },
+          },
+        },
+        {
+          type: "session_update",
+          toolTiming: { startedAt: "2026-09-12T10:00:01+08:00" },
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Inspect usage",
+            status: "in_progress",
+          },
+        },
+        {
+          type: "session_update",
+          toolTiming: {
+            startedAt: "2026-09-12T10:00:01+08:00",
+            durationMs: 2_000n,
+          },
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-1",
+            status: "completed",
+          },
+        },
+        {
+          type: "completed",
+          stopReason: "end_turn",
+          tokenUsage: {
+            accountingScope: "unspecified",
+            totalTokens: 50n,
+            inputTokens: 35n,
+            outputTokens: 15n,
+            cachedReadTokens: 20n,
+          },
+        },
+      ]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "local",
+    now: () => 42,
+  });
+
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" });
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0]?.items, [
+    {
+      kind: "toolCall",
+      id: "tool-1",
+      title: "Inspect usage",
+      status: "completed",
+      content: [],
+      locations: [],
+      createdAt: 42,
+      startedAt: Date.parse("2026-09-12T10:00:01+08:00"),
+      durationMs: 2_000,
+      updatedAt: 42,
+    },
+  ]);
+  assert.deepEqual(store.getState().conversations["ora-1"]?.usage, {
+    context: {
+      status: "reported",
+      snapshot: {
+        usedTokens: 25,
+        sizeTokens: 100,
+        cost: { amount: 0.42, currency: "USD" },
+        receivedAt: 42,
+      },
+    },
+    lastTurnTokens: {
+      status: "reported",
+      usage: {
+        accountingScope: "unspecified",
+        totalTokens: 50n,
+        inputTokens: 35n,
+        outputTokens: 15n,
+        cachedReadTokens: 20n,
+      },
+      receivedAt: 42,
+    },
+  });
+});
+
+test("clears an older token report when the next turn omits usage", async () => {
+  let promptCount = 0;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => {
+      promptCount += 1;
+      return events<PromptSessionEvent>(
+        promptCount === 1
+          ? [
+              {
+                type: "session_update",
+                update: { sessionUpdate: "usage_update", used: 30, size: 100 },
+              },
+              {
+                type: "completed",
+                stopReason: "end_turn",
+                tokenUsage: {
+                  accountingScope: "unspecified",
+                  totalTokens: 10n,
+                  inputTokens: 8n,
+                  outputTokens: 2n,
+                },
+              },
+            ]
+          : [{ type: "completed", stopReason: "end_turn" }],
+      );
+    },
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "local",
+    now: () => 42,
+  });
+
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "first" });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "second" });
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.usage, {
+    context: {
+      status: "reported",
+      snapshot: { usedTokens: 30, sizeTokens: 100, receivedAt: 42 },
+    },
+    lastTurnTokens: { status: "unavailable" },
+  });
+});
+
+test("drops volatile usage when a historical conversation is reloaded", async () => {
+  const client: ChatSessionClient = {
+    load: () =>
+      events<LoadSessionEvent>([
+        textEvent("user_message_chunk", "historical", "user-1"),
+        { type: "completed" },
+      ]),
+    prompt: () =>
+      events<PromptSessionEvent>([
+        {
+          type: "session_update",
+          update: { sessionUpdate: "usage_update", used: 30, size: 100 },
+        },
+        {
+          type: "completed",
+          stopReason: "end_turn",
+          tokenUsage: {
+            accountingScope: "unspecified",
+            totalTokens: 10n,
+            inputTokens: 8n,
+            outputTokens: 2n,
+          },
+        },
+      ]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "local",
+    now: () => 42,
+  });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "live" });
+
+  await store.getState().loadSession("ora-1");
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.usage, {
+    context: { status: "needs_interaction" },
+    lastTurnTokens: { status: "none" },
+  });
+});
+
+test("clears all reported usage when the answering agent changes", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () =>
+      events<PromptSessionEvent>([
+        {
+          type: "session_update",
+          update: { sessionUpdate: "usage_update", used: 30, size: 100 },
+        },
+        {
+          type: "completed",
+          stopReason: "end_turn",
+          tokenUsage: {
+            accountingScope: "unspecified",
+            totalTokens: 10n,
+            inputTokens: 8n,
+            outputTokens: 2n,
+          },
+        },
+      ]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "local",
+    now: () => 42,
+  });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" });
+
+  store.getState().adoptSwitchedAgent("ora-1", []);
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.usage, {
+    context: { status: "awaiting_report" },
+    lastTurnTokens: { status: "awaiting_completion" },
+  });
 });
 
 test("sends structured image prompts", async () => {
@@ -1571,6 +1808,10 @@ test("rolls back staged load updates when replay fails before completion", async
         isLoading: false,
         isResponding: false,
         pendingPermissions: [],
+        usage: {
+          context: { status: "hidden" },
+          lastTurnTokens: { status: "none" },
+        },
         error: null,
       },
     },
@@ -1592,6 +1833,10 @@ test("rolls back staged load updates when replay fails before completion", async
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: "load failed",
   });
 });
@@ -1640,6 +1885,10 @@ test("adopts the agent's answer to a model selection over the requested value", 
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -1676,6 +1925,10 @@ test("reports an unreachable model selection instead of silently keeping the old
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: "session is gone",
   });
 });

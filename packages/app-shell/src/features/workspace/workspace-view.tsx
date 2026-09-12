@@ -52,6 +52,10 @@ import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
 import { SessionHistoryBanner } from "../chat/session-history-banner";
+import {
+  SessionUsageIndicator,
+  shouldShowSessionUsage,
+} from "../chat/session-usage-surface";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
@@ -642,6 +646,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
+          {conversation && shouldShowSessionUsage(conversation.usage) && (
+            <SessionUsageIndicator usage={conversation.usage} />
+          )}
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
           <SurfaceLauncher />
           <WindowControls />

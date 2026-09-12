@@ -2,6 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import type {
   SessionHistoryNotice,
   SessionPermissionRequest,
+  TokenUsageReport,
 } from "@ora/contracts";
 
 /** Identifies who produced a rendered chat message. */
@@ -106,6 +107,35 @@ export interface ChatModelChange {
   createdAt: number;
 }
 
+/** One non-persisted context snapshot reported by the active agent. */
+export interface ContextUsageSnapshot {
+  usedTokens: number;
+  sizeTokens: number;
+  cost?: acp.Cost;
+  receivedAt: number;
+}
+
+/** Models whether Ora can currently show an agent-authored context snapshot. */
+export type ContextUsageState =
+  | { status: "hidden" }
+  | { status: "needs_interaction" }
+  | { status: "awaiting_report" }
+  | { status: "unavailable" }
+  | { status: "reported"; snapshot: ContextUsageSnapshot };
+
+/** Models the most recently completed prompt's optional draft token report. */
+export type LastTurnTokenState =
+  | { status: "none" }
+  | { status: "awaiting_completion" }
+  | { status: "unavailable" }
+  | { status: "reported"; usage: TokenUsageReport; receivedAt: number };
+
+/** Owns all volatile usage data for one loaded conversation. */
+export interface SessionUsage {
+  context: ContextUsageState;
+  lastTurnTokens: LastTurnTokenState;
+}
+
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
   /**
@@ -128,5 +158,7 @@ export interface SessionConversation {
   isLoading: boolean;
   isResponding: boolean;
   pendingPermissions: SessionPermissionRequest[];
+  /** Volatile agent telemetry; intentionally absent from Ora's session history. */
+  usage: SessionUsage;
   error: string | null;
 }
