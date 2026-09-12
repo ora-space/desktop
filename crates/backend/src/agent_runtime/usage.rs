@@ -20,14 +20,24 @@ pub(super) struct UsageSupplement {
 /// Implementations are expected to recognize a documented, namespaced `_meta` shape for a known
 /// agent version. Unknown metadata must produce an empty supplement.
 pub(super) trait UsageExtensionDecoder {
-    fn decode(&self, agent_ref: &AgentRef, meta: Option<&Meta>) -> UsageSupplement;
+    fn decode(
+        &self,
+        agent_ref: &AgentRef,
+        usage_meta: Option<&Meta>,
+        response_meta: Option<&Meta>,
+    ) -> UsageSupplement;
 }
 
 /// Leaves private agent metadata untouched until Ora supports a documented extension contract.
 pub(super) struct NoUsageExtensions;
 
 impl UsageExtensionDecoder for NoUsageExtensions {
-    fn decode(&self, _agent_ref: &AgentRef, _meta: Option<&Meta>) -> UsageSupplement {
+    fn decode(
+        &self,
+        _agent_ref: &AgentRef,
+        _usage_meta: Option<&Meta>,
+        _response_meta: Option<&Meta>,
+    ) -> UsageSupplement {
         UsageSupplement::default()
     }
 }
@@ -40,7 +50,7 @@ pub(super) fn normalize_token_usage<D: UsageExtensionDecoder>(
     decoder: &D,
 ) -> Option<TokenUsageReport> {
     let usage = usage?;
-    let supplement = decoder.decode(agent_ref, meta);
+    let supplement = decoder.decode(agent_ref, usage.meta.as_ref(), meta);
     Some(TokenUsageReport {
         accounting_scope: supplement
             .accounting_scope
