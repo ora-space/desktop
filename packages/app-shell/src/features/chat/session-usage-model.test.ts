@@ -27,7 +27,7 @@ describe("session usage presentation model", () => {
     expect(contextUsagePercent(0, 0)).toBe(0);
   });
 
-  it("does not reserve context-bar space for a fresh empty session", () => {
+  it("only exposes the header entry after usage is reported or unavailable", () => {
     expect(
       shouldShowSessionUsage({
         context: { status: "hidden" },
@@ -38,6 +38,47 @@ describe("session usage presentation model", () => {
       shouldShowSessionUsage({
         context: { status: "needs_interaction" },
         lastTurnTokens: { status: "none" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSessionUsage({
+        context: { status: "awaiting_report" },
+        lastTurnTokens: { status: "awaiting_completion" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSessionUsage({
+        context: {
+          status: "reported",
+          snapshot: {
+            usedTokens: 34,
+            sizeTokens: 100,
+            receivedAt: 1,
+          },
+        },
+        lastTurnTokens: { status: "none" },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSessionUsage({
+        context: { status: "unavailable" },
+        lastTurnTokens: { status: "none" },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSessionUsage({
+        context: { status: "hidden" },
+        lastTurnTokens: {
+          status: "reported",
+          usage: report(),
+          receivedAt: 1,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSessionUsage({
+        context: { status: "hidden" },
+        lastTurnTokens: { status: "unavailable" },
       }),
     ).toBe(true);
   });

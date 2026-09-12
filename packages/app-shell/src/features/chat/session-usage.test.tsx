@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SessionUsage } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
@@ -22,32 +22,7 @@ function renderUsage(usage: SessionUsage) {
 }
 
 describe("SessionUsageIndicator", () => {
-  it("explains why a reloaded historical session has no usage", async () => {
-    const { user } = renderUsage({
-      context: { status: "needs_interaction" },
-      lastTurnTokens: { status: "none" },
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /not saved with conversation history/i,
-      }),
-    );
-
-    expect(
-      screen.getByRole("heading", { name: "Current context usage" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Send a message and, if the current agent supports ACP/i,
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Previous-turn token usage" }),
-    ).toBeInTheDocument();
-  });
-
-  it("shows raw counters, an exact stack, and hover-only relationship details", async () => {
+  it("shows the context percentage, report ages, raw counters, and exact stack", async () => {
     const { user } = renderUsage({
       context: {
         status: "reported",
@@ -73,7 +48,13 @@ describe("SessionUsageIndicator", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: /Context 34%/i }));
+    const trigger = screen.getByRole("button", { name: /Context 34%/i });
+    expect(trigger).toHaveTextContent("34%");
+    expect(trigger).not.toHaveTextContent(/updated/i);
+    await user.click(trigger);
+
+    expect(screen.getAllByText("Updated just now")).toHaveLength(2);
+    expect(screen.queryByText("Current session cost")).not.toBeInTheDocument();
 
     const tokenSection = screen.getByRole("region", {
       name: "Previous-turn token usage",
@@ -88,23 +69,19 @@ describe("SessionUsageIndicator", () => {
     ).toBeInTheDocument();
     expect(within(tokenSection).getByText("Cache write")).toBeInTheDocument();
 
-    const info = within(tokenSection).getByRole("button", {
-      name: /token data attached to the previous response/i,
+    const info = screen.getByRole("button", {
+      name: "About usage statistics",
     });
-    fireEvent.click(info);
-    expect(
-      screen.queryByText(/A missing field means unreported, not zero/i),
-    ).not.toBeInTheDocument();
-
     await user.hover(info);
     expect(
-      await screen.findByText(/A missing field means unreported, not zero/i),
+      await screen.findByText(/Usage statistics are for reference only/i),
     ).toBeInTheDocument();
     expect(
-      within(tokenSection).queryByText(
-        /A missing field means unreported, not zero/i,
-      ),
-    ).not.toBeInTheDocument();
+      screen.getByText(/depend on the agent's implementation/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "About usage statistics" }),
+    ).toHaveLength(1);
   });
 
   it("hides a misleading stack when categories overlap", async () => {
@@ -225,26 +202,5 @@ describe("SessionUsageIndicator", () => {
         .getByRole("button", { name: /Context 100% · 120 \/ 100/i })
         .querySelector(".text-destructive"),
     ).toBeInTheDocument();
-  });
-
-  it("keeps global usage guidance in a hover-only tooltip", async () => {
-    const { user } = renderUsage({
-      context: { status: "unavailable" },
-      lastTurnTokens: { status: "unavailable" },
-    });
-    const help = screen.getByRole("button", { name: "About usage statistics" });
-
-    await user.hover(help);
-    expect(
-      await screen.findByText(/Usage statistics are for reference only/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/independent statistics and are not expected to match/i),
-    ).toBeInTheDocument();
-
-    fireEvent.click(help);
-    expect(
-      screen.queryByRole("heading", { name: "Current context usage" }),
-    ).not.toBeInTheDocument();
   });
 });
