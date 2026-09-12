@@ -13,11 +13,9 @@ use super::*;
 mod actor_history;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
-#[path = "usage.rs"]
-mod usage;
-use usage::{NoUsageExtensions, normalize_token_usage};
 #[path = "title_polling.rs"]
 mod title_polling;
+mod usage;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::CancelNotification;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
@@ -425,11 +423,11 @@ impl RuntimeActor {
                     match pending.finish(response) {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-                            let token_usage = normalize_token_usage(
+                            let token_usage = usage::normalize_token_usage(
                                 &self.session.agent_ref,
                                 response.usage.as_ref(),
                                 response.meta.as_ref(),
-                                &NoUsageExtensions,
+                                &usage::NoUsageExtensions,
                             );
                             self.end_timed_turn(response.stop_reason, &tool_timings);
                             followers.finish(response.stop_reason);
