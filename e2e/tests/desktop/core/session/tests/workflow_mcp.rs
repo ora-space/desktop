@@ -6,7 +6,7 @@ use super::{
 };
 use crate::setup::DesktopTestSetup;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use ora_backend::Backend;
+use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -31,7 +31,14 @@ fn install_mcp(home: &Path, name: &str) -> Result<PathBuf, std::io::Error> {
             "resolver = 1\nidentifier = \"{name}\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"MCP fixture\"\n"
         ),
     )?;
-    fs::write(root.join("assets").join("server"), "fixture")?;
+    let command = root.join("assets").join("server");
+    fs::write(&command, "#!/bin/sh\n")?;
+    // Unix discovery refuses a stdio command without an executable mode bit, and CI runs there.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o755))?;
+    }
     fs::write(root.join("assets").join("config.json"), json!({"schemaVersion": 1, "transport": {"type": "stdio", "command": "assets/server", "args": [], "env": {}}}).to_string())?;
     Ok(root)
 }
@@ -158,7 +165,39 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         let updated = first.with_file_name("1.0.1");
         fs::rename(&first, &updated)?;
         backend.plugins().scan(ScanPluginsRequest {}).await?;
-        follow_up(&backend, left).await?;
+        // The scan wakes the live actor into an MCP refresh that holds the session exclusively;
+        // a prompt reaching it mid-refresh is answered with SessionBusy while the parked node
+        // rolls back to Pending. Waiting for the refresh's own journal entry closes the wide
+        // window, and a bounded retry settles the instant where the refresh response and the
+        // queued prompt are ready together inside the actor's select.
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while !mcp_calls(&package_root).is_ok_and(|calls| {
+                calls.iter().any(|call| {
+                    call["method"] == "session/load"
+                        && call["sessionId"] == rebuilt_provider
+                        && call["servers"] == json!(["official/first"])
+                })
+            }) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        for attempt in 0..5 {
+            match follow_up(&backend, left).await {
+                Ok(()) => break,
+                Err(error)
+                    if attempt < 4
+                        && error
+                            .downcast_ref::<BackendError>()
+                            .is_some_and(|error| {
+                                matches!(error.public_error(), PublicError::SessionBusy(_))
+                            }) =>
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
         parked_nodes(&backend, &run.id).await?;
         let left_provider = rebuilt_provider;
         assert!(mcp_calls(&package_root)?.iter().any(|call| call["method"] == "session/load" && call["sessionId"] == left_provider && call["servers"] == json!(["official/first"])));
