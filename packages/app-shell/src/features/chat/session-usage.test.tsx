@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SessionUsage } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
@@ -47,7 +47,7 @@ describe("SessionUsageIndicator", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows raw counters, an exact stack, and click-accessible relationship details", async () => {
+  it("shows raw counters, an exact stack, and hover-only relationship details", async () => {
     const { user } = renderUsage({
       context: {
         status: "reported",
@@ -88,16 +88,23 @@ describe("SessionUsageIndicator", () => {
     ).toBeInTheDocument();
     expect(within(tokenSection).getByText("Cache write")).toBeInTheDocument();
 
-    await user.click(
-      within(tokenSection).getByRole("button", {
-        name: /token data attached to the previous response/i,
-      }),
-    );
+    const info = within(tokenSection).getByRole("button", {
+      name: /token data attached to the previous response/i,
+    });
+    fireEvent.click(info);
     expect(
-      within(tokenSection).getByText(
+      screen.queryByText(/A missing field means unreported, not zero/i),
+    ).not.toBeInTheDocument();
+
+    await user.hover(info);
+    expect(
+      await screen.findByText(/A missing field means unreported, not zero/i),
+    ).toBeInTheDocument();
+    expect(
+      within(tokenSection).queryByText(
         /A missing field means unreported, not zero/i,
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it("hides a misleading stack when categories overlap", async () => {
@@ -220,7 +227,7 @@ describe("SessionUsageIndicator", () => {
     ).toBeInTheDocument();
   });
 
-  it("exposes the global reliability disclaimer on hover and click", async () => {
+  it("keeps global usage guidance in a hover-only tooltip", async () => {
     const { user } = renderUsage({
       context: { status: "unavailable" },
       lastTurnTokens: { status: "unavailable" },
@@ -231,9 +238,13 @@ describe("SessionUsageIndicator", () => {
     expect(
       await screen.findByText(/Usage statistics are for reference only/i),
     ).toBeInTheDocument();
-    await user.click(help);
     expect(
-      screen.getByRole("heading", { name: "Current context usage" }),
+      screen.getByText(/independent statistics and are not expected to match/i),
     ).toBeInTheDocument();
+
+    fireEvent.click(help);
+    expect(
+      screen.queryByRole("heading", { name: "Current context usage" }),
+    ).not.toBeInTheDocument();
   });
 });
