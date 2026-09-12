@@ -1,4 +1,8 @@
+mod create;
+mod delete;
+mod entry_dest;
 mod error;
+mod relocate;
 mod search;
 mod watch;
 mod workspace;

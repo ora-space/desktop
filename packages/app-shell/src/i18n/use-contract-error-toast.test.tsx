@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { RemoteContractError } from "@ora/contracts";
 import { toast } from "@ora/ui";
 import { expect, it, vi } from "vitest";
@@ -56,8 +56,11 @@ it("downloads logs from an internal-error toast action", async () => {
   if (action === null || typeof action !== "object" || !("onClick" in action)) {
     throw new Error("diagnostic toast action is missing");
   }
-  action.onClick({} as Parameters<typeof action.onClick>[0]);
+  // The action toggles the shared hook's download state, so React must own the update.
+  await act(async () => {
+    action.onClick({} as Parameters<typeof action.onClick>[0]);
+  });
 
-  await waitFor(() => expect(downloadToday).toHaveBeenCalledOnce());
+  expect(downloadToday).toHaveBeenCalledOnce();
   expect(successToast).toHaveBeenCalledWith("今日日志已下载。");
 });

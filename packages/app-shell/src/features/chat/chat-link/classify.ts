@@ -6,7 +6,12 @@ import {
   stripTaskCwdPrefix,
 } from "../../../lib/workspace-path";
 import type { SessionArtifactIndex } from "./artifact-index";
-import { isPathLikeToken, parseChatHref, parsePathCandidate } from "./parse";
+import {
+  isLikelyFileArtifactPath,
+  isPathLikeToken,
+  parseChatHref,
+  parsePathCandidate,
+} from "./parse";
 
 export type ChatLinkClassification =
   | { kind: "none" }
@@ -295,6 +300,16 @@ function classifyFileCandidate(
 
   if (!hrefMissOpensFiles) return { kind: "none" };
   const explicitDirectory = /[\\/]$/.test(path);
+  // Bare names such as `packages` are not files; guessing Files here opens a
+  // missing-path viewer for tokens the workspace cannot read.
+  if (
+    !explicitDirectory &&
+    !isLikelyFileArtifactPath(path) &&
+    !path.includes("/") &&
+    !path.includes("\\")
+  ) {
+    return { kind: "none" };
+  }
   return navigationClassification(
     explicitDirectory ? "directory" : "files",
     path,

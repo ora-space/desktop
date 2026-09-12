@@ -120,6 +120,11 @@ export const settingsTranslations = {
       "日志级别更新失败，已恢复为上次生效的设置。",
     "settings.developer.logLevelVolumeWarning":
       "Trace 和 Debug 会显著增加日志量，建议仅在诊断问题时临时使用。",
+    "settings.developer.diagnosticLogs": "诊断日志",
+    "settings.developer.diagnosticLogsDescription":
+      "将当前 Ora 进程今日的诊断日志保存到你选择的位置，便于排查问题。",
+    "settings.developer.downloadLogs": "下载日志",
+    "settings.developer.downloadLogsInProgress": "正在下载…",
     "settings.privacy.clearHistory": "清除会话历史",
     "settings.privacy.clearHistoryDescription":
       "清除当前运行期内存中的所有 Agent 对话，不会删除项目和工作树。",
@@ -249,6 +254,11 @@ export const settingsTranslations = {
       "The log level update failed. The last effective setting has been restored.",
     "settings.developer.logLevelVolumeWarning":
       "Trace and Debug can produce substantially more logs. Use them temporarily while diagnosing a problem.",
+    "settings.developer.diagnosticLogs": "Diagnostic logs",
+    "settings.developer.diagnosticLogsDescription":
+      "Save today's diagnostic log from the current Ora process to a location you choose for troubleshooting.",
+    "settings.developer.downloadLogs": "Download logs",
+    "settings.developer.downloadLogsInProgress": "Downloading…",
     "settings.privacy.clearHistory": "Clear conversation history",
     "settings.privacy.clearHistoryDescription":
       "Clear all Agent conversations held in memory for this runtime without removing projects or worktrees.",

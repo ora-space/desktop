@@ -117,7 +117,7 @@ export function RunTheaterActCard({
   // Keep the session dock available during HITL so readers can inspect prior
   // node messages before answering a permission or clarify gate.
   // Only Agent nodes own sessions. Giving control nodes a dock produces a misleading
-  // "Agent is processing" placeholder because those nodes can never receive a session id.
+  // session placeholder because those nodes can never receive a session id.
   const canUseConversation =
     data.kind === "agent" && !compact && conversationEnabled;
   const isConversationOpen = conversationOpen && canUseConversation;
@@ -381,7 +381,11 @@ export function RunTheaterActCard({
               />
             ) : (
               <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-                {t("workflowRun.conversation.waiting")}
+                {t(
+                  isNodeWorking(state.status)
+                    ? "workflowRun.conversation.waiting"
+                    : "workflowRun.conversation.idle",
+                )}
               </div>
             )}
           </div>

@@ -21,6 +21,23 @@ export const filesTranslations = {
     "files.selectLine": "选择第 {{line}} 行",
     "files.quoteLineToChat": "引用第 {{line}} 行到 AI 对话",
     "files.lineSelectionNeedsChat": "请先打开一个对话，再把选区加入提示词",
+    "files.newFile": "新建文件",
+    "files.newFolder": "新建文件夹",
+    "files.copyPath": "复制路径",
+    "files.copyRelativePath": "复制相对路径",
+    "files.revealInFileManager": "在资源管理器中显示",
+    "files.invalidEntryName": "名称不能包含路径分隔符，也不能是 . 或 ..",
+    "files.cut": "剪切",
+    "files.copy": "复制",
+    "files.paste": "粘贴",
+    "files.rename": "重命名",
+    "files.pasteIntoSelf": "不能粘贴到自身或其子文件夹中。",
+    "files.deleteTitle": "删除 {{name}}？",
+    "files.deleteFileDescription": "将永久删除该文件，此操作无法撤销。",
+    "files.deleteFolderDescription":
+      "将永久删除该文件夹及其全部内容，此操作无法撤销。",
+    "files.deleting": "正在删除…",
+    "errors.file_system_path_already_exists": "该路径已存在。",
   },
   "en-US": {
     "errors.file_system_path_not_found": "The selected path was not found.",
@@ -46,5 +63,24 @@ export const filesTranslations = {
     "files.quoteLineToChat": "Quote line {{line}} to AI chat",
     "files.lineSelectionNeedsChat":
       "Open a chat first, then add the selection to the prompt",
+    "files.newFile": "New File",
+    "files.newFolder": "New Folder",
+    "files.copyPath": "Copy Path",
+    "files.copyRelativePath": "Copy Relative Path",
+    "files.revealInFileManager": "Reveal in File Manager",
+    "files.invalidEntryName":
+      "The name cannot include path separators or be . or ..",
+    "files.cut": "Cut",
+    "files.copy": "Copy",
+    "files.paste": "Paste",
+    "files.rename": "Rename",
+    "files.pasteIntoSelf": "Can't paste into the same folder or a child of it.",
+    "files.deleteTitle": "Delete {{name}}?",
+    "files.deleteFileDescription":
+      "This file will be permanently deleted. This cannot be undone.",
+    "files.deleteFolderDescription":
+      "This folder and everything in it will be permanently deleted. This cannot be undone.",
+    "files.deleting": "Deleting…",
+    "errors.file_system_path_already_exists": "That path already exists.",
   },
 } as const;

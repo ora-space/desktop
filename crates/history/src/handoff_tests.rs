@@ -68,6 +68,7 @@ fn user(text: &str) -> HistoryRecord {
         update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
             ContentBlock::Text(TextContent::new(text)),
         ))),
+        tool_timing: None,
     }
 }
 
@@ -76,6 +77,7 @@ fn assistant(text: &str) -> HistoryRecord {
         update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
             ContentBlock::Text(TextContent::new(text)),
         ))),
+        tool_timing: None,
     }
 }
 
@@ -84,6 +86,7 @@ fn thought(text: &str) -> HistoryRecord {
         update: Box::new(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
             ContentBlock::Text(TextContent::new(text)),
         ))),
+        tool_timing: None,
     }
 }
 
@@ -92,6 +95,7 @@ fn tool(title: &str, status: ToolCallStatus) -> HistoryRecord {
         update: Box::new(SessionUpdate::ToolCall(
             ToolCall::new("t1", title).status(status),
         )),
+        tool_timing: None,
     }
 }
 

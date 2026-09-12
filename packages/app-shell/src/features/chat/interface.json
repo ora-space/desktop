@@ -25,6 +25,10 @@
       "exports": ["SessionHistoryBanner"],
       "purpose": "Workspace composes chat-owned history status above the conversation."
     },
+    "./session-usage-surface": {
+      "exports": ["SessionUsageIndicator", "shouldShowSessionUsage"],
+      "purpose": "Workspace composes chat-owned volatile usage presentation in the conversation header."
+    },
     "./turn-diff-files": {
       "exports": ["displayPath"],
       "purpose": "Files and workflow activity normalize displayed ACP worktree paths consistently."

@@ -8,8 +8,12 @@ import type { ChatTurn } from "@ora/chat";
 import { ActivityPhase } from "./activity-phase";
 import { MessageBubble } from "./message-bubble";
 import { ContentBlock } from "./content-block";
-import { buildTurnDisplayItems } from "./turn-item-grouping";
+import {
+  buildTurnDisplayItems,
+  type DisplayTurnItem,
+} from "./turn-item-grouping";
 import { TurnDiffSummary } from "./turn-diff-summary";
+import { formatElapsedDuration } from "../../lib/format";
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -20,46 +24,92 @@ interface ResponseTurnProps {
 export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
   const displayItems = buildTurnDisplayItems(turn.items, turn.status);
+  const lastAssistantIndex = displayItems.findLastIndex(
+    (item) => item.kind === "message",
+  );
+  const formattedDuration = formatElapsedDuration(turn.durationMs);
   return (
     <section className="py-3" aria-label={t("chat.assistantReplied")}>
       <div className="min-w-0 space-y-2.5">
-        {displayItems.map((item, index) => {
-          switch (item.kind) {
-            case "activityPhase":
-              return (
-                <ActivityPhase
-                  key={item.id}
-                  phase={item}
-                  turnStatus={turn.status}
-                  isLatestActivity={index === displayItems.length - 1}
-                />
-              );
-            case "message":
-              return (
-                <MessageBubble
-                  key={item.id}
-                  message={item}
-                  userName={userName}
-                  embeddedAssistant
-                  streaming={
-                    turn.status === "streaming" &&
-                    index === displayItems.length - 1
-                  }
-                />
-              );
-            case "content":
-              return <ContentBlock key={item.id} content={item.content} />;
-          }
-        })}
+        {displayItems.map((item, index) => (
+          <DisplayTurnItemView
+            key={item.id}
+            item={item}
+            turn={turn}
+            userName={userName}
+            displayIndex={index}
+            displayCount={displayItems.length}
+            durationMs={
+              index === lastAssistantIndex ? turn.durationMs : undefined
+            }
+          />
+        ))}
         <TurnEnding turn={turn} />
+        {lastAssistantIndex === -1 && formattedDuration !== null && (
+          <TurnTotalDuration durationMs={turn.durationMs} />
+        )}
         <TurnDiffSummary turn={turn} />
       </div>
     </section>
   );
 }
 
+/** Renders one grouped response block so the thread list can window it independently. */
+export function DisplayTurnItemView({
+  item,
+  turn,
+  userName,
+  displayIndex,
+  displayCount,
+  durationMs,
+}: {
+  item: DisplayTurnItem;
+  turn: ChatTurn;
+  userName: string;
+  displayIndex: number;
+  displayCount: number;
+  durationMs?: number;
+}) {
+  switch (item.kind) {
+    case "activityPhase":
+      return (
+        <ActivityPhase
+          phase={item}
+          turnStatus={turn.status}
+          isLatestActivity={displayIndex === displayCount - 1}
+        />
+      );
+    case "message":
+      return (
+        <MessageBubble
+          message={item}
+          userName={userName}
+          embeddedAssistant
+          streaming={
+            turn.status === "streaming" && displayIndex === displayCount - 1
+          }
+          durationMs={durationMs}
+        />
+      );
+    case "content":
+      return <ContentBlock content={item.content} />;
+  }
+}
+
+/** Shows a completed turn's duration when it has no assistant text to carry the timing label. */
+export function TurnTotalDuration({ durationMs }: { durationMs?: number }) {
+  const { t } = useTranslation();
+  const formattedDuration = formatElapsedDuration(durationMs);
+  if (formattedDuration === null) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {t("chat.totalTime")} {formattedDuration}
+    </p>
+  );
+}
+
 /** Explains non-standard turn endings without treating them as transport failures. */
-function TurnEnding({ turn }: { turn: ChatTurn }) {
+export function TurnEnding({ turn }: { turn: ChatTurn }) {
   const { t } = useTranslation();
   if (turn.status === "cancelled") {
     return (

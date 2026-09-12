@@ -17,6 +17,14 @@ import type {
   SessionConversation,
 } from "./types.ts";
 import { currentModel } from "./model-option.ts";
+import {
+  applyContextUsageUpdate,
+  beginUsageAfterAgentSwitch,
+  beginUsageTurn,
+  completeUsageTurn,
+  createHiddenSessionUsage,
+  createReloadedSessionUsage,
+} from "./usage.ts";
 
 export type {
   ChatContent,
@@ -30,7 +38,11 @@ export type {
   ChatTurn,
   ChatTurnItem,
   ChatTurnStatus,
+  ContextUsageSnapshot,
+  ContextUsageState,
+  LastTurnTokenState,
   SessionConversation,
+  SessionUsage,
 } from "./types.ts";
 
 export interface SendMessageRequest {
@@ -146,6 +158,7 @@ const EMPTY_CONVERSATION: SessionConversation = {
   isLoading: false,
   isResponding: false,
   pendingPermissions: [],
+  usage: createHiddenSessionUsage(),
   error: null,
 };
 
@@ -198,8 +211,8 @@ export function createChatStore(
     },
 
     adoptSwitchedAgent: (oraSessionId, configOptions) => {
-      updateConversation(set, oraSessionId, (conversation) =>
-        withConfigOptions(
+      updateConversation(set, oraSessionId, (conversation) => ({
+        ...withConfigOptions(
           conversation,
           configOptions,
           createId,
@@ -209,7 +222,8 @@ export function createChatStore(
           // than after the exchange it introduced.
           Math.max(conversation.turns.length - 1, 0),
         ),
-      );
+        usage: beginUsageAfterAgentSwitch(),
+      }));
     },
 
     setSessionConfig: async (oraSessionId, configId, value) => {
@@ -245,6 +259,9 @@ export function createChatStore(
     loadSession: async (oraSessionId) => {
       if (operations.has(oraSessionId)) return;
       const previous = get().conversations[oraSessionId] ?? EMPTY_CONVERSATION;
+      const reloadedUsage = createReloadedSessionUsage(
+        previous.turns.length > 0,
+      );
       const controller = new AbortController();
       const staged = new HistoryBuilder(createId, now);
       let completed = false;
@@ -284,6 +301,7 @@ export function createChatStore(
       updateConversation(set, oraSessionId, () => ({
         ...previous,
         turns: [],
+        usage: reloadedUsage,
         isLoading: true,
         error: null,
       }));
@@ -303,6 +321,7 @@ export function createChatStore(
               staged.applyUpdate(
                 event.update,
                 recordedAtMillis(event.recordedAt),
+                event.toolTiming,
               );
               batchPreview =
                 (event.update.sessionUpdate === "user_message_chunk" ||
@@ -348,6 +367,7 @@ export function createChatStore(
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
           ...previous,
+          usage: reloadedUsage,
           error: isAbortError(error) ? previous.error : errorMessage(error),
         }));
         if (!isAbortError(error)) throw error;
@@ -405,6 +425,7 @@ export function createChatStore(
       operations.set(key, controller);
       let pendingTextChunk: BufferedTextChunk | null = null;
       let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      let usageCompleted = false;
 
       /** Flushes one buffered text batch into the live turn before a boundary update. */
       const flushPendingTextChunk = () => {
@@ -507,6 +528,7 @@ export function createChatStore(
             ...current,
             status: "failed",
             error: message,
+            durationMs: elapsedDuration(current.createdAt, now()),
           }));
           updateConversation(set, key, (conversation) => ({
             ...conversation,
@@ -520,7 +542,11 @@ export function createChatStore(
           // Stopped mid-startup: the session exists but we never open its stream.
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
-              ? { ...current, status: "cancelled" }
+              ? {
+                  ...current,
+                  status: "cancelled",
+                  durationMs: elapsedDuration(current.createdAt, now()),
+                }
               : current,
           );
           updateConversation(set, key, (conversation) => ({
@@ -542,6 +568,11 @@ export function createChatStore(
         }));
       }
 
+      updateConversation(set, key, (conversation) => ({
+        ...conversation,
+        usage: beginUsageTurn(conversation.usage),
+      }));
+
       try {
         for await (const event of promptWithReattach(
           client,
@@ -556,6 +587,17 @@ export function createChatStore(
             // would only duplicate it; every other update belongs to this turn.
             const update = event.update;
             if (update.sessionUpdate === "user_message_chunk") continue;
+            if (update.sessionUpdate === "usage_update") {
+              updateConversation(set, key, (conversation) => ({
+                ...conversation,
+                usage: applyContextUsageUpdate(
+                  conversation.usage,
+                  update,
+                  now(),
+                ),
+              }));
+              continue;
+            }
             // An agent may change its own configuration mid-turn; that describes
             // the session, so it never reaches the turn accumulator.
             const configOptions = sessionScopedConfigOptions(update);
@@ -589,13 +631,21 @@ export function createChatStore(
             }
             flushPendingTextChunk();
             updateTurn(set, key, turnId, (current) =>
-              applyAgentUpdate(current, update, createId, now()),
+              applyAgentUpdate(
+                current,
+                update,
+                createId,
+                now(),
+                event.toolTiming,
+              ),
             );
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
             appendPermission(set, key, event);
           } else {
             flushPendingTextChunk();
+            usageCompleted = true;
+            const completedAt = now();
             updateTurn(set, key, turnId, (current) =>
               settleActiveToolCalls(
                 {
@@ -605,11 +655,20 @@ export function createChatStore(
                       ? ("cancelled" as const)
                       : ("completed" as const),
                   stopReason: event.stopReason,
+                  durationMs: elapsedDuration(current.createdAt, now()),
                 },
                 impliedToolStatus(event.stopReason),
-                now(),
+                completedAt,
               ),
             );
+            updateConversation(set, key, (conversation) => ({
+              ...conversation,
+              usage: completeUsageTurn(
+                conversation.usage,
+                event.tokenUsage,
+                completedAt,
+              ),
+            }));
           }
         }
       } catch (error) {
@@ -618,7 +677,11 @@ export function createChatStore(
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
               ? settleActiveToolCalls(
-                  { ...current, status: "cancelled" },
+                  {
+                    ...current,
+                    status: "cancelled",
+                    durationMs: elapsedDuration(current.createdAt, now()),
+                  },
                   "cancelled",
                   now(),
                 )
@@ -633,7 +696,12 @@ export function createChatStore(
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
               ? settleActiveToolCalls(
-                  { ...current, status: "failed", error: message },
+                  {
+                    ...current,
+                    status: "failed",
+                    error: message,
+                    durationMs: elapsedDuration(current.createdAt, now()),
+                  },
                   "cancelled",
                   now(),
                 )
@@ -648,13 +716,23 @@ export function createChatStore(
       } finally {
         flushPendingTextChunk();
         operations.delete(key);
+        if (!usageCompleted) {
+          updateConversation(set, key, (conversation) => ({
+            ...conversation,
+            usage: completeUsageTurn(conversation.usage, undefined, now()),
+          }));
+        }
         // A stream that ended without a boundary event still closes the turn, so
         // its tools settle with it rather than outliving the turn that owns them.
         // Nothing reported them finishing, so they close as interrupted.
         updateTurn(set, key, turnId, (current) =>
           current.status === "streaming"
             ? settleActiveToolCalls(
-                { ...current, status: "completed" },
+                {
+                  ...current,
+                  status: "completed",
+                  durationMs: elapsedDuration(current.createdAt, now()),
+                },
                 "cancelled",
                 now(),
               )
@@ -732,13 +810,18 @@ class HistoryBuilder {
    * boundary is what tells them apart.
    */
   private hasOpenTurn = false;
+  private readonly recordedTurnStarts = new Map<string, number>();
 
   constructor(
     private readonly createId: () => string,
     private readonly now: () => number,
   ) {}
 
-  applyUpdate(update: acp.SessionUpdate, recordedAt?: number): void {
+  applyUpdate(
+    update: acp.SessionUpdate,
+    recordedAt?: number,
+    toolTiming?: import("@ora/contracts").ToolCallTiming,
+  ): void {
     if (update.sessionUpdate === "user_message_chunk") {
       this.appendUserChunk(update, recordedAt);
       return;
@@ -753,7 +836,13 @@ class HistoryBuilder {
     if (isDeferredConversationUpdate(update)) return;
     const turn = this.currentTurn(recordedAt);
     this.replaceLast(
-      applyAgentUpdate(turn, update, this.createId, this.timestamp(recordedAt)),
+      applyAgentUpdate(
+        turn,
+        update,
+        this.createId,
+        this.timestamp(recordedAt),
+        toolTiming,
+      ),
     );
   }
 
@@ -775,6 +864,14 @@ class HistoryBuilder {
       ...last,
       status: stopReason === "cancelled" ? "cancelled" : "completed",
       stopReason,
+      ...(recordedAt === undefined || !this.recordedTurnStarts.has(last.id)
+        ? {}
+        : {
+            durationMs: elapsedDuration(
+              this.recordedTurnStarts.get(last.id)!,
+              recordedAt,
+            ),
+          }),
     };
     this.replaceLast(
       settleActiveToolCalls(
@@ -787,21 +884,23 @@ class HistoryBuilder {
 
   /** Produces a complete loaded conversation after the finite replay stream ends. */
   finish(): SessionConversation {
+    const turns = this.turns.map((turn) =>
+      turn.status === "streaming"
+        ? settleActiveToolCalls(
+            { ...turn, status: "completed" as const },
+            "cancelled",
+            this.now(),
+          )
+        : turn,
+    );
     return {
       ...this.snapshot(),
       // A turn still streaming here never reached its boundary in the record,
       // which is what an interrupted process leaves behind. Its tools close with
       // it as interrupted too, so replay neither restores work that appears to
       // still be running nor credits it with an outcome the record never held.
-      turns: this.turns.map((turn) =>
-        turn.status === "streaming"
-          ? settleActiveToolCalls(
-              { ...turn, status: "completed" as const },
-              "cancelled",
-              this.now(),
-            )
-          : turn,
-      ),
+      turns,
+      usage: createReloadedSessionUsage(turns.length > 0),
       pendingPermissions: this.permissions,
       isLoaded: true,
     };
@@ -830,6 +929,7 @@ class HistoryBuilder {
       availableCommands: this.availableCommands,
       sessionTitle: this.sessionTitle,
       sessionUpdatedAt: this.sessionUpdatedAt,
+      usage: createReloadedSessionUsage(this.turns.length > 0),
     };
   }
 
@@ -882,6 +982,9 @@ class HistoryBuilder {
       error: null,
       createdAt,
     });
+    if (recordedAt !== undefined) {
+      this.recordedTurnStarts.set(this.turns.at(-1)!.id, recordedAt);
+    }
     this.hasOpenTurn = true;
   }
 
@@ -926,6 +1029,7 @@ function applyAgentUpdate(
   update: acp.SessionUpdate,
   createId: () => string,
   timestamp: number,
+  toolTiming?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
@@ -935,9 +1039,9 @@ function applyAgentUpdate(
     case "plan":
       return replacePlan(turn, update.entries, timestamp);
     case "tool_call":
-      return upsertToolCall(turn, update, timestamp);
+      return upsertToolCall(turn, update, timestamp, toolTiming);
     case "tool_call_update":
-      return updateToolCall(turn, update, timestamp);
+      return updateToolCall(turn, update, timestamp, toolTiming);
     default:
       return turn;
   }
@@ -1131,6 +1235,7 @@ function upsertToolCall(
   turn: ChatTurn,
   toolCall: acp.ToolCall,
   timestamp: number,
+  timing?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === toolCall.toolCallId,
@@ -1152,6 +1257,7 @@ function upsertToolCall(
         ? timestamp
         : (turn.items[toolIndex] as ChatToolCall).createdAt,
     updatedAt: timestamp,
+    ...toolTimingFields(timing),
   };
   if (toolIndex === -1) return { ...turn, items: [...turn.items, next] };
 
@@ -1165,6 +1271,7 @@ function updateToolCall(
   turn: ChatTurn,
   update: acp.ToolCallUpdate,
   timestamp: number,
+  timing?: import("@ora/contracts").ToolCallTiming,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === update.toolCallId,
@@ -1188,6 +1295,7 @@ function updateToolCall(
         : { rawOutput: update.rawOutput }),
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...toolTimingFields(timing),
     };
     return { ...turn, items: [...turn.items, tool] };
   }
@@ -1212,6 +1320,7 @@ function updateToolCall(
     ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
     ...(update.rawOutput === undefined ? {} : { rawOutput: update.rawOutput }),
     updatedAt: timestamp,
+    ...toolTimingFields(timing),
   };
   return { ...turn, items };
 }
@@ -1234,10 +1343,41 @@ function settleActiveToolCalls(
     items: turn.items.map((item) =>
       item.kind === "toolCall" &&
       (item.status === "pending" || item.status === "in_progress")
-        ? { ...item, status, updatedAt: timestamp }
+        ? {
+            ...item,
+            status,
+            updatedAt: timestamp,
+            ...(item.startedAt === undefined
+              ? {}
+              : { durationMs: elapsedDuration(item.startedAt, timestamp) }),
+          }
         : item,
     ),
   };
+}
+
+/** Converts optional transport timing without falling back to UI receipt timestamps. */
+function toolTimingFields(
+  timing: import("@ora/contracts").ToolCallTiming | undefined,
+): Pick<ChatToolCall, "startedAt" | "durationMs"> {
+  if (timing === undefined) return {};
+  const startedAt = Date.parse(timing.startedAt);
+  if (!Number.isFinite(startedAt)) return {};
+  const durationMs =
+    timing.durationMs === undefined ? undefined : Number(timing.durationMs);
+  return {
+    startedAt,
+    ...(durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+      ? {}
+      : { durationMs }),
+  };
+}
+
+/** Returns a validated non-negative duration between two epoch-millisecond boundaries. */
+function elapsedDuration(startedAt: number, finishedAt: number): number {
+  return Math.max(0, finishedAt - startedAt);
 }
 
 /**
@@ -1434,7 +1574,11 @@ export async function loadSessionConversation(
       if (configOptions) {
         staged.configOptions = configOptions;
       } else {
-        staged.applyUpdate(event.update, recordedAtMillis(event.recordedAt));
+        staged.applyUpdate(
+          event.update,
+          recordedAtMillis(event.recordedAt),
+          event.toolTiming,
+        );
       }
     } else if (event.type === "permission_request") {
       staged.addPermission(event);

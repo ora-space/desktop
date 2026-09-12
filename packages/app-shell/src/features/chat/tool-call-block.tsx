@@ -24,6 +24,8 @@ import { DiffView } from "./diff-view";
 import { ContentBlock } from "./content-block";
 import { ChatFileLink } from "./chat-link/chat-file-link";
 import { ChatToolOutputText } from "./chat-link/markdown-overrides";
+import { useElapsedDuration } from "./elapsed-clock";
+import { formatElapsedDuration } from "../../lib/format";
 
 interface ToolCallBlockProps {
   tool: ChatToolCall;
@@ -76,7 +78,12 @@ export function ToolCallBlock({
         </span>
       )}
       {displayTitle === null && <span className="min-w-0 flex-1" />}
-      <ToolStatus status={tool.status} compact={compactStatus} />
+      <ToolStatus
+        status={tool.status}
+        compact={compactStatus}
+        startedAt={tool.startedAt}
+        durationMs={tool.durationMs}
+      />
       {hasDetails && (
         <IconChevronDown
           className={`size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
@@ -330,20 +337,37 @@ function ToolKindIcon({ kind }: { kind: acp.ToolKind | undefined }) {
 export function ToolStatus({
   status,
   compact = false,
+  startedAt,
+  durationMs,
 }: {
   status: ChatToolCallStatus | undefined;
   compact?: boolean;
+  startedAt?: number;
+  durationMs?: number;
 }) {
   const { t } = useTranslation();
+  const elapsed = formatElapsedDuration(
+    useElapsedDuration(startedAt, durationMs),
+  );
+  const timing =
+    elapsed === null
+      ? null
+      : ` · ${t(durationMs === undefined ? "chat.elapsedTime" : "chat.totalTime")} ${elapsed}`;
   switch (status) {
     case "completed":
       return (
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-600">
           <IconCheck className="size-3" />
           {compact ? (
-            <span className="sr-only">{t("chat.toolCompleted")}</span>
+            <>
+              <span className="sr-only">{t("chat.toolCompleted")}</span>
+              {timing}
+            </>
           ) : (
-            t("chat.toolCompleted")
+            <>
+              {t("chat.toolCompleted")}
+              {timing}
+            </>
           )}
         </span>
       );
@@ -352,9 +376,15 @@ export function ToolStatus({
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-destructive">
           <IconAlertTriangle className="size-3" />
           {compact ? (
-            <span className="sr-only">{t("chat.toolFailed")}</span>
+            <>
+              <span className="sr-only">{t("chat.toolFailed")}</span>
+              {timing}
+            </>
           ) : (
-            t("chat.toolFailed")
+            <>
+              {t("chat.toolFailed")}
+              {timing}
+            </>
           )}
         </span>
       );
@@ -363,9 +393,15 @@ export function ToolStatus({
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
           <IconBan className="size-3" />
           {compact ? (
-            <span className="sr-only">{t("chat.toolCancelled")}</span>
+            <>
+              <span className="sr-only">{t("chat.toolCancelled")}</span>
+              {timing}
+            </>
           ) : (
-            t("chat.toolCancelled")
+            <>
+              {t("chat.toolCancelled")}
+              {timing}
+            </>
           )}
         </span>
       );
@@ -373,9 +409,15 @@ export function ToolStatus({
       return (
         <span className="shrink-0 text-[11px] text-muted-foreground">
           {compact ? (
-            <span className="sr-only">{t("chat.toolPending")}</span>
+            <>
+              <span className="sr-only">{t("chat.toolPending")}</span>
+              {timing}
+            </>
           ) : (
-            t("chat.toolPending")
+            <>
+              {t("chat.toolPending")}
+              {timing}
+            </>
           )}
         </span>
       );
@@ -384,9 +426,15 @@ export function ToolStatus({
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-sky-600">
           <IconLoader2 className="size-3 animate-spin motion-reduce:animate-none" />
           {compact ? (
-            <span className="sr-only">{t("chat.toolRunning")}</span>
+            <>
+              <span className="sr-only">{t("chat.toolRunning")}</span>
+              {timing}
+            </>
           ) : (
-            t("chat.toolRunning")
+            <>
+              {t("chat.toolRunning")}
+              {timing}
+            </>
           )}
         </span>
       );

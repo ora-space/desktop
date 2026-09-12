@@ -113,6 +113,25 @@ and leaves the `Ready` status in place, because the verified bytes are still on 
 therefore only reported when nothing was installable to begin with, and a failed installation
 restores `Ready` so the user can retry.
 
+## Marketplace index refreshes
+
+Desktop refreshes the cached marketplace registry index on its own: once fifteen seconds after
+startup, and every six hours afterwards in the host's local time. Both run on the same
+`ora-scheduler` and drive the same rebuild; only the trigger recorded in the log differs. Unlike
+release updates, a refresh only rebuilds the cached listing and never installs or updates an
+installed plugin, so development builds register it too rather than leaving it untested until a
+packaged release. A refresh that fails is logged and not retried on its own: the next six-hour
+tick is the retry.
+
+The backend admits one index rebuild at a time. Because every rebuild produces the same index for
+every caller, a caller that arrives while one is in flight is turned away rather than queued —
+including a user pressing Sync, whose request is then answered from the cached index instead of
+running a second identical rebuild. The shell disables its Sync action for the span of an
+automatic refresh, reported as `marketplace-auto-sync-changed` with `started` and `finished`; the
+admission is claimed before `started` is emitted, so the shell is never told a refresh began that
+was in fact discarded. `finished` also invalidates the cached listing query, which is why the
+shell mounts that bridge at its root rather than inside the settings dialog.
+
 ## Plugin marketplace artifact retrieval
 
 Each configured plugin marketplace source independently selects how its `.orax` release artifacts

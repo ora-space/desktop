@@ -4,9 +4,11 @@ mod connection;
 mod events;
 mod handoff;
 mod history;
+mod limits;
 mod load;
 mod operations;
 pub(crate) mod plugin_agent;
+mod prompt_liveness;
 mod record;
 mod replay;
 mod restart_circuit;
@@ -17,6 +19,7 @@ mod start;
 mod stream;
 mod support;
 mod title_acquisition;
+mod tool_timing;
 
 #[cfg(test)]
 mod history_tests;
@@ -31,6 +34,7 @@ use crate::app_event::AppEventPublisher;
 use attach::RebuiltBinding;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
+use limits::*;
 use load::UnreadableHistory;
 pub use operations::AgentRuntime;
 pub use stream::SessionEventStream;
@@ -74,12 +78,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-
-const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
-const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
-const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
-const CONTRACT_QUEUE_CAPACITY: usize = 256;
-const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Repairs live sessions after the agent process behind them was replaced.
 ///

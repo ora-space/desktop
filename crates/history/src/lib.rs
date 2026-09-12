@@ -34,5 +34,7 @@ pub use path::history_path;
 pub use reader::{
     HistoryIntegrity, SessionHistory, read_session_history, read_session_history_up_to,
 };
-pub use record::{AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
+pub use record::{
+    AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
+};
 pub use writer::{HistoryWriter, remove_session_history};

@@ -71,6 +71,10 @@ function conversation(
     sessionTitle: null,
     sessionUpdatedAt: null,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   };
 }

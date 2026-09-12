@@ -254,6 +254,43 @@ pub enum SessionHistoryNotice {
     UnrecordedContent { reason: String },
 }
 
+/// Describes the accounting interval an agent declares for a token usage report.
+///
+/// ACP does not currently define this discriminator, so reports decoded from the draft
+/// `PromptResponse.usage` field remain [`Self::Unspecified`] unless a future extension explicitly
+/// supplies stronger semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "session.ts")]
+pub enum TokenAccountingScope {
+    Unspecified,
+    Turn,
+    Session,
+}
+
+/// Carries the token counters an agent attached to one completed prompt response.
+///
+/// The required total, input, and output counters are preserved exactly as reported. Optional
+/// counters stay optional because absence means the agent did not report that category, not zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct TokenUsageReport {
+    pub accounting_scope: TokenAccountingScope,
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thought_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cached_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cached_write_tokens: Option<u64>,
+}
+
 /// Loads Ora's recorded conversation and follows an active turn when one is already running.
 ///
 /// The stream begins with assembled updates from Ora's own record. If the session already has an
@@ -277,6 +314,13 @@ pub enum LoadSessionEvent {
         )]
         #[ts(optional)]
         recorded_at: Option<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
+        #[ts(optional)]
+        tool_timing: Option<ToolCallTiming>,
     },
     PermissionRequest(SessionPermissionRequest),
     TurnEnded {
@@ -305,6 +349,7 @@ impl LoadSessionEvent {
         Self::SessionUpdate {
             update,
             recorded_at: None,
+            tool_timing: None,
         }
     }
 
@@ -317,6 +362,17 @@ impl LoadSessionEvent {
     }
 }
 
+/// Timing observed by Ora for one ACP tool-call lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ToolCallTiming {
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_ms: Option<u64>,
+}
+
 /// Streams one prompt turn and ends with the provider's typed stop reason.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -325,12 +381,27 @@ pub enum PromptSessionEvent {
     SessionUpdate {
         #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
+        #[ts(optional)]
+        tool_timing: Option<ToolCallTiming>,
     },
     PermissionRequest(SessionPermissionRequest),
     Completed {
         #[serde(rename = "stopReason")]
         #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
+        /// Token counters attached to this prompt response, if the agent reported them.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "tokenUsage"
+        )]
+        #[ts(optional)]
+        token_usage: Option<TokenUsageReport>,
     },
 }
 
@@ -492,6 +563,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PromptSessionRequest::export(config)?;
     SessionPermissionRequest::export(config)?;
     SessionHistoryNotice::export(config)?;
+    TokenAccountingScope::export(config)?;
+    TokenUsageReport::export(config)?;
+    ToolCallTiming::export(config)?;
     LoadSessionEvent::export(config)?;
     PromptSessionEvent::export(config)?;
     RespondToPermissionRequest::export(config)?;
@@ -509,8 +583,13 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentRuntimeStatus, AgentStatus, PromptSessionRequest};
-    use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+    use super::{
+        AgentRuntimeStatus, AgentStatus, PromptSessionEvent, PromptSessionRequest,
+        TokenAccountingScope, TokenUsageReport, ToolCallTiming,
+    };
+    use agent_client_protocol_schema::v1::{
+        ContentBlock, SessionUpdate, StopReason, TextContent, ToolCall,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::{Map, json};
 
@@ -547,6 +626,72 @@ mod tests {
                     "text": "hello",
                     "_meta": { "ora.dev/source": "composer" },
                 }],
+            })
+        );
+    }
+
+    /// Verifies the completion event keeps missing optional counters absent on the wire.
+    #[test]
+    fn prompt_completion_serializes_the_agent_token_report() {
+        let event = PromptSessionEvent::Completed {
+            stop_reason: StopReason::EndTurn,
+            token_usage: Some(TokenUsageReport {
+                accounting_scope: TokenAccountingScope::Unspecified,
+                total_tokens: 1_000,
+                input_tokens: 800,
+                output_tokens: 200,
+                thought_tokens: None,
+                cached_read_tokens: None,
+                cached_write_tokens: None,
+            }),
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).expect("serialize prompt completion"),
+            json!({
+                "type": "completed",
+                "stopReason": "end_turn",
+                "tokenUsage": {
+                    "accountingScope": "unspecified",
+                    "totalTokens": 1_000,
+                    "inputTokens": 800,
+                    "outputTokens": 200,
+                },
+            }),
+        );
+    }
+
+    /// Verifies tool timing is additive and omitted completely for older event producers.
+    #[test]
+    fn session_update_serializes_optional_tool_timing() {
+        let update = SessionUpdate::ToolCall(ToolCall::new("tool-1", "Run tests"));
+        assert_eq!(
+            serde_json::to_value(PromptSessionEvent::SessionUpdate {
+                update: update.clone(),
+                tool_timing: None,
+            })
+            .expect("serialize untimed update"),
+            json!({
+                "type": "session_update",
+                "update": update,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(PromptSessionEvent::SessionUpdate {
+                update: update.clone(),
+                tool_timing: Some(ToolCallTiming {
+                    started_at: "2026-09-11T10:00:00+08:00".to_string(),
+                    duration_ms: Some(12_000),
+                }),
+            })
+            .expect("serialize timed update"),
+            json!({
+                "type": "session_update",
+                "update": update,
+                "toolTiming": {
+                    "startedAt": "2026-09-11T10:00:00+08:00",
+                    "durationMs": 12_000,
+                },
             })
         );
     }

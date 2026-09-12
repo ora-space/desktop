@@ -1,4 +1,4 @@
-use crate::record::HistoryRecord;
+use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::Plan;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
@@ -35,6 +35,7 @@ struct PendingTool {
     seq: u32,
     call: ToolCall,
     written: bool,
+    timing: Option<ToolCallTiming>,
 }
 
 /// Turns one session's live ACP update stream into settled history records.
@@ -99,6 +100,7 @@ impl HistoryAssembler {
                         update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
                             block.clone(),
                         ))),
+                        tool_timing: None,
                     },
                 }
             })
@@ -107,14 +109,39 @@ impl HistoryAssembler {
 
     /// Applies one live provider update and returns whatever settled because of it.
     pub fn push_update(&mut self, update: &SessionUpdate) -> Vec<AssembledRecord> {
+        self.push_update_inner(update, None)
+    }
+
+    /// Applies a tool update together with runtime timing captured for that call.
+    pub fn push_timed_update(
+        &mut self,
+        update: &SessionUpdate,
+        timing: ToolCallTiming,
+    ) -> Vec<AssembledRecord> {
+        self.push_update_inner(update, Some(timing))
+    }
+
+    /// Replaces timing for an open tool before a turn boundary flushes its final snapshot.
+    pub fn update_tool_timing(&mut self, tool_call_id: &ToolCallId, timing: ToolCallTiming) {
+        if let Some(index) = self.tool_index(tool_call_id) {
+            self.tools[index].timing = Some(timing);
+        }
+    }
+
+    /// Shares update assembly while keeping timing an explicit tool-only API at call sites.
+    fn push_update_inner(
+        &mut self,
+        update: &SessionUpdate,
+        timing: Option<ToolCallTiming>,
+    ) -> Vec<AssembledRecord> {
         match update {
             // The prompt was already recorded from the request, so the echo would
             // duplicate the user turn.
             SessionUpdate::UserMessageChunk(_) => Vec::new(),
             SessionUpdate::AgentMessageChunk(chunk) => self.push_text(TextKind::Message, chunk),
             SessionUpdate::AgentThoughtChunk(chunk) => self.push_text(TextKind::Thought, chunk),
-            SessionUpdate::ToolCall(call) => self.upsert_tool(call.clone()),
-            SessionUpdate::ToolCallUpdate(update) => self.update_tool(update),
+            SessionUpdate::ToolCall(call) => self.upsert_tool(call.clone(), timing),
+            SessionUpdate::ToolCallUpdate(update) => self.update_tool(update, timing),
             SessionUpdate::Plan(plan) => self.replace_plan(plan.clone()),
             // Session chrome. The agent re-establishes it on every binding, so
             // persisting it would only preserve a copy that goes stale.
@@ -147,6 +174,7 @@ impl HistoryAssembler {
                 seq,
                 record: HistoryRecord::Update {
                     update: Box::new(SessionUpdate::Plan(plan)),
+                    tool_timing: None,
                 },
             }))
             .collect();
@@ -231,39 +259,58 @@ impl HistoryAssembler {
     }
 
     /// Installs a tool call's opening snapshot, replacing an earlier one in place.
-    fn upsert_tool(&mut self, call: ToolCall) -> Vec<AssembledRecord> {
+    fn upsert_tool(
+        &mut self,
+        call: ToolCall,
+        timing: Option<ToolCallTiming>,
+    ) -> Vec<AssembledRecord> {
         match self.tool_index(&call.tool_call_id) {
             Some(index) => {
                 let pending = &mut self.tools[index];
                 pending.call = call;
+                if timing.is_some() {
+                    pending.timing = timing;
+                }
                 pending.settle()
             }
-            None => self.open_tool(call),
+            None => self.open_tool(call, timing),
         }
     }
 
     /// Applies one partial tool update to the snapshot it belongs to.
-    fn update_tool(&mut self, update: &ToolCallUpdate) -> Vec<AssembledRecord> {
+    fn update_tool(
+        &mut self,
+        update: &ToolCallUpdate,
+        timing: Option<ToolCallTiming>,
+    ) -> Vec<AssembledRecord> {
         if let Some(index) = self.tool_index(&update.tool_call_id) {
             let pending = &mut self.tools[index];
             pending.call.update(update.fields.clone());
+            if timing.is_some() {
+                pending.timing = timing;
+            }
             return pending.settle();
         }
         // An update for a call Ora never saw start still belongs to the timeline;
         // ACP only guarantees the title on the opening notification.
         let mut call = ToolCall::new(update.tool_call_id.clone(), "Tool call");
         call.update(update.fields.clone());
-        self.open_tool(call)
+        self.open_tool(call, timing)
     }
 
     /// Starts tracking one tool call and writes it immediately if it arrived settled.
-    fn open_tool(&mut self, call: ToolCall) -> Vec<AssembledRecord> {
+    fn open_tool(
+        &mut self,
+        call: ToolCall,
+        timing: Option<ToolCallTiming>,
+    ) -> Vec<AssembledRecord> {
         let mut records = self.interrupt_unidentified_text();
         let seq = self.take_seq();
         let mut pending = PendingTool {
             seq,
             call,
             written: false,
+            timing,
         };
         records.extend(pending.settle());
         self.tools.push(pending);
@@ -314,7 +361,7 @@ impl HistoryAssembler {
                     // A tool that has already been written is durable, not pending; snapshotting
                     // it again would duplicate it in the merged replay prefix.
                     .filter(|tool| !tool.written)
-                    .map(|tool| tool_record(tool.seq, &tool.call)),
+                    .map(|tool| tool_record(tool.seq, &tool.call, tool.timing.clone())),
             )
             .collect();
         if let Some((seq, plan)) = &self.plan {
@@ -322,6 +369,7 @@ impl HistoryAssembler {
                 seq: *seq,
                 record: HistoryRecord::Update {
                     update: Box::new(SessionUpdate::Plan(plan.clone())),
+                    tool_timing: None,
                 },
             });
         }
@@ -345,7 +393,7 @@ impl PendingTool {
             return Vec::new();
         }
         self.written = true;
-        vec![tool_record(self.seq, &self.call)]
+        vec![tool_record(self.seq, &self.call, self.timing.clone())]
     }
 
     /// Emits this call's final snapshot once the turn it belongs to has ended.
@@ -370,9 +418,9 @@ impl PendingTool {
         );
         if unfinished && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
-            return Some(tool_record(self.seq, &self.call));
+            return Some(tool_record(self.seq, &self.call, self.timing.clone()));
         }
-        (!self.written).then(|| tool_record(self.seq, &self.call))
+        (!self.written).then(|| tool_record(self.seq, &self.call, self.timing.clone()))
     }
 }
 
@@ -404,11 +452,12 @@ impl PendingText {
 }
 
 /// Builds the record that carries one tool call's current snapshot.
-fn tool_record(seq: u32, call: &ToolCall) -> AssembledRecord {
+fn tool_record(seq: u32, call: &ToolCall, tool_timing: Option<ToolCallTiming>) -> AssembledRecord {
     AssembledRecord {
         seq,
         record: HistoryRecord::Update {
             update: Box::new(SessionUpdate::ToolCall(call.clone())),
+            tool_timing,
         },
     }
 }
@@ -426,5 +475,6 @@ fn chunk_record(
             TextKind::Message => SessionUpdate::AgentMessageChunk(chunk),
             TextKind::Thought => SessionUpdate::AgentThoughtChunk(chunk),
         }),
+        tool_timing: None,
     }
 }
