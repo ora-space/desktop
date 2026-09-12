@@ -240,6 +240,7 @@ describe("RunNodeSessionChat", () => {
     const clientHandlers: TestHandlers =
       createFixtureHandlers(createFixtureState());
     const loadSpy = vi.fn(async function* () {
+      yield* [];
       throw new Error("agent session unavailable");
     });
     clientHandlers.loadSession = loadSpy;
