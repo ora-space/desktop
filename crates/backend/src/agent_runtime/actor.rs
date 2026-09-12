@@ -1,14 +1,16 @@
 use super::connection::AgentAcpClient;
 use super::events::{drain_idle_events, drain_queued_prompt_events, settle_cancelled_prompt};
 use super::handoff::{AgentPrompt, prompt_for_agent};
+use super::prompt_liveness::PromptLiveness;
 use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::session_followers::SessionFollowers;
-use super::prompt_liveness::PromptLiveness;
 use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
+#[path = "actor_history.rs"]
+mod actor_history;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
 #[path = "title_polling.rs"]
@@ -594,18 +596,6 @@ impl RuntimeActor {
         }
     }
 
-    /// Closes the recorded turn after the ordered event consumer has settled its events.
-    fn end_turn(&mut self, stop_reason: StopReason) {
-        let outcome = self.recorder.record_turn_end(stop_reason);
-        self.settle_record(outcome);
-    }
-
-    /// Freezes this prompt's tool durations before history settles its open snapshots.
-    fn end_timed_turn(&mut self, stop_reason: StopReason, timings: &ToolTimings) {
-        self.recorder.finish_tool_timings(timings.finish_all());
-        self.end_turn(stop_reason);
-    }
-
     /// Marks the session degraded when a recording attempt just broke its history.
     pub(super) fn settle_record(&mut self, outcome: RecordOutcome) {
         let RecordOutcome::JustFailed { reason } = outcome else {
@@ -617,33 +607,6 @@ impl RuntimeActor {
             "session history stopped recording",
         );
         self.persist_session_history_state(HistoryState::Degraded { reason });
-    }
-
-    /// Streams Ora's recorded conversation to a client that loaded it.
-    ///
-    /// Sends apply backpressure rather than failing fast: a long history is far
-    /// larger than the event queue, and a slow consumer is not a disconnected one.
-    async fn replay_recorded_history(
-        &self,
-        events: &mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
-    ) -> Replay {
-        let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
-            Ok(history) => history,
-            Err(error) => {
-                // Load is how a user asks to see the conversation, so a history
-                // that cannot be read is reported rather than shown as an empty
-                // one. Completing here would state that nothing was ever said.
-                ora_warn!(session_id = %self.session.id, error = %error, "session history unreadable during load");
-                let _ = events.send(Err(session_history_unreadable())).await;
-                return Replay::Unreadable;
-            }
-        };
-        for event in recorded_replay(history) {
-            if events.send(Ok(event)).await.is_err() {
-                return Replay::Abandoned;
-            }
-        }
-        Replay::Delivered
     }
 
     /// Handles controls arriving while a registered session has no active operation.

@@ -3,9 +3,7 @@ use crate::clock::FixedHistoryClock;
 use crate::error::HistoryError;
 use crate::path::history_path;
 use crate::reader::{HistoryIntegrity, read_session_history, read_session_history_up_to};
-use crate::record::{
-    HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
-};
+use crate::record::{HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta, ToolCallTiming};
 use crate::writer::{HistoryWriter, remove_session_history};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
@@ -55,8 +53,7 @@ fn reads_v1_updates_without_tool_timing_and_round_trips_v2_timing() {
         },
     );
     let json = serde_json::to_string(&timed).expect("serialize v2 update");
-    let restored: HistoryLine =
-        serde_json::from_str(&json).expect("deserialize v2 update");
+    let restored: HistoryLine = serde_json::from_str(&json).expect("deserialize v2 update");
 
     assert_eq!(restored, timed);
     assert_eq!(SCHEMA_VERSION, 2);

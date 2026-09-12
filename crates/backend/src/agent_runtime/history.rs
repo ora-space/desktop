@@ -137,7 +137,9 @@ impl<C: HistoryClock> SessionRecorder<C> {
     /// Freezes open tool timing before the ordinary turn-boundary flush.
     pub(super) fn finish_tool_timings(
         &mut self,
-        timings: impl IntoIterator<Item = (agent_client_protocol_schema::v1::ToolCallId, ToolCallTiming)>,
+        timings: impl IntoIterator<
+            Item = (agent_client_protocol_schema::v1::ToolCallId, ToolCallTiming),
+        >,
     ) {
         for (tool_call_id, timing) in timings {
             self.assembler.update_tool_timing(&tool_call_id, timing);

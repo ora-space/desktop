@@ -277,7 +277,11 @@ pub enum LoadSessionEvent {
         )]
         #[ts(optional)]
         recorded_at: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "toolTiming")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
         #[ts(optional)]
         tool_timing: Option<ToolCallTiming>,
     },
@@ -340,7 +344,11 @@ pub enum PromptSessionEvent {
     SessionUpdate {
         #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "toolTiming")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "toolTiming"
+        )]
         #[ts(optional)]
         tool_timing: Option<ToolCallTiming>,
     },

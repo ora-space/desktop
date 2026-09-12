@@ -452,11 +452,7 @@ impl PendingText {
 }
 
 /// Builds the record that carries one tool call's current snapshot.
-fn tool_record(
-    seq: u32,
-    call: &ToolCall,
-    tool_timing: Option<ToolCallTiming>,
-) -> AssembledRecord {
+fn tool_record(seq: u32, call: &ToolCall, tool_timing: Option<ToolCallTiming>) -> AssembledRecord {
     AssembledRecord {
         seq,
         record: HistoryRecord::Update {
