@@ -84,6 +84,7 @@ export const chatTranslations = {
     "chat.usage.total": "总计",
     "chat.usage.updated": "{{time}}更新",
     "chat.usage.justNow": "刚刚",
+    "chat.usage.minutesAgo_one": "{{count}} 分钟前",
     "chat.usage.minutesAgo_other": "{{count}} 分钟前",
     "chat.usage.contextSummary": "上下文 {{percent}}% · {{used}} / {{size}}",
     "chat.usage.composition": "上一轮 Token 构成",
