@@ -109,6 +109,10 @@ test("loads provider history and reconstructs turns from message boundaries", as
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -858,6 +862,10 @@ test("loads commands, session metadata, and structured content without creating 
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -1321,6 +1329,10 @@ test("rolls back staged load updates when replay fails before completion", async
         isLoading: false,
         isResponding: false,
         pendingPermissions: [],
+        usage: {
+          context: { status: "hidden" },
+          lastTurnTokens: { status: "none" },
+        },
         error: null,
       },
     },
@@ -1342,6 +1354,10 @@ test("rolls back staged load updates when replay fails before completion", async
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "needs_interaction" },
+      lastTurnTokens: { status: "none" },
+    },
     error: "load failed",
   });
 });
@@ -1390,6 +1406,10 @@ test("adopts the agent's answer to a model selection over the requested value", 
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: null,
   });
 });
@@ -1426,6 +1446,10 @@ test("reports an unreachable model selection instead of silently keeping the old
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
     error: "session is gone",
   });
 });

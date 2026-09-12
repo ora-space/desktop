@@ -17,6 +17,14 @@ import type {
   SessionConversation,
 } from "./types.ts";
 import { currentModel } from "./model-option.ts";
+import {
+  applyContextUsageUpdate,
+  beginUsageAfterAgentSwitch,
+  beginUsageTurn,
+  completeUsageTurn,
+  createHiddenSessionUsage,
+  createReloadedSessionUsage,
+} from "./usage.ts";
 
 export type {
   ChatContent,
@@ -30,7 +38,11 @@ export type {
   ChatTurn,
   ChatTurnItem,
   ChatTurnStatus,
+  ContextUsageSnapshot,
+  ContextUsageState,
+  LastTurnTokenState,
   SessionConversation,
+  SessionUsage,
 } from "./types.ts";
 
 export interface SendMessageRequest {
@@ -146,6 +158,7 @@ const EMPTY_CONVERSATION: SessionConversation = {
   isLoading: false,
   isResponding: false,
   pendingPermissions: [],
+  usage: createHiddenSessionUsage(),
   error: null,
 };
 
@@ -198,8 +211,8 @@ export function createChatStore(
     },
 
     adoptSwitchedAgent: (oraSessionId, configOptions) => {
-      updateConversation(set, oraSessionId, (conversation) =>
-        withConfigOptions(
+      updateConversation(set, oraSessionId, (conversation) => ({
+        ...withConfigOptions(
           conversation,
           configOptions,
           createId,
@@ -209,7 +222,8 @@ export function createChatStore(
           // than after the exchange it introduced.
           Math.max(conversation.turns.length - 1, 0),
         ),
-      );
+        usage: beginUsageAfterAgentSwitch(),
+      }));
     },
 
     setSessionConfig: async (oraSessionId, configId, value) => {
@@ -245,6 +259,9 @@ export function createChatStore(
     loadSession: async (oraSessionId) => {
       if (operations.has(oraSessionId)) return;
       const previous = get().conversations[oraSessionId] ?? EMPTY_CONVERSATION;
+      const reloadedUsage = createReloadedSessionUsage(
+        previous.turns.length > 0,
+      );
       const controller = new AbortController();
       const staged = new HistoryBuilder(createId, now);
       let completed = false;
@@ -284,6 +301,7 @@ export function createChatStore(
       updateConversation(set, oraSessionId, () => ({
         ...previous,
         turns: [],
+        usage: reloadedUsage,
         isLoading: true,
         error: null,
       }));
@@ -348,6 +366,7 @@ export function createChatStore(
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
           ...previous,
+          usage: reloadedUsage,
           error: isAbortError(error) ? previous.error : errorMessage(error),
         }));
         if (!isAbortError(error)) throw error;
@@ -405,6 +424,7 @@ export function createChatStore(
       operations.set(key, controller);
       let pendingTextChunk: BufferedTextChunk | null = null;
       let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      let usageCompleted = false;
 
       /** Flushes one buffered text batch into the live turn before a boundary update. */
       const flushPendingTextChunk = () => {
@@ -542,6 +562,11 @@ export function createChatStore(
         }));
       }
 
+      updateConversation(set, key, (conversation) => ({
+        ...conversation,
+        usage: beginUsageTurn(conversation.usage),
+      }));
+
       try {
         for await (const event of promptWithReattach(
           client,
@@ -556,6 +581,17 @@ export function createChatStore(
             // would only duplicate it; every other update belongs to this turn.
             const update = event.update;
             if (update.sessionUpdate === "user_message_chunk") continue;
+            if (update.sessionUpdate === "usage_update") {
+              updateConversation(set, key, (conversation) => ({
+                ...conversation,
+                usage: applyContextUsageUpdate(
+                  conversation.usage,
+                  update,
+                  now(),
+                ),
+              }));
+              continue;
+            }
             // An agent may change its own configuration mid-turn; that describes
             // the session, so it never reaches the turn accumulator.
             const configOptions = sessionScopedConfigOptions(update);
@@ -596,6 +632,8 @@ export function createChatStore(
             appendPermission(set, key, event);
           } else {
             flushPendingTextChunk();
+            usageCompleted = true;
+            const completedAt = now();
             updateTurn(set, key, turnId, (current) =>
               settleActiveToolCalls(
                 {
@@ -607,9 +645,17 @@ export function createChatStore(
                   stopReason: event.stopReason,
                 },
                 impliedToolStatus(event.stopReason),
-                now(),
+                completedAt,
               ),
             );
+            updateConversation(set, key, (conversation) => ({
+              ...conversation,
+              usage: completeUsageTurn(
+                conversation.usage,
+                event.tokenUsage,
+                completedAt,
+              ),
+            }));
           }
         }
       } catch (error) {
@@ -648,6 +694,12 @@ export function createChatStore(
       } finally {
         flushPendingTextChunk();
         operations.delete(key);
+        if (!usageCompleted) {
+          updateConversation(set, key, (conversation) => ({
+            ...conversation,
+            usage: completeUsageTurn(conversation.usage, undefined, now()),
+          }));
+        }
         // A stream that ended without a boundary event still closes the turn, so
         // its tools settle with it rather than outliving the turn that owns them.
         // Nothing reported them finishing, so they close as interrupted.
@@ -787,21 +839,23 @@ class HistoryBuilder {
 
   /** Produces a complete loaded conversation after the finite replay stream ends. */
   finish(): SessionConversation {
+    const turns = this.turns.map((turn) =>
+      turn.status === "streaming"
+        ? settleActiveToolCalls(
+            { ...turn, status: "completed" as const },
+            "cancelled",
+            this.now(),
+          )
+        : turn,
+    );
     return {
       ...this.snapshot(),
       // A turn still streaming here never reached its boundary in the record,
       // which is what an interrupted process leaves behind. Its tools close with
       // it as interrupted too, so replay neither restores work that appears to
       // still be running nor credits it with an outcome the record never held.
-      turns: this.turns.map((turn) =>
-        turn.status === "streaming"
-          ? settleActiveToolCalls(
-              { ...turn, status: "completed" as const },
-              "cancelled",
-              this.now(),
-            )
-          : turn,
-      ),
+      turns,
+      usage: createReloadedSessionUsage(turns.length > 0),
       pendingPermissions: this.permissions,
       isLoaded: true,
     };
@@ -830,6 +884,7 @@ class HistoryBuilder {
       availableCommands: this.availableCommands,
       sessionTitle: this.sessionTitle,
       sessionUpdatedAt: this.sessionUpdatedAt,
+      usage: createReloadedSessionUsage(this.turns.length > 0),
     };
   }
 

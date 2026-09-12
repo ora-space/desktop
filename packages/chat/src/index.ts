@@ -22,6 +22,10 @@ export {
   type ChatState,
   type ChatStore,
   type ChatStoreOptions,
+  type ContextUsageSnapshot,
+  type ContextUsageState,
+  type LastTurnTokenState,
   type SendMessageRequest,
   type SessionConversation,
+  type SessionUsage,
 } from "./store.ts";
