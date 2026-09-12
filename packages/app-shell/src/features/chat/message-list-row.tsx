@@ -19,6 +19,7 @@ import type { ChatTurn } from "@ora/chat";
 import type { MessageListRow } from "./message-list-rows";
 import { useElapsedDuration } from "./elapsed-clock";
 import { formatElapsedDuration } from "../../lib/format";
+import type * as acp from "@agentclientprotocol/sdk";
 
 /** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
 const RUNNING_WORD_INTERVAL_MS = 5000;
@@ -29,6 +30,7 @@ interface MessageListRowViewProps {
   row: MessageListRow;
   turns: ChatTurn[];
   userName: string;
+  availableCommands: acp.AvailableCommand[];
   chatLinkForTurn: (turnIndex: number) => ChatLinkContextValue | null;
 }
 
@@ -37,6 +39,7 @@ export const MessageListRowView = memo(function MessageListRowView({
   row,
   turns,
   userName,
+  availableCommands,
   chatLinkForTurn,
 }: MessageListRowViewProps) {
   switch (row.type) {
@@ -50,7 +53,11 @@ export const MessageListRowView = memo(function MessageListRowView({
       return (
         <div data-turn-anchor={turn.id}>
           <div data-turn-user data-conversation-anchor={`${turn.id}:user`}>
-            <MessageBubble message={turn.userMessage} userName={userName} />
+            <MessageBubble
+              message={turn.userMessage}
+              userName={userName}
+              availableCommands={availableCommands}
+            />
           </div>
         </div>
       );

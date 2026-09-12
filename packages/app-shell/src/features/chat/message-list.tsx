@@ -28,6 +28,7 @@ import {
   MESSAGE_LIST_VIRTUALIZE_MIN_ROWS,
   rowIndexForAnchor,
 } from "./message-list-rows";
+import type * as acp from "@agentclientprotocol/sdk";
 
 interface MessageListProps {
   turns: ChatTurn[];
@@ -38,6 +39,7 @@ interface MessageListProps {
   taskId?: string;
   projectId?: string;
   workspaceId?: string;
+  availableCommands?: acp.AvailableCommand[];
   /** Optional presentation override for chats embedded inside another surface. */
   conversationNavigation?: ConversationNavigationPresentation;
 }
@@ -53,6 +55,7 @@ export function MessageList({
   taskId,
   projectId,
   workspaceId,
+  availableCommands = [],
   conversationNavigation,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -184,6 +187,7 @@ export function MessageList({
               row={row}
               turns={turns}
               userName={userName}
+              availableCommands={availableCommands}
               chatLinkForTurn={chatLinkForTurn}
             />
           </div>
@@ -195,6 +199,7 @@ export function MessageList({
           row={row}
           turns={turns}
           userName={userName}
+          availableCommands={availableCommands}
           chatLinkForTurn={chatLinkForTurn}
         />
       ));

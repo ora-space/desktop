@@ -1,13 +1,21 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type * as acp from "@agentclientprotocol/sdk";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { MarkdownDocument } from "./markdown-message";
 
 /** Renders a sent prompt through the same compact surface user bubbles use. */
-function renderPrompt(content: string) {
+function renderPrompt(
+  content: string,
+  availableCommands: acp.AvailableCommand[] = [],
+) {
   return render(
     <AppI18nProvider>
-      <MarkdownDocument density="compact" content={content} />
+      <MarkdownDocument
+        density="compact"
+        content={content}
+        availableCommands={availableCommands}
+      />
     </AppI18nProvider>,
   );
 }
@@ -24,11 +32,21 @@ describe("compact user-prompt chips", () => {
   });
 
   it("re-renders a sent command token as a chip", () => {
-    renderPrompt("run /test please");
+    renderPrompt("run /test please", [
+      { name: "test", description: "Run tests" },
+    ]);
     const chip = document.querySelector("[data-prompt-token='command']");
     expect(chip).not.toBeNull();
     expect(chip).toHaveClass("composer-mention");
     expect(chip?.textContent).toBe("/test");
+  });
+
+  it("keeps an unavailable command as plain text", () => {
+    renderPrompt("run /mcp please", [
+      { name: "test", description: "Run tests" },
+    ]);
+    expect(document.querySelector("[data-prompt-token='command']")).toBeNull();
+    expect(screen.getByText(/run \/mcp please/)).toBeInTheDocument();
   });
 
   it("re-renders a sent role token as a chip", () => {

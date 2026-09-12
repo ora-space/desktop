@@ -369,6 +369,70 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("marks but still sends an unavailable leading slash command", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={[{ name: "test", description: "Run tests" }]}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/mcp");
+
+    const marker = textarea.querySelector(".composer-unsupported-command");
+    expect(marker).toHaveAttribute("data-unsupported-command", "mcp");
+    expect(marker?.getAttribute("title")).toMatch(
+      /Agent 插件不支持命令 \/mcp|Agent plugin does not support the command \/mcp/,
+    );
+
+    await user.keyboard("{Enter}");
+
+    expect(onSend).toHaveBeenCalledWith("/mcp");
+    expect(composerText(textarea)).toBe("");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("refreshes the warning when the Agent command catalog changes", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(
+      <Composer onSend={onSend} isResponding={false} />,
+    );
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/mcp");
+    expect(
+      textarea.querySelector("[data-unsupported-command='mcp']"),
+    ).not.toBeNull();
+
+    view.rerender(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={[{ name: "mcp", description: "Manage MCP" }]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        textarea.querySelector("[data-unsupported-command='mcp']"),
+      ).toBeNull(),
+    );
+  });
+
+  it("does not mark a slash path as an unsupported command", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<Composer onSend={vi.fn()} isResponding={false} />);
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/usr/bin/parser");
+
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+  });
+
   it("offers roles from the slash palette and inserts them as @ tokens", async () => {
     const user = userEvent.setup();
     renderWithI18n(

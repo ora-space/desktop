@@ -22,23 +22,35 @@ interface MdastNode {
 const TOKEN_PATTERN =
   /(?<![A-Za-z0-9/])([$/@])([A-Za-z][\w-]*)(?![A-Za-z0-9/])/g;
 
+interface PromptTokenOptions {
+  /** Names advertised by the current Agent through ACP. */
+  availableCommandNames?: ReadonlySet<string>;
+}
+
 /**
- * Rebuilds the skill, command, and role chips the composer showed while the
- * prompt was being written.
+ * Rebuilds the skill, advertised command, and role chips the composer showed
+ * while the prompt was being written.
  *
  * Sending flattens those tokens to Markdown (`$skill`, `/command`, `@role`)
  * because that is what the agent reads, but the same text is what history
  * replays — so without this the user's own tokens come back as a wall of raw
  * characters. File-quote chips are handled by their own pass; only plain-text
- * token fragments are split here, never code or inline code.
+ * token fragments are split here, never code or inline code. Command chips are
+ * limited to names the current Agent advertised, so arbitrary slash text stays
+ * ordinary text in history.
  */
-export function remarkComposerPromptTokens() {
+export function remarkComposerPromptTokens({
+  availableCommandNames = new Set<string>(),
+}: PromptTokenOptions = {}) {
   return (tree: MdastNode) => {
-    splitPromptTokens(tree);
+    splitPromptTokens(tree, availableCommandNames);
   };
 }
 
-function splitPromptTokens(node: MdastNode): void {
+function splitPromptTokens(
+  node: MdastNode,
+  availableCommandNames: ReadonlySet<string>,
+): void {
   if (node.type === "code" || node.type === "inlineCode") return;
   const { children } = node;
   if (children === undefined) return;
@@ -52,16 +64,19 @@ function splitPromptTokens(node: MdastNode): void {
       typeof child.value === "string" &&
       child.data?.hName === undefined
     ) {
-      next.push(...splitTokenText(child.value));
+      next.push(...splitTokenText(child.value, availableCommandNames));
       continue;
     }
-    splitPromptTokens(child);
+    splitPromptTokens(child, availableCommandNames);
     next.push(child);
   }
   node.children = next;
 }
 
-function splitTokenText(value: string): MdastNode[] {
+function splitTokenText(
+  value: string,
+  availableCommandNames: ReadonlySet<string>,
+): MdastNode[] {
   TOKEN_PATTERN.lastIndex = 0;
   const nodes: MdastNode[] = [];
   let lastIndex = 0;
@@ -70,7 +85,13 @@ function splitTokenText(value: string): MdastNode[] {
     if (index > lastIndex) {
       nodes.push({ type: "text", value: value.slice(lastIndex, index) });
     }
-    nodes.push(chipNode(tokenKind(match[1]), match[2] ?? ""));
+    const kind = tokenKind(match[1]);
+    const name = match[2] ?? "";
+    nodes.push(
+      kind !== "command" || availableCommandNames.has(name)
+        ? chipNode(kind, name)
+        : { type: "text", value: match[0] },
+    );
     lastIndex = index + match[0].length;
   }
   if (lastIndex < value.length) {

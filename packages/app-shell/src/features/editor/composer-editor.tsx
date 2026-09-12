@@ -38,6 +38,7 @@ import {
   TextEditContextMenu,
   writeClipboardText,
 } from "./text-edit-context-menu";
+import { UnsupportedCommandExtension } from "./unsupported-command-extension";
 import "./composer-editor.css";
 
 export interface ComposerEditorHandle {
@@ -91,6 +92,10 @@ export interface ComposerEditorProps {
   ariaActivedescendant?: string;
   /** Controls whether slash queries require a command boundary or may start inline. */
   slashQueryMode?: SlashQueryMode;
+  /** Commands advertised by the current Agent; omission disables command warnings. */
+  availableCommandNames?: ReadonlySet<string>;
+  /** Builds the localized explanation shown when hovering an unknown command. */
+  unsupportedCommandTitle?: (commandName: string) => string;
   /** Overrides the prompt-token slot, e.g. with a React NodeView for workflow variables. */
   promptTokenExtension?: AnyExtension;
   onSubmit: () => void;
@@ -132,6 +137,8 @@ export const ComposerEditor = forwardRef<
     ariaControls,
     ariaActivedescendant,
     slashQueryMode = "command",
+    availableCommandNames,
+    unsupportedCommandTitle,
     promptTokenExtension,
     onSubmit,
     onQueryChange,
@@ -160,6 +167,10 @@ export const ComposerEditor = forwardRef<
   enterKeyRef.current = enterKey;
   const slashQueryModeRef = useRef(slashQueryMode);
   slashQueryModeRef.current = slashQueryMode;
+  const availableCommandNamesRef = useRef(availableCommandNames);
+  availableCommandNamesRef.current = availableCommandNames;
+  const unsupportedCommandTitleRef = useRef(unsupportedCommandTitle);
+  unsupportedCommandTitleRef.current = unsupportedCommandTitle;
   const lastQueryRef = useRef<ComposerQueryState>(EMPTY_COMPOSER_QUERY);
   const suppressNotifyRef = useRef(false);
   const parkedSelectionRef = useRef<{ from: number; to: number } | null>(null);
@@ -180,6 +191,13 @@ export const ComposerEditor = forwardRef<
             ? {}
             : { promptToken: promptTokenExtensionRef.current }),
         },
+        extraExtensions: [
+          UnsupportedCommandExtension.configure({
+            availableCommandNames: () => availableCommandNamesRef.current,
+            commandTitle: (commandName) =>
+              unsupportedCommandTitleRef.current?.(commandName),
+          }),
+        ],
       }),
     [],
   );
@@ -263,6 +281,14 @@ export const ComposerEditor = forwardRef<
       );
     },
   });
+
+  // A catalog update does not edit the document, so explicitly ask ProseMirror
+  // to re-evaluate decorations instead of leaving a stale warning in place.
+  useEffect(() => {
+    editor.view.dispatch(
+      editor.state.tr.setMeta("commandCatalogChanged", true),
+    );
+  }, [availableCommandNames, editor, unsupportedCommandTitle]);
 
   useEffect(() => {
     editor.setEditable(!disabled);

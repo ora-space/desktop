@@ -484,6 +484,15 @@ export function Composer({
     fileMenuStatusMessageKey === undefined
       ? undefined
       : t(fileMenuStatusMessageKey);
+  const availableCommandNames = useMemo(
+    () => new Set(availableCommands.map(({ name }) => name)),
+    [availableCommands],
+  );
+  const unsupportedCommandTitle = useCallback(
+    (commandName: string) =>
+      t("chat.unsupportedCommand", { command: `/${commandName}` }),
+    [t],
+  );
   const showActionMenu =
     (plusMenuOpen ||
       (slashQuery !== null &&
@@ -1002,6 +1011,8 @@ export function Composer({
               : undefined
           }
           onSubmit={submit}
+          availableCommandNames={availableCommandNames}
+          unsupportedCommandTitle={unsupportedCommandTitle}
           onQueryChange={setQuery}
           onDocChange={handleDocChange}
           onTextChange={(text) => {

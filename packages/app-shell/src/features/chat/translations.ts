@@ -121,6 +121,8 @@ export const chatTranslations = {
     "chat.historyNotice.unrecordedContent": "部分对话未能记录：{{reason}}",
     "chat.send": "发送消息",
     "chat.starting": "正在启动…",
+    "chat.unsupportedCommand":
+      "当前 Agent 插件不支持命令 {{command}}。继续发送可能会导致未知行为，但你仍可以发送。",
     "chat.commands.available": "可用命令",
     "chat.mode": "Agent 模式",
     "chat.actionMenu.label": "快捷操作",
@@ -436,6 +438,8 @@ export const chatTranslations = {
       "Part of the conversation was not recorded: {{reason}}",
     "chat.send": "Send message",
     "chat.starting": "Starting…",
+    "chat.unsupportedCommand":
+      "The current Agent plugin does not support the command {{command}}. Sending it may lead to unexpected behavior, but you can still send it.",
     "chat.commands.available": "Available commands",
     "chat.mode": "Agent mode",
     "chat.actionMenu.label": "Quick actions",
