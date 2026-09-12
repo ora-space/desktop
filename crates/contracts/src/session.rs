@@ -254,6 +254,43 @@ pub enum SessionHistoryNotice {
     UnrecordedContent { reason: String },
 }
 
+/// Describes the accounting interval an agent declares for a token usage report.
+///
+/// ACP does not currently define this discriminator, so reports decoded from the draft
+/// `PromptResponse.usage` field remain [`Self::Unspecified`] unless a future extension explicitly
+/// supplies stronger semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "session.ts")]
+pub enum TokenAccountingScope {
+    Unspecified,
+    Turn,
+    Session,
+}
+
+/// Carries the token counters an agent attached to one completed prompt response.
+///
+/// The required total, input, and output counters are preserved exactly as reported. Optional
+/// counters stay optional because absence means the agent did not report that category, not zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct TokenUsageReport {
+    pub accounting_scope: TokenAccountingScope,
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thought_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cached_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cached_write_tokens: Option<u64>,
+}
+
 /// Loads Ora's recorded conversation and follows an active turn when one is already running.
 ///
 /// The stream begins with assembled updates from Ora's own record. If the session already has an
@@ -331,6 +368,14 @@ pub enum PromptSessionEvent {
         #[serde(rename = "stopReason")]
         #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
+        /// Token counters attached to this prompt response, if the agent reported them.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "tokenUsage"
+        )]
+        #[ts(optional)]
+        token_usage: Option<TokenUsageReport>,
     },
 }
 
@@ -492,6 +537,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PromptSessionRequest::export(config)?;
     SessionPermissionRequest::export(config)?;
     SessionHistoryNotice::export(config)?;
+    TokenAccountingScope::export(config)?;
+    TokenUsageReport::export(config)?;
     LoadSessionEvent::export(config)?;
     PromptSessionEvent::export(config)?;
     RespondToPermissionRequest::export(config)?;

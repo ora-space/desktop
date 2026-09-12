@@ -366,6 +366,7 @@ async fn drive_agent_node(
                 PromptSessionEvent::PermissionRequest(_) => {}
                 PromptSessionEvent::Completed {
                     stop_reason: reason,
+                    ..
                 } => {
                     stop_reason = Some(reason);
                     break;

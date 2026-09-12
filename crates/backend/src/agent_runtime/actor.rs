@@ -6,6 +6,7 @@ use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::session_followers::SessionFollowers;
 use super::title_acquisition::PollAttempt;
+use super::usage::{NoUsageExtensions, normalize_token_usage};
 use super::*;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
@@ -388,12 +389,19 @@ impl RuntimeActor {
                     match pending.finish(response) {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
+                            let token_usage = normalize_token_usage(
+                                &self.session.agent_ref,
+                                response.usage.as_ref(),
+                                response.meta.as_ref(),
+                                &NoUsageExtensions,
+                            );
                             self.end_turn(response.stop_reason);
                             followers.finish(response.stop_reason);
                             self.maybe_start_title_acquisition(response.stop_reason);
                             if events
                                 .try_send(Ok(PromptSessionEvent::Completed {
                                     stop_reason: response.stop_reason,
+                                    token_usage,
                                 }))
                                 .is_ok()
                             {
@@ -475,6 +483,7 @@ impl RuntimeActor {
                         || events
                             .try_send(Ok(PromptSessionEvent::Completed {
                                 stop_reason: StopReason::Cancelled,
+                                token_usage: None,
                             }))
                             .is_ok();
                     if reusable && owner_notified {

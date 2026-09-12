@@ -17,6 +17,7 @@ mod start;
 mod stream;
 mod support;
 mod title_acquisition;
+mod usage;
 
 #[cfg(test)]
 mod history_tests;
