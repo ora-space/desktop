@@ -8,7 +8,11 @@ import {
   LocalTransportError,
   RemoteContractError,
 } from "@ora/contracts";
-import { createChatStore, type ChatSessionClient } from "../src/index.ts";
+import {
+  createChatStore,
+  type ChatSessionClient,
+  type ChatToolCall,
+} from "../src/index.ts";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
 function textEvent(
@@ -365,6 +369,108 @@ test("restores explicit turn and tool timing without receipt-time fallbacks", as
   assert.equal(turn.durationMs, 6_000);
   assert.equal(tool?.startedAt, Date.parse("2026-09-11T10:00:01+08:00"));
   assert.equal(tool?.durationMs, 4_000);
+});
+
+test("keeps concurrent session timing isolated even when tool ids match", async () => {
+  let finishA: () => void = () => {};
+  let finishB: () => void = () => {};
+  const gateA = new Promise<void>((resolve) => {
+    finishA = resolve;
+  });
+  const gateB = new Promise<void>((resolve) => {
+    finishB = resolve;
+  });
+  const starts = {
+    a: "2026-09-11T10:00:01+08:00",
+    b: "2026-09-11T11:00:01+08:00",
+  };
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: (request) => ({
+      async *[Symbol.asyncIterator]() {
+        const session = request.sessionId as "a" | "b";
+        yield {
+          type: "session_update" as const,
+          toolTiming: { startedAt: starts[session] },
+          update: {
+            sessionUpdate: "tool_call" as const,
+            toolCallId: "same-tool",
+            title: session,
+            status: "in_progress" as const,
+          },
+        };
+        await (session === "a" ? gateA : gateB);
+        yield {
+          type: "session_update" as const,
+          toolTiming: {
+            startedAt: starts[session],
+            durationMs: session === "a" ? 5_000n : 2_000n,
+          },
+          update: {
+            sessionUpdate: "tool_call_update" as const,
+            toolCallId: "same-tool",
+            status: "completed" as const,
+          },
+        };
+        yield { type: "completed" as const, stopReason: "end_turn" as const };
+      },
+    }),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => crypto.randomUUID(),
+    now: () => 42,
+  });
+  const firstTool = (session: "a" | "b"): ChatToolCall => {
+    const item = store.getState().conversations[session]?.turns[0]?.items[0];
+    assert.equal(item?.kind, "toolCall");
+    return item;
+  };
+
+  const sendingA = store
+    .getState()
+    .sendMessage({ oraSessionId: "a", text: "A" });
+  const sendingB = store
+    .getState()
+    .sendMessage({ oraSessionId: "b", text: "B" });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(store.getState().conversations.a?.isResponding, true);
+  assert.equal(store.getState().conversations.b?.isResponding, true);
+  assert.deepEqual(firstTool("a"), {
+    kind: "toolCall",
+    id: "same-tool",
+    title: "a",
+    status: "in_progress",
+    content: [],
+    locations: [],
+    createdAt: 42,
+    updatedAt: 42,
+    startedAt: Date.parse(starts.a),
+  });
+  assert.deepEqual(firstTool("b"), {
+    kind: "toolCall",
+    id: "same-tool",
+    title: "b",
+    status: "in_progress",
+    content: [],
+    locations: [],
+    createdAt: 42,
+    updatedAt: 42,
+    startedAt: Date.parse(starts.b),
+  });
+
+  finishB();
+  await sendingB;
+  assert.equal(store.getState().conversations.a?.isResponding, true);
+  assert.equal(store.getState().conversations.b?.isResponding, false);
+  assert.equal(firstTool("b").durationMs, 2_000);
+  assert.equal(firstTool("a").durationMs, undefined);
+
+  finishA();
+  await sendingA;
+  assert.equal(firstTool("a").durationMs, 5_000);
 });
 
 test("retains durable-history notices after a successful replay", async () => {
