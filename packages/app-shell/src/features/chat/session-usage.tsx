@@ -19,14 +19,14 @@ import {
 import { UsageHeading, UsageMetric } from "./session-usage-primitives";
 import { TokenSection } from "./session-token-usage";
 
-/** Displays volatile context and last-turn token telemetry above the composer. */
+/** Displays volatile context and last-turn token telemetry in the conversation header. */
 export function SessionUsageIndicator({ usage }: { usage: SessionUsage }) {
   const { t, i18n } = useTranslation();
   const now = useMinuteClock();
   const triggerLabel = contextTriggerLabel(usage, i18n.language, t);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5">
+    <div className="flex shrink-0 items-center">
       <Popover>
         <Tooltip>
           <TooltipTrigger
@@ -42,38 +42,41 @@ export function SessionUsageIndicator({ usage }: { usage: SessionUsage }) {
               />
             }
           >
-            <UsageTrigger usage={usage} now={now} />
+            <UsageTrigger usage={usage} />
           </TooltipTrigger>
           <TooltipContent>{triggerLabel}</TooltipContent>
         </Tooltip>
-        <PopoverContent side="top" align="end" className="w-[26rem] gap-3 p-3">
+        <PopoverContent
+          side="bottom"
+          align="end"
+          className="relative w-[26rem] gap-3 p-3"
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-2.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={t("chat.usage.referenceInfo")}
+                />
+              }
+            >
+              <IconHelpCircle className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-80 leading-relaxed">
+              {t("chat.usage.disclaimer")}
+            </TooltipContent>
+          </Tooltip>
           <ContextSection usage={usage} now={now} locale={i18n.language} />
           <div className="h-px bg-border" />
           <TokenSection usage={usage} now={now} locale={i18n.language} />
         </PopoverContent>
       </Popover>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={t("chat.usage.referenceInfo")}
-            />
-          }
-        >
-          <IconHelpCircle className="size-3.5" />
-        </TooltipTrigger>
-        <TooltipContent className="max-w-80 space-y-1.5 leading-relaxed">
-          <p>{t("chat.usage.independent")}</p>
-          <p>{t("chat.usage.disclaimer")}</p>
-        </TooltipContent>
-      </Tooltip>
     </div>
   );
 }
 
-function UsageTrigger({ usage, now }: { usage: SessionUsage; now: number }) {
+function UsageTrigger({ usage }: { usage: SessionUsage }) {
   const { t } = useTranslation();
   if (usage.context.status === "reported") {
     const { usedTokens, sizeTokens } = usage.context.snapshot;
@@ -96,27 +99,20 @@ function UsageTrigger({ usage, now }: { usage: SessionUsage; now: number }) {
         >
           <span className="absolute inset-[3px] rounded-full bg-background" />
         </span>
-        <span className="text-[11px]">
-          {t("chat.usage.updated", {
-            time: relativeUsageTime(usage.context.snapshot.receivedAt, now, t),
-          })}
-        </span>
+        <span className="text-[11px] tabular-nums">{Math.round(percent)}%</span>
       </>
     );
   }
   return (
-    <>
-      <span>
-        {t(
-          usage.context.status === "needs_interaction"
-            ? "chat.usage.waiting"
-            : usage.context.status === "awaiting_report"
-              ? "chat.usage.awaiting"
-              : "chat.usage.unavailable",
-        )}
-      </span>
-      <IconHelpCircle className="size-3.5" aria-hidden="true" />
-    </>
+    <span>
+      {t(
+        usage.context.status === "needs_interaction"
+          ? "chat.usage.waiting"
+          : usage.context.status === "awaiting_report"
+            ? "chat.usage.awaiting"
+            : "chat.usage.unavailable",
+      )}
+    </span>
   );
 }
 
@@ -139,11 +135,16 @@ function ContextSection({
       <UsageHeading
         id="session-context-usage-title"
         title={t("chat.usage.contextTitle")}
-        tooltip={t("chat.usage.contextTooltip")}
-        details={t("chat.usage.contextDetails")}
+        updatedLabel={
+          context.status === "reported"
+            ? t("chat.usage.updated", {
+                time: relativeUsageTime(context.snapshot.receivedAt, now, t),
+              })
+            : undefined
+        }
       />
       {context.status === "reported" ? (
-        <ContextMetrics snapshot={context.snapshot} now={now} locale={locale} />
+        <ContextMetrics snapshot={context.snapshot} locale={locale} />
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t(
@@ -161,48 +162,33 @@ function ContextSection({
 
 function ContextMetrics({
   snapshot,
-  now,
   locale,
 }: {
   snapshot: ContextUsageSnapshot;
-  now: number;
   locale: string;
 }) {
   const { t } = useTranslation();
   const percent = contextUsagePercent(snapshot.usedTokens, snapshot.sizeTokens);
   const remaining = Math.max(snapshot.sizeTokens - snapshot.usedTokens, 0);
   return (
-    <>
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <UsageMetric
-          label={t("chat.usage.used")}
-          value={formatCompactTokens(snapshot.usedTokens, locale)}
-        />
-        <UsageMetric
-          label={t("chat.usage.limit")}
-          value={formatCompactTokens(snapshot.sizeTokens, locale)}
-        />
-        <UsageMetric
-          label={t("chat.usage.remaining")}
-          value={formatCompactTokens(remaining, locale)}
-        />
-        <UsageMetric
-          label={t("chat.usage.percent")}
-          value={`${Math.round(percent)}%`}
-        />
-        {snapshot.cost && (
-          <UsageMetric
-            label={t("chat.usage.sessionCost")}
-            value={formatCost(snapshot.cost, locale)}
-          />
-        )}
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        {t("chat.usage.updated", {
-          time: relativeUsageTime(snapshot.receivedAt, now, t),
-        })}
-      </p>
-    </>
+    <div className="grid grid-cols-2 gap-2 text-xs">
+      <UsageMetric
+        label={t("chat.usage.used")}
+        value={formatCompactTokens(snapshot.usedTokens, locale)}
+      />
+      <UsageMetric
+        label={t("chat.usage.limit")}
+        value={formatCompactTokens(snapshot.sizeTokens, locale)}
+      />
+      <UsageMetric
+        label={t("chat.usage.remaining")}
+        value={formatCompactTokens(remaining, locale)}
+      />
+      <UsageMetric
+        label={t("chat.usage.percent")}
+        value={`${Math.round(percent)}%`}
+      />
+    </div>
   );
 }
 
@@ -228,18 +214,4 @@ function contextTriggerLabel(
     used: formatCompactTokens(snapshot.usedTokens, locale),
     size: formatCompactTokens(snapshot.sizeTokens, locale),
   });
-}
-
-function formatCost(
-  cost: { amount: number; currency: string },
-  locale: string,
-): string {
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency: cost.currency,
-    }).format(cost.amount);
-  } catch {
-    return `${cost.amount} ${cost.currency}`;
-  }
 }

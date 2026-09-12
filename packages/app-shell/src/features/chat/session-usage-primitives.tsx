@@ -1,40 +1,23 @@
-import { IconInfoCircle } from "@tabler/icons-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
-
-/** Renders a titled usage section whose explanation is available on hover or focus. */
+/** Renders a usage section title with its optional report age. */
 export function UsageHeading({
   id,
   title,
-  tooltip,
-  details,
+  updatedLabel,
 }: {
   id: string;
   title: string;
-  tooltip: string;
-  details: string;
+  updatedLabel?: string;
 }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-baseline gap-2 pr-7">
       <h3 id={id} className="text-sm font-medium">
         {title}
       </h3>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={tooltip}
-            />
-          }
-        >
-          <IconInfoCircle className="size-3.5" />
-        </TooltipTrigger>
-        <TooltipContent className="max-w-80 space-y-1.5 leading-relaxed">
-          <p>{tooltip}</p>
-          <p>{details}</p>
-        </TooltipContent>
-      </Tooltip>
+      {updatedLabel && (
+        <span className="text-[11px] text-muted-foreground">
+          {updatedLabel}
+        </span>
+      )}
     </div>
   );
 }

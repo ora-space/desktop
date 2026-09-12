@@ -54,12 +54,8 @@ export const chatTranslations = {
     "chat.usage.unavailable": "用量不可用",
     "chat.usage.referenceInfo": "用量统计说明",
     "chat.usage.disclaimer":
-      "统计仅供参考。数据不会随历史记录保存，更新可能存在延迟；完整性、准确性和统计口径取决于当前 Agent 的 ACP 实现。",
+      "统计仅供参考。数据不会随历史记录保存，更新可能存在延迟；完整性、准确性和统计口径取决于 Agent 本身的实现。",
     "chat.usage.contextTitle": "当前上下文用量",
-    "chat.usage.contextTooltip":
-      "当前上下文是 Agent 上报的即时快照，不是历史 Token 消耗。",
-    "chat.usage.contextDetails":
-      "used 表示当前保留在模型上下文中的 Token，size 表示当前有效上限。它不等于下方的上一轮 Token 总计，也不需要再加上 Output。Agent 可能在生成前、生成中或生成后更新该值。",
     "chat.usage.reloadEmpty":
       "用量数据不会随历史记录保存。发送一条消息后，如果当前 Agent 支持 ACP 用量上报，这里会显示最新数据。",
     "chat.usage.awaitingDetails":
@@ -67,10 +63,6 @@ export const chatTranslations = {
     "chat.usage.contextUnavailable":
       "当前 Agent 在上一轮交互后仍未上报上下文用量。",
     "chat.usage.lastTurnTitle": "上一轮对话 Token 使用",
-    "chat.usage.tokenTooltip":
-      "这里展示上一轮响应携带的 Token 数据；总计与各分项的关系由 Agent 的统计口径决定。",
-    "chat.usage.tokenDetails":
-      "totalTokens 是 Agent 直接上报的总计。若各分项互不重叠，通常满足 Total = Input + Output + Thought + Cache read + Cache write。缺失字段表示 Agent 没有上报，不表示 0。部分 Agent 可能已把缓存 Token 包含在 Input 中，因此分项不一定能再次相加。Ora 不会修改或推测 Agent 的原始数据，也不会跨多轮累计。",
     "chat.usage.tokenAwaiting": "正在等待上一轮响应完成并提供 Token 数据。",
     "chat.usage.tokenUnavailable":
       "当前 Agent 未提供上一轮对话的 Token 使用明细。",
@@ -80,7 +72,6 @@ export const chatTranslations = {
     "chat.usage.limit": "上限",
     "chat.usage.remaining": "剩余",
     "chat.usage.percent": "占比",
-    "chat.usage.sessionCost": "当前会话费用",
     "chat.usage.total": "总计",
     "chat.usage.updated": "{{time}}更新",
     "chat.usage.justNow": "刚刚",
@@ -102,8 +93,6 @@ export const chatTranslations = {
       "已上报分项合计 {{known}}，大于 Agent 上报的总计 {{total}}。部分字段可能存在包含或重叠关系，因此无法可靠相加。",
     "chat.usage.zeroTotal":
       "Agent 上报的总计为 0，因此不绘制构成图；上方仍保留其原始字段。",
-    "chat.usage.independent":
-      "当前上下文用量与上一轮对话 Token 使用是两套独立统计，二者不要求相等。",
     "chat.moreActions": "更多对话操作",
     "chat.permission.label": "权限模式",
     "chat.permission.always": "每次询问",
@@ -374,12 +363,8 @@ export const chatTranslations = {
     "chat.usage.unavailable": "Usage unavailable",
     "chat.usage.referenceInfo": "About usage statistics",
     "chat.usage.disclaimer":
-      "Usage statistics are for reference only. They are not saved with conversation history and may update with a delay; completeness, accuracy, and accounting semantics depend on the current agent's ACP implementation.",
+      "Usage statistics are for reference only. They are not saved with conversation history and may update with a delay; completeness, accuracy, and accounting semantics depend on the agent's implementation.",
     "chat.usage.contextTitle": "Current context usage",
-    "chat.usage.contextTooltip":
-      "Current context is an agent-reported snapshot, not historical token consumption.",
-    "chat.usage.contextDetails":
-      "used is the number of tokens currently retained in the model context, while size is the active limit. It is not the last-turn total below and Output must not be added to it. The agent may update this value before, during, or after generation.",
     "chat.usage.reloadEmpty":
       "Usage data is not saved with conversation history. Send a message and, if the current agent supports ACP usage reporting, the latest data will appear here.",
     "chat.usage.awaitingDetails":
@@ -387,10 +372,6 @@ export const chatTranslations = {
     "chat.usage.contextUnavailable":
       "The current agent still did not report context usage after the previous interaction.",
     "chat.usage.lastTurnTitle": "Previous-turn token usage",
-    "chat.usage.tokenTooltip":
-      "This is the token data attached to the previous response. The agent determines how the total relates to each category.",
-    "chat.usage.tokenDetails":
-      "totalTokens is the total reported directly by the agent. When categories do not overlap, Total usually equals Input + Output + Thought + Cache read + Cache write. A missing field means unreported, not zero. Some agents may include cached tokens in Input, so categories cannot always be added again. Ora neither changes nor infers the raw values and does not accumulate them across turns.",
     "chat.usage.tokenAwaiting":
       "Waiting for the previous response to finish and provide token data.",
     "chat.usage.tokenUnavailable":
@@ -401,7 +382,6 @@ export const chatTranslations = {
     "chat.usage.limit": "Limit",
     "chat.usage.remaining": "Remaining",
     "chat.usage.percent": "Percent",
-    "chat.usage.sessionCost": "Current session cost",
     "chat.usage.total": "Total",
     "chat.usage.updated": "Updated {{time}}",
     "chat.usage.justNow": "just now",
@@ -423,8 +403,6 @@ export const chatTranslations = {
       "Reported categories total {{known}}, which exceeds the agent-reported total of {{total}}. Some fields may include or overlap others, so they cannot be added reliably.",
     "chat.usage.zeroTotal":
       "The agent reported a total of zero, so no composition bar is shown; the raw fields remain above.",
-    "chat.usage.independent":
-      "Current context usage and previous-turn token usage are independent statistics and are not expected to match.",
     "chat.moreActions": "More conversation actions",
     "chat.permission.label": "Permission mode",
     "chat.permission.always": "Ask every time",

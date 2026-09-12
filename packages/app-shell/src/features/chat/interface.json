@@ -27,7 +27,7 @@
     },
     "./session-usage-surface": {
       "exports": ["SessionUsageIndicator", "shouldShowSessionUsage"],
-      "purpose": "Workspace composes chat-owned volatile usage presentation above the conversation composer."
+      "purpose": "Workspace composes chat-owned volatile usage presentation in the conversation header."
     },
     "./turn-diff-files": {
       "exports": ["displayPath"],

@@ -646,6 +646,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
+          {conversation && shouldShowSessionUsage(conversation.usage) && (
+            <SessionUsageIndicator usage={conversation.usage} />
+          )}
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
           <SurfaceLauncher />
           <WindowControls />
@@ -688,8 +691,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             contextBar={
               selection.sessionId === null && pendingTurn === null ? (
                 <ComposerContextBar />
-              ) : conversation && shouldShowSessionUsage(conversation.usage) ? (
-                <SessionUsageIndicator usage={conversation.usage} />
               ) : undefined
             }
             // Failures land in chatError; the rejection also lets the composer

@@ -40,16 +40,16 @@ export function TokenSection({
       <UsageHeading
         id="last-turn-token-usage-title"
         title={t("chat.usage.lastTurnTitle")}
-        tooltip={t("chat.usage.tokenTooltip")}
-        details={t("chat.usage.tokenDetails")}
+        updatedLabel={
+          state.status === "reported"
+            ? t("chat.usage.updated", {
+                time: relativeUsageTime(state.receivedAt, now, t),
+              })
+            : undefined
+        }
       />
       {state.status === "reported" ? (
-        <TokenMetrics
-          report={state.usage}
-          receivedAt={state.receivedAt}
-          now={now}
-          locale={locale}
-        />
+        <TokenMetrics report={state.usage} locale={locale} />
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t(
@@ -67,13 +67,9 @@ export function TokenSection({
 
 function TokenMetrics({
   report,
-  receivedAt,
-  now,
   locale,
 }: {
   report: TokenUsageReport;
-  receivedAt: number;
-  now: number;
   locale: string;
 }) {
   const { t } = useTranslation();
@@ -206,11 +202,6 @@ function TokenMetrics({
           {t("chat.usage.zeroTotal")}
         </p>
       )}
-      <p className="text-[11px] text-muted-foreground">
-        {t("chat.usage.updated", {
-          time: relativeUsageTime(receivedAt, now, t),
-        })}
-      </p>
     </>
   );
 }

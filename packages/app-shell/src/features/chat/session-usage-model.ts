@@ -24,10 +24,13 @@ export type TokenComposition =
   | { kind: "empty"; total: bigint; knownSum: bigint }
   | { kind: "overlap"; total: bigint; knownSum: bigint };
 
-/** Reports whether the compact context bar should reserve any space for usage. */
+/** Reports whether the conversation header should expose volatile usage. */
 export function shouldShowSessionUsage(usage: SessionUsage): boolean {
   return (
-    usage.context.status !== "hidden" || usage.lastTurnTokens.status !== "none"
+    usage.context.status === "reported" ||
+    usage.context.status === "unavailable" ||
+    usage.lastTurnTokens.status === "reported" ||
+    usage.lastTurnTokens.status === "unavailable"
   );
 }
 
