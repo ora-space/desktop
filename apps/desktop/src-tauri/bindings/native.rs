@@ -44,6 +44,10 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Native {
+        handler: "diagnostic_logs::download_plugin_log",
+        permission: Permission::MainWebview,
+    },
+    Binding::Native {
         handler: "surface::commands::surface_capabilities",
         permission: Permission::MainWebview,
     },

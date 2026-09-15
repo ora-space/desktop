@@ -1,5 +1,7 @@
+mod log_level;
 mod marketplace_sync;
 
+pub use log_level::{GetPluginLogLevelRequest, PluginLogLevelResponse, SetPluginLogLevelRequest};
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
 
 use serde::{Deserialize, Serialize};
@@ -752,6 +754,7 @@ pub struct ResetPluginConfigurationResponse {
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     marketplace_sync::export(config)?;
+    log_level::export(config)?;
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
     PluginConfigurationCompleteness::export(config)?;

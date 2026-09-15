@@ -16,6 +16,35 @@ mod install_tests;
 #[cfg(test)]
 mod tests;
 
+/// Renders one lifecycle level state in the closed wire vocabulary.
+fn plugin_log_level_response(
+    plugin_id: String,
+    state: ora_plugin_lifecycle::PluginLogLevelState,
+) -> PluginLogLevelResponse {
+    PluginLogLevelResponse {
+        plugin_id,
+        level: match state.level {
+            ora_logging::LogLevel::Trace => RuntimeLogLevel::Trace,
+            ora_logging::LogLevel::Debug => RuntimeLogLevel::Debug,
+            ora_logging::LogLevel::Info => RuntimeLogLevel::Info,
+            ora_logging::LogLevel::Warn => RuntimeLogLevel::Warn,
+            ora_logging::LogLevel::Error => RuntimeLogLevel::Error,
+        },
+        configured: state.configured,
+    }
+}
+
+/// Converts a validated contract level into the shared logging vocabulary.
+fn internal_log_level(level: RuntimeLogLevel) -> ora_logging::LogLevel {
+    match level {
+        RuntimeLogLevel::Trace => ora_logging::LogLevel::Trace,
+        RuntimeLogLevel::Debug => ora_logging::LogLevel::Debug,
+        RuntimeLogLevel::Info => ora_logging::LogLevel::Info,
+        RuntimeLogLevel::Warn => ora_logging::LogLevel::Warn,
+        RuntimeLogLevel::Error => ora_logging::LogLevel::Error,
+    }
+}
+
 /// Owns plugin operations and their runtime coordination without exposing host internals.
 #[derive(Clone)]
 pub struct Plugins {
@@ -186,6 +215,35 @@ impl Plugins {
         let response = self.host.uninstall(request).await?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
+    }
+
+    /// Resolves the active plugin log file the desktop export copies for one installed plugin.
+    pub fn log_file_path(&self, plugin_id: &str) -> Result<PathBuf, BackendError> {
+        Ok(self.host.lifecycle.plugin_log_file(plugin_id)?)
+    }
+
+    /// Reads the effective host-owned log level of one plugin identity.
+    pub fn get_log_level(
+        &self,
+        request: GetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self.host.lifecycle.plugin_log_level(&request.plugin_id)?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
+    }
+
+    /// Persists a plugin's log level and applies it to its running generation, if any.
+    ///
+    /// The lifecycle persists before it applies, so a returned error means nothing changed and
+    /// the frontend must not show the requested level as current.
+    pub fn set_log_level(
+        &self,
+        request: SetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self
+            .host
+            .lifecycle
+            .set_plugin_log_level(&request.plugin_id, internal_log_level(request.level))?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
     }
 
     /// Installs a marketplace plugin by resolving its release manifest from the synced source and

@@ -33,7 +33,7 @@ it("downloads logs from an internal-error toast action", async () => {
   );
   const platform = {
     ...createStubPlatform(),
-    diagnosticLogs: { downloadToday },
+    diagnosticLogs: { downloadToday, downloadPluginLog: async () => false },
   };
   render(
     <AppI18nProvider>

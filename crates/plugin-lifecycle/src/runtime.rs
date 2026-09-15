@@ -7,7 +7,7 @@ use crate::ports::{
 };
 use crate::storage::PluginStorage;
 use ora_plugin_runtime::{
-    HostRequestError, HostRequestHandler, PluginProcessExit, PluginRegistration,
+    HostRequestError, HostRequestHandler, PluginLogSetup, PluginProcessExit, PluginRegistration,
     PluginRuntime as ProcessPluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
 };
 use ora_process::TokioProcessSpawner;
@@ -116,6 +116,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
     fn launch(
         &self,
         request: PluginLaunchRequest,
+        log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let timeouts = self.timeouts;
@@ -156,6 +157,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
                     shutdown_timeout: timeouts.shutdown,
                 },
                 host_requests,
+                log,
             )
             .await
             .map_err(|error| PluginRuntimeFailure::new(error.to_string()))?;

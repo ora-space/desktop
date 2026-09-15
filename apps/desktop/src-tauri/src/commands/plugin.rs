@@ -158,6 +158,20 @@ async_backend_command!(
     plugins.uninstall,
     "Stops and removes one installed plugin."
 );
+backend_command!(
+    get_plugin_log_level,
+    GetPluginLogLevelRequest,
+    PluginLogLevelResponse,
+    plugins.get_log_level,
+    "Reads one plugin's host-owned log level."
+);
+backend_command!(
+    set_plugin_log_level,
+    SetPluginLogLevelRequest,
+    PluginLogLevelResponse,
+    plugins.set_log_level,
+    "Persists and applies one plugin's host-owned log level."
+);
 /// Installs one marketplace plugin and emits throttled byte-level download progress.
 #[tauri::command]
 pub async fn install_plugin(

@@ -5,6 +5,10 @@ and `packages/plugin-sdk`. It contains the framed stdio codec, JSON-RPC method c
 registration declarations, and DTOs for agent control, Effects, storage, child processes, and
 workbench calls.
 
+Plugin diagnostics are not part of the stdout protocol: the SDK writes them to stderr as
+`@ora/plugin-log/v1` envelopes and the host persists them per plugin; see
+[Plugin Logging](plugin-logging.md).
+
 Run `task export-contracts` after changing a protocol DTO or method name. The Rust exporter writes
 generated bindings into `packages/plugin-sdk/src/protocol`; `constants.ts` and the DTO modules are
 generated, while `index.ts`, `json.ts`, and `transport.ts` remain hand-written. Do not duplicate a

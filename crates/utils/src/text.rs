@@ -1,4 +1,10 @@
-//! Generic text normalization utilities.
+//! Generic text normalization and rendering utilities.
+
+mod line_framer;
+mod lossless_bytes;
+
+pub use line_framer::{BoundedLineFramer, LineFrame};
+pub use lossless_bytes::{ByteRendering, render_bytes_lossless};
 
 use std::borrow::Cow;
 

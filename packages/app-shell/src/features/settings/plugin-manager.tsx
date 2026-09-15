@@ -40,6 +40,8 @@ import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { PluginDownloadProgress } from "./plugin-download-progress";
+import { PluginLogMenuItems } from "./plugin-log-menu";
+import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 
 /** The installed-plugin manager exposes package lifecycle commands without process start/stop. */
 export function PluginManager({
@@ -60,6 +62,8 @@ export function PluginManager({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const scan = usePluginScan();
+  // Plugin log controls are developer tooling: they only appear once developer mode is on.
+  const developerTools = useDeveloperMode().state?.enabled === true;
 
   const needle = query.trim().toLowerCase();
   const visible = useMemo(
@@ -160,6 +164,7 @@ export function PluginManager({
               plugin={plugin}
               onConfigure={onConfigure}
               available={availableById?.get(plugin.id)}
+              developerTools={developerTools}
             />
           ))}
         </div>
@@ -172,10 +177,12 @@ function InstalledPluginRow({
   plugin,
   onConfigure,
   available,
+  developerTools,
 }: {
   plugin: InstalledPlugin;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
   available: AvailablePlugin | undefined;
+  developerTools: boolean;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -289,7 +296,14 @@ function InstalledPluginRow({
           >
             <IconDots />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-56">
+            {developerTools &&
+              plugin.installationValidity.validity === "valid" && (
+                <PluginLogMenuItems
+                  pluginId={plugin.id}
+                  displayName={plugin.displayName}
+                />
+              )}
             <DropdownMenuItem
               variant="destructive"
               disabled={uninstalling}

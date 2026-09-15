@@ -212,3 +212,79 @@ async fn reports_unknown_methods_bad_params_and_size_limits() {
         ),
     );
 }
+
+/// The plugin logs tree is a sibling of the data tree, so no logical storage path — however it
+/// spells a parent traversal — can list, read, write, or remove anything under it.
+///
+/// Documented as the core case "No Storage Path Can Reach the Plugin Logs Tree" in
+/// `specs/test-cases/desktop/plugin/logging/ownership-and-storage-boundary.md`.
+#[tokio::test]
+async fn storage_cannot_reach_the_sibling_logs_tree() {
+    let temp_dir = TempDir::new().expect("create data root");
+    // Mirror the production layout: `<root>/plugins/data/<ns>/<name>` beside
+    // `<root>/plugins/logs/<ns>/<name>`.
+    let data_dir = temp_dir
+        .path()
+        .join("plugins")
+        .join("data")
+        .join("official")
+        .join("example");
+    let logs_dir = temp_dir
+        .path()
+        .join("plugins")
+        .join("logs")
+        .join("official")
+        .join("example");
+    fs::create_dir_all(&data_dir).expect("create data dir");
+    fs::create_dir_all(&logs_dir).expect("create logs dir");
+    fs::write(logs_dir.join("plugin.log"), b"{\"host\":true}\n").expect("write log");
+    let storage = PluginStorage::new(data_dir);
+
+    let mut kinds = Vec::new();
+    for (method, path) in [
+        (STORAGE_LIST_METHOD, "../../logs/official/example"),
+        (
+            STORAGE_READ_METHOD,
+            "../../logs/official/example/plugin.log",
+        ),
+        (
+            STORAGE_WRITE_METHOD,
+            "../../logs/official/example/plugin.log",
+        ),
+        (STORAGE_REMOVE_METHOD, "../../logs/official/example"),
+        (
+            STORAGE_READ_METHOD,
+            "/plugins/logs/official/example/plugin.log",
+        ),
+        (
+            STORAGE_READ_METHOD,
+            "..\\..\\logs\\official\\example\\plugin.log",
+        ),
+    ] {
+        let error = storage
+            .handle(method, json!({ "path": path, "bytes_base64": "" }))
+            .await
+            .expect_err(path);
+        kinds.push((method, path, kind_of(&error)));
+    }
+    let listed = storage
+        .handle(STORAGE_LIST_METHOD, json!({ "path": "" }))
+        .await;
+
+    let expected = kinds
+        .iter()
+        .map(|(method, path, _)| (*method, *path, "invalid_path".to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (
+            kinds,
+            listed,
+            fs::read(logs_dir.join("plugin.log")).expect("log intact"),
+        ),
+        (
+            expected,
+            Ok(json!({ "entries": [] })),
+            b"{\"host\":true}\n".to_vec(),
+        ),
+    );
+}

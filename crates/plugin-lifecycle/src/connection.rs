@@ -173,7 +173,8 @@ where
                         Err(
                             error @ (PluginLifecycleError::RuntimeStop { .. }
                             | PluginLifecycleError::PackageRemoval { .. }
-                            | PluginLifecycleError::UninstallStaging { .. }),
+                            | PluginLifecycleError::UninstallStaging { .. }
+                            | PluginLifecycleError::LogLevelPersistence { .. }),
                         ) => return Err(ConnectionError::Failed(error.to_string())),
                     }
                 }

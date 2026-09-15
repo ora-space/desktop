@@ -166,7 +166,7 @@ describe("SettingsDialog developer options", () => {
     const downloadToday = vi.fn(async () => true);
     renderDialog(createTestClient(createFixtureHandlers(state)), {
       ...createStubPlatform(),
-      diagnosticLogs: { downloadToday },
+      diagnosticLogs: { downloadToday, downloadPluginLog: async () => false },
     });
 
     await userEvent.click(

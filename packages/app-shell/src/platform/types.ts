@@ -240,6 +240,11 @@ export interface SurfaceCapability {
 export interface DiagnosticLogsCapability {
   /** Opens a host save flow and reports whether the user completed the download. */
   downloadToday(): Promise<boolean>;
+  /**
+   * Opens a host save flow for one installed plugin's own log and reports whether the user
+   * completed the download. `fileStem` only seeds the suggested file name.
+   */
+  downloadPluginLog(pluginId: string, fileStem: string): Promise<boolean>;
 }
 
 /** Collects the host capabilities consumed by the shared application shell. */

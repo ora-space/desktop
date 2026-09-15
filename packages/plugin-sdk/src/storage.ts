@@ -17,8 +17,9 @@ export interface StorageEntry {
  *
  * Paths are logical, slash-separated, and relative to the data directory Ora resolved for this
  * plugin (`data/<namespace>/<name>/`); the host refuses absolute paths, `..`, symlinks, and the
- * host-owned `web-profile/` directory. `downloads/` is where Ora puts files downloaded from a
- * surface, using exactly the `path` carried by `onDownloadCompleted`.
+ * host-owned `web-profile/` directory; the plugin log lives outside this tree altogether.
+ * `downloads/` is where Ora puts files downloaded from a surface, using exactly the `path`
+ * carried by `onDownloadCompleted`.
  */
 export interface PluginStorage {
   /** Lists the entries directly below `path` (`""` for the data directory itself). */

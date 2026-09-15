@@ -7,7 +7,7 @@ import {
   refreshAgent,
 } from "../data/agent-runtime";
 import { refreshPluginAgent } from "../data/plugin-lifecycle";
-import { invalidatePluginQueries } from "../data/plugins";
+import { forgetPluginLogLevel, invalidatePluginQueries } from "../data/plugins";
 
 /** Provides lifecycle mutations for one installed plugin and invalidates the plugin queries on settle. */
 export function usePluginMutations(pluginId: string, agentRef?: string) {
@@ -50,10 +50,12 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
     // Unlike the other lifecycle endpoints, uninstall returns only the plugin
     // id. Callers that still own the installed snapshot provide its package
     // identity so agent availability and display caches cannot survive removal.
-    onSuccess: () =>
-      agentRef === undefined
+    onSuccess: () => {
+      forgetPluginLogLevel(queryClient, pluginId);
+      return agentRef === undefined
         ? invalidateAgentAvailability(queryClient)
-        : refreshAgent(queryClient, agentRef, "availability"),
+        : refreshAgent(queryClient, agentRef, "availability");
+    },
     onSettled: async () => {
       try {
         await invalidate();

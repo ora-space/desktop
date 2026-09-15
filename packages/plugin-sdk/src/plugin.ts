@@ -1,4 +1,5 @@
 import {
+  CLAUDE_MCP_CONFIG_V1,
   createDenoTransport,
   decodeFrames,
   encodeFrame,
@@ -8,15 +9,21 @@ import {
   type JsonRpcRequest,
   type JsonValue,
   METHOD_NOT_FOUND,
+  OPENCODE_MCP_CONFIG_V1,
   PLUGIN_METHODS,
   type PluginEffectResource,
   type PluginRegistrationParams,
   type PluginTransport,
   type RequestId,
   SKILL_DIRECTORY_V1,
-  OPENCODE_MCP_CONFIG_V1,
-  CLAUDE_MCP_CONFIG_V1,
 } from "./protocol/index.ts";
+import {
+  createLogger,
+  createStderrLogSink,
+  type PluginLogger,
+  type PluginLogSink,
+  redirectConsoleToLogger,
+} from "./logger.ts";
 
 export type MethodHandler = (
   input: JsonValue,
@@ -92,8 +99,22 @@ interface PendingHostRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/** Construction options; production plugins need none of them. */
+export interface PluginOptions {
+  /** Where log records go; defaults to stderr, which the host persists per plugin. */
+  logSink?: PluginLogSink;
+}
+
 /** Stores a plugin's immutable capability registry and serves host traffic. */
 export class Plugin {
+  /**
+   * Structured logger for this plugin's own diagnostics.
+   *
+   * Records travel over stderr and are persisted by the host into this plugin's private log
+   * file, filtered by the level the user configured for it. The logger exposes no file path,
+   * plugin id, or correlation field: those belong to the host.
+   */
+  readonly logger: PluginLogger;
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #effectResources: EffectResourceDeclaration[] = [];
@@ -102,6 +123,10 @@ export class Plugin {
   #nextHostRequestId = 1;
   #state: PluginState = "registering";
   #writer: FrameWriter | undefined;
+
+  constructor(options: PluginOptions = {}) {
+    this.logger = createLogger(options.logSink ?? createStderrLogSink());
+  }
 
   /** Registers one uniquely named method before the plugin starts serving. */
   registerMethod(name: string, handler: MethodHandler): void {
@@ -231,7 +256,7 @@ export class Plugin {
     }
     this.#state = "running";
     if (transport.redirectConsole) {
-      redirectConsoleToStderr();
+      redirectConsoleToLogger(this.logger);
     }
 
     const writer = new FrameWriter(transport.writable);
@@ -415,8 +440,8 @@ export class PluginMethodError extends Error {
 }
 
 /** Creates a fresh plugin in its registration state. */
-export function createPlugin(): Plugin {
-  return new Plugin();
+export function createPlugin(options: PluginOptions = {}): Plugin {
+  return new Plugin(options);
 }
 
 class FrameWriter {
@@ -481,26 +506,4 @@ function errorResponse(
   message: string,
 ): JsonValue {
   return { jsonrpc: JSON_RPC_VERSION, id, error: { code, message } };
-}
-
-let consoleRedirected = false;
-
-/** Protects the stdout protocol channel from every standard console method. */
-function redirectConsoleToStderr(): void {
-  if (consoleRedirected) {
-    return;
-  }
-  consoleRedirected = true;
-  const encoder = new TextEncoder();
-  const write = (level: string, values: unknown[]) => {
-    const rendered = values
-      .map((value) => (typeof value === "string" ? value : Deno.inspect(value)))
-      .join(" ");
-    Deno.stderr.writeSync(encoder.encode(`[plugin:${level}] ${rendered}\n`));
-  };
-  console.debug = (...values: unknown[]) => write("debug", values);
-  console.info = (...values: unknown[]) => write("info", values);
-  console.log = (...values: unknown[]) => write("log", values);
-  console.warn = (...values: unknown[]) => write("warn", values);
-  console.error = (...values: unknown[]) => write("error", values);
 }

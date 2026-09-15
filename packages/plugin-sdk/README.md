@@ -23,11 +23,26 @@ four-byte big-endian length, followed by the one-byte JSON-RPC frame type and a
 UTF-8 JSON payload. Frames larger than 16 MiB and malformed host messages stop
 the plugin.
 
-When the default Deno transport starts, the SDK redirects all `console` methods
-to stderr so normal plugin diagnostics cannot corrupt stdout. Plugins receive no
-Deno permissions unless the Ora host grants them when launching the process; ui
-plugins receive none at all and reach their data through the storage client
-below.
+Plugin diagnostics go through `plugin.logger`, which writes structured records
+to stderr; the Ora host persists them into the plugin's own log file, filtered
+by the level the user chose for that plugin, and never into its own runtime log.
+When the default Deno transport starts, the SDK also routes every `console`
+method through that logger (`console.debug` → `DEBUG`, `console.info`/`log` →
+`INFO`, `console.warn` → `WARN`, `console.error` → `ERROR`) so multi-line output
+stays one record and nothing ever reaches stdout, which carries the protocol.
+
+```ts
+plugin.logger.info("synced", { target: "sync", context: { items: 3 } });
+plugin.logger.error("sync failed", { error }); // Error objects render bounded
+const log = plugin.logger.child({ target: "db" }); // defaults for a component
+```
+
+Logging never throws: circular values, `BigInt`, throwing getters, and
+oversized payloads degrade to bounded descriptions. The logger exposes no file
+path, plugin id, or correlation field — the host stamps those itself. Plugins
+receive no Deno permissions unless the Ora host grants them when launching the
+process; ui plugins receive none at all and reach their data through the
+storage client below.
 
 `run()` sends a single `ora/register` notification, serves host traffic until it
 receives `ora/shutdown` or stdin closes, then waits for current handlers to
@@ -56,6 +71,8 @@ stopped first).
 
 `createStorage(plugin)` (also available as `ui.storage` from `defineUiPlugin`)
 wraps the `ora/storage/*` methods. Paths are logical, slash-separated, and
+never reach the host-owned `web-profile/` directory or the plugin log, which
+lives outside the data directory entirely; they are
 relative to the plugin's private data directory; Ora resolves them by the
 calling plugin's identity and refuses absolute paths, `..`, symlinks, and the
 host-owned `web-profile/` directory.

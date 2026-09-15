@@ -6,7 +6,7 @@
 
 use crate::permissions::DenoPermission;
 use ora_domain::PluginId;
-use ora_plugin_runtime::{PluginNotification, PluginRegistration};
+use ora_plugin_runtime::{PluginLogSetup, PluginNotification, PluginRegistration};
 use serde_json::Value;
 use std::future::Future;
 use std::path::PathBuf;
@@ -115,9 +115,13 @@ pub trait PluginRuntimeLauncher: Clone + Send + Sync + 'static {
     type Runtime: PluginRuntime;
 
     /// Starts one resolved plugin entrypoint and returns after runtime readiness is established.
+    ///
+    /// `log` is passed beside the request rather than inside it because it carries a live level
+    /// subscription: the request stays a plain, comparable description of what to launch.
     fn launch(
         &self,
         request: PluginLaunchRequest,
+        log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send;
 }
 

@@ -812,6 +812,7 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
         }
     });
 
+    let log_dir = tempfile::tempdir().expect("log dir");
     let (runtime, _notifications) = ProcessPluginRuntime::launch(
         &plugin_spawner,
         PluginRuntimeConfig {
@@ -825,6 +826,12 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
             shutdown_timeout: Duration::from_secs(5),
         },
         NoHostRequests,
+        ora_plugin_runtime::PluginLogSetup {
+            root: log_dir.path().join("logs"),
+            directory: log_dir.path().join("logs").join("official").join("a"),
+            generation: 1,
+            level: watch::channel(ora_logging::LogLevel::Info).1,
+        },
     )
     .await
     .expect("fake plugin runtime launches");

@@ -36,7 +36,7 @@ describe("DiagnosticLogsSettings", () => {
     );
     renderSettings({
       ...createStubPlatform(),
-      diagnosticLogs: { downloadToday },
+      diagnosticLogs: { downloadToday, downloadPluginLog: async () => false },
     });
 
     await user.click(screen.getByRole("button", { name: "Download logs" }));
@@ -59,7 +59,10 @@ describe("DiagnosticLogsSettings", () => {
     const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "id");
     renderSettings({
       ...createStubPlatform(),
-      diagnosticLogs: { downloadToday: async () => false },
+      diagnosticLogs: {
+        downloadToday: async () => false,
+        downloadPluginLog: async () => false,
+      },
     });
 
     await user.click(screen.getByRole("button", { name: "Download logs" }));
@@ -79,6 +82,7 @@ describe("DiagnosticLogsSettings", () => {
     renderSettings({
       ...createStubPlatform(),
       diagnosticLogs: {
+        downloadPluginLog: async () => false,
         downloadToday: async () => {
           throw new Error("copy failed");
         },

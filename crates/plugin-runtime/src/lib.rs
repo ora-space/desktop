@@ -1,6 +1,7 @@
 //! Owns the lifecycle and bidirectional stdio protocol of one sandboxed Ora plugin process.
 
 mod host_requests;
+mod plugin_log;
 mod protocol;
 mod state;
 mod tasks;
@@ -12,6 +13,11 @@ pub use host_requests::{
     HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
 };
 pub use ora_plugin_protocol::{PluginEffectCoordination, PluginEffectResource, PluginRegistration};
+pub use plugin_log::{
+    ACTIVE_LOG_FILE_NAME, DEFAULT_PLUGIN_TARGET, MAX_IDENTIFIER_BYTES, MAX_RECORD_BYTES,
+    PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup, PluginLogStats, QUEUE_CAPACITY,
+    RAW_STDERR_TARGET,
+};
 pub use protocol::PluginNotification;
 
 use std::path::PathBuf;
@@ -44,6 +50,13 @@ pub struct PluginRuntimeConfig {
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
 }
+
+/// How long, after the process has exited, stderr may take to reach EOF and the log to flush.
+///
+/// Process exit does not end the generation: the pipe can still hold bytes and a grandchild
+/// may have inherited the write end. This bound keeps stop from hanging on either while giving
+/// an ordinary exit ample time to land its last records.
+const LOG_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Reports why a plugin cannot start or serve a method invocation.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -108,10 +121,14 @@ impl PluginRuntime {
     /// The returned receiver carries every whitelisted plugin-originated notification. It is
     /// unbounded on purpose: connection-wide backpressure would let one noisy stream stall
     /// unrelated traffic on the same process, so bounded queues belong to each consumer instead.
+    ///
+    /// `log` binds the process's stderr to the host-owned plugin log for this generation; the
+    /// runtime never learns a log path or level from the plugin itself.
     pub async fn launch<P, H>(
         spawner: &P,
         config: PluginRuntimeConfig,
         host_requests: H,
+        log: PluginLogSetup,
     ) -> Result<(Self, mpsc::UnboundedReceiver<PluginNotification>), PluginRuntimeError>
     where
         P: ProcessSpawner,
@@ -150,6 +167,7 @@ impl PluginRuntime {
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
         let (status_tx, mut status_rx) = watch::channel(RuntimeStatus::Starting);
         let (exited_tx, _) = watch::channel(false);
+        let plugin_log = plugin_log::start(stderr, config.plugin_id.clone(), log);
         let inner = Arc::new(RuntimeInner {
             plugin_id: config.plugin_id.clone(),
             registration: RwLock::new(PluginRegistration::default()),
@@ -161,6 +179,7 @@ impl PluginRuntime {
             pending: Mutex::new(PendingRequests::default()),
             next_request_id: AtomicU64::new(1),
             call_timeout: config.call_timeout,
+            plugin_log: plugin_log.counters(),
         });
         let runtime = Self {
             inner: Arc::clone(&inner),
@@ -181,13 +200,14 @@ impl PluginRuntime {
             Arc::clone(&inner),
             Arc::new(host_requests),
         ));
-        tokio::spawn(tasks::run_stderr(stderr, config.plugin_id.clone()));
         tokio::spawn(tasks::run_supervisor(
             process,
             supervisor_rx,
             Arc::clone(&inner),
             config.shutdown_timeout,
             writer_close_tx,
+            plugin_log,
+            LOG_TEARDOWN_TIMEOUT,
         ));
 
         let ready_result = timeout(config.ready_timeout, async {
@@ -233,6 +253,14 @@ impl PluginRuntime {
     /// Returns the capability declaration published by the plugin, fixed once the plugin is ready.
     pub async fn registration(&self) -> PluginRegistration {
         self.inner.registration.read().await.clone()
+    }
+
+    /// Reports this generation's plugin-log loss accounting as of now.
+    ///
+    /// Counts stay queryable for as long as the handle lives, so a diagnosis can still ask how
+    /// much was dropped even when the Ora runtime log itself could not be written.
+    pub fn plugin_log_stats(&self) -> PluginLogStats {
+        self.inner.plugin_log.snapshot()
     }
 
     /// Invokes one registered method and returns its JSON result.
@@ -337,10 +365,13 @@ impl PluginRuntime {
         self.request_shutdown();
     }
 
-    /// Requests bounded process-tree shutdown and returns only after the child has been reaped.
+    /// Requests bounded process-tree shutdown and returns only after the child has been reaped
+    /// and its plugin log has been drained, flushed, and released (or given up on after the
+    /// teardown deadline).
     ///
     /// Lifecycle owners use this instead of `shutdown` when starting a replacement generation:
-    /// the blocking boundary prevents old and new plugin generations from overlapping.
+    /// the blocking boundary prevents old and new plugin generations from overlapping, on the
+    /// process and on the active log file alike.
     pub async fn shutdown_and_wait(&self) -> PluginProcessExit {
         self.request_shutdown();
         self.wait_for_exit().await

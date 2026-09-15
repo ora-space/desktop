@@ -242,6 +242,31 @@ describe("TauriPlatformAdapter", () => {
     });
   });
 
+  it("downloads one plugin's log under a sanitized suggested name", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 3, 12));
+    saveMock.mockResolvedValue("/home/ora/ora-plugin-claude-2026-09-03.log");
+    const adapter = createTauriPlatformAdapter();
+
+    await expect(
+      adapter.diagnosticLogs.downloadPluginLog(
+        "official/claude",
+        "Claude Code",
+      ),
+    ).resolves.toBe(true);
+
+    expect(saveMock).toHaveBeenCalledWith({
+      defaultPath: "ora-plugin-Claude-Code-2026-09-03.log",
+      filters: [{ name: "Log", extensions: ["log"] }],
+    });
+    expect(invokeMock).toHaveBeenCalledWith("download_plugin_log", {
+      request: {
+        pluginId: "official/claude",
+        destination: "/home/ora/ora-plugin-claude-2026-09-03.log",
+      },
+    });
+  });
+
   it("does not invoke the host when diagnostic log saving is cancelled", async () => {
     saveMock.mockResolvedValue(null);
     const adapter = createTauriPlatformAdapter();

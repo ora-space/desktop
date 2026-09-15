@@ -1,16 +1,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ora_logging::{ora_error, ora_info, ora_warn};
+use ora_logging::{ora_error, ora_warn};
 use ora_plugin_protocol::{read_message, write_message};
 use ora_process::ManagedProcess;
 use serde_json::Value;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
 use crate::PluginRuntimeError;
 use crate::host_requests::HostRequestHandler;
+use crate::plugin_log::{self, PluginLogPipeline};
 use crate::protocol::handle_message;
 use crate::state::{
     RuntimeInner, RuntimeStatus, SupervisorCommand, close_inbound, fail_pending, fail_runtime,
@@ -65,42 +66,19 @@ where
     }
 }
 
-/// Drains plugin stderr continuously so logging cannot block the child process.
-pub(crate) async fn run_stderr<R>(mut stderr: R, plugin_id: String)
-where
-    R: AsyncRead + Unpin,
-{
-    let mut buffer = [0_u8; 8 * 1024];
-    loop {
-        match stderr.read(&mut buffer).await {
-            Ok(0) => return,
-            Ok(length) => {
-                let message = String::from_utf8_lossy(&buffer[..length]);
-                ora_info!(
-                    message = "plugin stderr",
-                    plugin_id = %plugin_id,
-                    output = %message.trim_end(),
-                );
-            }
-            Err(error) => {
-                ora_warn!(
-                    message = "failed to read plugin stderr",
-                    plugin_id = %plugin_id,
-                    error = %error,
-                );
-                return;
-            }
-        }
-    }
-}
-
 /// Supervises process exit and guarantees a bounded graceful shutdown.
+///
+/// The generation is only reported as exited once its plugin log has also finished: a stop
+/// that returned while the log writer still held the active file would let the next generation
+/// or an uninstall race it.
 pub(crate) async fn run_supervisor<P>(
     process: P,
     mut commands: mpsc::UnboundedReceiver<SupervisorCommand>,
     inner: Arc<RuntimeInner>,
     shutdown_timeout: Duration,
     writer_close: oneshot::Sender<()>,
+    plugin_log: PluginLogPipeline,
+    log_teardown_timeout: Duration,
 ) where
     P: ManagedProcess + Send + 'static,
 {
@@ -152,5 +130,6 @@ pub(crate) async fn run_supervisor<P>(
     }
     close_inbound(&inner).await;
     let _ = writer_close.send(());
+    plugin_log::finish(plugin_log, log_teardown_timeout).await;
     inner.exited_tx.send_replace(true);
 }
