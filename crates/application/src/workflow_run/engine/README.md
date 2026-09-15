@@ -18,9 +18,23 @@ runtime registered for its node type.
   form, never on the node type itself. Run-output precedence is runtime metadata too — each
   runtime declares the rank with which its succeeded nodes contribute the run's final output —
   so a new terminal node type picks its own precedence without touching the scheduling core.
+- **Iteration composite runtime** (`iteration.rs`, `node_runtime/iteration.rs`): the first
+  composite runtime (foreach semantics). `iteration.rs` owns the graph-level domain — the
+  `iterationConfig` wire shape (`iteratorSelector`, `collectSelector`, `errorStrategy`,
+  `maxIterations`), region derivation from React Flow `parentId` containment, the six region
+  boundary rules validated at parse, and the per-round `RoundOutcome` ledger model with its
+  `entries`/`output`/`failed_count` projection. `node_runtime/iteration.rs` is the pure advance
+  planner: given the persisted rows, ledger, and pool, it answers with the next transition
+  (`CompositeAdvancePlan`), which the engine executes through the repository's atomic composite
+  operations. The engine holds no iteration state in memory — the current round is always
+  re-derived from the region rows' `max(iteration)`.
 - **Engine persistence port** (`ports.rs`): the `WorkflowRunEngineRepository` trait that the run
   engine uses, implemented in `ora-db`; plus the `WorkflowRunInvalidationPublisher` port that
-  publishes a stateless invalidation after every committed run or node-run state transition.
+  publishes a stateless invalidation after every committed run or node-run state transition. The
+  port also carries the composite operations (`start_iteration_round`, `settle_iteration_round`,
+  `complete_iteration_node`) and `FailurePropagation`: a failure inside a composite region
+  resolves to the owning composite node (`Composite`), and the owner's error strategy decides at
+  settlement whether the node fails (`fail`) or records the round and advances (`continue`).
 - **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
   deploy flow calls to validate roles and resolve Effect-owned skill placements. It returns the
   actual per-node placements as a receipt rather than exposing a directory convention to later
@@ -28,9 +42,15 @@ runtime registered for its node type.
 - **Skill delivery model** (`skill_delivery.rs`): Agent capability, non-empty validated discovery
   roots, frozen materialization bindings, and the typed workflow-run payload shared by deployment
   and node execution.
+- **Branch projection** (`branch_projection.rs`): derives node states from persisted rows and
+  Condition decisions. The outer projection treats composite regions as black boxes — members
+  never enter the outer ready set and their per-round rows never seed outer states — while the
+  scoped projection (`new_region_round`) schedules exactly one region round, consuming only that
+  round's rows and per-round Condition decisions.
 - **Run engine** (`engine.rs`): `start`/`cancel`/`restart` use cases and the reactive DAG scheduler.
   The scheduling core (`run_schedule`) recomputes state from persistence, hands in-flight nodes to
-  their registered runtimes, and finishes drained runs; it contains no node-type branching.
+  their registered runtimes, advances composite nodes each wave, and finishes drained runs; it
+  contains no node-type branching.
 
 ## Non-responsibilities
 
@@ -102,12 +122,26 @@ node-run transition — engine or interactive — publishes one event. `ora-db` 
 - Run invalidation events never carry workflow state: the persisted rows remain the only source
   of truth, and a lost or reordered event only leaves a stale view that the next event or refresh
   clears.
+- Iteration regions are a structural property of the frozen graph: membership is `parentId`
+  containment, validated by the six boundary rules at parse (non-empty and entered from the
+  owner, no Output or nested composite inside, member out-edges stay inside, no outer node may
+  target a member, `maxIterations >= 1`).
+- Rounds are persisted facts: region rows carry their `iteration`, round variables
+  (`item`/`index`) commit with the round's first rows in one transaction, ledger entries commit
+  with their continuation in one transaction, and already-settled rounds are append-only. The
+  exposed variables (`output: array[T]`, `entries: array[object]`, `failed_count: number`) are
+  derived from the ledger at completion and never change type with the error strategy.
+- An iteration node's own failures (non-array source, exceeded safety ceiling, exposed-variable
+  write failures) always propagate to run failure; only failures inside the region can be
+  absorbed by a `continue` strategy, and a branch that bypasses the collect target settles that
+  round as failed instead of reading a stale pool value.
 
 ## Failure semantics
 
 `GraphError` distinguishes structural failures: `InvalidJson`, `MissingNodes`, `MissingEdges`,
-`InvalidNode`, `UnknownNodeType`, `DanglingEdge`, `CycleDetected`, `MultipleStartNodes`, and
-`DuplicateNodeId`. An empty graph is legal; unsupported-but-known node types fail later at
-workflow start rather than at parse.
+`InvalidNode`, `UnknownNodeType`, `DanglingEdge`, `CycleDetected`, `MultipleStartNodes`,
+`DuplicateNodeId`, plus the iteration variants `InvalidIteration` (config or selector typing)
+and `InvalidRegion` (region boundary violations). An empty graph is legal; unsupported-but-known
+node types fail later at workflow start rather than at parse.
 
 Agent MCP bindings are parsed and validated by `agent_config`; absent bindings default to an empty node allowlist. Runtime availability remains a Session setup responsibility.

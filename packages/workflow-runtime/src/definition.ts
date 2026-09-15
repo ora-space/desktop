@@ -25,6 +25,8 @@ export interface WorkflowDefinitionInputNode {
   deletable?: boolean;
   initialWidth?: number;
   initialHeight?: number;
+  /** Iteration containment: the owning iteration node's id for region members. */
+  parentId?: string;
 }
 
 export interface WorkflowDefinitionInputEdge {
@@ -75,6 +77,8 @@ export function normalizeWorkflowDefinition(
       ...(node.initialHeight === undefined
         ? {}
         : { initialHeight: node.initialHeight }),
+      // Iteration containment is structural: body nodes carry their container's id.
+      ...(node.parentId === undefined ? {} : { parentId: node.parentId }),
     })),
     edges: input.edges.map((edge) => ({
       id: edge.id,

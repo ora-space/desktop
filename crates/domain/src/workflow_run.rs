@@ -173,6 +173,10 @@ pub struct WorkflowNodeRun {
     pub output: Option<String>,
     pub error: Option<String>,
     pub payload: Option<String>,
+    /// Round index when this row executed inside a composite region; `None` for outer rows.
+    /// The composite node's own row is an outer row (iteration is `None`); region rows carry
+    /// the round they belong to, starting at 0 (ADR "iteration composite runtime" D2).
+    pub iteration: Option<u32>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub audit_fields: AuditFields,
@@ -180,6 +184,9 @@ pub struct WorkflowNodeRun {
 
 impl WorkflowNodeRun {
     /// Creates a node-run snapshot together with its persistence-managed audit metadata.
+    ///
+    /// The row starts as an outer execution (`iteration: None`); region rounds attach their
+    /// index through [`WorkflowNodeRun::in_iteration`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: WorkflowNodeRunId,
@@ -207,10 +214,17 @@ impl WorkflowNodeRun {
             output,
             error,
             payload,
+            iteration: None,
             started_at,
             finished_at,
             audit_fields,
         }
+    }
+
+    /// Attaches the composite-region round this row belongs to.
+    pub fn in_iteration(mut self, iteration: Option<u32>) -> Self {
+        self.iteration = iteration;
+        self
     }
 }
 

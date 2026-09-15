@@ -119,6 +119,16 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       )}
       headerAccessory={
         <div className="flex shrink-0 items-center gap-1">
+          {state.iteration !== undefined && (
+            <span
+              className="inline-flex items-center rounded bg-violet-500/12 px-1 py-0.5 text-[9px] font-medium tabular-nums text-violet-700 dark:text-violet-300"
+              title={t("workflowRun.overview.roundBadge", {
+                round: state.iteration + 1,
+              })}
+            >
+              R{state.iteration + 1}
+            </span>
+          )}
           {artifactCount > 0 && (
             <span
               className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium text-muted-foreground"

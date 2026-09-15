@@ -77,6 +77,8 @@ interface WorkflowInspectorProps {
   onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onCloseNode: () => void;
+  /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
+  graphNodes?: Node<WorkflowNodeData, "workflow">[];
 }
 
 /** Right-rail editor for the selected workflow node (definition only). */
@@ -102,6 +104,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       onUpdate={props.onUpdate}
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
+      graphNodes={props.graphNodes}
     />
   );
 }
@@ -152,6 +155,7 @@ function WorkflowNodeInspector({
   onUpdate,
   onDelete,
   onClose,
+  graphNodes,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
@@ -169,6 +173,8 @@ function WorkflowNodeInspector({
   onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onClose: () => void;
+  /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
+  graphNodes?: Node<WorkflowNodeData, "workflow">[];
 }) {
   const { t } = useTranslation();
   const nodeType = capabilities.nodeTypes.find(
@@ -380,6 +386,7 @@ function WorkflowNodeInspector({
           variableCatalog={variableCatalog}
           onUpdate={onUpdate}
           onClose={onClose}
+          graphNodes={graphNodes}
         />
       )}
       <div className="border-t border-border p-3">

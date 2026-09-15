@@ -175,10 +175,14 @@ pub(crate) fn seeded_pending_run(
     let run_id = WorkflowRunId::new("run-1");
     // Real runs are created through the deployment handler, which always freezes a typed
     // payload; without one, private routing state such as Condition decisions would never
-    // persist, so the fixture seeds the same minimal payload shape.
-    let payload = serde_json::to_string(&WorkflowRunPayload::new(
+    // persist, so the fixture seeds the graph-derived pool exactly like deployment does.
+    let parsed_graph = ora_application::WorkflowGraph::parse(graph).expect("fixture graph parses");
+    let start_node_id = parsed_graph.start_node().map(|node| node.id.clone());
+    let payload = serde_json::to_string(&WorkflowRunPayload::with_variable_pool(
         WorkflowRunLocale::EnUs,
         Default::default(),
+        start_node_id,
+        ora_application::WorkflowVariablePool::from_graph(&parsed_graph),
     ))
     .unwrap();
     let run = WorkflowRun::new(

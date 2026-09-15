@@ -5,7 +5,7 @@ use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    FileChange, UuidWorkflowNodeRunIdGenerator, WorkflowGraph, WorkflowRunCallback,
+    FileChange, NodeType, UuidWorkflowNodeRunIdGenerator, WorkflowGraph, WorkflowRunCallback,
     WorkflowRunControlHandler, WorkflowRunEngine, WorkflowRunEngineRepository,
     WorkflowRunInvalidationPublisher,
 };
@@ -19,6 +19,7 @@ use ora_domain::{
 };
 use ora_logging::{ora_error, ora_warn};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 /// The concrete run engine as composed by the backend.
@@ -250,11 +251,16 @@ pub(crate) fn reconcile_running_workflow_runs(
 
         let _gate = run_locks.acquire_exclusive(run_id.as_ref());
 
-        if node_runs
-            .iter()
-            .any(|node_run| node_run.status == WorkflowNodeStatus::Running)
-        {
-            // A run still generating was already failed by the orphan sweep; stay inert.
+        if node_runs.iter().any(|node_run| {
+            node_run.status == WorkflowNodeStatus::Running
+                && NodeType::from_str(&node_run.node_type)
+                    .map(|node_type| !node_type.is_composite())
+                    .unwrap_or(true)
+        }) {
+            // A run still generating a non-composite row was already failed by the orphan
+            // sweep; stay inert. A `Running` composite row is not generating — its runtime
+            // re-plans from persisted facts, so the run resumes below (ADR "iteration
+            // composite runtime" D2).
             continue;
         }
         let invalid_pending: Vec<_> = node_runs

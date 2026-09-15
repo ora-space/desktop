@@ -190,6 +190,35 @@ function configuredParameters(
     );
     return parameters;
   }
+  if (data.kind === "iteration") {
+    const config = data.iterationConfig;
+    if (config === undefined) {
+      return parameters;
+    }
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.iterationIterator"),
+      config.iteratorSelector.join("."),
+    );
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.iterationCollect"),
+      config.collectSelector.join("."),
+    );
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.iterationErrorStrategy"),
+      config.errorStrategy === "continue"
+        ? t("settings.workflow.iteration.continueStrategy")
+        : t("settings.workflow.iteration.failStrategy"),
+    );
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.maxIterations"),
+      config.maxIterations.toString(),
+    );
+    return parameters;
+  }
   if (data.kind === "output" || data.kind === "subflow") {
     return parameters;
   }

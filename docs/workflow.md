@@ -94,6 +94,50 @@ Workflow value types are enforced at graph parsing, editor entry, and variable-p
 
 Start inputs keep their form control separate from their variable-pool type. The editor supports text, paragraph, select, number, checkbox, single-file, file-list, and JSON controls, which emit `string`, `string`, `string`, `number`, `boolean`, `file`, `array[file]`, and `object` values respectively. Select choices, required state, and text length limits are frozen into the deployed snapshot and validated again at the execution boundary. Snapshots created before form controls were introduced continue to derive a compatible control from their declared value type.
 
+### Iteration nodes (foreach composite runtime)
+
+The iteration node is the first composite runtime: it owns a region — the set of nodes whose
+React Flow `parentId` points at it — and executes that region's frozen subgraph once per element
+of an array source. Its `data.iterationConfig` carries `iteratorSelector` (an array-typed
+variable), `collectSelector` (a root variable declared inside the region), `errorStrategy`
+(`fail` or `continue`), and `maxIterations` (default 50). Region boundaries are validated at
+graph parse: the region must be non-empty and entered by an edge from the iteration node, may
+contain neither Output nor nested composite nodes, member out-edges must stay inside, no outer
+node may target a member, and `maxIterations` must be at least 1.
+
+Rounds are persisted facts. Region rows carry their round in the `iteration` column (the
+iteration node's own row keeps `NULL`), so the same node holds one row per round. Each round's
+`{iter}.item` and `{iter}.index` bindings commit in the same SQLite transaction as the round's
+first node-run rows, and each settled round's ledger entry commits with its continuation (next
+round, node completion, or node failure) in one transaction. The engine keeps no iteration
+state in memory: the current round is always re-derived from the region rows, so a crash
+recovery replays to the same point. The boot sweep is region-aware — interrupted rows inside a
+still-running iteration fail as `interrupted_by_restart` while the composite row and the run
+survive, and the runtime settles the interrupted round as a failed ledger entry.
+
+Error handling is decoupled into a binary control-flow switch plus a per-round ledger. `fail`
+(the default) stops at the first failed round and fails the run; `continue` records failed
+rounds in the ledger and still runs the remaining rounds. On completion the node exposes three
+variables whose types never depend on the strategy: `{iter}.output` (`array[T]`, where `T` is
+the collect target's declared type), `{iter}.entries` (`array[object]`, one
+`{item, status, output, error}` envelope per round, aligned with the input array), and
+`{iter}.failed_count` (`number`). A source longer than `maxIterations` fails the node at the
+startup boundary — never silently truncating — with the length and the ceiling in the error,
+and an empty source completes immediately with empty outputs. A round whose branch bypassed the
+collect target settles as a failed round (`collect target did not run this round`) instead of
+reading the previous round's stale pool value. The node's own failures always propagate to run
+failure; only region-internal failures can be absorbed, and Condition decisions inside a region
+are recorded per round so a later round can never overwrite an earlier round's branch.
+
+The editor renders the iteration node as an embedded container frame on the same canvas:
+dragging a node into the frame's region zone makes it a member, the frame collapses to a
+compact summary, and the inspector edits the four config fields. The variable catalog follows
+region scope — members see `item`/`index` plus their in-region upstream products but never the
+node's own exposed results, while outer consumers see the three exposed variables but never the
+round bindings. Run views group region states by `(node_id, iteration)`: the overview marks
+member nodes with their round badge, and Theater's act inspector offers a per-round strip for
+viewing each round's session and output.
+
 ### Entities and tables
 
 | Domain type       | Backing table        |

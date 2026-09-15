@@ -104,6 +104,8 @@ function renderInspector() {
           nodeId="agent-1"
           data={AGENT_DATA}
           state={{ status: "succeeded" }}
+          selectedRound={null}
+          onRoundChange={() => undefined}
           artifacts={[]}
           revealedArtifactId={null}
           onClose={() => undefined}

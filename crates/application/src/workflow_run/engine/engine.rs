@@ -4,18 +4,19 @@ use crate::workflow_run::engine::branch_projection::BranchProjection;
 use crate::workflow_run::engine::condition::ELSE_BRANCH_ID;
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_runtime::{
-    NodeRuntimeRegistry, RegisteredNodeRuntime, SwiftCompletion, standard_node_runtimes,
+    CompositeAdvancePlan, CompositeContinuation, NodeRuntimeRegistry, RegisteredNodeRuntime,
+    SwiftCompletion, standard_node_runtimes,
 };
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
-    WorkflowRunInvalidationPublisher,
+    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FailurePropagation,
+    FileChange, IterationRoundContinuation, NoRunInvalidations, NodeRunToStart,
+    RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
 };
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
+use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
 use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
@@ -195,6 +196,7 @@ where
             node_id: start_node.id.clone(),
             node_type: start_node.node_type.as_str().to_string(),
             input: self.runtimes.start_input(start_node, &context),
+            iteration: None,
         };
         let now = self.clock.now_timestamp_millis();
         match self.repository.start_run(run_id, &start_node_run, now)? {
@@ -279,6 +281,10 @@ where
     }
 
     /// Marks one node-run and its run failed; the run is terminal so no scheduling follows.
+    ///
+    /// A failure inside a `continue`-strategy iteration region is absorbed instead: the row
+    /// fails, the run stays active, and the composite runtime settles the failed round on its
+    /// next advance (ADR "iteration composite runtime" D6).
     pub fn fail_node(
         &self,
         run_id: &WorkflowRunId,
@@ -287,8 +293,18 @@ where
         output: Option<String>,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
-        match self.repository.fail_node(node_run_id, error, output, now)? {
-            AdvanceWorkflowRunResult::Advanced => self.run_events.publish_run_invalidated(run_id),
+        let propagation = self.failure_propagation(run_id, node_run_id)?;
+        match self
+            .repository
+            .fail_node(node_run_id, error, output, propagation, now)?
+        {
+            AdvanceWorkflowRunResult::Advanced => {
+                self.run_events.publish_run_invalidated(run_id);
+                if propagation == FailurePropagation::Composite {
+                    // The absorbing runtime must settle the failed round and advance.
+                    self.run_schedule(run_id)?;
+                }
+            }
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {}
         }
         Ok(())
@@ -301,13 +317,15 @@ where
         self.run_schedule(run_id)
     }
 
-    /// Runs one reactive scheduling pass: complete in-flight swift nodes, dispatch ready nodes,
-    /// and finish the run once the graph is drained.
+    /// Runs one reactive scheduling pass: complete in-flight swift nodes, advance composite
+    /// nodes, dispatch ready nodes, and finish the run once the graph is drained.
     ///
     /// This is the scheduling core: it resolves every node through the runtime registry and
     /// never matches on node types itself. In-flight nodes without a background driver — the
     /// swift runtimes — complete synchronously against the committed pool; async runtimes are
-    /// owned by their background drivers and report through the callback sink instead.
+    /// owned by their background drivers and report through the callback sink instead;
+    /// composite runtimes are handed their Running rows each wave and answered with a pure
+    /// plan the engine executes (ADR "node runtime orchestration" D5 advance coordination).
     fn run_schedule(&self, run_id: &WorkflowRunId) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
         loop {
@@ -351,11 +369,20 @@ where
                         completed_swift = true;
                     }
                     Err(message) => {
-                        let advanced =
-                            self.repository
-                                .fail_node(&node_run.id, message, None, now)?;
+                        let propagation = region_failure_propagation(&graph, &node_run.node_id);
+                        let advanced = self.repository.fail_node(
+                            &node_run.id,
+                            message,
+                            None,
+                            propagation,
+                            now,
+                        )?;
                         if matches!(advanced, AdvanceWorkflowRunResult::Advanced) {
                             self.run_events.publish_run_invalidated(run_id);
+                        }
+                        if propagation == FailurePropagation::Composite {
+                            // The absorbed failure settles as a failed round on the next pass.
+                            continue;
                         }
                         return Ok(());
                     }
@@ -364,6 +391,15 @@ where
 
             // Swift completions persist internal routing state; reload before projecting branches.
             if completed_swift {
+                continue;
+            }
+
+            // Advance coordination: hand every Running composite row back to its runtime. A
+            // non-noop plan commits a transition, so the loop reloads and re-plans until the
+            // plan settles into waiting on in-flight region rows or the outer ready set.
+            let advanced_composite =
+                self.advance_composites(run_id, &graph, &node_runs, &context, now)?;
+            if advanced_composite {
                 continue;
             }
 
@@ -389,6 +425,7 @@ where
                     node_id: node.id.clone(),
                     node_type: node.node_type.as_str().to_string(),
                     input: self.runtimes.start_input(node, &context),
+                    iteration: None,
                 })
                 .collect();
             self.repository
@@ -404,6 +441,205 @@ where
                 }
             }
         }
+    }
+
+    /// Plans and executes one advance step for every Running composite node-run of the run.
+    ///
+    /// Returns whether any transition committed (so the caller reloads and re-plans). The plan
+    /// is pure; execution goes through the repository's atomic composite operations, and any
+    /// rows the plan started are dispatched to their async runtimes before returning.
+    fn advance_composites(
+        &self,
+        run_id: &WorkflowRunId,
+        graph: &WorkflowGraph,
+        node_runs: &[WorkflowNodeRun],
+        context: &ExecutionContext,
+        now: i64,
+    ) -> Result<bool, EngineError> {
+        let payload = execution_payload_from(context.run.payload.as_deref());
+        for node_run in node_runs
+            .iter()
+            .filter(|node_run| node_run.status == WorkflowNodeStatus::Running)
+        {
+            let Some(node) = graph.node(&node_run.node_id) else {
+                continue;
+            };
+            let Some(RegisteredNodeRuntime::Composite(runtime)) =
+                self.runtimes.runtime(node.node_type)
+            else {
+                continue;
+            };
+            let plan = match runtime.plan_advance(node, graph, node_runs, &payload) {
+                Ok(plan) => plan,
+                // A composite-own failure always propagates to the run (ADR D8).
+                Err(error) => {
+                    self.repository.fail_node(
+                        &node_run.id,
+                        error,
+                        None,
+                        FailurePropagation::Run,
+                        now,
+                    )?;
+                    self.run_events.publish_run_invalidated(run_id);
+                    return Ok(true);
+                }
+            };
+            let started = self
+                .execute_composite_plan(run_id, graph, context, node_run, node_runs, plan, now)?;
+            if started.is_some() {
+                self.run_events.publish_run_invalidated(run_id);
+                // Dispatch the rows this plan started to their background drivers.
+                if let Some((_, started_runs)) = started {
+                    for planned in &started_runs {
+                        if let Some(started_node) = graph.node(&planned.node_id)
+                            && let Some(RegisteredNodeRuntime::Async(runtime)) =
+                                self.runtimes.runtime(started_node.node_type)
+                        {
+                            runtime.dispatch(&planned.id, started_node, context);
+                        }
+                    }
+                }
+                // One transition per pass: reload rows and re-plan with fresh facts.
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Executes one composite advance plan through the repository's atomic operations.
+    ///
+    /// Returns the round and materialized rows the plan started, so the caller can dispatch
+    /// their async runtimes; `None` means the plan committed no transition (a no-op).
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn execute_composite_plan(
+        &self,
+        run_id: &WorkflowRunId,
+        graph: &WorkflowGraph,
+        context: &ExecutionContext,
+        node_run: &WorkflowNodeRun,
+        node_runs: &[WorkflowNodeRun],
+        plan: CompositeAdvancePlan,
+        now: i64,
+    ) -> Result<Option<(Option<u32>, Vec<NodeRunToStart>)>, EngineError> {
+        let materialize = |round: Option<u32>, node_ids: &[String]| -> Vec<NodeRunToStart> {
+            node_ids
+                .iter()
+                .filter_map(|node_id| {
+                    let node = graph.node(node_id)?;
+                    Some(NodeRunToStart {
+                        id: self.node_run_id_generator.generate_node_run_id(),
+                        node_id: node.id.clone(),
+                        node_type: node.node_type.as_str().to_string(),
+                        input: self.runtimes.start_input(node, context),
+                        iteration: round,
+                    })
+                })
+                .collect()
+        };
+        match plan {
+            CompositeAdvancePlan::Noop => Ok(None),
+            CompositeAdvancePlan::StartRound {
+                round,
+                item,
+                node_ids,
+            } => {
+                let rows = materialize(Some(round), &node_ids);
+                let result = self.repository.start_iteration_round(
+                    run_id,
+                    &node_run.node_id,
+                    round,
+                    &item,
+                    &rows,
+                    now,
+                )?;
+                Ok(matches!(result, AdvanceWorkflowRunResult::Advanced)
+                    .then_some((Some(round), rows)))
+            }
+            CompositeAdvancePlan::StartRegionNodes { node_ids } => {
+                // Mid-round wave: the rows carry the round they belong to, derived from the
+                // region's persisted rows so no in-memory round state exists (ADR D2).
+                let round = region_rows_round(graph, node_run, node_runs);
+                let rows = materialize(round, &node_ids);
+                self.repository.start_ready_nodes(run_id, &rows, now)?;
+                Ok(Some((round, rows)))
+            }
+            CompositeAdvancePlan::SettleRound {
+                round,
+                entry,
+                continuation,
+            } => {
+                let continuation = match continuation {
+                    CompositeContinuation::StartNextRound {
+                        round,
+                        item,
+                        node_ids,
+                    } => IterationRoundContinuation::StartNextRound {
+                        round,
+                        item,
+                        node_runs: materialize(Some(round), &node_ids),
+                    },
+                    CompositeContinuation::Complete { exposed, output } => {
+                        IterationRoundContinuation::Complete { exposed, output }
+                    }
+                    CompositeContinuation::Fail { error } => {
+                        IterationRoundContinuation::Fail { error }
+                    }
+                };
+                let result = self.repository.settle_iteration_round(
+                    run_id,
+                    &node_run.node_id,
+                    round,
+                    entry,
+                    continuation,
+                    now,
+                )?;
+                Ok(matches!(result, AdvanceWorkflowRunResult::Advanced)
+                    .then_some((None, Vec::new())))
+            }
+            CompositeAdvancePlan::CompleteNode { exposed, output } => {
+                let result = self.repository.complete_iteration_node(
+                    &node_run.id,
+                    &node_run.node_id,
+                    &exposed,
+                    output,
+                    now,
+                )?;
+                Ok(matches!(result, AdvanceWorkflowRunResult::Advanced)
+                    .then_some((None, Vec::new())))
+            }
+            CompositeAdvancePlan::FailNode { error } => {
+                let result = self.repository.fail_node(
+                    &node_run.id,
+                    error,
+                    None,
+                    FailurePropagation::Run,
+                    now,
+                )?;
+                Ok(matches!(result, AdvanceWorkflowRunResult::Advanced)
+                    .then_some((None, Vec::new())))
+            }
+        }
+    }
+
+    /// Resolves how one node-run's failure propagates, by graph structure only (ADR
+    /// "iteration composite runtime" D6): a failure inside a `continue`-strategy composite
+    /// region is absorbed by the runtime; everything else keeps the `Run` behavior.
+    fn failure_propagation(
+        &self,
+        run_id: &WorkflowRunId,
+        node_run_id: &WorkflowNodeRunId,
+    ) -> Result<FailurePropagation, EngineError> {
+        let node_run = self.repository.find_node_run_by_id(node_run_id)?.ok_or(
+            EngineError::WorkflowRunNotFound {
+                run_id: run_id.to_string(),
+            },
+        )?;
+        if node_run.iteration.is_none() {
+            return Ok(FailurePropagation::Run);
+        }
+        let context = self.execution_context(run_id)?;
+        let graph = WorkflowGraph::parse(&context.graph_json)?;
+        Ok(region_failure_propagation(&graph, &node_run.node_id))
     }
 
     /// Loads the execution context or reports the run as missing.
@@ -525,6 +761,41 @@ fn execution_state_from(
     };
     let condition_decisions = payload.resolved_condition_decisions();
     (payload.variable_pool, condition_decisions)
+}
+
+/// Loads the full run payload, defaulting when a run carries none.
+fn execution_payload_from(serialized_payload: Option<&str>) -> WorkflowRunPayload {
+    serialized_payload
+        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
+        .unwrap_or_default()
+}
+
+/// Resolves how a failure of the node with the given id propagates, structurally: any failure
+/// inside a composite region resolves to the owning composite node with `Composite` semantics
+/// (the row fails, the run stays), and the owner's error strategy decides the node's fate at
+/// settlement — `fail` fails the node and the run there, `continue` records the round and
+/// advances (ADR "iteration composite runtime" D4, D6). This is a graph-structure judgment,
+/// not a node-type branch in the scheduling core.
+fn region_failure_propagation(graph: &WorkflowGraph, node_id: &str) -> FailurePropagation {
+    match graph.region_owner(node_id) {
+        Some(_) => FailurePropagation::Composite,
+        None => FailurePropagation::Run,
+    }
+}
+
+/// Derives the round a composite node's region is currently executing, from the region's
+/// persisted rows only (v1 serial execution; ADR "iteration composite runtime" D2).
+fn region_rows_round(
+    graph: &WorkflowGraph,
+    node_run: &WorkflowNodeRun,
+    node_runs: &[WorkflowNodeRun],
+) -> Option<u32> {
+    let region = graph.region(&node_run.node_id)?;
+    node_runs
+        .iter()
+        .filter(|row| row.iteration.is_some() && region.contains(&row.node_id))
+        .filter_map(|row| row.iteration)
+        .max()
 }
 
 #[cfg(test)]

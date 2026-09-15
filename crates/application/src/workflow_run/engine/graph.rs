@@ -2,7 +2,11 @@ pub use super::agent_config::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, StructuredTextExposure,
 };
 use super::agent_config::{AgentMcp, deserialize_bindings};
-use crate::workflow_run::engine::condition::{ConditionConfig, WireConditionCase};
+use super::condition::{ConditionConfig, WireConditionCase};
+use super::iteration::{CompositeRegion, IterationConfig, derive_regions, parse_iteration_config};
+use super::start_input::{StartInputVariable, WireStartInputVariable, into_start_input_variables};
+
+use super::variable_pool;
 use crate::workflow_run::engine::node_type::{NodeType, UnknownNodeType};
 use crate::workflow_run::engine::structured_output::validate_structured_output_schema;
 use crate::workflow_run::engine::variable_pool::VariableSelector;
@@ -31,7 +35,9 @@ pub struct WorkflowGraphEdge {
 /// A parsed workflow execution graph.
 ///
 /// Deserializes a frozen React Flow document (the snapshot graph) into a validated DAG. The
-/// graph is immutable after construction; every topology query is deterministic.
+/// graph is immutable after construction; every topology query is deterministic. Iteration
+/// nodes own composite regions derived from `parentId` containment; regions are a structural
+/// property validated at parse and never change at runtime.
 #[derive(Debug, Clone)]
 pub struct WorkflowGraph {
     graph: DiGraph<WorkflowGraphNode, Option<String>>,
@@ -39,6 +45,10 @@ pub struct WorkflowGraph {
     /// Rank of each node in the unique `toposort` order, used to order transitive closures.
     topo_rank: HashMap<NodeIndex, usize>,
     global_variables: Vec<WorkflowGlobalVariable>,
+    /// Regions by owning composite node id.
+    regions: HashMap<String, CompositeRegion>,
+    /// Member node id → owning composite node id.
+    region_by_member: HashMap<String, String>,
 }
 
 /// One node in a parsed workflow graph.
@@ -58,71 +68,8 @@ pub struct WorkflowGraphNode {
     pub condition_config: Option<ConditionConfig>,
     /// Declared result bindings of an `output` node; absent for non-output nodes.
     pub output_config: Option<OutputConfig>,
-}
-
-/// One typed variable declared by the Start node, optionally carrying its initial value.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StartInputVariable {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub field_type: StartInputFieldType,
-    pub value_type: String,
-    pub required: bool,
-    pub options: Vec<String>,
-    pub max_length: Option<usize>,
-    pub value: Option<serde_json::Value>,
-}
-
-/// Form control used to collect one Start variable without conflating UI and value types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StartInputFieldType {
-    TextInput,
-    Paragraph,
-    Select,
-    Number,
-    Checkbox,
-    File,
-    FileList,
-    Json,
-}
-
-impl StartInputFieldType {
-    /// Parses current field metadata or derives a compatible control for legacy snapshots.
-    fn from_wire(field_type: Option<&str>, value_type: &str) -> Option<Self> {
-        match field_type {
-            Some("text-input") => Some(Self::TextInput),
-            Some("paragraph") => Some(Self::Paragraph),
-            Some("select") => Some(Self::Select),
-            Some("number") => Some(Self::Number),
-            Some("checkbox") => Some(Self::Checkbox),
-            Some("file") => Some(Self::File),
-            Some("file-list") => Some(Self::FileList),
-            Some("json") => Some(Self::Json),
-            Some(_) => None,
-            None => match value_type {
-                "number" | "integer" => Some(Self::Number),
-                "boolean" => Some(Self::Checkbox),
-                "file" => Some(Self::File),
-                "array[file]" => Some(Self::FileList),
-                "object" | "any" | "array" | "array[string]" | "array[number]"
-                | "array[object]" | "array[boolean]" | "array[any]" => Some(Self::Json),
-                "string" | "secret" => Some(Self::TextInput),
-                _ => None,
-            },
-        }
-    }
-
-    /// Returns the exact variable-pool type emitted by current Start field controls.
-    fn value_type(self) -> &'static str {
-        match self {
-            Self::TextInput | Self::Paragraph | Self::Select => "string",
-            Self::Number => "number",
-            Self::Checkbox => "boolean",
-            Self::File => "file",
-            Self::FileList => "array[file]",
-            Self::Json => "object",
-        }
-    }
+    /// Composite configuration of an `iteration` node; absent for non-iteration nodes.
+    pub iteration_config: Option<IterationConfig>,
 }
 
 /// One workflow-wide variable declaration, independent of graph topology.
@@ -161,6 +108,10 @@ pub enum GraphError {
     UnknownNodeType { node_id: String, value: String },
     #[error("node {node_id} has an invalid condition config: {reason}")]
     InvalidCondition { node_id: String, reason: String },
+    #[error("node {node_id} has an invalid iteration config: {reason}")]
+    InvalidIteration { node_id: String, reason: String },
+    #[error("node {node_id} violates a composite region boundary: {reason}")]
+    InvalidRegion { node_id: String, reason: String },
     #[error("node {node_id} has invalid Start variables: {reason}")]
     InvalidStartVariables { node_id: String, reason: String },
     #[error("workflow has invalid global variables: {reason}")]
@@ -201,11 +152,16 @@ struct WireGlobalVariable {
 
 /// Wire shape of one React Flow node. The renderer `type` is irrelevant to execution.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WireNode {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
     data: Option<WireNodeData>,
+    /// React Flow container containment: a non-null value marks this node as a member of the
+    /// referenced iteration node's region (the only composite kind v1 recognizes).
+    #[serde(default)]
+    parent_id: Option<String>,
 }
 
 /// Wire shape of a node's `data` payload.
@@ -233,28 +189,8 @@ struct WireNodeData {
     cases: Vec<WireConditionCase>,
     #[serde(default)]
     outputs: Vec<WireOutputBinding>,
-}
-
-/// Wire shape of one typed Start input variable.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireStartInputVariable {
     #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    field_type: Option<String>,
-    #[serde(default)]
-    value_type: Option<String>,
-    #[serde(default)]
-    required: bool,
-    #[serde(default)]
-    options: Vec<String>,
-    #[serde(default)]
-    max_length: Option<usize>,
-    #[serde(default)]
-    value: Option<serde_json::Value>,
+    iteration_config: Option<super::iteration::WireIterationConfig>,
 }
 
 /// Wire shape of one `data.outputs` entry on an Output node.
@@ -397,106 +333,6 @@ fn into_output_config(wire: Vec<WireOutputBinding>) -> Option<OutputConfig> {
     (!outputs.is_empty()).then_some(OutputConfig { outputs })
 }
 
-/// Validates Start declarations before they become variable-pool catalog entries.
-fn into_start_input_variables(
-    wire: Vec<WireStartInputVariable>,
-) -> Result<Vec<StartInputVariable>, String> {
-    let mut names = HashSet::new();
-    let mut variables = Vec::with_capacity(wire.len());
-    for variable in wire {
-        let name = variable.name.unwrap_or_default().trim().to_string();
-        if name.is_empty() || name.contains('.') {
-            return Err("variable names must be non-empty and cannot contain dots".into());
-        }
-        if !names.insert(name.clone()) {
-            return Err(format!("duplicate variable name {name}"));
-        }
-        let value_type = variable.value_type.unwrap_or_default();
-        if !is_supported_variable_type(&value_type) {
-            return Err(format!("variable {name} has unsupported type {value_type}"));
-        }
-        let field_type =
-            StartInputFieldType::from_wire(variable.field_type.as_deref(), &value_type)
-                .ok_or_else(|| format!("variable {name} has unsupported Start field type"))?;
-        if variable.field_type.is_some() && field_type.value_type() != value_type {
-            return Err(format!(
-                "variable {name} field type does not produce declared type {value_type}"
-            ));
-        }
-        let options = variable
-            .options
-            .into_iter()
-            .map(|option| option.trim().to_string())
-            .collect::<Vec<_>>();
-        if field_type == StartInputFieldType::Select
-            && (options.is_empty()
-                || options.iter().any(String::is_empty)
-                || options.iter().collect::<HashSet<_>>().len() != options.len())
-        {
-            return Err(format!(
-                "variable {name} select options must be non-empty and unique"
-            ));
-        }
-        if field_type != StartInputFieldType::Select && !options.is_empty() {
-            return Err(format!(
-                "variable {name} options are only supported for select fields"
-            ));
-        }
-        let display_name = variable
-            .display_name
-            .map(|display_name| display_name.trim().to_string())
-            .filter(|display_name| !display_name.is_empty());
-        let max_length = match variable.max_length {
-            Some(0) => return Err(format!("variable {name} max length must be positive")),
-            Some(_)
-                if !matches!(
-                    field_type,
-                    StartInputFieldType::TextInput | StartInputFieldType::Paragraph
-                ) =>
-            {
-                return Err(format!(
-                    "variable {name} max length is only supported for text fields"
-                ));
-            }
-            max_length => max_length,
-        };
-        let value = match variable.value {
-            Some(value) => Some(normalize_workflow_value(value, &value_type).ok_or_else(|| {
-                format!("variable {name} value does not match declared type {value_type}")
-            })?),
-            None => None,
-        };
-        if let (Some(max_length), Some(serde_json::Value::String(value))) = (max_length, &value)
-            && value.chars().count() > max_length
-        {
-            return Err(format!(
-                "variable {name} value exceeds maximum length {max_length}"
-            ));
-        }
-        if field_type == StartInputFieldType::Select
-            && value
-                .as_ref()
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|value| !options.iter().any(|option| option == value))
-        {
-            return Err(format!(
-                "variable {name} initial value is not one of its select options"
-            ));
-        }
-        variables.push(StartInputVariable {
-            name,
-            display_name,
-            field_type,
-            value_type,
-            required: variable.required,
-            options,
-            max_length,
-            value,
-        });
-    }
-    Ok(variables)
-}
-
 /// Validates top-level global declarations and restores required runtime-owned variables.
 fn into_global_variables(
     wire: Vec<WireGlobalVariable>,
@@ -568,6 +404,7 @@ impl WorkflowGraph {
 
         let mut graph = DiGraph::<WorkflowGraphNode, Option<String>>::new();
         let mut index_by_id = HashMap::new();
+        let mut containment: Vec<(String, Option<String>, NodeType, bool)> = Vec::new();
         for wire_node in wire_nodes {
             let id = wire_node.id.ok_or_else(|| GraphError::InvalidNode {
                 reason: "missing id".into(),
@@ -626,6 +463,10 @@ impl WorkflowGraph {
                         NodeType::Output => into_output_config(data.outputs),
                         _ => None,
                     },
+                    iteration_config: match node_type {
+                        NodeType::Iteration => parse_iteration_config(data.iteration_config, &id)?,
+                        _ => None,
+                    },
                 };
             if let Some(AgentOutputContract::Structured { schema, .. }) = node
                 .agent_config
@@ -640,10 +481,19 @@ impl WorkflowGraph {
                     }
                 })?;
             }
+            containment.push((
+                id.clone(),
+                wire_node.parent_id,
+                node_type,
+                node.agent_config
+                    .as_ref()
+                    .is_some_and(|config| config.interactive),
+            ));
             let index = graph.add_node(node);
             index_by_id.insert(id, index);
         }
 
+        let mut edges: Vec<WorkflowGraphEdge> = Vec::with_capacity(wire_edges.len());
         for wire_edge in wire_edges {
             let WireEdge {
                 source,
@@ -670,7 +520,12 @@ impl WorkflowGraph {
                     .ok_or_else(|| GraphError::DanglingEdge {
                         node_id: target.to_string(),
                     })?;
-            graph.add_edge(source_index, target_index, source_handle);
+            graph.add_edge(source_index, target_index, source_handle.clone());
+            edges.push(WorkflowGraphEdge {
+                source: source.to_string(),
+                target: target.to_string(),
+                source_handle,
+            });
         }
 
         let start_count = graph
@@ -687,12 +542,49 @@ impl WorkflowGraph {
             .enumerate()
             .map(|(rank, index)| (index, rank))
             .collect();
-        Ok(Self {
+        let mut graph = Self {
             graph,
             index_by_id,
             topo_rank,
             global_variables,
-        })
+            regions: HashMap::new(),
+            region_by_member: HashMap::new(),
+        };
+        graph.derive_and_validate_regions(containment, &edges)?;
+        variable_pool::validate_iteration_declarations(&graph)?;
+        Ok(graph)
+    }
+
+    /// Derives composite regions from `parentId` containment and enforces the region boundary
+    /// rules; membership is stored for the projection and runtime layers.
+    fn derive_and_validate_regions(
+        &mut self,
+        containment: Vec<(String, Option<String>, NodeType, bool)>,
+        edges: &[WorkflowGraphEdge],
+    ) -> Result<(), GraphError> {
+        let regions = derive_regions(&containment, edges)?;
+        self.region_by_member = regions
+            .values()
+            .flat_map(|region| {
+                region
+                    .member_ids
+                    .iter()
+                    .map(|member| (member.clone(), region.owner_id.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        self.regions = regions;
+        Ok(())
+    }
+
+    /// Returns the region owned by the composite node with the given id.
+    pub fn region(&self, owner_id: &str) -> Option<&CompositeRegion> {
+        self.regions.get(owner_id)
+    }
+
+    /// Returns the owning composite node id when `node_id` is a region member.
+    pub fn region_owner(&self, node_id: &str) -> Option<&str> {
+        self.region_by_member.get(node_id).map(String::as_str)
     }
 
     /// Returns the unique start node, if the graph has one (parse guarantees at most one).

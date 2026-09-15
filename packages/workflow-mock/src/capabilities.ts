@@ -23,7 +23,8 @@ export type WorkflowConfigField =
   | "waitStrategy"
   | "failureStrategy"
   | "maxAttempts"
-  | "exitCondition";
+  | "exitCondition"
+  | "iteration";
 
 export interface WorkflowAgentModel {
   agentCli: string;
@@ -123,6 +124,7 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
+    createMockWorkflowNodeType("iteration", locale),
     createMockWorkflowNodeType("output", locale),
   ];
   const models = [
@@ -287,6 +289,16 @@ export function createMockWorkflowNodeType(
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
         configFields: ["maxAttempts", "exitCondition"],
+      };
+    case "iteration":
+      return {
+        kind,
+        label: locale === "zh-CN" ? "迭代" : "Iteration",
+        description:
+          locale === "zh-CN"
+            ? "对数组逐项执行区域内节点"
+            : "Run the region once per array element",
+        configFields: ["iteration"],
       };
     case "subflow":
       return {

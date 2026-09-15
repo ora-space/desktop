@@ -8,6 +8,7 @@ import type {
   WorkflowNodeData,
   WorkflowNodeKind,
 } from "./node-data";
+import { DEFAULT_ITERATION_MAX_ITERATIONS } from "./iteration-defaults";
 
 /** Creates a catalog item as a native React Flow node with business data in `data`. */
 export function createMockWorkflowNode({
@@ -55,6 +56,7 @@ function createMockNodeExecutionData(
   | "failureStrategy"
   | "maxAttempts"
   | "exitCondition"
+  | "iterationConfig"
 > {
   const capabilities = createMockWorkflowCapabilities(locale);
   switch (kind) {
@@ -62,6 +64,17 @@ function createMockNodeExecutionData(
       return { input: "" };
     case "output":
       return {};
+    case "iteration":
+      // Selectors start empty; the inspector requires an array-typed iterator source and a
+      // region-internal collect target before the graph becomes executable.
+      return {
+        iterationConfig: {
+          iteratorSelector: [],
+          collectSelector: [],
+          errorStrategy: "fail",
+          maxIterations: DEFAULT_ITERATION_MAX_ITERATIONS,
+        },
+      };
     case "human":
     case "subflow":
       return {};

@@ -9,11 +9,16 @@ import {
 import { useTranslation } from "react-i18next";
 import { IconTrash } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
+import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import {
   createMockWorkflowCapabilities,
   createMockWorkflowNodeType,
   isWorkflowConditionComparisonComplete,
   resolveConditionCases,
+  WORKFLOW_ITERATION_CARD_WIDTH,
+  WORKFLOW_ITERATION_ENTRY_HANDLE_Y,
+  WORKFLOW_ITERATION_NODE_HEIGHT,
+  WORKFLOW_ITERATION_NODE_WIDTH,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
@@ -55,6 +60,22 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
     isConnectionCandidate && connectionCandidateEndpoint === "source";
   const conditionCases =
     data.kind === "condition" ? resolveConditionCases(data) : [];
+
+  if (data.kind === "iteration") {
+    return (
+      <IterationNodeFrame
+        id={id}
+        data={data}
+        selected={selected}
+        deletable={deletable}
+        isInputCandidate={isInputCandidate}
+        isOutputCandidate={isOutputCandidate}
+        positionAbsoluteX={positionAbsoluteX}
+        positionAbsoluteY={positionAbsoluteY}
+        nodeKindLabel={nodeKindLabel}
+      />
+    );
+  }
 
   return (
     <WorkflowNodeCardShell
@@ -257,6 +278,168 @@ function ConditionNodeDetails({
 }
 
 /** Aligns each branch handle with its rendered IF / ELIF / ELSE label. */
+/** Renders the iteration composite as an embedded container frame (ADR D7).
+ *
+ * The card sits on top of a dashed region drop zone; nodes dragged into the zone become
+ * region members (parentId containment) and execute once per round. The entry handle inside
+ * the zone feeds the first round members; the right-side handle is the outer exit.
+ */
+function IterationNodeFrame({
+  id,
+  data,
+  selected,
+  deletable,
+  isInputCandidate,
+  isOutputCandidate,
+  positionAbsoluteX,
+  positionAbsoluteY,
+  nodeKindLabel,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  selected: boolean;
+  deletable?: boolean;
+  isInputCandidate: boolean;
+  isOutputCandidate: boolean;
+  positionAbsoluteX: number;
+  positionAbsoluteY: number;
+  nodeKindLabel: string;
+}) {
+  const { t } = useTranslation();
+  const { deleteElements, updateNodeData } =
+    useReactFlow<Node<WorkflowNodeData, "workflow">>();
+  const collapsed = data.collapsed === true;
+  const memberCount =
+    typeof data.regionMemberCount === "number" ? data.regionMemberCount : 0;
+  return (
+    <div
+      data-workflow-node=""
+      data-workflow-node-id={id}
+      data-x={String(Math.round(positionAbsoluteX))}
+      data-y={String(Math.round(positionAbsoluteY))}
+      data-workflow-iteration-frame=""
+      data-collapsed={collapsed}
+      className={cn(
+        "relative rounded-2xl border-2 border-dashed transition-colors",
+        selected
+          ? "border-ring/70 bg-ring/5"
+          : "border-violet-500/40 bg-violet-500/5",
+      )}
+      style={{
+        width: WORKFLOW_ITERATION_NODE_WIDTH,
+        height: collapsed ? 112 : WORKFLOW_ITERATION_NODE_HEIGHT,
+      }}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        data-workflow-input={id}
+        aria-label={t("settings.workflow.connectTo", { name: data.title })}
+        className={cn(
+          "workflow-port workflow-port-input !size-2.5 !border-0 !bg-transparent",
+          isInputCandidate && "workflow-port-candidate",
+        )}
+        style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        data-workflow-output={id}
+        aria-label={t("settings.workflow.connectFrom", { name: data.title })}
+        className={cn(
+          "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
+          isOutputCandidate && "workflow-port-candidate",
+        )}
+        style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
+      />
+      <div className="p-2">
+        <WorkflowNodeCardShell
+          kind={data.kind}
+          title={data.title}
+          description={data.description}
+          kindLabel={nodeKindLabel}
+          density="editor"
+          selected={selected}
+          width={WORKFLOW_ITERATION_CARD_WIDTH}
+          details={<WorkflowNodeParameterSummary data={data} />}
+          ariaLabel={`${data.title}: ${nodeKindLabel}`}
+          frameClassName={cn(
+            isOutputCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
+          )}
+          headerEnd={
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="nodrag nopan flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={t(
+                  collapsed
+                    ? "settings.workflow.iteration.expand"
+                    : "settings.workflow.iteration.collapse",
+                )}
+                title={t(
+                  collapsed
+                    ? "settings.workflow.iteration.expand"
+                    : "settings.workflow.iteration.collapse",
+                )}
+                onClick={() => {
+                  // Collapse is presentation-only state on the node data: it hides
+                  // region members without touching the graph structure.
+                  updateNodeData(id, { collapsed: !collapsed });
+                }}
+              >
+                {collapsed ? (
+                  <IconChevronUp className="size-4" />
+                ) : (
+                  <IconChevronDown className="size-4" />
+                )}
+              </button>
+              {selected && deletable ? (
+                <button
+                  type="button"
+                  className="nodrag nopan flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={t("settings.workflow.deleteNamed", {
+                    name: data.title,
+                  })}
+                  onClick={() => {
+                    void deleteElements({ nodes: [{ id }] });
+                  }}
+                >
+                  <IconTrash className="size-3.5" />
+                </button>
+              ) : undefined}
+            </div>
+          }
+        />
+      </div>
+      {!collapsed && (
+        <div
+          className="pointer-events-none absolute inset-x-3 bottom-3 top-[116px] rounded-xl border border-dashed border-violet-500/30"
+          aria-hidden
+        >
+          <span className="absolute left-3 top-2 text-[11px] text-muted-foreground">
+            {memberCount > 0
+              ? t("settings.workflow.iteration.regionSummary", {
+                  total: memberCount,
+                })
+              : t("settings.workflow.iteration.dropHint")}
+          </span>
+        </div>
+      )}
+      <Handle
+        id="iteration-entry"
+        type="source"
+        position={Position.Left}
+        data-workflow-iteration-entry={id}
+        aria-label={t("settings.workflow.iteration.entryHandle", {
+          name: data.title,
+        })}
+        className="workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent"
+        style={{ top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y, left: 14 }}
+      />
+    </div>
+  );
+}
+
 function conditionHandleTop(
   cases: ReturnType<typeof resolveConditionCases>,
   branchIndex: number,

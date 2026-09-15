@@ -351,6 +351,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -710,6 +711,7 @@ fn running_run_cannot_be_deleted() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )

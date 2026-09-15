@@ -4,6 +4,8 @@ mod api;
 mod engine;
 mod executor;
 pub(crate) mod interactive;
+#[cfg(test)]
+mod iteration_tests;
 mod operations;
 mod prerequisites;
 mod prompt;

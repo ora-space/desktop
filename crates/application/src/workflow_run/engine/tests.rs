@@ -1,4 +1,4 @@
-use crate::workflow_run::engine::graph::StartInputFieldType;
+use crate::workflow_run::engine::start_input::StartInputFieldType;
 use crate::workflow_run::engine::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError, NodeType,
     StructuredTextExposure, UnknownNodeType, WorkflowGraph, WorkflowGraphNode,
@@ -224,6 +224,7 @@ fn parses_agent_config_into_the_model() {
         }),
         condition_config: None,
         output_config: None,
+        iteration_config: None,
     };
     assert_eq!(*graph.node("a").unwrap(), expected);
 }

@@ -359,6 +359,8 @@ export function buildDisplayRun(
       output: string | null;
       payload: string | null;
       sessionId?: string | null;
+      /** Composite-region round; null for outer rows. */
+      iteration?: number | null;
     }>;
   },
   graph: string,
@@ -408,53 +410,92 @@ export function buildDisplayRun(
     nodes,
     edges: envelope.edges,
   };
-  const nodeRunByNodeId = new Map(
-    detail.nodes.map((node) => [node.nodeId, node]),
-  );
-  const nodeStates: Record<string, GraphWorkflowNodeState> = {};
-  for (const node of definitionSnapshot.nodes) {
-    const nodeRun = nodeRunByNodeId.get(node.id) ?? null;
+  // Region nodes hold one row per iteration round; outer nodes hold at most one row. Group
+  // rows by node id in (iteration, createdAt) order so each region node exposes its rounds
+  // while outer nodes keep their single row (ADR "iteration composite runtime" D7).
+  const rowsByNodeId = new Map<string, typeof detail.nodes>();
+  for (const nodeRun of detail.nodes) {
+    const rows = rowsByNodeId.get(nodeRun.nodeId) ?? [];
+    rows.push(nodeRun);
+    rowsByNodeId.set(nodeRun.nodeId, rows);
+  }
+  for (const rows of rowsByNodeId.values()) {
+    rows.sort((left, right) => {
+      const leftRound = left.iteration ?? -1;
+      const rightRound = right.iteration ?? -1;
+      if (leftRound !== rightRound) {
+        return leftRound - rightRound;
+      }
+      return Number(left.startedAt ?? 0n) - Number(right.startedAt ?? 0n);
+    });
+  }
+
+  /** Projects one persisted row onto one display state, tagged with its round. */
+  const stateFromRow = (
+    nodeId: string,
+    kind: string,
+    nodeRun: (typeof detail.nodes)[number],
+  ): GraphWorkflowNodeState => {
     const payload =
-      nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+      nodeRun.payload != null ? parseNodePayload(nodeRun.payload) : null;
     const conversation =
-      node.data.kind === "agent" && nodeRun?.output != null
+      kind === "agent" && nodeRun.output != null
         ? conversationFromNodeOutput(
             nodeRun.output,
             detail.run.id,
-            node.id,
+            nodeId,
             nodeRun.sessionId ?? undefined,
             nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
           )
         : undefined;
-    nodeStates[node.id] = {
+    return {
       status: projectNodeStatus(
         nodeRun as {
           status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-        } | null,
+        },
       ),
-      ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+      ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
+      ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""
         ? { sessionId: nodeRun.sessionId }
         : {}),
-      ...(nodeRun?.startedAt != null
+      ...(nodeRun.startedAt != null
         ? { startedAt: toIso(nodeRun.startedAt) }
         : {}),
-      ...(nodeRun?.finishedAt != null
+      ...(nodeRun.finishedAt != null
         ? { finishedAt: toIso(nodeRun.finishedAt) }
         : {}),
-      ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+      ...(nodeRun.error != null ? { errorMessage: nodeRun.error } : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
         : {}),
       ...(payload?.file_changes != null && payload.file_changes.length > 0
         ? { fileChanges: payload.file_changes }
         : {}),
-      ...(nodeRun?.output != null
+      ...(nodeRun.output != null
         ? { output: { summary: nodeRun.output } }
         : {}),
       ...(conversation != null && conversation.length > 0
         ? { conversation }
         : {}),
     };
+  };
+
+  const nodeStates: Record<string, GraphWorkflowNodeState> = {};
+  const roundStates: Record<string, GraphWorkflowNodeState[]> = {};
+  for (const node of definitionSnapshot.nodes) {
+    const rows = rowsByNodeId.get(node.id) ?? [];
+    if (rows.length === 0) {
+      nodeStates[node.id] = { status: "idle" };
+      continue;
+    }
+    const states = rows.map((row) =>
+      stateFromRow(node.id, node.data.kind, row),
+    );
+    if (states.length > 1 || states[0]?.iteration != null) {
+      roundStates[node.id] = states;
+    }
+    // The node-level state is the latest round's state for region nodes.
+    nodeStates[node.id] = states[states.length - 1] ?? { status: "idle" };
   }
   // A node behind a lost condition branch has no node-run and never will; mark it inactive so the
   // overview distinguishes it from a node still waiting on the active path.
@@ -488,6 +529,7 @@ export function buildDisplayRun(
     ),
     kickoffInput: kickoffInput ?? undefined,
     nodeStates,
+    ...(Object.keys(roundStates).length > 0 ? { roundStates } : {}),
     openHitls: [],
     createdAt: toIso(detail.run.createdAt),
     updatedAt: toIso(detail.run.updatedAt),

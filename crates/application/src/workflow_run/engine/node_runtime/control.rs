@@ -395,6 +395,7 @@ mod tests {
             agent_config: None,
             condition_config: None,
             output_config: None,
+            iteration_config: None,
         };
         let node_run = running_node_run("c", "condition");
         let node_runs = vec![node_run.clone()];

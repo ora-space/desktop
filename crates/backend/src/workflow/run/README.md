@@ -22,6 +22,14 @@ This module adapts workflow-run application use cases to the production backend 
   boundaries include explicit blank lines because Agent providers may concatenate ACP blocks
   without adding separators.
 - `interactive/` coordinates human turns and manual completion for interactive nodes.
+- `recovery.rs` runs the graph-aware boot sweep: interrupted rows inside a still-`Running`
+  iteration region fail as `interrupted_by_restart` while the composite row and its run survive,
+  so the runtime settles the interrupted round as a failed ledger entry on the next advance
+  (ADR "iteration composite runtime" D2); anything else keeps the pre-composite whole-run
+  failure. `iteration_tests.rs` holds the end-to-end iteration verification against real SQLite.
+- `iteration_tests.rs` verifies the composite runtime end to end: serial foreach, the empty
+  source, the startup safety ceiling, both error strategies, per-round Condition decisions, the
+  outer `current_nodes` anchor, and restart resets.
 - `transitions.rs` commits the node-run transitions that happen outside the scheduling engine —
   an interactive node parking at awaiting input, a human turn beginning, and a turn ending —
   through one sink that publishes the run invalidation only when the guarded transition commits,
