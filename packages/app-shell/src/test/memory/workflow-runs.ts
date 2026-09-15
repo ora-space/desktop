@@ -1,4 +1,4 @@
-import { type WorkflowRun } from "@ora/contracts";
+import { type WorkflowRun, type WorkflowRunStatus } from "@ora/contracts";
 import type { TestHandlers } from "../contracts-transport";
 import { nextId, nextTimestamp } from "./records";
 import { visibleWorkspaces, type WorkspaceMemoryState } from "./workspaces";
@@ -17,13 +17,7 @@ export interface MockWorkflowRunRecord {
   /** Version label surfaced by list views; mock snapshots always resolve to this. */
   version: string;
   name: string;
-  status:
-    | "pending"
-    | "running"
-    | "succeeded"
-    | "failed"
-    | "cancelled"
-    | "awaitingInput";
+  status: WorkflowRunStatus;
   workspaceId: string;
   createdAt: bigint;
   updatedAt: bigint;

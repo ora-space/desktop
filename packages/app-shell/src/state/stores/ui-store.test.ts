@@ -15,6 +15,7 @@ beforeEach(() => {
     expandedProjects: new Set<string>(),
     expandedTasks: new Set<string>(),
     treeExpansionBootstrapped: false,
+    workflowRunStatusFilterByProjectId: {},
     dialog: null,
     deleteTarget: null,
   });
@@ -96,15 +97,33 @@ describe("useUiStore", () => {
     expect(useUiStore.getState().expandedProjects).toEqual(new Set(["p1"]));
   });
 
+  it("persists a per-project workflow status filter and drops All", () => {
+    useUiStore.getState().setWorkflowRunStatusFilter("p1", "awaiting_input");
+    expect(useUiStore.getState().workflowRunStatusFilterByProjectId).toEqual({
+      p1: "awaiting_input",
+    });
+    useUiStore.getState().setWorkflowRunStatusFilter("p1", "all");
+    expect(useUiStore.getState().workflowRunStatusFilterByProjectId).toEqual(
+      {},
+    );
+  });
+
   it("pruneTreeExpansion drops ids that are no longer in the live tree", () => {
     useUiStore.setState({
       expandedProjects: new Set(["p1", "gone"]),
       expandedTasks: new Set(["t1", "gone-task"]),
       treeExpansionBootstrapped: true,
+      workflowRunStatusFilterByProjectId: {
+        p1: "failed",
+        gone: "running",
+      },
     });
     useUiStore.getState().pruneTreeExpansion(["p1"], ["t1"]);
     expect(useUiStore.getState().expandedProjects).toEqual(new Set(["p1"]));
     expect(useUiStore.getState().expandedTasks).toEqual(new Set(["t1"]));
+    expect(useUiStore.getState().workflowRunStatusFilterByProjectId).toEqual({
+      p1: "failed",
+    });
   });
 
   it("round-trips a collapsed tree through localStorage without re-expanding", async () => {
@@ -137,6 +156,7 @@ describe("useUiStore", () => {
         expandedProjects: string[];
         expandedTasks: string[];
         treeExpansionBootstrapped: boolean;
+        workflowRunStatusFilterByProjectId: Record<string, string>;
       };
     };
     expect(parsed.state).toEqual({
@@ -144,6 +164,7 @@ describe("useUiStore", () => {
       expandedProjects: ["p1"],
       expandedTasks: ["t1"],
       treeExpansionBootstrapped: true,
+      workflowRunStatusFilterByProjectId: {},
     });
     expect(raw!).not.toContain("settingsOpen");
     expect(raw!).not.toContain("workflowEditorOpen");
@@ -221,6 +242,26 @@ describe("useUiStore", () => {
     expect(useUiStore.getState().expandedProjects).toEqual(new Set(["p1"]));
     expect(useUiStore.getState().expandedTasks).toEqual(new Set());
     expect(useUiStore.getState().treeExpansionBootstrapped).toBe(false);
+  });
+
+  it("drops unknown workflow status filter tokens", async () => {
+    window.localStorage.setItem(
+      UI_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          workflowRunStatusFilterByProjectId: {
+            p1: "awaiting_input",
+            p2: "nope",
+            "": "failed",
+          },
+        },
+        version: 0,
+      }),
+    );
+    await useUiStore.persist.rehydrate();
+    expect(useUiStore.getState().workflowRunStatusFilterByProjectId).toEqual({
+      p1: "awaiting_input",
+    });
   });
 
   it("falls back to defaults when persisted JSON is corrupt", async () => {

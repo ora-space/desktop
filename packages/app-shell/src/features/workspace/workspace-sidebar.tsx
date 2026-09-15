@@ -24,7 +24,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
-import type { Session, Task } from "@ora/contracts";
+import type { Session, Task, WorkflowRunSummary } from "@ora/contracts";
 import type { CurrentUser } from "../../lib/types";
 import { UserProfile } from "../sidebar/user-profile";
 import { localizeContractError } from "../../i18n/contract-error";
@@ -32,6 +32,7 @@ import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
+import { useWorkflowRunListsByProjects } from "../../state/data/workflow-runs";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { usePersistHydrated } from "../../state/hooks/use-persist-hydrated";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -54,12 +55,15 @@ import { OraMark } from "../../components/ora-mark";
 import { DragRegion } from "../../components/drag-region";
 import { useStableGroupBy } from "../../lib/use-stable-group-by";
 import { ProjectTreeNode } from "./workspace-project-tree-node";
+import { workflowRunMatchesSidebarFilters } from "./sidebar-workflow-run-filter";
 import { WorkflowEditorList } from "../workflow-editor/workflow-editor-list";
 import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 
 const EMPTY_TASKS: Task[] = [];
 const EMPTY_SESSIONS: Session[] = [];
 const EMPTY_DRAFTS: DraftPlacement[] = [];
+const EMPTY_PROJECT_IDS: string[] = [];
+const EMPTY_RUNS: WorkflowRunSummary[] = [];
 type DraftSearchEntry = Pick<
   SessionDraft,
   "id" | "projectId" | "taskId" | "text"
@@ -116,6 +120,15 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
   const projects = useMemo(
     () => projectsQuery.data ?? [],
     [projectsQuery.data],
+  );
+  const projectIds = useMemo(
+    () => projects.map((project) => project.id),
+    [projects],
+  );
+  const searchedProjectIds = needle.length > 0 ? projectIds : EMPTY_PROJECT_IDS;
+  const runListQueries = useWorkflowRunListsByProjects(searchedProjectIds);
+  const statusFilters = useUiStore(
+    (state) => state.workflowRunStatusFilterByProjectId,
   );
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
   const sessions = useMemo(
@@ -302,6 +315,22 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
       ) {
         return true;
       }
+      const projectIndex = searchedProjectIds.indexOf(project.id);
+      const projectRuns =
+        projectIndex >= 0
+          ? (runListQueries[projectIndex]?.data ?? EMPTY_RUNS)
+          : EMPTY_RUNS;
+      if (
+        projectRuns.some((run) =>
+          workflowRunMatchesSidebarFilters(
+            run,
+            statusFilters[project.id] ?? "all",
+            needle,
+          ),
+        )
+      ) {
+        return true;
+      }
       const projectTasks = tasksByProjectId.get(project.id) ?? EMPTY_TASKS;
       return projectTasks.some((task) => {
         if (task.title.toLowerCase().includes(needle)) return true;
@@ -331,6 +360,9 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
     directSessionsByProjectId,
     sessionsByWorkspaceId,
     tasksByProjectId,
+    runListQueries,
+    searchedProjectIds,
+    statusFilters,
   ]);
 
   // First install only: open the whole tree once. After that, trust localStorage
@@ -544,6 +576,7 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
                   }
                   worktreeDraftsByTaskId={worktreeDraftsByTaskId}
                   forceExpanded={Boolean(needle)}
+                  searchNeedle={needle}
                 />
               ))}
             </nav>

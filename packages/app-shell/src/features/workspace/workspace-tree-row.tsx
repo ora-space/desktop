@@ -30,7 +30,10 @@ import {
   useRenameWorkflowRun,
   useWorkflowRunsByProject,
 } from "../../state/data/workflow-runs";
+import { useUiStore } from "../../state/stores/ui-store";
 import { runStatusTone } from "../workflow-run/run-status-style";
+import { SidebarSectionEmpty } from "./sidebar-section-header";
+import { workflowRunMatchesSidebarFilters } from "./sidebar-workflow-run-filter";
 import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
@@ -314,6 +317,9 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   onSelectRun,
   onDeleteRun,
   listEnabled = true,
+  searchNeedle,
+  emptyLabel,
+  emptyFilteredLabel,
 }: {
   projectId: string;
   workspaceId: string | null;
@@ -323,15 +329,34 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   onDeleteRun: (run: { id: string; name: string }) => void;
   /** False while the branch is collapsed so sticky keep-mount does not keep polling. */
   listEnabled?: boolean;
+  /** Lowercased sidebar search; empty string means no title filter. */
+  searchNeedle: string;
+  emptyLabel?: string;
+  emptyFilteredLabel?: string;
 }) {
   const { t } = useTranslation();
+  const statusFilter = useUiStore(
+    (state) => state.workflowRunStatusFilterByProjectId[projectId] ?? "all",
+  );
   const runsQuery = useWorkflowRunsByProject(projectId, {
     enabled: listEnabled,
   });
   const renameWorkflowRun = useRenameWorkflowRun();
   const runs = (runsQuery.data ?? []).filter(
-    (run) => run.workspaceId === workspaceId,
+    (run) =>
+      run.workspaceId === workspaceId &&
+      workflowRunMatchesSidebarFilters(run, statusFilter, searchNeedle),
   );
+  if (runs.length === 0) {
+    if (emptyLabel === undefined) return null;
+    return (
+      <SidebarSectionEmpty depth={depth}>
+        {statusFilter === "all"
+          ? emptyLabel
+          : (emptyFilteredLabel ?? emptyLabel)}
+      </SidebarSectionEmpty>
+    );
+  }
   return (
     <>
       {runs.map((run) => {

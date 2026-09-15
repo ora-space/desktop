@@ -1,5 +1,6 @@
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -89,6 +90,24 @@ export function useWorkflowRunsByProject(
     // Completion is backend-driven with no frontend event, so poll while any run is active.
     refetchInterval: (query) =>
       enabled && hasActiveRun(query.state.data) ? 4000 : false,
+  });
+}
+
+/**
+ * Lists persisted runs for many projects so sidebar search can match run titles
+ * before those project rows expand and mount their own list queries.
+ */
+export function useWorkflowRunListsByProjects(projectIds: readonly string[]) {
+  const client = useContractsClient();
+  return useQueries({
+    queries: projectIds.map((projectId) => ({
+      queryKey: workflowRunKeys.byProject(projectId),
+      queryFn: async () => (await client.workflowRun.list({ projectId })).runs,
+      enabled: projectId.length > 0,
+      refetchInterval: (query: {
+        state: { data: WorkflowRunSummary[] | undefined };
+      }) => (hasActiveRun(query.state.data) ? 4000 : false),
+    })),
   });
 }
 

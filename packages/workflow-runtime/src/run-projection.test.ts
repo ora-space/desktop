@@ -54,6 +54,20 @@ describe("node status projection", () => {
   });
 });
 
+describe("toDisplayRunStatus", () => {
+  it("maps awaitingInput onto the display spelling used by Theater", () => {
+    expect(toDisplayRunStatus("awaitingInput")).toBe("awaiting_input");
+  });
+
+  it("keeps every other wire status unchanged", () => {
+    expect(toDisplayRunStatus("pending")).toBe("pending");
+    expect(toDisplayRunStatus("running")).toBe("running");
+    expect(toDisplayRunStatus("succeeded")).toBe("succeeded");
+    expect(toDisplayRunStatus("failed")).toBe("failed");
+    expect(toDisplayRunStatus("cancelled")).toBe("cancelled");
+  });
+});
+
 describe("isTerminalRunStatus", () => {
   it("marks finished run statuses only", () => {
     expect(isTerminalRunStatus("succeeded")).toBe(true);
