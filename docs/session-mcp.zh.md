@@ -38,3 +38,10 @@ Agent 适配器应把传入的 `mcpServers` 列表视为该会话的完整集合
 
 Ora 不会为 MCP 创建、修改或删除 `.mcp.json`、OpenCode JSON/JSONC、所有权旁文件、Git 排除文件或其他工作区路径。已有用户 MCP 文件保持原样。本实现没有从未发布的文件物化方案迁移的步骤。
 因此，安装 MCP 只表示把它加入全局可选目录；工作流节点的显式选择才是 Session 级授权决定。
+
+## 运行健康
+
+设置成功只表示 Host 已经发出完整的 `mcpServers` 列表，不表示 Agent 已经连上这些 Server、列出工具，或让模型用到它们。连接和握手失败目前只出现在运维日志里；插件卡片和会话界面没有 Host 侧健康状态。
+
+Host 侧健康探测是一份尚在评审的决策：保持现有投递语义不变，在有界的 `initialize` + `tools/list` 握手之后，把运行健康记为独立的内存事实。见
+[`specs/decisions/desktop/core/agent/session/mcp/20260916-mcp-health-probing.md`](../specs/decisions/desktop/core/agent/session/mcp/20260916-mcp-health-probing.md)。

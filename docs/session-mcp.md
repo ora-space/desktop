@@ -83,3 +83,14 @@ exclude files, or any other Workspace path for MCP. Existing user-authored MCP c
 left untouched. There is no runtime migration off the unpublished file-materialization design.
 Installing an MCP therefore adds it to the global catalog only; a workflow node's explicit
 selection is the Session-level authorization decision.
+
+## Runtime health
+
+Setup success means the Host sent a complete `mcpServers` list. It does not mean the Agent
+connected to those servers, listed their tools, or made them visible to the model. Connection and
+handshake failures currently appear only in operator logs; the plugin card and session UI have no
+Host-side health state.
+
+Host-side health probing is a proposed decision. It would keep delivery unchanged and add a
+separate, in-memory Host fact after a bounded `initialize` + `tools/list` handshake. See
+[`specs/decisions/desktop/core/agent/session/mcp/20260916-mcp-health-probing.md`](../specs/decisions/desktop/core/agent/session/mcp/20260916-mcp-health-probing.md).

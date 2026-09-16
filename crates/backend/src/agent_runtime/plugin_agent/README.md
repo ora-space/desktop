@@ -126,7 +126,7 @@ event from leaving a Workspace without its Target.
 
 MCP is not projected into Workspace files and is not injected as `ORA_MCP_*`
 environment variables. Session MCP setup lives in `session_setup` and is
-described in [Session MCP](../../../../../docs/session-mcp.md).
+described in [Session MCP](../../../../../docs/session-mcp.md#runtime-health).
 
 ## Sandboxing
 
