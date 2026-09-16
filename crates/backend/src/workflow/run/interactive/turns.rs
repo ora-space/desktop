@@ -4,6 +4,7 @@ use super::CompletingNodeRuns;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
+use crate::workflow::run::transitions::WorkflowRunTransitions;
 use ora_contracts::{PromptSessionEvent, PromptSessionRequest};
 use ora_db::RepositoryPool;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub(crate) struct WorkflowSessionTurns {
     pool: RepositoryPool,
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
+    transitions: Arc<WorkflowRunTransitions>,
 }
 
 impl WorkflowSessionTurns {
@@ -21,11 +23,13 @@ impl WorkflowSessionTurns {
         pool: RepositoryPool,
         run_locks: Arc<KeyedResourceLocks>,
         completing_node_runs: Arc<CompletingNodeRuns>,
+        transitions: Arc<WorkflowRunTransitions>,
     ) -> Self {
         Self {
             pool,
             run_locks,
             completing_node_runs,
+            transitions,
         }
     }
 
@@ -43,6 +47,7 @@ impl WorkflowSessionTurns {
             &self.pool,
             &self.run_locks,
             &self.completing_node_runs,
+            &self.transitions,
             &request.session_id,
         )
         .await?;
@@ -51,8 +56,11 @@ impl WorkflowSessionTurns {
             Err(error) => {
                 // The turn never started; put the awaiting node back where it was.
                 if let Some(node_run_id) = node_run_id.as_ref() {
-                    crate::workflow::run::interactive::end_human_turn(&self.pool, node_run_id)
-                        .await?;
+                    crate::workflow::run::interactive::end_human_turn(
+                        &self.transitions,
+                        node_run_id,
+                    )
+                    .await?;
                 }
                 return Err(error);
             }
@@ -60,9 +68,9 @@ impl WorkflowSessionTurns {
         let Some(node_run_id) = node_run_id else {
             return Ok(stream);
         };
-        let pool = self.pool.clone();
+        let transitions = self.transitions.clone();
         Ok(stream.attach_cleanup(move || async move {
-            crate::workflow::run::interactive::end_human_turn(&pool, &node_run_id).await
+            crate::workflow::run::interactive::end_human_turn(&transitions, &node_run_id).await
         }))
     }
 }

@@ -2,7 +2,10 @@ import { QueryClient } from "@tanstack/react-query";
 import { mockWorkflowKeys } from "./mock-workflows";
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderHookWithClient } from "../../test/hook-harness";
+import {
+  renderHookWithClient,
+  createTestQueryClient,
+} from "../../test/hook-harness";
 import {
   createTestClient,
   type TestHandlers,
@@ -96,6 +99,145 @@ const GRAPH = JSON.stringify({
   edges: [{ id: "e1", source: "start", target: "explore" }],
   viewport: { x: 32, y: 32, zoom: 1 },
   description: "审查流程",
+});
+
+/** An iteration graph: the region member `fix` runs once per round inside `iter`. */
+const ITERATION_GRAPH = JSON.stringify({
+  nodes: [
+    {
+      id: "start",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "start",
+        title: "开始",
+        description: "",
+        inputVariables: [{ name: "prs", valueType: "array[object]" }],
+      },
+    },
+    {
+      id: "iter",
+      type: "workflow",
+      position: { x: 200, y: 0 },
+      data: {
+        kind: "iteration",
+        title: "迭代",
+        description: "",
+        iterationConfig: {
+          iteratorSelector: ["start", "prs"],
+          collectSelector: ["fix", "output"],
+          errorStrategy: "continue",
+          maxIterations: 10,
+        },
+      },
+    },
+    {
+      id: "fix",
+      type: "workflow",
+      parentId: "iter",
+      position: { x: 40, y: 160 },
+      data: { kind: "agent", title: "修复", description: "" },
+    },
+  ],
+  edges: [
+    { id: "e1", source: "start", target: "iter" },
+    { id: "e2", source: "iter", target: "fix" },
+  ],
+  viewport: { x: 0, y: 0, zoom: 1 },
+  description: "迭代流程",
+});
+
+describe("buildDisplayRun iteration projection", () => {
+  /** A run whose region member executed two rounds: round 0 succeeded, round 1 failed. */
+  const detail = {
+    run: {
+      id: "run-2",
+      workspaceId: "workspace-t1",
+      workflowId: "workflow-a",
+      snapshotId: "snap-2",
+      name: "迭代流程",
+      status: "running",
+      state: '{"current_nodes":["iter"]}',
+      input: null,
+      startedAt: 1n,
+      finishedAt: null,
+      createdAt: 1n,
+      updatedAt: 5n,
+    },
+    name: "迭代流程",
+    projectId: "p1",
+    variables: [],
+    conditionDecisions: {},
+    nodes: [
+      {
+        nodeId: "start",
+        status: "succeeded",
+        startedAt: 1n,
+        finishedAt: 2n,
+        error: null,
+        output: null,
+        payload: null,
+        iteration: null,
+      },
+      {
+        nodeId: "iter",
+        status: "running",
+        startedAt: 2n,
+        finishedAt: null,
+        error: null,
+        output: null,
+        payload: null,
+        iteration: null,
+      },
+      {
+        nodeId: "fix",
+        status: "succeeded",
+        startedAt: 3n,
+        finishedAt: 4n,
+        error: null,
+        output: "fixed round 0",
+        payload: null,
+        iteration: 0,
+      },
+      {
+        nodeId: "fix",
+        status: "failed",
+        startedAt: 4n,
+        finishedAt: 5n,
+        error: "agent exploded",
+        output: null,
+        payload: null,
+        iteration: 1,
+      },
+    ],
+  };
+
+  it("groups region states by (nodeId, iteration) and keeps the latest round as the node state", () => {
+    const display = buildDisplayRun(detail, ITERATION_GRAPH);
+    expect(display.nodeStates.fix).toMatchObject({
+      status: "failed",
+      iteration: 1,
+      errorMessage: "agent exploded",
+    });
+    expect(display.roundStates?.fix).toHaveLength(2);
+    expect(display.roundStates?.fix[0]).toMatchObject({
+      status: "succeeded",
+      iteration: 0,
+      output: { summary: "fixed round 0" },
+    });
+    expect(display.roundStates?.fix[1]).toMatchObject({
+      status: "failed",
+      iteration: 1,
+    });
+    // The iteration node itself carries its own outer state.
+    expect(display.nodeStates.iter).toMatchObject({ status: "running" });
+  });
+
+  it("keeps outer single-round nodes out of roundStates", () => {
+    const display = buildDisplayRun(detail, ITERATION_GRAPH);
+    expect(display.roundStates?.start).toBeUndefined();
+    expect(display.roundStates?.iter).toBeUndefined();
+  });
 });
 
 describe("buildDisplayRun", () => {
@@ -469,6 +611,79 @@ describe("useRealWorkflowRun", () => {
     expect(result.current.data?.workspaceId).toBe("workspace-t1");
     expect(result.current.data?.run.id).toBe("run-1");
     expect(result.current.data?.run.name).toBe("审查流程 1");
+  });
+
+  it("copies Theater display status onto the sidebar list cache", async () => {
+    const state = seededState();
+    state.workflowRuns[0]!.status = "awaitingInput";
+    state.projects = [{ id: "p1", name: "Demo" }];
+    state.workflows = [
+      {
+        workflow: {
+          id: "workflow-a",
+          namespace: "local",
+          name: "审查流程",
+          publishedSnapshotId: "snap-1",
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        draft: {
+          id: "draft-1",
+          workflowId: "workflow-a",
+          version: "draft",
+          graph: GRAPH,
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        published: [
+          {
+            id: "snap-1",
+            workflowId: "workflow-a",
+            version: "v1",
+            graph: GRAPH,
+            createdAt: 1n,
+            updatedAt: null,
+          },
+        ],
+      },
+    ];
+    const client = createTestClient(createFixtureHandlers(state));
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(workflowRunKeys.byProject("p1"), [
+      {
+        id: "run-1",
+        name: "审查流程 1",
+        workspaceId: "workspace-t1",
+        projectId: "p1",
+        workflowId: "workflow-a",
+        version: "v1",
+        status: "succeeded" as const,
+        startedAt: null,
+        finishedAt: null,
+        createdAt: 1n,
+      },
+    ]);
+    const { result } = renderHookWithClient(
+      () => useRealWorkflowRun("run-1"),
+      client,
+      queryClient,
+    );
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.run.status).toBe("awaiting_input");
+    expect(queryClient.getQueryData(workflowRunKeys.byProject("p1"))).toEqual([
+      {
+        id: "run-1",
+        name: "审查流程 1",
+        workspaceId: "workspace-t1",
+        projectId: "p1",
+        workflowId: "workflow-a",
+        version: "v1",
+        status: "awaitingInput",
+        startedAt: null,
+        finishedAt: null,
+        createdAt: 1n,
+      },
+    ]);
   });
 });
 

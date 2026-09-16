@@ -107,7 +107,7 @@ fn migration_round_trips_preserve_recovery_evidence() -> Result<(), Box<dyn std:
                 .target_versions()
                 .iter()
                 .copied()
-                .filter(|version| *version != "0010")
+                .take_while(|version| *version != "0010")
                 .collect(),
         )?;
         let location = DatabaseLocation::path(directory.path().join("ora.sqlite"));

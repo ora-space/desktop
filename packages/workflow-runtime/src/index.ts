@@ -58,6 +58,8 @@ export {
   isTerminalRunStatus,
   projectNodeStatus,
   projectRunStatus,
+  toDisplayRunStatus,
+  toListRunStatus,
 } from "./run-projection";
 export { workflowPathNodes, workflowPathOrder } from "./workflow-path-order";
 export { computeInactiveNodes } from "./branch-projection";

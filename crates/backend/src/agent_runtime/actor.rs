@@ -2,6 +2,7 @@ use super::connection::AgentAcpClient;
 use super::events::{drain_idle_events, drain_queued_prompt_events, settle_cancelled_prompt};
 use super::handoff::{AgentPrompt, prompt_for_agent};
 use super::prompt_liveness::PromptLiveness;
+use super::prompt_retry::{StalledPrompt, retry_stalled_prompt};
 use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
@@ -288,7 +289,7 @@ impl RuntimeActor {
         let agent_session_id = self.provider_session_id().to_string();
         let request = PromptRequest::new(agent_session_id.clone(), blocks);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
-        let pending = match client
+        let mut pending = match client
             .start_session_request::<_, PromptResponse>(
                 AcpSessionId::new(agent_session_id.clone()),
                 AGENT_METHOD_NAMES.session_prompt,
@@ -331,7 +332,7 @@ impl RuntimeActor {
         let mut permissions = HashMap::new();
         let mut followers = SessionFollowers::new();
         let mut input_state = ActiveInputState::default();
-        let mut liveness = PromptLiveness::new(PROMPT_INACTIVITY_TIMEOUT);
+        let mut liveness = PromptLiveness::new(&PROMPT_INACTIVITY_WINDOWS);
         let mut tool_timings = ToolTimings::default();
         loop {
             let input = tokio::select! {
@@ -343,21 +344,29 @@ impl RuntimeActor {
                 () = liveness.wait() => None,
             };
             let Some(input) = input else {
-                ora_warn!(session_id = %self.session.id, operation_id = operation_id, "prompt inactive; cancelling session");
-                self.cancel(&client, &permissions).await;
-                let settled = timeout(
-                    CANCELLATION_GRACE,
-                    settle_cancelled_prompt(self, &mut channel, &client, pending, &events),
+                match retry_stalled_prompt(
+                    self,
+                    &mut channel,
+                    pending,
+                    &events,
+                    &mut liveness,
+                    &mut permissions,
+                    &request,
                 )
-                .await;
-                if !matches!(settled, Ok(Some(_))) {
-                    drain_queued_prompt_events(self, &mut channel, &client, &events).await;
+                .await
+                {
+                    StalledPrompt::Resent(resent) => {
+                        pending = resent;
+                        continue;
+                    }
+                    StalledPrompt::Failed(error) => {
+                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        followers.finish(StopReason::Cancelled);
+                        let _ = events.try_send(Err(error));
+                        self.isolate_channel(channel).await;
+                        return;
+                    }
                 }
-                self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                followers.finish(StopReason::Cancelled);
-                let _ = events.try_send(Err(agent_timed_out("agent prompt made no progress")));
-                self.isolate_channel(channel).await;
-                return;
             };
             match input {
                 ActiveInput::Event(SessionEvent::Update(update)) => {
@@ -880,6 +889,7 @@ mod tests {
             agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(0, 0, false),
         );
         let (commands, command_receiver) = mpsc::unbounded_channel();
@@ -956,6 +966,7 @@ mod tests {
             agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(0, 0, false),
         );
         let (commands, command_receiver) = mpsc::unbounded_channel();
@@ -1011,22 +1022,4 @@ fn publish_setup(
             }))
             .is_ok()
     })
-}
-
-/// Reports that the actor cannot accept a second operation while one is in flight.
-fn session_busy() -> BackendError {
-    BackendError::new(
-        ErrorClassification::Conflict,
-        PublicError::SessionBusy(EmptyErrorParams {}),
-        "session already has an active operation",
-    )
-}
-
-/// Reports that the requested permission no longer belongs to an active prompt.
-fn permission_not_pending() -> BackendError {
-    BackendError::new(
-        ErrorClassification::Conflict,
-        PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
-        "permission request is not pending",
-    )
 }

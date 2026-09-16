@@ -52,6 +52,7 @@ impl Fixture {
                 AgentRef::parse("ora-space.fixture").expect("agent identity"),
                 "provider-session",
                 ora_domain::SessionStatus::Stopped,
+                ora_domain::SessionMcpSelection::Automatic,
                 AuditFields::new(1, 1, /*is_deleted*/ false),
             ))
             .expect("session row");

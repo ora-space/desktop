@@ -94,6 +94,8 @@ export function RunTheater({
   // kickoff input only by the explicit save action, so per-keystroke refetches cannot clobber
   // an in-progress edit or fire one mutation per character.
   const [instructionDraft, setInstructionDraft] = useState<string | null>(null);
+  /** Theater round viewer: the round of the focused region node being inspected. */
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [variableDraft, setVariableDraft] = useState<Record<
     string,
     unknown
@@ -174,6 +176,14 @@ export function RunTheater({
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
   const primaryState =
     primaryId !== null ? run.nodeStates[primaryId] : undefined;
+  // A round selection only applies to the node it was made on; switching focus resets it.
+  // Implemented as a render-time reset keyed on the focused node, mirroring the pending-draft
+  // reset above, so no effect cascades renders.
+  const [roundNodeId, setRoundNodeId] = useState<string | null>(null);
+  if (primaryId !== roundNodeId) {
+    setRoundNodeId(primaryId);
+    setSelectedRound(null);
+  }
   // The Start input is editable whenever the run is not executing — a not-started pending
   // run or any terminal run — so the kickoff input can be changed before a restart re-runs it.
   const isEditableStart =
@@ -654,6 +664,9 @@ export function RunTheater({
               }}
             >
               <RunActInspector
+                roundStates={run.roundStates}
+                selectedRound={selectedRound}
+                onRoundChange={setSelectedRound}
                 nodeId={primaryId}
                 data={primaryNode?.data ?? null}
                 state={primaryState ?? null}

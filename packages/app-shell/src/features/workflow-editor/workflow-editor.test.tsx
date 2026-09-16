@@ -964,7 +964,7 @@ describe("WorkflowEditor", () => {
 
     expect(screen.getByLabelText("Agent 模型")).toBeInTheDocument();
     expect(screen.getByLabelText("角色")).toHaveTextContent("Reviewer");
-    expect(screen.getAllByText("Skills")).toHaveLength(2);
+    expect(screen.getAllByText("必需 Skill")).toHaveLength(2);
     expect(screen.getByLabelText("自定义 Prompt")).toHaveTextContent(
       "按严重程度整理问题，并给出定位与修复建议。",
     );
@@ -984,7 +984,9 @@ describe("WorkflowEditor", () => {
     expect(configuredParameters).toHaveTextContent(
       `${AGENT_REF.codeagentcli} · opencode/big-pickle`,
     );
-    expect(configuredParameters).toHaveTextContent("Skillscode-defect-scan");
+    expect(configuredParameters).toHaveTextContent(
+      "必需 Skillcode-defect-scan",
+    );
     expect(configuredParameters).not.toHaveTextContent(
       "按严重程度整理问题，并给出定位与修复建议。",
     );

@@ -1,6 +1,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import type {
   WorkflowGlobalVariable,
+  WorkflowIterationConfig,
   WorkflowNodeData,
   WorkflowVariableValueType,
 } from "./node-data";
@@ -36,7 +37,22 @@ export interface WorkflowVariableCatalogEntry {
   valueType: WorkflowVariableValueType;
 }
 
-/** Derives variables from every ancestor while keeping Conditions value-transparent. */
+/** Strips the element type from an array variable type; untyped arrays yield `any`. */
+function arrayElementType(valueType: string): string {
+  if (valueType === "array" || valueType === "array[any]") {
+    return "any";
+  }
+  const match = /^array\[(.+)\]$/.exec(valueType);
+  return match === null ? "any" : match[1]!;
+}
+
+/** Derives variables from every ancestor while keeping Conditions value-transparent.
+ *
+ * Iteration regions follow the ADR's scope rules: region members see the iteration's
+ * `item`/`index` round bindings plus their in-region upstream products, but never the
+ * iteration's own exposed results; outer consumers see the three exposed variables
+ * (`output`, `entries`, `failed_count`) whose types stay fixed across error strategies.
+ */
 export function deriveWorkflowVariableCatalog(
   nodes: Array<Node<WorkflowNodeData, "workflow">>,
   edges: Edge[],
@@ -48,6 +64,17 @@ export function deriveWorkflowVariableCatalog(
       ? new Set(nodes.map((node) => node.id))
       : collectVisibleProducerIds(nodes, edges, consumerNodeId);
   const entries = globalVariables.flatMap(globalVariableCatalogEntry);
+
+  // Iteration membership: `parentId` containment, as the frozen graph persists it.
+  const iterationIds = new Set(
+    nodes
+      .filter((node) => node.data.kind === "iteration")
+      .map((node) => node.id),
+  );
+  const owningIterationOf = (nodeId: string): string | null => {
+    const parent = nodes.find((node) => node.id === nodeId)?.parentId;
+    return parent !== undefined && iterationIds.has(parent) ? parent : null;
+  };
 
   for (const node of nodes) {
     if (node.data.kind === "start") {
@@ -67,7 +94,29 @@ export function deriveWorkflowVariableCatalog(
       );
       continue;
     }
+    if (node.data.kind === "iteration") {
+      appendIterationVariables(
+        entries,
+        node,
+        nodes,
+        consumerNodeId,
+        visibleProducerIds,
+      );
+      continue;
+    }
     if (!visibleProducerIds.has(node.id) || node.id === consumerNodeId) {
+      continue;
+    }
+    // A region member's products stay region-visible only: the consumer sees them when it
+    // shares the same region, never from outside.
+    const consumerOwner =
+      consumerNodeId === undefined ? null : owningIterationOf(consumerNodeId);
+    const producerOwner = owningIterationOf(node.id);
+    if (
+      producerOwner !== null &&
+      consumerOwner !== producerOwner &&
+      consumerNodeId !== undefined
+    ) {
       continue;
     }
 
@@ -97,6 +146,96 @@ export function deriveWorkflowVariableCatalog(
     }
   }
   return entries;
+}
+
+/** Adds one iteration node's round bindings and exposed results by consumer scope. */
+function appendIterationVariables(
+  entries: WorkflowVariableCatalogEntry[],
+  node: Node<WorkflowNodeData, "workflow">,
+  nodes: Array<Node<WorkflowNodeData, "workflow">>,
+  consumerNodeId: string | undefined,
+  visibleProducerIds: Set<string>,
+): void {
+  const memberIds = new Set(
+    nodes
+      .filter((candidate) => candidate.parentId === node.id)
+      .map((candidate) => candidate.id),
+  );
+  const config = node.data.iterationConfig;
+  const consumerIsMember =
+    consumerNodeId !== undefined && memberIds.has(consumerNodeId);
+  if (consumerIsMember) {
+    // Round bindings are region-private: members resolve them per round.
+    const iteratorType =
+      config === undefined
+        ? "any"
+        : (nodes
+            .flatMap((candidate) =>
+              candidate.data.kind === "start"
+                ? (candidate.data.inputVariables ?? [])
+                : [],
+            )
+            .find(
+              (variable) =>
+                config.iteratorSelector.length === 2 &&
+                variable.name === config.iteratorSelector[1],
+            )?.valueType ?? "array");
+    const itemType = arrayElementType(iteratorType);
+    entries.push({
+      ...nodeVariable(node, "item", itemType as WorkflowVariableValueType),
+      variableName: "item",
+    });
+    entries.push(nodeVariable(node, "index", "number"));
+    return;
+  }
+  if (!visibleProducerIds.has(node.id) || node.id === consumerNodeId) {
+    return;
+  }
+  if (config === undefined) {
+    return;
+  }
+  // Outer consumers see the three exposed variables with fixed types. The element type of
+  // `output` follows the collect target's declared type when it resolves.
+  const collectType = resolveCollectType(config, nodes);
+  entries.push(
+    nodeVariable(
+      node,
+      "output",
+      `array[${collectType}]` as WorkflowVariableValueType,
+    ),
+  );
+  entries.push(nodeVariable(node, "entries", "array[object]"));
+  entries.push(nodeVariable(node, "failed_count", "number"));
+}
+
+/** Resolves the declared type of the collect target's root variable, defaulting to `any`. */
+function resolveCollectType(
+  config: WorkflowIterationConfig,
+  nodes: Array<Node<WorkflowNodeData, "workflow">>,
+): string {
+  const collectNodeId = config.collectSelector[0];
+  const collectVariable = config.collectSelector[1];
+  if (collectNodeId === undefined || collectVariable === undefined) {
+    return "any";
+  }
+  const target = nodes.find((node) => node.id === collectNodeId);
+  if (target === undefined) {
+    return "any";
+  }
+  if (collectVariable === "structured_output") {
+    return "object";
+  }
+  if (collectVariable === "output") {
+    return "string";
+  }
+  if (target.data.kind === "start") {
+    return (
+      (target.data.inputVariables ?? []).find(
+        (variable) => variable.name === collectVariable,
+      )?.valueType ?? "any"
+    );
+  }
+  return "any";
 }
 
 /** Collects every upstream ancestor while remaining finite for temporarily cyclic edit graphs. */

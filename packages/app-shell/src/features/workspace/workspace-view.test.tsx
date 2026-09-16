@@ -11,6 +11,7 @@ import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { useSessionSetupStore } from "../chat/session-setup";
 import { appI18n } from "../../i18n/i18n-instance";
 import {
   createHookWrapper,
@@ -101,6 +102,7 @@ beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useDraftSessionsStore.getState().clear();
   useComposerInputStore.getState().reset();
+  useSessionSetupStore.setState({ setups: {} });
   useUiStore.setState({ workflowEditorOpen: false });
   // Outlives a render on purpose — remembering one CLI's models across chat
   // surfaces is the point of the store — so each test has to start from a CLI
@@ -747,6 +749,11 @@ describe("WorkspaceView", () => {
       });
     });
     expect(screen.getByText(/你好\s+workspace mode/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", {
+        name: /Agent 会话已建立|Agent session established/,
+      }),
+    ).toBeInTheDocument();
     expect(state.tasks).toEqual([]);
     await waitFor(() => {
       expect(state.sessions).toEqual([
@@ -1604,6 +1611,7 @@ describe("WorkspaceView", () => {
    */
   function createSwitchTargetClient(
     state: ReturnType<typeof createFixtureState>,
+    beforeSwitch: () => Promise<void> = async () => {},
   ) {
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
     const baseClient = createTestClient(baseClientHandlers);
@@ -1617,6 +1625,7 @@ describe("WorkspaceView", () => {
       },
       switchSessionAgent: async (request, options) => {
         switched.push(request);
+        await beforeSwitch();
         return baseClient.session.switchAgent(request, options);
       },
       listAgentModels: async (request, options) => {
@@ -1708,11 +1717,23 @@ describe("WorkspaceView", () => {
     expect(state.sessions[0]?.agentRef).toBe(AGENT_REF.opencode);
   });
 
-  it("commits a recorded agent move with the next message", async () => {
+  it("commits a recorded agent move and retains its setup timing across session navigation", async () => {
     const user = userEvent.setup();
     const state = createFixtureState();
     seedSwitchableSession(state);
-    const { client, switched } = createSwitchTargetClient(state);
+    state.sessions.push({
+      ...state.sessions[0]!,
+      id: "s2",
+      title: "Other session",
+    });
+    let finishSwitch: () => void = () => {};
+    const switching = new Promise<void>((resolve) => {
+      finishSwitch = resolve;
+    });
+    const { client, switched } = createSwitchTargetClient(
+      state,
+      () => switching,
+    );
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1742,12 +1763,50 @@ describe("WorkspaceView", () => {
     await user.type(await screen.findByRole("textbox"), "hello");
     await user.keyboard("{Enter}");
 
+    expect(
+      await screen.findByRole("status", {
+        name: /正在建立 Agent 会话|Establishing Agent session/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", {
+        name: /助手正在运行|Assistant is working/,
+      }),
+    ).toBeNull();
+
+    finishSwitch();
+
     await waitFor(() =>
       expect(state.sessions[0]?.agentRef).toBe(AGENT_REF.claude),
     );
+    expect(
+      screen.getByRole("status", {
+        name: /Agent 会话已建立|Agent session established/,
+      }),
+    ).toHaveTextContent(/用时|Took/);
     expect(switched).toEqual([
       { sessionId: "s1", agentRef: AGENT_REF.claude, model: null },
     ]);
+
+    act(() =>
+      useWorkspaceSelectionStore.getState().selectSession("s2", "t1", "p1"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("status", {
+          name: /Agent 会话已建立|Agent session established/,
+        }),
+      ).toBeNull(),
+    );
+
+    act(() =>
+      useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1"),
+    );
+    expect(
+      await screen.findByRole("status", {
+        name: /Agent 会话已建立|Agent session established/,
+      }),
+    ).toHaveTextContent(/用时|Took/);
   });
 
   it("moves a session off an unavailable agent with the next message", async () => {

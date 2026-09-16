@@ -4,8 +4,6 @@ mod error;
 mod host;
 mod live;
 mod resolve;
-mod selection;
-pub(crate) use selection::{SessionMcpSelection, SessionMcpSelectionSource};
 
 #[cfg(test)]
 mod selection_tests;
@@ -22,6 +20,7 @@ pub(crate) use resolve::{resolve_session_mcp, resolve_session_mcp_revision};
 
 use agent_client_protocol_schema::v1::McpServer;
 use ora_domain::PluginId;
+pub(crate) use ora_domain::SessionMcpSelection;
 use semver::Version;
 use std::fmt;
 

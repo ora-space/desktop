@@ -27,6 +27,7 @@ use ora_domain::{
 };
 use ora_logging::ora_warn;
 
+use super::transitions::WorkflowRunTransitions;
 use super::worktree::{capture_worktree_snapshot, compute_file_changes, persist_worktree_baseline};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -47,10 +48,13 @@ pub struct WorkflowRunNodeExecutor {
     clock: SystemClock,
     /// Root for the per-node worktree baseline snapshots an interactive node diffs at completion.
     baselines_root: PathBuf,
+    /// Commits the interactive park transition with the shared publish-after-commit discipline.
+    transitions: Arc<WorkflowRunTransitions>,
 }
 
 impl WorkflowRunNodeExecutor {
-    /// Builds an executor from the session runtime, persistence, role catalog, and engine callback.
+    /// Builds an executor from the session runtime, persistence, role catalog, engine callback,
+    /// and the shared transition sink.
     pub fn new(
         agent_runtime: Arc<AgentRuntimeManager>,
         pool: RepositoryPool,
@@ -58,6 +62,7 @@ impl WorkflowRunNodeExecutor {
         callback: Arc<dyn WorkflowRunCallback>,
         clock: SystemClock,
         baselines_root: PathBuf,
+        transitions: Arc<WorkflowRunTransitions>,
     ) -> Self {
         Self {
             agent_runtime,
@@ -66,6 +71,7 @@ impl WorkflowRunNodeExecutor {
             callback,
             clock,
             baselines_root,
+            transitions,
         }
     }
 }
@@ -83,6 +89,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let callback = self.callback.clone();
         let clock = self.clock;
         let baselines_root = self.baselines_root.clone();
+        let transitions = self.transitions.clone();
         let node_run_id = node_run_id.clone();
         let node = node.clone();
         let context = context.clone();
@@ -93,6 +100,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &agent_repository,
                 &clock,
                 &baselines_root,
+                &transitions,
                 &node_run_id,
                 &node,
                 &context,
@@ -229,6 +237,7 @@ async fn drive_agent_node(
     agent_repository: &SqliteAgentDefinitionRepository,
     clock: &SystemClock,
     baselines_root: &Path,
+    transitions: &WorkflowRunTransitions,
     node_run_id: &WorkflowNodeRunId,
     node: &WorkflowGraphNode,
     context: &ExecutionContext,
@@ -374,6 +383,11 @@ async fn drive_agent_node(
                     accumulator.consume(&update);
                 }
                 PromptSessionEvent::PermissionRequest(_) => {}
+                // The re-sent prompt answers the node afresh; text the stalled attempt got out
+                // before Ora gave up on it is not part of the deliverable.
+                PromptSessionEvent::Retrying { .. } => {
+                    accumulator = AssistantOutputAccumulator::default();
+                }
                 PromptSessionEvent::Completed {
                     stop_reason: reason,
                     ..
@@ -396,12 +410,13 @@ async fn drive_agent_node(
             {
                 ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes");
             }
-            let now = clock.now_timestamp_millis();
-            repository.transition_node_run_status(
+            // The park commits through the shared transition sink so the awaiting state is
+            // observable through the same invalidation channel as every engine transition
+            // (ADR D7); a guard rejection (cancel or completion won the race) stays a no-op.
+            transitions.transition_node_run_status(
                 node_run_id,
                 WorkflowNodeStatus::Running,
                 WorkflowNodeStatus::Pending,
-                now,
             )?;
             return Ok(AgentNodeOutcome::AwaitingInput);
         }

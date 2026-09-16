@@ -1,4 +1,4 @@
-use crate::workflow_run::engine::graph::StartInputFieldType;
+use crate::workflow_run::engine::start_input::StartInputFieldType;
 use crate::workflow_run::engine::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError, NodeType,
     StructuredTextExposure, UnknownNodeType, WorkflowGraph, WorkflowGraphNode,
@@ -224,6 +224,7 @@ fn parses_agent_config_into_the_model() {
         }),
         condition_config: None,
         output_config: None,
+        iteration_config: None,
     };
     assert_eq!(*graph.node("a").unwrap(), expected);
 }
@@ -900,4 +901,157 @@ fn node_type_reports_the_v1_supported_set() {
     .map(|node_type| node_type.as_str())
     .collect();
     assert_eq!(supported, vec!["start", "agent", "condition", "output"]);
+}
+
+// Executable architecture constraints (ADR "node runtime orchestration" D1/D2).
+//
+// These source-scan tests live outside the scanned modules so their own assertions cannot
+// trip the constraints they pin. The scheduling-structure constraint used to scan only the
+// `run_schedule` body, which let node-type policy hide in scheduling-path helpers; it now
+// covers the whole scheduling-core module and the registry's scheduling-facing surface.
+
+/// Extracts one function's body from Rust source by brace matching.
+fn function_body<'source>(source: &'source str, signature: &str) -> Option<&'source str> {
+    let start = source.find(signature)?;
+    let open = source[start..].find('{')? + start;
+    let mut depth = 0usize;
+    for (offset, character) in source[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[open..open + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Removes one inline `mod tests { ... }` block: test code may reference `NodeType` and other
+/// scanned vocabulary freely, so the constraints below audit production code only.
+fn without_test_module(source: &str) -> String {
+    let Some(body) = function_body(source, "mod tests") else {
+        return source.to_string();
+    };
+    source.replacen(body, "", 1)
+}
+
+/// Removes whole-line comments (doc comments included) so prose may name the scanned
+/// primitives while only code is audited. Trailing comments after code stay; a violation
+/// lives in the code before them, which remains scanned.
+fn without_comment_lines(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
+/// Where node-type coupling is allowed by design (ADR D1):
+/// - the registry assembly (`standard_node_runtimes`) is the one place mapping node types to
+///   runtimes;
+/// - registry lookups parse a persisted `node_type` string (`NodeType::from_str`);
+/// - runtime implementations (`node_runtime/control.rs`) own their own type's policy;
+/// - start-time graph-structural validation (`validate_executable_graph`) mirrors
+///   `WorkflowGraph::parse` - graph policy, not scheduling;
+/// - the projection algorithm (`branch_projection.rs`) consumes committed routing state and is
+///   extended by region decisions, not by node runtimes.
+/// Everything else in the scheduling core - the engine module and the registry's
+/// scheduling-facing surface - must stay free of node-type literals, so a new node type can
+/// enter scheduling only by registering a runtime.
+#[test]
+fn scheduling_core_contains_no_node_type_literals() {
+    let engine_source = without_comment_lines(&without_test_module(include_str!("engine.rs")));
+    let scheduling_core = engine_source.replacen(
+        function_body(&engine_source, "fn validate_executable_graph")
+            .expect("validate_executable_graph remains the graph-structural validator"),
+        "",
+        1,
+    );
+    assert!(
+        !scheduling_core.contains("NodeType::"),
+        "the scheduling core (engine.rs) must dispatch through the node runtime registry, not          node-type literals"
+    );
+
+    let registry_source =
+        without_comment_lines(&without_test_module(include_str!("node_runtime.rs")));
+    let registry_surface = registry_source.replacen(
+        function_body(&registry_source, "pub fn standard_node_runtimes")
+            .expect("standard_node_runtimes remains the registry assembly point"),
+        "",
+        1,
+    );
+    // `NodeType::from_str` resolves a persisted node-type string through the registry - a
+    // lookup, not a literal match on a specific type.
+    let registry_surface = registry_surface.replace("NodeType::from_str", "");
+    assert!(
+        !registry_surface.contains("NodeType::"),
+        "the registry's scheduling-facing surface (node_runtime.rs) must carry node-type          coupling only as runtime metadata and registry assembly"
+    );
+}
+
+/// IO and waiting primitives no node runtime may use (ADR D2): the application-layer runtime
+/// module stays a pure-policy boundary, so a runtime that needs the outside world is an async
+/// runtime whose background driver lives behind the executor port in the backend. Bounded work
+/// remains a review obligation - a source scan cannot prove termination.
+const FORBIDDEN_RUNTIME_PRIMITIVES: &[&str] = &[
+    "std::fs",
+    "std::net",
+    "std::process",
+    "std::thread",
+    "tokio",
+    "block_on",
+    "sleep",
+    "rusqlite",
+    "Sqlite",
+    "reqwest",
+];
+
+/// Every source file of the node runtime module - its root plus each direct submodule, so a
+/// runtime added later is scanned automatically.
+fn node_runtime_sources() -> Vec<String> {
+    let module_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("workflow_run")
+        .join("engine")
+        .join("node_runtime");
+    let mut sources = vec![include_str!("node_runtime.rs").to_string()];
+    let entries = std::fs::read_dir(&module_root)
+        .expect("the node runtime module directory exists next to its root");
+    let mut files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs"))
+        .collect();
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "swift runtime implementations must live in the node_runtime module"
+    );
+    for path in files {
+        sources.push(std::fs::read_to_string(&path).expect("read a node runtime source file"));
+    }
+    sources
+}
+
+/// The runtime module performs no IO and no waiting: swift runtimes execute under the per-run
+/// serial gate, and async runtimes dispatch immediately, so neither form may reach for files,
+/// networks, subprocesses, thread control, or an async runtime by itself.
+#[test]
+fn node_runtime_module_performs_no_io_or_waiting() {
+    for source in node_runtime_sources() {
+        let production = without_comment_lines(&without_test_module(&source));
+        for primitive in FORBIDDEN_RUNTIME_PRIMITIVES {
+            assert!(
+                !production.contains(primitive),
+                "node runtimes must not perform IO or waiting themselves ({primitive} found);                  route the outside world through an async runtime's executor port instead"
+            );
+        }
+    }
 }

@@ -160,7 +160,7 @@ describe("WorkflowInspector layout", () => {
       screen.getByRole("button", { name: "添加 MCP" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/1\/1/)).toBeInTheDocument();
-    expect(screen.getByText("暂未配置 MCP（可选）")).toBeInTheDocument();
+    expect(screen.getByText("本节点未获授权使用任何 MCP")).toBeInTheDocument();
     expect(
       screen.getByRole("switch", {
         name: "启用或禁用 openspec-explore",
@@ -176,8 +176,8 @@ describe("WorkflowInspector layout", () => {
       screen.getByText("Agent 模型"),
       screen.getByText("自定义 Prompt"),
       screen.getByText("角色"),
-      screen.getByText("Skills"),
-      screen.getByText("MCP"),
+      screen.getByText("必需 Skill"),
+      screen.getByText("允许的 MCP"),
       screen.getByText("交互模式"),
       screen.getByText("结构化输出"),
     ];

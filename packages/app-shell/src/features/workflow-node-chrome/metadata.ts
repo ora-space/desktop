@@ -8,6 +8,7 @@ import {
   IconHierarchy2,
   IconPlayerPlay,
   IconRepeat,
+  IconStack2,
   IconUserCheck,
   type IconProps,
 } from "@tabler/icons-react";
@@ -54,6 +55,11 @@ const WORKFLOW_NODE_METADATA: Record<WorkflowNodeKind, WorkflowNodeMetadata> = {
     kind: "loop",
     icon: IconRepeat,
     tone: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-400",
+  },
+  iteration: {
+    kind: "iteration",
+    icon: IconStack2,
+    tone: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
   },
   subflow: {
     kind: "subflow",

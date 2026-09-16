@@ -80,6 +80,20 @@ export type ChatTurnItem =
 /** Describes the lifecycle of one user prompt and its agent response. */
 export type ChatTurnStatus = "streaming" | "completed" | "cancelled" | "failed";
 
+/**
+ * Records that the backend re-sent this turn's prompt after the agent stalled.
+ *
+ * Counted from the first retry so it reads as `retry / maxRetries`. Live state
+ * only: a reloaded transcript carries no retry marker, so the field is absent
+ * there and the notice belongs to the streaming turn alone.
+ */
+export interface ChatTurnRetry {
+  retry: number;
+  maxRetries: number;
+  /** The last retry also stalled and the turn failed with the agent's timeout. */
+  exhausted?: boolean;
+}
+
 /** Groups one user message with every agent update produced in response. */
 export interface ChatTurn {
   id: string;
@@ -89,7 +103,10 @@ export interface ChatTurn {
   stopReason: acp.StopReason | null;
   error: string | null;
   createdAt: number;
+  /** Starts after any pre-prompt session preparation, so response time excludes handoff. */
+  responseStartedAt?: number;
   durationMs?: number;
+  retry?: ChatTurnRetry;
 }
 
 /**

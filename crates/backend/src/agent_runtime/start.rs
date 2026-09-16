@@ -131,6 +131,7 @@ impl AgentRuntimeManager {
                 agent_ref,
                 agent_session_id,
                 SessionStatus::Running,
+                session_mcp.selection.clone(),
                 AuditFields::new(now, now, false),
             );
             let mut opened = self.open_recorder(&session)?;
@@ -235,7 +236,7 @@ pub(super) async fn create_provider_session(
     log_session_mcp_request(
         ora_session_id,
         agent_ref,
-        None,
+        /*agent_session_id*/ None,
         AGENT_METHOD_NAMES.session_new,
         &session_mcp.selection,
         &setup.mcp,
@@ -322,6 +323,10 @@ pub(super) fn log_session_mcp_request(
     selection: &SessionMcpSelection,
     snapshot: &crate::session_setup::SessionMcpSnapshot,
 ) {
+    let selection_mode = match selection {
+        SessionMcpSelection::Automatic => "automatic",
+        SessionMcpSelection::Explicit(_) => "explicit",
+    };
     let members = snapshot
         .revision()
         .members()
@@ -338,7 +343,7 @@ pub(super) fn log_session_mcp_request(
         agent = %agent_ref,
         agent_session_id,
         acp_method,
-        mcp_selection = selection.mode(),
+        mcp_selection = selection_mode,
         mcp_server_count = snapshot.servers().len(),
         mcp_members = ?members,
         "sending ACP session configuration"
@@ -624,7 +629,7 @@ mod tests {
                 transport: SessionMcpTransportKind::Http,
             }]),
         );
-        let selection = SessionMcpSelection::Explicit(BTreeSet::from([plugin_id.canonical()]));
+        let selection = SessionMcpSelection::Explicit(BTreeSet::from([plugin_id]));
         let recorder = EventTextRecorder::default();
 
         with_recorded_trace_logging(recorder.layer(), || {

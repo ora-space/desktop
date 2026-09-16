@@ -8,17 +8,17 @@
 //! path, which keeps completed workflow nodes from mutating the worktree with no node-run
 //! provenance.
 
-use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    AdvanceWorkflowRunResult, ApplicationError, Clock, RepositoryError, WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, ApplicationError, RepositoryError, WorkflowRunEngineRepository,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunStatus};
 use std::sync::Arc;
 
 use super::CompletingNodeRuns;
+use crate::workflow::run::transitions::WorkflowRunTransitions;
 
 /// Validates and flips an awaiting interactive node to `Running` before a human turn.
 ///
@@ -31,11 +31,13 @@ pub(crate) async fn begin_human_turn(
     pool: &RepositoryPool,
     run_locks: &Arc<KeyedResourceLocks>,
     completing_node_runs: &Arc<CompletingNodeRuns>,
+    transitions: &Arc<WorkflowRunTransitions>,
     session_id: &str,
 ) -> Result<Option<WorkflowNodeRunId>, BackendError> {
     let pool = pool.clone();
     let run_locks = run_locks.clone();
     let completing_node_runs = completing_node_runs.clone();
+    let transitions = transitions.clone();
     let session_id = SessionId::new(session_id);
     tokio::task::spawn_blocking(move || {
         let repository = SqliteWorkflowRunEngineRepository::new(pool);
@@ -78,13 +80,14 @@ pub(crate) async fn begin_human_turn(
             return Err(node_not_awaiting(&node_run.node_id));
         }
         // The guarded transition both grants the turn and races against any concurrent mutation;
-        // a rejected transition means the node is no longer awaiting and the prompt must not start.
-        match repository
+        // a rejected transition means the node is no longer awaiting and the prompt must not
+        // start. It commits through the shared transition sink, so a granted turn publishes the
+        // run invalidation observers re-query (ADR D7) while a rejection publishes nothing.
+        match transitions
             .transition_node_run_status(
                 &node_run.id,
                 WorkflowNodeStatus::Pending,
                 WorkflowNodeStatus::Running,
-                SystemClock.now_timestamp_millis(),
             )
             .map_err(repository_error)?
         {
@@ -103,21 +106,21 @@ pub(crate) async fn begin_human_turn(
 /// This is deliberately exempt from the per-run gate: it is a guarded `Running → Pending` cleanup
 /// transition that computes no ready set, dispatches nothing, and becomes a no-op when the node has
 /// already reached a terminal state. Routing the fire-and-forget drop hook through the gate would
-/// add a run-id lookup and a blocking lock for no scheduling benefit.
+/// add a run-id lookup and a blocking lock for no scheduling benefit. The commit still goes
+/// through the shared transition sink, so a completed flip publishes the run invalidation while
+/// a no-op flip publishes nothing.
 pub(crate) async fn end_human_turn(
-    pool: &RepositoryPool,
+    transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
 ) -> Result<(), BackendError> {
-    let pool = pool.clone();
+    let transitions = transitions.clone();
     let node_run_id = node_run_id.clone();
     tokio::task::spawn_blocking(move || {
-        let repository = SqliteWorkflowRunEngineRepository::new(pool);
-        repository
+        transitions
             .transition_node_run_status(
                 &node_run_id,
                 WorkflowNodeStatus::Running,
                 WorkflowNodeStatus::Pending,
-                SystemClock.now_timestamp_millis(),
             )
             .map_err(repository_error)?;
         Ok(())
@@ -145,15 +148,23 @@ mod tests {
     use ora_application::{WorkflowRunEngine, WorkflowRunRepository};
     use ora_db::SqliteWorkflowRunRepository;
     use pretty_assertions::assert_eq;
+
     /// A session not bound to any workflow node is an ordinary session prompt.
     #[test]
     fn session_without_bound_node_is_an_ordinary_prompt() {
         run_test(async {
             let (_temp, pool) = bootstrap();
             let (run_locks, completing) = locks();
-            let result = begin_human_turn(&pool, &run_locks, &completing, "unbound-session")
-                .await
-                .unwrap();
+            let (transitions, _recording) = recording_transitions(&pool);
+            let result = begin_human_turn(
+                &pool,
+                &run_locks,
+                &completing,
+                &transitions,
+                "unbound-session",
+            )
+            .await
+            .unwrap();
             assert_eq!(result, None);
         });
     }
@@ -180,11 +191,16 @@ mod tests {
                 .unwrap();
 
             let (run_locks, completing) = locks();
+            let (transitions, recording) = recording_transitions(&pool);
             assert!(
-                begin_human_turn(&pool, &run_locks, &completing, "session-1")
+                begin_human_turn(&pool, &run_locks, &completing, &transitions, "session-1")
                     .await
                     .is_err(),
                 "a terminal node must reject the prompt"
+            );
+            assert!(
+                recording.published.lock().unwrap().is_empty(),
+                "a rejected turn transition must not publish"
             );
         });
     }
@@ -199,12 +215,19 @@ mod tests {
             let (session_id, node_run_id) = bind_and_park(&pool, agent);
 
             let (run_locks, completing) = locks();
+            let (transitions, _recording) = recording_transitions(&pool);
             completing.lock().unwrap().insert(node_run_id);
 
             assert!(
-                begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-                    .await
-                    .is_err(),
+                begin_human_turn(
+                    &pool,
+                    &run_locks,
+                    &completing,
+                    &transitions,
+                    session_id.as_ref()
+                )
+                .await
+                .is_err(),
                 "a completing node must reject the prompt"
             );
         });
@@ -220,9 +243,16 @@ mod tests {
             let (session_id, _node_run_id) = bind_and_park(&pool, agent);
 
             let (run_locks, completing) = locks();
-            let result = begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-                .await
-                .unwrap();
+            let (transitions, _recording) = recording_transitions(&pool);
+            let result = begin_human_turn(
+                &pool,
+                &run_locks,
+                &completing,
+                &transitions,
+                session_id.as_ref(),
+            )
+            .await
+            .unwrap();
             assert!(result.is_some());
 
             let node_runs = SqliteWorkflowRunRepository::new(pool)
@@ -251,17 +281,115 @@ mod tests {
                 ClockAt(40),
             );
             engine
-                .fail_node(&right.id, "boom".to_string(), None)
+                .fail_node(&run_id, &right.id, "boom".to_string(), None)
                 .unwrap();
 
             let (run_locks, completing) = locks();
+            let (transitions, _recording) = recording_transitions(&pool);
             assert!(
-                begin_human_turn(&pool, &run_locks, &completing, session_id.as_ref())
-                    .await
-                    .is_err(),
+                begin_human_turn(
+                    &pool,
+                    &run_locks,
+                    &completing,
+                    &transitions,
+                    session_id.as_ref()
+                )
+                .await
+                .is_err(),
                 "a node in a non-running run must reject the prompt"
             );
             assert_ne!(run_id.as_ref(), "");
+        });
+    }
+
+    /// A granted human turn publishes exactly one run invalidation (ADR D7): the awaiting
+    /// dock is user-visible state, and observers re-query instead of waiting for the polling
+    /// fallback.
+    #[test]
+    fn beginning_a_human_turn_publishes_one_run_invalidation() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let (session_id, _node_run_id) = bind_and_park(&pool, agent);
+
+            let (run_locks, completing) = locks();
+            let (transitions, recording) = recording_transitions(&pool);
+            let result = begin_human_turn(
+                &pool,
+                &run_locks,
+                &completing,
+                &transitions,
+                session_id.as_ref(),
+            )
+            .await
+            .unwrap();
+            assert!(result.is_some());
+            assert_eq!(
+                *recording.published.lock().unwrap(),
+                vec![run_id.to_string()],
+                "the granted Pending -> Running transition publishes exactly one invalidation"
+            );
+        });
+    }
+
+    /// Ending a turn commits the Running -> Pending flip and publishes the same invalidation,
+    /// so the awaiting dock is observable the moment the agent stops generating.
+    #[test]
+    fn ending_a_human_turn_publishes_one_run_invalidation() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+            let (session_id, _node_run_id) = bind_and_park(&pool, agent);
+
+            let (run_locks, completing) = locks();
+            let (transitions, recording) = recording_transitions(&pool);
+            begin_human_turn(
+                &pool,
+                &run_locks,
+                &completing,
+                &transitions,
+                session_id.as_ref(),
+            )
+            .await
+            .unwrap();
+            end_human_turn(&transitions, &_node_run_id).await.unwrap();
+
+            assert_eq!(
+                *recording.published.lock().unwrap(),
+                vec![run_id.to_string(), run_id.to_string()],
+                "the begun turn and the ended turn each publish one invalidation"
+            );
+            let parked = SqliteWorkflowRunRepository::new(pool)
+                .list_node_runs(&run_id)
+                .unwrap()
+                .into_iter()
+                .find(|n| n.node_id == "agent")
+                .unwrap();
+            assert_eq!(parked.status, WorkflowNodeStatus::Pending);
+        });
+    }
+
+    /// An idempotently rejected turn-end (the node already left Running) commits nothing and
+    /// publishes nothing, matching the engine's discipline for duplicate reports.
+    #[test]
+    fn a_rejected_turn_end_publishes_nothing() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
+            let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
+
+            // Park the node directly, then end a turn that never began: the node is Pending,
+            // so the Running -> Pending guard rejects.
+            let (_session_id, node_run_id) = bind_and_park(&pool, agent);
+            let (transitions, recording) = recording_transitions(&pool);
+            end_human_turn(&transitions, &node_run_id).await.unwrap();
+
+            assert!(
+                recording.published.lock().unwrap().is_empty(),
+                "a rejected turn-end transition must not publish"
+            );
         });
     }
 

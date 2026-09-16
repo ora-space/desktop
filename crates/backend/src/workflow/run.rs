@@ -4,14 +4,15 @@ mod api;
 mod engine;
 mod executor;
 pub(crate) mod interactive;
+#[cfg(test)]
+mod iteration_tests;
 mod operations;
 mod prerequisites;
 mod prompt;
 mod recovery;
-mod session_mcp;
-pub(crate) use session_mcp::WorkflowSessionMcpSelectionSource;
 #[cfg(test)]
 mod test_fixture;
+mod transitions;
 mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;

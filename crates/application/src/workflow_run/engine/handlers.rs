@@ -1,8 +1,8 @@
 use crate::workflow_run::mapper::map_run;
 use crate::workflow_run::{
-    CancelWorkflowRunResult, FileChange, NodeExecutor, RestartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunRepository,
+    CancelWorkflowRunResult, FileChange, RestartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    WorkflowNodeRunIdGenerator, WorkflowRunEngine, WorkflowRunEngineRepository,
+    WorkflowRunRepository,
 };
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
@@ -16,21 +16,20 @@ use std::sync::Arc;
 /// Exposes the engine's start/cancel/restart operations as application handlers.
 ///
 /// Each command runs the engine, then returns the run's current state for the transport layer.
-pub struct WorkflowRunControlHandler<R, E, G, C, RunRepo> {
-    engine: WorkflowRunEngine<R, E, G, C>,
+pub struct WorkflowRunControlHandler<R, G, C, RunRepo> {
+    engine: WorkflowRunEngine<R, G, C>,
     run_repository: Arc<RunRepo>,
 }
 
-impl<R, E, G, C, RunRepo> WorkflowRunControlHandler<R, E, G, C, RunRepo>
+impl<R, G, C, RunRepo> WorkflowRunControlHandler<R, G, C, RunRepo>
 where
     R: WorkflowRunEngineRepository,
-    E: NodeExecutor,
     G: WorkflowNodeRunIdGenerator,
     C: Clock,
     RunRepo: WorkflowRunRepository,
 {
     /// Builds a control handler from the run engine and the run read repository.
-    pub fn new(engine: WorkflowRunEngine<R, E, G, C>, run_repository: Arc<RunRepo>) -> Self {
+    pub fn new(engine: WorkflowRunEngine<R, G, C>, run_repository: Arc<RunRepo>) -> Self {
         Self {
             engine,
             run_repository,

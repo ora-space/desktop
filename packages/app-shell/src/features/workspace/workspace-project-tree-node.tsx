@@ -19,6 +19,11 @@ import { DraftSessionTreeRow } from "./draft-session-tree-row";
 import { SessionTreeRow } from "./session-tree-row";
 import { SidebarCreateMenu } from "./sidebar-create-menu";
 import {
+  SidebarSectionEmpty,
+  SidebarSectionHeader,
+} from "./sidebar-section-header";
+import { WorkflowRunStatusFilterMenu } from "./workflow-run-status-filter-menu";
+import {
   ProjectWorkflowRunRows,
   TreeBranch,
   TreeRow,
@@ -37,6 +42,8 @@ interface ProjectTreeNodeProps {
   worktreeDraftsByTaskId: ReadonlyMap<string, readonly DraftPlacement[]>;
   /** Search forces branches open without mutating persisted expand sets. */
   forceExpanded: boolean;
+  /** Lowercased sidebar search; empty string means no title filter. */
+  searchNeedle: string;
 }
 
 /**
@@ -53,6 +60,7 @@ function projectTreeNodePropsEqual(
   if (prev.mainWorkspaceId !== next.mainWorkspaceId) return false;
   if (prev.tasks !== next.tasks) return false;
   if (prev.forceExpanded !== next.forceExpanded) return false;
+  if (prev.searchNeedle !== next.searchNeedle) return false;
   if (prev.directDrafts !== next.directDrafts) return false;
   if (prev.directSessions !== next.directSessions) return false;
   for (const task of next.tasks) {
@@ -85,6 +93,7 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
   directDrafts,
   worktreeDraftsByTaskId,
   forceExpanded,
+  searchNeedle,
 }: ProjectTreeNodeProps) {
   const { t } = useTranslation();
   const updateProject = useUpdateProject();
@@ -186,54 +195,80 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
         ]}
       />
       <TreeBranch expanded={projectOpen} retainWhenCollapsed={!forceExpanded}>
-        <ProjectWorkflowRunRows
-          projectId={project.id}
-          workspaceId={mainWorkspaceId}
-          depth={1}
-          listEnabled={projectOpen}
-          activeRunId={activeRunId}
-          onSelectRun={(runId) =>
-            useWorkspaceSelectionStore
-              .getState()
-              .selectWorkflowRun(runId, project.id)
-          }
-          onDeleteRun={(run) =>
-            useUiStore.getState().setDeleteTarget({
-              kind: "workflowRun",
-              id: run.id,
-              name: run.name,
-              projectId: project.id,
-            })
-          }
-        />
-        {directDrafts.map((draft) => (
-          <DraftSessionTreeRow key={draft.id} draftId={draft.id} depth={1} />
-        ))}
-        {directSessions.map((session) => (
-          <SessionTreeRow
-            key={session.id}
-            sessionId={session.id}
-            taskId={null}
-            projectId={project.id}
-            depth={1}
-            title={session.title ?? t("sidebar.newSession")}
-            deleteAs="session"
+        <section>
+          <SidebarSectionHeader
+            label={t("sidebar.sectionWorkflows")}
+            action={<WorkflowRunStatusFilterMenu projectId={project.id} />}
           />
-        ))}
-        {tasks.map((task) => {
-          const taskSessions =
-            sessionsByWorkspaceId.get(task.workspaceId) ?? EMPTY_SESSIONS;
-          return (
-            <WorktreeTaskNode
-              key={task.id}
-              task={task}
+          <ProjectWorkflowRunRows
+            projectId={project.id}
+            workspaceId={mainWorkspaceId}
+            depth={1}
+            listEnabled={projectOpen}
+            searchNeedle={searchNeedle}
+            emptyLabel={t("sidebar.emptyWorkflows")}
+            emptyFilteredLabel={t("sidebar.emptyWorkflowsFiltered")}
+            activeRunId={activeRunId}
+            onSelectRun={(runId) =>
+              useWorkspaceSelectionStore
+                .getState()
+                .selectWorkflowRun(runId, project.id)
+            }
+            onDeleteRun={(run) =>
+              useUiStore.getState().setDeleteTarget({
+                kind: "workflowRun",
+                id: run.id,
+                name: run.name,
+                projectId: project.id,
+              })
+            }
+          />
+        </section>
+        <section>
+          <SidebarSectionHeader label={t("sidebar.sectionSessions")} />
+          {directDrafts.length === 0 && directSessions.length === 0 ? (
+            <SidebarSectionEmpty>
+              {t("sidebar.emptySessions")}
+            </SidebarSectionEmpty>
+          ) : null}
+          {directDrafts.map((draft) => (
+            <DraftSessionTreeRow key={draft.id} draftId={draft.id} depth={1} />
+          ))}
+          {directSessions.map((session) => (
+            <SessionTreeRow
+              key={session.id}
+              sessionId={session.id}
+              taskId={null}
               projectId={project.id}
-              sessions={taskSessions}
-              drafts={worktreeDraftsByTaskId.get(task.id) ?? EMPTY_DRAFTS}
-              forceExpanded={forceExpanded}
+              depth={1}
+              title={session.title ?? t("sidebar.newSession")}
+              deleteAs="session"
             />
-          );
-        })}
+          ))}
+        </section>
+        <section>
+          <SidebarSectionHeader label={t("sidebar.sectionWorktrees")} />
+          {tasks.length === 0 ? (
+            <SidebarSectionEmpty>
+              {t("sidebar.emptyWorktrees")}
+            </SidebarSectionEmpty>
+          ) : null}
+          {tasks.map((task) => {
+            const taskSessions =
+              sessionsByWorkspaceId.get(task.workspaceId) ?? EMPTY_SESSIONS;
+            return (
+              <WorktreeTaskNode
+                key={task.id}
+                task={task}
+                projectId={project.id}
+                sessions={taskSessions}
+                drafts={worktreeDraftsByTaskId.get(task.id) ?? EMPTY_DRAFTS}
+                forceExpanded={forceExpanded}
+                searchNeedle={searchNeedle}
+              />
+            );
+          })}
+        </section>
       </TreeBranch>
     </div>
   );
@@ -245,6 +280,7 @@ interface WorktreeTaskNodeProps {
   sessions: readonly Session[];
   drafts: readonly DraftPlacement[];
   forceExpanded: boolean;
+  searchNeedle: string;
 }
 
 /**
@@ -257,6 +293,7 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
   sessions,
   drafts,
   forceExpanded,
+  searchNeedle,
 }: WorktreeTaskNodeProps) {
   const { t } = useTranslation();
   const updateTask = useUpdateTask();
@@ -345,6 +382,7 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
           workspaceId={task.workspaceId}
           depth={2}
           listEnabled={taskOpen}
+          searchNeedle={searchNeedle}
           activeRunId={activeRunId}
           onSelectRun={(runId) =>
             useWorkspaceSelectionStore

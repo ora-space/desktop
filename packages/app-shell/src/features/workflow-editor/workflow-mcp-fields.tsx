@@ -140,6 +140,9 @@ export function WorkflowMcpFields({
           </Popover>
         </div>
       </div>
+      <p className="text-[10px] leading-relaxed text-muted-foreground">
+        {t("settings.workflow.mcpAuthorizationHint")}
+      </p>
       <div className="min-w-0 divide-y overflow-hidden rounded-md border border-border">
         {catalog?.isLoading && (
           <p role="status" className="p-2.5 text-xs">

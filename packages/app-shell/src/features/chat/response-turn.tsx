@@ -2,6 +2,7 @@ import {
   IconAlertTriangle,
   IconBan,
   IconInfoCircle,
+  IconWifiOff,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
@@ -89,6 +90,11 @@ export function DisplayTurnItemView({
             turn.status === "streaming" && displayIndex === displayCount - 1
           }
           durationMs={durationMs}
+          completedAt={
+            durationMs === undefined
+              ? undefined
+              : (turn.responseStartedAt ?? turn.createdAt) + durationMs
+          }
         />
       );
     case "content":
@@ -120,13 +126,28 @@ export function TurnEnding({ turn }: { turn: ChatTurn }) {
     );
   }
   if (turn.status === "failed") {
+    // Every re-send stalled too: the agent was unreachable, not broken, so the
+    // ending says so with the same icon the retries showed, now cut through.
+    const exhausted = turn.retry?.exhausted === true;
     return (
       <p
         data-selectable
         className="flex items-center gap-1.5 text-xs text-destructive"
       >
-        <IconAlertTriangle className="size-3.5" />
-        {turn.error ?? t("chat.turnFailed")}
+        {exhausted ? (
+          <IconWifiOff
+            role="img"
+            aria-label={t("chat.turnRetryUnreachable")}
+            className="size-3.5"
+          />
+        ) : (
+          <IconAlertTriangle className="size-3.5" />
+        )}
+        {exhausted
+          ? t("chat.turnRetriesExhausted", {
+              maxRetries: turn.retry?.maxRetries,
+            })
+          : (turn.error ?? t("chat.turnFailed"))}
       </p>
     );
   }

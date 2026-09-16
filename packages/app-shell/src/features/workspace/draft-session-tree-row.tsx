@@ -13,6 +13,7 @@ import {
   dismissSessionDraft,
   selectBoundDraftSession,
 } from "../../state/session-drafts";
+import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 
 interface DraftSessionTreeRowProps {
   draftId: string;
@@ -115,28 +116,30 @@ export const DraftSessionTreeRow = memo(function DraftSessionTreeRow({
           : "hover:bg-sidebar-accent/70"
       }`}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={handleSelect}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          handleSelect();
-        }}
-        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        style={{ paddingLeft: `${8 + depth * 18}px` }}
-      >
-        <span className="flex size-[18px] shrink-0 items-center justify-center opacity-60">
-          <IconMessageCircle
-            className="size-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-          {title}
-        </span>
-      </div>
+      <TreeRowOverflowTooltip text={title}>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={handleSelect}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            handleSelect();
+          }}
+          className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ paddingLeft: `${8 + depth * 18}px` }}
+        >
+          <span className="flex size-[18px] shrink-0 items-center justify-center opacity-60">
+            <IconMessageCircle
+              className="size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+            {title}
+          </span>
+        </div>
+      </TreeRowOverflowTooltip>
       {!bound && !current.sendInFlight && (
         <div
           className={`mr-1 flex items-center transition-opacity duration-100 ${

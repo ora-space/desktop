@@ -135,6 +135,7 @@ export type PromptSessionEvent =
     toolTiming?: ToolCallTiming;
   }
   | { "type": "permission_request" } & SessionPermissionRequest
+  | { "type": "retrying"; retry: number; maxRetries: number }
   | {
     "type": "completed";
     stopReason: import("@agentclientprotocol/sdk").StopReason;

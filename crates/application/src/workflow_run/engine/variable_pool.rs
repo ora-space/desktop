@@ -1,4 +1,5 @@
-use crate::workflow_run::engine::graph::{AgentOutputContract, WorkflowGraph};
+use crate::workflow_run::engine::graph::{AgentOutputContract, WorkflowGraph, WorkflowGraphNode};
+use crate::workflow_run::engine::iteration::IterationConfig;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::variable_value::normalize_workflow_value;
 use serde::{Deserialize, Serialize};
@@ -93,8 +94,31 @@ pub enum WorkflowVariablePoolError {
     PathNotObject { selector: String, path: String },
 }
 
+/// Why an iteration node's selectors cannot be statically typed against the graph's variable
+/// declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub(crate) enum IterationDeclarationError {
+    #[error("iteration source {selector} is not declared")]
+    IteratorUndeclared { selector: String },
+    #[error("iteration source {selector} must be an array type, but is {value_type}")]
+    IteratorNotArray {
+        selector: String,
+        value_type: String,
+    },
+    #[error("iteration source {selector} is produced inside the iteration's own region")]
+    IteratorInsideOwnRegion { selector: String },
+    #[error("collect target {selector} is not a node inside the iteration region")]
+    CollectOutsideRegion { selector: String },
+    #[error("collect target {selector} is not a declared variable")]
+    CollectUndeclared { selector: String },
+}
+
 impl WorkflowVariablePool {
     /// Creates declarations for explicit Start inputs and node outputs in the current graph.
+    ///
+    /// Composite (iteration) nodes are declared in a second pass: their exposed types derive
+    /// from the base catalog, and sequential iterations may iterate over an earlier iteration's
+    /// exposed arrays, so they are processed in topological order.
     pub fn from_graph(graph: &WorkflowGraph) -> Self {
         let mut pool = Self::default();
 
@@ -107,42 +131,13 @@ impl WorkflowVariablePool {
         }
 
         for node in graph.nodes() {
-            if !matches!(node.node_type, NodeType::Start | NodeType::Condition) {
-                pool.declare(&format!("{}.output", node.id), "string", &node.id);
-            }
-            match node.node_type {
-                NodeType::Start => {
-                    // `{start_id}.input` is the reserved free-text selector for the run's kickoff
-                    // instruction. It matches the stable selector the editor catalog always exposes,
-                    // so a prompt may reference it even when no run has supplied text yet.
-                    pool.declare(&format!("{}.input", node.id), "string", &node.id);
-                    for variable in &node.input_variables {
-                        let selector = format!("{}.{}", node.id, variable.name);
-                        pool.declare(&selector, &variable.value_type, &node.id);
-                        if let Some(definition) = pool.catalog.get_mut(&selector) {
-                            definition.max_length = variable.max_length;
-                        }
-                        if let Some(value) = variable.value.clone() {
-                            pool.values.insert(selector, value);
-                        }
-                    }
-                }
-                NodeType::Agent => {
-                    if let Some(config) = node.agent_config.as_ref()
-                        && let Some(AgentOutputContract::Structured { .. }) =
-                            config.output_contract.as_ref()
-                    {
-                        pool.declare(
-                            &format!("{}.structured_output", node.id),
-                            "object",
-                            &node.id,
-                        );
-                    }
-                }
-                NodeType::Condition => {}
-                _ => {}
-            }
+            declare_base_node_variables(&mut pool, node);
         }
+
+        // Parsed graphs already passed `validate_iteration_declarations`, so declaration
+        // failures here are impossible; skipping keeps `from_graph` total for hand-built
+        // graphs in tests.
+        let _ = declare_iteration_variables(&mut pool, graph);
         pool
     }
 
@@ -243,6 +238,178 @@ impl WorkflowVariablePool {
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
+}
+
+/// Declares one non-composite node's base variables: the shared `.output` for data-producing
+/// nodes, Start inputs, and structured-output objects. Iteration nodes declare nothing here;
+/// their exposed variables derive from these declarations in a second pass.
+fn declare_base_node_variables(pool: &mut WorkflowVariablePool, node: &WorkflowGraphNode) {
+    if !matches!(
+        node.node_type,
+        NodeType::Start | NodeType::Condition | NodeType::Iteration
+    ) {
+        pool.declare(&format!("{}.output", node.id), "string", &node.id);
+    }
+    match node.node_type {
+        NodeType::Start => {
+            // `{start_id}.input` is the reserved free-text selector for the run's kickoff
+            // instruction. It matches the stable selector the editor catalog always exposes,
+            // so a prompt may reference it even when no run has supplied text yet.
+            pool.declare(&format!("{}.input", node.id), "string", &node.id);
+            for variable in &node.input_variables {
+                let selector = format!("{}.{}", node.id, variable.name);
+                pool.declare(&selector, &variable.value_type, &node.id);
+                if let Some(definition) = pool.catalog.get_mut(&selector) {
+                    definition.max_length = variable.max_length;
+                }
+                if let Some(value) = variable.value.clone() {
+                    pool.values.insert(selector, value);
+                }
+            }
+        }
+        NodeType::Agent => {
+            if let Some(config) = node.agent_config.as_ref()
+                && let Some(AgentOutputContract::Structured { .. }) =
+                    config.output_contract.as_ref()
+            {
+                pool.declare(
+                    &format!("{}.structured_output", node.id),
+                    "object",
+                    &node.id,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Derives the element type an iteration's `{iter}.item` binds from the source array type
+/// (`array[string]` → `string`; untyped arrays → `any`).
+fn iteration_item_type(source_type: &str) -> &str {
+    match source_type {
+        "array" | "array[any]" => "any",
+        "array[string]" => "string",
+        "array[number]" => "number",
+        "array[object]" => "object",
+        "array[boolean]" => "boolean",
+        "array[file]" => "file",
+        _ => "any",
+    }
+}
+
+/// Validates one iteration config against the working catalog and declares its five variables:
+/// `item`, `index`, `output`, `entries`, and `failed_count` (ADR "iteration composite runtime"
+/// D3). Called in topological order so a later iteration may iterate an earlier one's arrays.
+fn declare_one_iteration(
+    pool: &mut WorkflowVariablePool,
+    graph: &WorkflowGraph,
+    node_id: &str,
+    config: &IterationConfig,
+) -> Result<(), IterationDeclarationError> {
+    let iterator_selector = config.iterator_selector.qualified();
+    let source_type = pool
+        .catalog
+        .get(&iterator_selector)
+        .map(|definition| definition.value_type.clone())
+        .ok_or_else(|| IterationDeclarationError::IteratorUndeclared {
+            selector: iterator_selector.clone(),
+        })?;
+    if !source_type.starts_with("array") {
+        return Err(IterationDeclarationError::IteratorNotArray {
+            selector: iterator_selector,
+            value_type: source_type,
+        });
+    }
+    let iterator_writer = pool
+        .catalog
+        .get(&iterator_selector)
+        .map(|definition| definition.writer.clone())
+        .unwrap_or_default();
+    if graph
+        .region(node_id)
+        .is_some_and(|region| region.contains(&iterator_writer))
+    {
+        return Err(IterationDeclarationError::IteratorInsideOwnRegion {
+            selector: iterator_selector,
+        });
+    }
+
+    // The collect target must be a region member that declares the collected variable; its
+    // declared type T fixes `{iter}.output` as `array[T]` for every error strategy.
+    let collect_selector = config.collect_selector.qualified();
+    if !graph
+        .region(node_id)
+        .is_some_and(|region| region.contains(&config.collect_selector.node_id))
+    {
+        return Err(IterationDeclarationError::CollectOutsideRegion {
+            selector: collect_selector,
+        });
+    }
+    let collect_type = pool
+        .catalog
+        .get(&collect_selector)
+        .map(|definition| definition.value_type.clone())
+        .ok_or(IterationDeclarationError::CollectUndeclared {
+            selector: collect_selector,
+        })?;
+
+    let item_type = iteration_item_type(&source_type);
+    pool.declare(&format!("{node_id}.item"), item_type, node_id);
+    pool.declare(&format!("{node_id}.index"), "number", node_id);
+    pool.declare(
+        &format!("{node_id}.output"),
+        &format!("array[{collect_type}]"),
+        node_id,
+    );
+    pool.declare(&format!("{node_id}.entries"), "array[object]", node_id);
+    pool.declare(&format!("{node_id}.failed_count"), "number", node_id);
+    Ok(())
+}
+
+/// Declares every iteration node's exposed variables in topological order.
+///
+/// Returns the failing node's id together with the error so parse-time validation can point
+/// the author at the offending iteration node.
+fn declare_iteration_variables(
+    pool: &mut WorkflowVariablePool,
+    graph: &WorkflowGraph,
+) -> Result<(), (String, IterationDeclarationError)> {
+    for node in graph.nodes_in_topological_order() {
+        if let Some(config) = node.iteration_config.as_ref()
+            && let Err(error) = declare_one_iteration(pool, graph, &node.id, config)
+        {
+            return Err((node.id.clone(), error));
+        }
+    }
+    Ok(())
+}
+
+/// Graph-parse-time validation of every iteration node's selectors against the graph's
+/// derived variable declarations (ADR "iteration composite runtime" D1: statically decidable
+/// at parse). Non-iteration graphs short-circuit so per-wave parsing pays nothing.
+pub(super) fn validate_iteration_declarations(
+    graph: &WorkflowGraph,
+) -> Result<(), crate::workflow_run::engine::graph::GraphError> {
+    if !graph
+        .nodes()
+        .any(|node| node.node_type == NodeType::Iteration)
+    {
+        return Ok(());
+    }
+    let mut pool = WorkflowVariablePool::default();
+    for variable in graph.global_variables() {
+        let writer = variable.name.split('.').next().unwrap_or("global");
+        pool.declare(&variable.name, &variable.value_type, writer);
+    }
+    for node in graph.nodes() {
+        declare_base_node_variables(&mut pool, node);
+    }
+    declare_iteration_variables(&mut pool, graph).map_err(|(node_id, error)| {
+        crate::workflow_run::engine::graph::GraphError::InvalidIteration {
+            node_id,
+            reason: error.to_string(),
+        }
+    })
 }
 
 #[cfg(test)]

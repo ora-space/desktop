@@ -129,13 +129,47 @@ describe("buildMessageListRows", () => {
 
   it("carries the latest turn start into the running row and omits it without turns", () => {
     const turn = completedTurn("turn-1", "Hi");
+    turn.responseStartedAt = 2;
     expect(buildMessageListRows([turn], [], true).at(-2)).toEqual({
       type: "running",
       key: "running",
-      startedAt: turn.createdAt,
+      startedAt: turn.responseStartedAt,
     });
     expect(buildMessageListRows([], [], true)).not.toContainEqual(
       expect.objectContaining({ type: "running" }),
     );
+  });
+
+  it("places ephemeral session setup after the first prompt without replacing turn timing", () => {
+    const turns = [completedTurn("turn-1", "Hi")];
+    turns[0]!.durationMs = 3_000;
+    const rows = buildMessageListRows(turns, [], true, [
+      {
+        id: "setup-1",
+        turnIndex: 0,
+        status: "connected",
+        startedAt: 100,
+        durationMs: 1_000,
+      },
+    ]);
+
+    expect(rows.map((row) => row.type)).toEqual([
+      "user",
+      "sessionSetup",
+      "display",
+      "turnMeta",
+      "running",
+      "pad",
+    ]);
+    expect(rows[1]).toEqual({
+      type: "sessionSetup",
+      key: "session-setup:setup-1",
+      id: "setup-1",
+      turnIndex: 0,
+      status: "connected",
+      startedAt: 100,
+      durationMs: 1_000,
+    });
+    expect(turns[0]!.durationMs).toBe(3_000);
   });
 });

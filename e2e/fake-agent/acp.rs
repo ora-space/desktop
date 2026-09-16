@@ -408,15 +408,20 @@ fn record_mcp_call(method: &str, session_id: &str, servers: &[McpServer]) {
             _ => panic!("unsupported fixture MCP transport"),
         })
         .collect();
-    let mut file = OpenOptions::new()
+    let result = OpenOptions::new()
         .create(true)
         .append(true)
         .open("mcp_calls.jsonl")
-        .expect("MCP journal");
-    writeln!(
-        file,
-        "{}",
-        json!({"method": method, "sessionId": session_id, "servers": names})
-    )
-    .expect("record MCP call");
+        .and_then(|mut file| {
+            writeln!(
+                file,
+                "{}",
+                json!({"method": method, "sessionId": session_id, "servers": names})
+            )
+        });
+    if let Err(error) = result {
+        eprintln!(
+            "fake-agent could not record MCP call `{method}` for session `{session_id}`: {error}"
+        );
+    }
 }

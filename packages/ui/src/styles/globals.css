@@ -49,6 +49,18 @@
   --animate-dot-column-middle: dot-column-middle 1.2s linear infinite;
   --animate-dot-column-bottom: dot-column-bottom 1.2s linear infinite;
   --animate-preview-fade-in: preview-fade-in 220ms ease-out;
+  --animate-retry-pulse: retry-pulse 3s ease-in-out infinite;
+}
+
+/* A slow breathe for the retry indicator: dim enough to read as "waiting", never a blink. */
+@keyframes retry-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 @keyframes preview-fade-in {

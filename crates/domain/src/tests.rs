@@ -1,8 +1,8 @@
 use crate::{
     AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME, DomainModelError,
     HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
-    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId, Worktree,
-    WorktreeActivity, WorktreeBaseline,
+    SessionId, SessionMcpSelection, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId,
+    Worktree, WorktreeActivity, WorktreeBaseline,
 };
 use pretty_assertions::assert_eq;
 
@@ -31,6 +31,7 @@ fn constructs_schema_backed_entities() {
         AgentRef::parse("ora-space.nga").unwrap(),
         "agent-session-1",
         SessionStatus::Running,
+        SessionMcpSelection::Automatic,
         audit_fields.clone(),
     );
     let skill = Skill::new(
@@ -92,6 +93,7 @@ fn constructs_schema_backed_entities() {
             title: None,
             status: SessionStatus::Running,
             history_state: HistoryState::Writable,
+            mcp_selection: SessionMcpSelection::Automatic,
             audit_fields: audit_fields.clone(),
         }
     );
@@ -116,6 +118,32 @@ fn constructs_schema_backed_entities() {
             content: String::new(),
             audit_fields,
         }
+    );
+}
+
+/// Session MCP authority has a stable JSON shape and rejects malformed plugin identities.
+#[test]
+fn serializes_and_validates_session_mcp_selection() {
+    let explicit =
+        SessionMcpSelection::Explicit(std::collections::BTreeSet::from([crate::PluginId::parse(
+            "official/github",
+        )
+        .unwrap()]));
+
+    assert_eq!(
+        serde_json::to_value(&explicit).unwrap(),
+        serde_json::json!({"mode": "explicit", "pluginIds": ["official/github"]})
+    );
+    assert_eq!(
+        serde_json::from_value::<SessionMcpSelection>(serde_json::json!({"mode": "automatic"}))
+            .unwrap(),
+        SessionMcpSelection::Automatic
+    );
+    assert!(
+        serde_json::from_value::<SessionMcpSelection>(
+            serde_json::json!({"mode": "explicit", "pluginIds": ["github"]})
+        )
+        .is_err()
     );
 }
 

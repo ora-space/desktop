@@ -390,6 +390,16 @@ pub enum PromptSessionEvent {
         tool_timing: Option<ToolCallTiming>,
     },
     PermissionRequest(SessionPermissionRequest),
+    /// The prompt stalled and Ora is re-sending it on the same provider session.
+    ///
+    /// Everything streamed before this event came from the abandoned attempt; what
+    /// follows belongs to the retry. `retry` counts from the first retry, so a client
+    /// can show it as `retry / max_retries`.
+    Retrying {
+        retry: u32,
+        #[serde(rename = "maxRetries")]
+        max_retries: u32,
+    },
     Completed {
         #[serde(rename = "stopReason")]
         #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]

@@ -71,6 +71,7 @@ fn seed_session(root: &Path, pool: &RepositoryPool) {
         AgentRef::parse(MISSING_AGENT).expect("agent identity"),
         "provider-session-1",
         SessionStatus::Stopped,
+        ora_domain::SessionMcpSelection::Automatic,
         AuditFields::new(2, 2, false),
     );
     SqliteSessionRepository::new(pool.clone())

@@ -5,15 +5,16 @@ use super::tests::{
 };
 use super::{
     McpConfigurationEligibility, SessionMcpError, SessionMcpRevision, SessionMcpSelection,
-    resolve_session_mcp, resolve_session_mcp_revision,
+    SessionMcpTransportKind, resolve_session_mcp, resolve_session_mcp_revision,
 };
+use ora_contracts::{PublicError, SessionMcpSetupFailedParams};
 use pretty_assertions::assert_eq;
 use semver::Version;
 use std::collections::BTreeMap;
 
 /// Builds canonical allowlists just as frozen workflow bindings do.
 fn explicit(names: &[&str]) -> SessionMcpSelection {
-    SessionMcpSelection::Explicit(names.iter().map(|name| plugin(name).canonical()).collect())
+    SessionMcpSelection::Explicit(names.iter().map(|name| plugin(name)).collect())
 }
 
 /// An unrelated broken plugin cannot block a workflow, and empty selections need no capabilities.
@@ -99,10 +100,11 @@ fn selected_missing_or_incomplete_plugins_fail_without_a_partial_set() {
         let expected = if selection == explicit(&["first"]) {
             SessionMcpError::ConfigurationIncomplete {
                 plugin_id: plugin("first"),
+                transport: SessionMcpTransportKind::Stdio,
             }
         } else {
             SessionMcpError::SelectedPluginUnavailable {
-                plugin_id: plugin("missing").canonical(),
+                plugin_id: plugin("missing"),
             }
         };
         assert_eq!(
@@ -124,6 +126,19 @@ fn selected_missing_or_incomplete_plugins_fail_without_a_partial_set() {
     assert_eq!(
         resolve_session_mcp_revision(&catalog, &configurations, &SessionMcpSelection::Automatic),
         Ok(SessionMcpRevision::default())
+    );
+    assert_eq!(
+        SessionMcpError::ConfigurationIncomplete {
+            plugin_id: plugin("first"),
+            transport: SessionMcpTransportKind::Stdio,
+        }
+        .public_error(),
+        PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
+            error_code: "mcp_configuration_incomplete".to_string(),
+            plugin_id: Some(plugin("first").canonical()),
+            setting_id: None,
+            transport: Some("stdio".to_string()),
+        }))
     );
 }
 

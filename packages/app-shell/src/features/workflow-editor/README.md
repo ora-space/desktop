@@ -27,7 +27,9 @@ category.
 - Agent-node MCP choices derive from `useInstalledPlugins` (`kind: "mcp"`) and share plugin-query
   invalidation with Settings. Canonical IDs and enabled flags persist in the graph; availability
   is display metadata. Missing or unavailable bindings stay editable, and discovery failure
-  offers retry without claiming that installed plugins disappeared.
+  offers retry without claiming that installed plugins disappeared. Installation only populates
+  the global catalog; enabled bindings are the node Session's allowlist. Agent-node Skill switches
+  instead express mandatory invocation and do not provide node-level Skill isolation.
 
 ## Key invariants
 
@@ -42,9 +44,15 @@ category.
   a successful leave clears the sidebar error.
 - The inner library rail is gone: the app sidebar is the only workflow list.
   Newest-created workflows are first; create prepends the row and opens its draft.
-- The node catalog advertises only the runtime-backed Start, Agent, and Output
-  nodes. Prototype metadata for other node kinds remains available so each kind
-  can be exposed when its runtime support is implemented.
+- The node catalog advertises only the runtime-backed Start, Agent, Condition, Iteration, and
+  Output nodes. Prototype metadata for other node kinds remains available so each kind can be
+  exposed when its runtime support is implemented.
+- The iteration node renders as an embedded container frame on the same canvas: dragging a node
+  into the frame's region zone assigns React Flow `parentId` containment, the frame collapses to
+  a compact member-count summary, and its inspector edits the iterator source, collect target,
+  error strategy, and the iteration ceiling. Editor-side connection rules reject edges that
+  cross a region boundary in a direction the engine cannot honor; the authoritative validation
+  stays in the Rust graph parser.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - The + beside the library title opens a menu with New workflow (Ctrl/Cmd+N still opens it

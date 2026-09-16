@@ -35,7 +35,7 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 ## Graph storage
 
-The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string. The [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
+The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
 ## Agent-node MCP bindings
 
@@ -43,12 +43,13 @@ The Agent inspector reads installed `kind: "mcp"` plugins, displaying their name
 and configuration availability. Authors can add, enable, disable, and remove bindings independently
 for each node. Adding enables the binding. Loading failures offer retry and preserve existing
 bindings; missing plugins remain visible by ID and can still be disabled or removed.
+Installing an MCP adds it to this global authoring catalog only; MCP is never materialized into
+Workspace files, and the enabled bindings form the node Session's strict allowlist.
 
 Bindings use `mcps: [{ mcpId, enabled }]` in the graph, where `mcpId` is the full installed plugin
 ID. Draft save, publish, duplicate, and import/export retain these values, including disabled
-bindings. No selection (including old graphs without `mcps`) means no MCP servers for that node.
-Legacy demo IDs are retained without guessing a replacement. Empty IDs, duplicate IDs, and invalid
-field types are rejected when parsing the executable graph.
+bindings. No selection (including old graphs without `mcps`) means the node is authorized to use no
+MCP servers. Malformed bindings are rejected when the executable graph is parsed.
 
 Execution uses the frozen run's enabled IDs throughout Session creation, restore, rebuild, and
 refresh. Editing a draft affects later runs only. An unavailable enabled dependency fails the node
@@ -81,17 +82,61 @@ Unlike project and task, workflow deletion follows the standard CRUD handler pat
 
 ## Workflow runs
 
-A workflow run freezes one published snapshot and executes directly in a caller-selected Workspace. A project's row targets its Main Workspace; a Task row targets that Task's Isolated Workspace. The run CRUD layer is graph-agnostic. The execution engine owns start/restart/HITL on top of the same repository; `ora-backend` implements `NodeExecutor` as `WorkflowRunNodeExecutor` and composes it at `Backend::open`.
+A workflow run freezes one published snapshot and executes directly in a caller-selected Workspace. A project's row targets its Main Workspace; a Task row targets that Task's Isolated Workspace. The run CRUD layer is graph-agnostic. The execution engine owns start/restart/HITL on top of the same repository; `ora-backend` implements `NodeExecutor` as `WorkflowRunNodeExecutor` and composes it at `Backend::open`, where the engine wraps it as the Agent node runtime and registers the swift Start/Condition/Output runtimes behind one registry. After every committed run or node-run state transition, the engine publishes an `AppEvent::WorkflowRunInvalidated { run_id }` on the application event stream; the event carries no workflow state, so frontend run views re-query the persisted run detail and lists instead of rendering from the event. The engine-external interactive transitions — an interactive node parking at awaiting input after its first turn, a human follow-up turn beginning, and that turn ending — commit through a shared transition sink that publishes on the same channel, so every committed node-run transition is observable. Agent output streaming stays on the ACP session stream; invalidation events only signal state changes, and the run view's polling remains as a loss-tolerant fallback.
 
 Before an agent node is prompted, the backend turns the frozen graph and current node-run rows into a structured workflow handoff. The message identifies the current step and its direct neighbors, labels the resolved role as behavioral constraints, lists every node in deterministic topological order with its current status, and keeps the original run request separate. Predecessor outputs are never appended implicitly: the current node receives one only when its custom Prompt explicitly references the corresponding variable, such as `{{#agent-1.output#}}`. Ora's active display locale is frozen when the run is created, so every generated handoff in that run uses consistent Chinese or English copy even if the interface language later changes. User-authored node content and resolved variable values remain verbatim. Enabled skill slash commands remain at the beginning of the first text block because agent CLIs parse them positionally. That block also lists the actual skill-package paths in the selected Workspace and requires the Agent to use those materialized copies. When structured output is enabled, its object-rooted JSON Schema can be configured through either the visual field editor or the raw JSON Schema editor; both edit a dialog-local draft and update the node only when saved. The JSON Schema contract is appended after the ordinary workflow context. It constrains only the final assistant response to one bare JSON object, so the Agent can still reason, call tools, and modify files normally during the step.
 
-Skill delivery is capability-driven. Effect owns physical Skill materialization in the Workspace. During run creation, the backend asks an `AgentSkillDeliveryProvider` for each skill-using node's validated, Workspace-relative discovery roots and freezes a per-node receipt containing the original skill id, executable slash-command name, and actual package paths; it does not copy or rewrite packages. Deploy-time skill resolution is origin-aware: a local skill resolves through its formal catalog directory and a plugin-imported skill through the immutable plugin package recorded in its catalog row, so a workflow bound to a plugin skill starts as long as that package is still installed and loadable. The current provider returns the shared `.agents/skills` root for every Agent. A future plugin-backed provider may return different or multiple roots without changing workflow creation, executor, or prompt-rendering code. Node execution consumes only the frozen receipt and never re-resolves skill names from the mutable global catalog; capability or catalog changes therefore affect new runs only.
+Skill delivery is capability-driven. Effect owns physical Skill materialization in every eligible Workspace. A node's enabled Skill bindings are required invocations added to that node's prompt; they are not a security allowlist and do not hide other materialized Skills from the Agent. During run creation, the backend asks an `AgentSkillDeliveryProvider` for each skill-using node's validated, Workspace-relative discovery roots and freezes a per-node receipt containing the original skill id, executable slash-command name, and actual package paths; it does not copy or rewrite packages. Deploy-time skill resolution is origin-aware: a local skill resolves through its formal catalog directory and a plugin-imported skill through the immutable plugin package recorded in its catalog row, so a workflow bound to a plugin skill starts as long as that package is still installed and loadable. The current provider returns the shared `.agents/skills` root for every Agent. A future plugin-backed provider may return different or multiple roots without changing workflow creation, executor, or prompt-rendering code. Node execution consumes only the frozen receipt and never re-resolves skill names from the mutable global catalog; capability or catalog changes therefore affect new runs only.
 
 The session history is the sole source of a node's complete conversation. `workflow_node_runs.output` always stores an Agent node's final assistant text for display, audit, and explicit access through `agent-1.output`, including when structured parsing or schema validation fails and the node is marked failed. The run-scoped variable pool lives in `workflow_runs.payload`: its catalog declares typed Start inputs and stable outputs from data-producing nodes, while enabled structured output additionally declares `agent-1.structured_output`. Condition nodes expose no variables and persist neither `output` nor `selected_branch_id`; their selected branch is private scheduler state in `conditionDecisions`, kept outside the variable pool while remaining restart-safe. A validated structured object is committed only on successful completion; invalid JSON never enters the variable pool. `variablePool.values` contains only assigned values. The run's kickoff instruction remains separate in `workflow_runs.input` and is never exposed as a selectable workflow variable. Start variables may deliberately remain unassigned in the workflow definition and be filled in on the deployed run's pre-start input screen. Each declaration may carry a human-facing display name and string/secret variables may impose a positive maximum character length; the same limit is enforced for editor defaults and deployment-time writes. User-defined workflow globals differ from runtime-owned system globals: each custom declaration requires both an explicit dotted name and a type-correct initial value before it can be saved. For each node, the editor exposes workflow globals plus variables from every direct predecessor. Condition nodes are scope-transparent: their downstream nodes see the original variables from the Condition's direct predecessors, including through a chain of Conditions, without creating a `condition.output`. Other transitive ancestors remain unavailable unless forwarded by a direct predecessor. Structured-output field paths are expanded in the same catalog, so Condition and Output selectors never rely on free-form text. Each terminal Output builds its own result object, so result names must be unique only within that node and may be reused by Outputs on separate branches. The pool is initialized from the frozen graph when a run is created and completed-node writes are committed in the same SQLite transaction as the node status transition. A node Session remains addressable by id for Theater, but standalone Session listing excludes every Session bound to a visible workflow node run so workflow execution never appears as an ordinary chat.
 
 Workflow value types are enforced at graph parsing, editor entry, and variable-pool writes. `array` and `array[any]` both accept heterogeneous JSON arrays; the first is the concise unconstrained declaration and the second explicitly documents an unconstrained element type. Typed arrays validate every element. `file` is a durable Workspace-relative reference shaped as `{ "kind": "workspace_file", "path": "relative/path" }`, and `array[file]` is an array of those references. Editor path strings and legacy saved path strings are normalized into that object, while absolute paths, parent traversal, empty paths, and platform-reserved paths are rejected. Global-value placeholders are generated from this vocabulary, so changing a declaration's type immediately shows a parseable example. Structured Agent schemas use the same types, are validated recursively before execution, and generate a schema-derived valid JSON example in the Agent prompt. Agent-produced file fields must use the canonical object representation shown in that example.
 
 Start inputs keep their form control separate from their variable-pool type. The editor supports text, paragraph, select, number, checkbox, single-file, file-list, and JSON controls, which emit `string`, `string`, `string`, `number`, `boolean`, `file`, `array[file]`, and `object` values respectively. Select choices, required state, and text length limits are frozen into the deployed snapshot and validated again at the execution boundary. Snapshots created before form controls were introduced continue to derive a compatible control from their declared value type.
+
+### Iteration nodes (foreach composite runtime)
+
+The iteration node is the first composite runtime: it owns a region — the set of nodes whose
+React Flow `parentId` points at it — and executes that region's frozen subgraph once per element
+of an array source. Its `data.iterationConfig` carries `iteratorSelector` (an array-typed
+variable), `collectSelector` (a root variable declared inside the region), `errorStrategy`
+(`fail` or `continue`), and `maxIterations` (default 50). Region boundaries are validated at
+graph parse: the region must be non-empty and entered by an edge from the iteration node, may
+contain neither Output nor nested composite nodes, member out-edges must stay inside, no outer
+node may target a member, and `maxIterations` must be at least 1.
+
+Rounds are persisted facts. Region rows carry their round in the `iteration` column (the
+iteration node's own row keeps `NULL`), so the same node holds one row per round. Each round's
+`{iter}.item` and `{iter}.index` bindings commit in the same SQLite transaction as the round's
+first node-run rows, and each settled round's ledger entry commits with its continuation (next
+round, node completion, or node failure) in one transaction. The engine keeps no iteration
+state in memory: the current round is always re-derived from the region rows, so a crash
+recovery replays to the same point. The boot sweep is region-aware — interrupted rows inside a
+still-running iteration fail as `interrupted_by_restart` while the composite row and the run
+survive, and the runtime settles the interrupted round as a failed ledger entry.
+
+Error handling is decoupled into a binary control-flow switch plus a per-round ledger. `fail`
+(the default) stops at the first failed round and fails the run; `continue` records failed
+rounds in the ledger and still runs the remaining rounds. On completion the node exposes three
+variables whose types never depend on the strategy: `{iter}.output` (`array[T]`, where `T` is
+the collect target's declared type), `{iter}.entries` (`array[object]`, one
+`{item, status, output, error}` envelope per round, aligned with the input array), and
+`{iter}.failed_count` (`number`). A source longer than `maxIterations` fails the node at the
+startup boundary — never silently truncating — with the length and the ceiling in the error,
+and an empty source completes immediately with empty outputs. A round whose branch bypassed the
+collect target settles as a failed round (`collect target did not run this round`) instead of
+reading the previous round's stale pool value. The node's own failures always propagate to run
+failure; only region-internal failures can be absorbed, and Condition decisions inside a region
+are recorded per round so a later round can never overwrite an earlier round's branch.
+
+The editor renders the iteration node as an embedded container frame on the same canvas:
+dragging a node into the frame's region zone makes it a member, the frame collapses to a
+compact summary, and the inspector edits the four config fields. The variable catalog follows
+region scope — members see `item`/`index` plus their in-region upstream products but never the
+node's own exposed results, while outer consumers see the three exposed variables but never the
+round bindings. Run views group region states by `(node_id, iteration)`: the overview marks
+member nodes with their round badge, and Theater's act inspector offers a per-round strip for
+viewing each round's session and output.
 
 ### Entities and tables
 

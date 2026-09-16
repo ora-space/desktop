@@ -201,7 +201,7 @@ fn project_creation_keeps_missing_main_workspace_in_provisioning() {
 
 /// Verifies sessions can be stored and read with only their direct workspace foreign key.
 #[test]
-fn session_round_trip_uses_workspace_id() {
+fn session_round_trip_persists_workspace_and_mcp_selection() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
     let project_repository =
@@ -230,6 +230,9 @@ fn session_round_trip_uses_workspace_id() {
         // An unrelated running session shares the workspace but must not block
         // deletion of this completed workflow run.
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Explicit(std::collections::BTreeSet::from([
+            ora_domain::PluginId::parse("official/github").unwrap(),
+        ])),
         AuditFields::new(20, 20, false),
     );
 
@@ -277,6 +280,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-standalone",
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Automatic,
         AuditFields::new(20, 20, false),
     );
     let workflow_session = Session::new(
@@ -285,6 +289,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-workflow",
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Automatic,
         AuditFields::new(21, 21, false),
     );
     session_repository
@@ -346,6 +351,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -612,6 +618,7 @@ fn deleting_workflow_run_does_not_delete_workspace_or_session() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-session-1",
         SessionStatus::Stopped,
+        ora_domain::SessionMcpSelection::Automatic,
         ora_domain::AuditFields::new(20, 20, false),
     );
     session_repository.create_session(session.clone()).unwrap();
@@ -704,6 +711,7 @@ fn running_run_cannot_be_deleted() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )

@@ -1,19 +1,14 @@
 {
   "modules": {
-    "crates/application/src/workflow_run/engine/graph.rs": {
-      "owner": "ora-application",
-      "lines": 833,
-      "split_plan": "Extract graph parsing/validation and indexed traversal into private modules. Agent execution types now live in engine/agent_config.rs. Keep accepted graph schemas and readiness rules covered by their existing tests."
-    },
     "crates/backend/src/agent_runtime.rs": {
       "owner": "ora-backend",
-      "lines": 968,
+      "lines": 961,
       "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Session creation now lives in agent_runtime/start.rs. Durable record ownership lives in agent_runtime/record.rs, and load/attach in agent_runtime/load.rs and agent_runtime/attach.rs."
     },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",
-      "lines": 1051,
-      "split_plan": "Group run-state transitions, node/history rows and artifact persistence into private repository modules. Preserve the existing transaction scopes and repository interface, with real SQLite transition tests accompanying extraction."
+      "lines": 932,
+      "split_plan": "Composite-region transactions live in workflow_run_engine/iteration.rs and run-payload state maintenance in workflow_run_engine/payload.rs. Next extraction candidate: the boot-sweep operations, keeping the repository interface and transaction scopes intact with real SQLite tests."
     }
   }
 }

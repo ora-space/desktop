@@ -7,6 +7,7 @@ export const WORKFLOW_NODE_KINDS = [
   "junction",
   "human",
   "loop",
+  "iteration",
   "subflow",
   "output",
 ] as const;
@@ -260,6 +261,20 @@ export interface WorkflowToolParameter {
   value: string;
 }
 
+/** How an Iteration node reacts when one round fails (backend `errorStrategy`). */
+export type WorkflowIterationErrorStrategy = "fail" | "continue";
+
+/** Executable configuration of an Iteration node (foreach composite runtime). */
+export interface WorkflowIterationConfig {
+  /** Dify-style selector of the array variable driving the rounds. */
+  iteratorSelector: string[];
+  /** Dify-style root-variable selector collected into `{iter}.output` each round. */
+  collectSelector: string[];
+  errorStrategy: WorkflowIterationErrorStrategy;
+  /** Safety ceiling; a longer source fails the node at the startup boundary. */
+  maxIterations: number;
+}
+
 /** Uses React Flow's `Node.data` extension point for executable workflow data. */
 export interface WorkflowNodeData extends Record<string, unknown> {
   kind: WorkflowNodeKind;
@@ -290,6 +305,12 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   failureStrategy?: WorkflowJunctionFailureStrategy;
   maxAttempts?: number;
   exitCondition?: string;
+  /** Iteration node: foreach composite configuration (backend `data.iterationConfig`). */
+  iterationConfig?: WorkflowIterationConfig;
+  /** Iteration frame: presentation-only collapsed state; region members stay in the graph. */
+  collapsed?: boolean;
+  /** Iteration frame: derived member count for the collapsed summary badge. */
+  regionMemberCount?: number;
   /**
    * Fixture-only mock-engine step duration (ms); the editor deliberately does
    * not expose this simulation control as workflow configuration.

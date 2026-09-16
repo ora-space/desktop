@@ -25,6 +25,8 @@ interface MessageBubbleProps {
   /** Lets an embedding surface own the highlight geometry for the whole message row. */
   showAnchorHighlight?: boolean;
   durationMs?: number;
+  /** Completion clock for assistant output; omitted while the response is still open. */
+  completedAt?: number;
 }
 
 /**
@@ -101,6 +103,7 @@ export function MessageBubble({
   compact = false,
   showAnchorHighlight = true,
   durationMs,
+  completedAt,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyMessage(message.content);
@@ -135,7 +138,11 @@ export function MessageBubble({
             className={`flex min-h-6 items-center gap-2 ${isUser ? "flex-row-reverse pr-1" : ""}`}
           >
             <span className="text-xs text-muted-foreground">
-              {formatClock(message.createdAt)}
+              {isUser
+                ? formatClock(message.createdAt)
+                : completedAt === undefined
+                  ? null
+                  : formatClock(completedAt)}
               {!isUser &&
                 duration !== null &&
                 ` · ${t("chat.totalTime")} ${duration}`}

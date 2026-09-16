@@ -13,6 +13,7 @@ import {
 import { sessionKeys } from "../data/sessions";
 import { pluginKeys } from "../data/plugins";
 import { agentRuntimeKeys } from "../data/agent-runtime";
+import { workflowRunKeys } from "../data/workflow-runs";
 import { useAppEvents } from "./use-app-events";
 
 describe("useAppEvents", () => {
@@ -86,6 +87,51 @@ describe("useAppEvents", () => {
     );
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: agentRuntimeKeys.agentRuntimeStatus,
+    });
+
+    unmount();
+  });
+
+  it("re-queries the run detail and lists for run invalidation events", async () => {
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.watchAppEvents = async function* (
+      _request,
+      options,
+    ): AsyncGenerator<AppEvent> {
+      yield { type: "ready" };
+      yield { type: "workflow_run_invalidated", run_id: "run-1" };
+      await new Promise<void>((resolve) => {
+        const signal = options?.signal;
+        if (signal === undefined || signal.aborted) {
+          resolve();
+          return;
+        }
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    };
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result, unmount } = renderHookWithClient(
+      () => useAppEvents(client),
+      client,
+      queryClient,
+    );
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    // The event carries only the run id; the reaction is a re-query of the authoritative run
+    // detail plus the run lists, never a write of event payload into query state.
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: workflowRunKeys.detail("run-1"),
+      }),
+    );
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: workflowRunKeys.projectLists,
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: workflowRunKeys.workflowLists,
     });
 
     unmount();

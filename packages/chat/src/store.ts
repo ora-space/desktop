@@ -37,6 +37,7 @@ export type {
   ChatToolCallStatus,
   ChatTurn,
   ChatTurnItem,
+  ChatTurnRetry,
   ChatTurnStatus,
   ContextUsageSnapshot,
   ContextUsageState,
@@ -522,13 +523,12 @@ export function createChatStore(
         try {
           prepared = await prepare();
         } catch (error) {
-          // Nothing streamed yet; settle the optimistic turn and stop here.
+          // Preparation failed before the prompt phase began, so there is no response duration.
           const message = errorMessage(error);
           updateTurn(set, key, turnId, (current) => ({
             ...current,
             status: "failed",
             error: message,
-            durationMs: elapsedDuration(current.createdAt, now()),
           }));
           updateConversation(set, key, (conversation) => ({
             ...conversation,
@@ -545,7 +545,6 @@ export function createChatStore(
               ? {
                   ...current,
                   status: "cancelled",
-                  durationMs: elapsedDuration(current.createdAt, now()),
                 }
               : current,
           );
@@ -556,6 +555,10 @@ export function createChatStore(
           operations.delete(key);
           return;
         }
+        updateTurn(set, key, turnId, (current) => ({
+          ...current,
+          responseStartedAt: now(),
+        }));
         // This turn was streamed live, so the local conversation already is the
         // session's history. Marking it loaded stops the workspace's "load if not
         // loaded" effect from firing once the session becomes selectable — that
@@ -642,6 +645,17 @@ export function createChatStore(
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
             appendPermission(set, key, event);
+          } else if (event.type === "retrying") {
+            flushPendingTextChunk();
+            // The stalled attempt was cancelled before the re-send, so tools it
+            // left open are interrupted now rather than ticking until the turn
+            // ends; its pending permissions were answered by that cancel too.
+            const retriedAt = now();
+            updateTurn(set, key, turnId, (current) => ({
+              ...settleActiveToolCalls(current, "cancelled", retriedAt),
+              retry: { retry: event.retry, maxRetries: event.maxRetries },
+            }));
+            clearPendingPermissions(set, key);
           } else {
             flushPendingTextChunk();
             usageCompleted = true;
@@ -655,7 +669,10 @@ export function createChatStore(
                       ? ("cancelled" as const)
                       : ("completed" as const),
                   stopReason: event.stopReason,
-                  durationMs: elapsedDuration(current.createdAt, now()),
+                  durationMs: elapsedDuration(
+                    current.responseStartedAt ?? current.createdAt,
+                    now(),
+                  ),
                 },
                 impliedToolStatus(event.stopReason),
                 completedAt,
@@ -680,7 +697,10 @@ export function createChatStore(
                   {
                     ...current,
                     status: "cancelled",
-                    durationMs: elapsedDuration(current.createdAt, now()),
+                    durationMs: elapsedDuration(
+                      current.responseStartedAt ?? current.createdAt,
+                      now(),
+                    ),
                   },
                   "cancelled",
                   now(),
@@ -690,6 +710,10 @@ export function createChatStore(
           clearPendingPermissions(set, key);
         } else {
           const message = errorMessage(error);
+          // A timeout after the backend already re-sent the prompt means every
+          // retry stalled too; the turn keeps that so the UI can say the agent
+          // never came back rather than showing a generic failure.
+          const retriesExhausted = isAgentTimedOutError(error);
           // The failure ended the turn, so tools the agent never settled were
           // interrupted by it. They are not marked failed: the stream broke, and
           // whether the tool itself succeeded is exactly what was never reported.
@@ -700,7 +724,13 @@ export function createChatStore(
                     ...current,
                     status: "failed",
                     error: message,
-                    durationMs: elapsedDuration(current.createdAt, now()),
+                    ...(retriesExhausted && current.retry !== undefined
+                      ? { retry: { ...current.retry, exhausted: true } }
+                      : {}),
+                    durationMs: elapsedDuration(
+                      current.responseStartedAt ?? current.createdAt,
+                      now(),
+                    ),
                   },
                   "cancelled",
                   now(),
@@ -731,7 +761,10 @@ export function createChatStore(
                 {
                   ...current,
                   status: "completed",
-                  durationMs: elapsedDuration(current.createdAt, now()),
+                  durationMs: elapsedDuration(
+                    current.responseStartedAt ?? current.createdAt,
+                    now(),
+                  ),
                 },
                 "cancelled",
                 now(),
@@ -1547,6 +1580,13 @@ async function* promptWithReattach(
     { signal },
   );
 }
+/** Reports whether a failure is the backend giving up on a prompt that made no progress. */
+function isAgentTimedOutError(error: unknown): boolean {
+  return (
+    error instanceof RemoteContractError && error.code === "agent_timed_out"
+  );
+}
+
 /** Reports whether a failure is the backend refusing a session that holds no live route. */
 function isSessionStoppedError(error: unknown): boolean {
   return (

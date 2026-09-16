@@ -347,6 +347,7 @@ mod tests {
             AgentRef::parse("ora-space.nga").expect("agent identity"),
             "provider-1",
             SessionStatus::Running,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(1, 1, false),
         )
     }

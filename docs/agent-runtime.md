@@ -43,7 +43,7 @@ Actor-owned scheduler callbacks keep only a weak command sender. Once deletion, 
 
 ## Lazy Session Creation and Model Discovery
 
-Opening or navigating to a chat surface creates no backend session state. The frontend keeps the optimistic first turn locally while `startSession` performs the provider handshake and persistence, then adopts the returned Ora session id before prompting it. Workflow nodes use the same path with an unpublished marker until the node-run binding commits.
+Opening or navigating to a chat surface creates no backend session state. The frontend keeps the optimistic first turn locally while `startSession` performs the provider handshake and persistence, then adopts the returned Ora session id before prompting it. During the first send and an Agent handoff, the UI presents session setup as an ephemeral phase with its own elapsed time; its clock appears only when the phase settles and names that completion time. The response turn starts a separate timer only after setup succeeds and follows the same completion-clock convention. Setup presentation is cached by session for the renderer lifetime, so navigating away and back preserves it, while restarting Ora or replaying history in a fresh renderer does not recreate it. Workflow nodes use the same path with an unpublished marker until the node-run binding commits.
 
 Pre-session models come from `agent/list_models`, called on demand with the Workspace's resolved working directory. Ora does not cache the result or read it while bringing up the shared ACP connection. The plugin owns discovery and its cache lifetime; if discovery requires ACP, the plugin must ask the host's child-process service to launch a separate one-shot agent process rather than injecting frames into Ora's shared connection or spawning an unmanaged process itself. The call has a dedicated 60-second budget, and a failure affects only that discovery request, never the shared connection lifecycle. Empty model lists are valid.
 
@@ -105,29 +105,36 @@ Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-
 
 Permission requests are part of the ordered session FIFO, so a prompt consumes them in the same order in which the provider emitted them and can correlate the user's response to the active operation. A permission request arriving during `session/load` or while the session is idle is answered as cancelled; the operation reports the backend's typed internal error when protocol traffic violates that lifecycle boundary. Connection loss and queue overflow remain separate terminal controls.
 
-Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. A prompt inactivity timeout sends the same cancellation, waits through the five-second settlement grace, then unloads and stops only that Session; it never restarts the shared process or affects another Session sharing the connection. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
+Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. A prompt inactivity timeout sends the same cancellation and waits through the five-second settlement grace; while the retry schedule allows, it then re-sends the same prompt on the same provider session instead of unloading it (see [Prompt inactivity and retries](#prompt-inactivity-and-retries)). Once the schedule is exhausted, or the agent never confirmed the cancellation, it unloads and stops only that Session; it never restarts the shared process or affects another Session sharing the connection. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
 
 History replay is the one stream that applies backpressure instead of failing fast. A recorded conversation is far larger than the 256-item queue, and a consumer that has not drained it yet is not a disconnected one.
 
 ## Timeouts and Limits
 
-| Bound                                | Value                                         |
-| ------------------------------------ | --------------------------------------------- |
-| `initialize` handshake               | 15 s                                          |
-| Plugin-owned model discovery         | 60 s                                          |
-| Session setup/load inactivity        | 30 s, reset by each session update            |
-| Prompt meaningful-activity deadline  | 1 min, paused by running tools and permission |
-| Cancellation settlement grace        | 5 s                                           |
-| Connection retry backoff             | 250 ms, doubling to a 30 s cap                |
-| Connection crash circuit             | Opens after more than 3 failures in 1 minute  |
-| Session-list title request           | 5 s per attempt                               |
-| First-title fallback window          | 3 s and 10 s after the first eligible prompt  |
-| Session update and event queue depth | 256 items                                     |
-| JSON-RPC frame size                  | 8 MiB                                         |
-| Serialized structured prompt size    | 16 MiB                                        |
-| Handoff transcript size              | unbounded                                     |
+| Bound                                | Value                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------------- |
+| `initialize` handshake               | 15 s                                                                             |
+| Plugin-owned model discovery         | 60 s                                                                             |
+| Session setup/load inactivity        | 30 s, reset by each session update                                               |
+| Prompt meaningful-activity deadline  | 45 s, then 60 s / 90 s / 120 s per retry; paused by running tools and permission |
+| Prompt stall retries                 | Up to 3 re-sends per prompt, same provider session                               |
+| Cancellation settlement grace        | 5 s                                                                              |
+| Connection retry backoff             | 250 ms, doubling to a 30 s cap                                                   |
+| Connection crash circuit             | Opens after more than 3 failures in 1 minute                                     |
+| Session-list title request           | 5 s per attempt                                                                  |
+| First-title fallback window          | 3 s and 10 s after the first eligible prompt                                     |
+| Session update and event queue depth | 256 items                                                                        |
+| JSON-RPC frame size                  | 8 MiB                                                                            |
+| Serialized structured prompt size    | 16 MiB                                                                           |
+| Handoff transcript size              | unbounded                                                                        |
 
-The prompt deadline is an inactivity timer rather than a total budget. Agent messages, thoughts, plans, and tool lifecycle updates prove progress and rearm it. Session chrome (`available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, and `usage_update`) does not, because those notifications can continue while the prompt itself is stuck. The first pending observation rearms once; any `in_progress` tool pauses the deadline until the last parallel running tool settles, and permission waits pause it until the decision returns. A legitimately long tool can therefore run for hours without timing out, while a prompt that produces no meaningful activity for one minute fails only its own Session. There is no absolute prompt runtime limit.
+### Prompt inactivity and retries
+
+The prompt deadline is an inactivity timer rather than a total budget. Agent messages, thoughts, plans, and tool lifecycle updates prove progress and rearm it. Session chrome (`available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, and `usage_update`) does not, because those notifications can continue while the prompt itself is stuck. The first pending observation rearms once; any `in_progress` tool pauses the deadline until the last parallel running tool settles, and permission waits pause it until the decision returns. A legitimately long tool can therefore run for hours without timing out. There is no absolute prompt runtime limit.
+
+When a window expires, the runtime does not give up on the prompt immediately. It sends `session/cancel`, waits up to the five-second grace for the stalled `session/prompt` request's response, and — if that response arrived with `stop_reason: cancelled` and the schedule still has a window left — re-sends the same prompt blocks on the same provider session, emitting `retrying { retry, maxRetries }` on the owning stream first so a client can attribute what follows to the retry. The windows widen per attempt (45 s for the first send, then 60 s, 90 s, and 120 s for the three retries) because a stall that outlived the first window is more likely an upstream slowdown than a glitch, and every retry costs a fresh LLM turn. The response fence is a hard condition: ACP updates carry no request id, so only the agent's confirmation that the stalled turn ended proves nothing it still had in flight can be mistaken for the retry's output. A late or missing fence, a response with any other stop reason, or an exhausted schedule fails the prompt with `agent_timed_out` and isolates only that Session, as an unretried timeout always did.
+
+A retry never calls `session/close` and never re-records the prompt: the turn keeps a single user message, tool timings span the whole turn, and the transcript handoff a prompt may carry is settled by the first accepted send. Output the stalled attempt produced before cancellation stays in the record and on screen; the retry answers the same prompt again, so an agent that had already started replying may repeat itself. Followers of the session see one continuous turn; only the owning prompt stream receives the `retrying` marker, and a reloaded transcript carries none.
 
 Prompts are passed through as ordered ACP `ContentBlock` values, including text, images, audio, resource links, and embedded resources. An empty list or a list containing only blank text is rejected, and the 16 MiB limit is measured from the serialized JSON payload before it reaches the provider.
 

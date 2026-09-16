@@ -1,12 +1,14 @@
 //! Real SQLite fixtures shared by workflow coordination and public lifecycle tests.
 
 use super::interactive::CompletingNodeRuns;
+use super::transitions::WorkflowRunTransitions;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
     Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraphNode,
     WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunRepository,
+    WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunRepository,
 };
+use ora_contracts::WorkflowRunLocale;
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteSessionRepository,
     SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
@@ -15,10 +17,9 @@ use ora_db::{
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
     AgentRef, AuditFields, Namespace, Project, ProjectId, Session, SessionId, SessionStatus,
-    Workflow, WorkflowId, WorkflowNodeRun, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
-    WorkflowSnapshot, WorkflowSnapshotId, WorkspaceLocation,
+    Workflow, WorkflowId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun,
+    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, WorkspaceLocation,
 };
-use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -34,6 +35,22 @@ pub(crate) const TWO_AGENT_GRAPH: &str = r#"{"nodes":[
     {"id":"l","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"l"}}},
     {"id":"r","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"r"}}}
 ],"edges":[{"source":"start","target":"l"},{"source":"start","target":"r"}]}"#;
+
+/// A purely swift chain: the whole run completes inside scheduling waves, with no dispatch.
+pub(crate) const CONTROL_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"out","data":{"kind":"output"}}
+],"edges":[{"source":"start","target":"out"}]}"#;
+
+/// A swift chain through a Condition: the empty case list always selects the else branch.
+pub(crate) const CONDITION_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"c","data":{"kind":"condition"}},
+    {"id":"out","data":{"kind":"output"}}
+],"edges":[
+    {"source":"start","target":"c"},
+    {"source":"c","sourceHandle":"else","target":"out"}
+]}"#;
 
 pub(crate) struct NoopExecutor;
 
@@ -81,13 +98,13 @@ pub(crate) fn bootstrap() -> (TempDir, RepositoryPool) {
     (temp, pool)
 }
 
-/// Seeds a project, workflow, snapshot, and pending run, then starts it so the agent nodes are
-/// `Running`. Returns the run id and the started run's node runs.
-pub(crate) fn started_run(
+/// Seeds a project, workflow, snapshot, and a `Pending` run without starting it, so callers
+/// can start the run through their own engine composition.
+pub(crate) fn seeded_pending_run(
     temp: &TempDir,
     pool: &RepositoryPool,
     graph: &str,
-) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
+) -> WorkflowRunId {
     let workspace_path = temp.path().join("fixture-project");
     std::fs::create_dir_all(&workspace_path).unwrap();
     let project = SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
@@ -151,10 +168,23 @@ pub(crate) fn started_run(
             AgentRef::parse("ora-space.opencode").unwrap(),
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(25, 25, false),
         ))
         .unwrap();
     let run_id = WorkflowRunId::new("run-1");
+    // Real runs are created through the deployment handler, which always freezes a typed
+    // payload; without one, private routing state such as Condition decisions would never
+    // persist, so the fixture seeds the graph-derived pool exactly like deployment does.
+    let parsed_graph = ora_application::WorkflowGraph::parse(graph).expect("fixture graph parses");
+    let start_node_id = parsed_graph.start_node().map(|node| node.id.clone());
+    let payload = serde_json::to_string(&WorkflowRunPayload::with_variable_pool(
+        WorkflowRunLocale::EnUs,
+        Default::default(),
+        start_node_id,
+        ora_application::WorkflowVariablePool::from_graph(&parsed_graph),
+    ))
+    .unwrap();
     let run = WorkflowRun::new(
         run_id.clone(),
         workspace.id,
@@ -166,7 +196,7 @@ pub(crate) fn started_run(
         Some("kickoff".to_string()),
         None,
         None,
-        None,
+        Some(payload),
         None,
         None,
         AuditFields::new(30, 30, false),
@@ -174,7 +204,17 @@ pub(crate) fn started_run(
     SqliteWorkflowRunRepository::new(pool.clone())
         .create_run(run)
         .unwrap();
+    run_id
+}
 
+/// Seeds a project, workflow, snapshot, and pending run, then starts it so the agent nodes are
+/// `Running`. Returns the run id and the started run's node runs.
+pub(crate) fn started_run(
+    temp: &TempDir,
+    pool: &RepositoryPool,
+    graph: &str,
+) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
+    let run_id = seeded_pending_run(temp, pool, graph);
     let engine = WorkflowRunEngine::new(
         SqliteWorkflowRunEngineRepository::new(pool.clone()),
         NoopExecutor,
@@ -216,6 +256,35 @@ pub(crate) fn bind_and_park(
         )
         .unwrap();
     (session_id, node_run.id.clone())
+}
+
+/// Captures the run ids each invalidation identified, for tests of the D7 event channel.
+pub(crate) struct RecordingInvalidations {
+    pub(crate) published: std::sync::Mutex<Vec<String>>,
+}
+
+impl Default for RecordingInvalidations {
+    fn default() -> Self {
+        Self {
+            published: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl WorkflowRunInvalidationPublisher for RecordingInvalidations {
+    fn publish_run_invalidated(&self, run_id: &WorkflowRunId) {
+        self.published.lock().unwrap().push(run_id.to_string());
+    }
+}
+
+/// Builds a transition sink over the fixture pool whose invalidations are recorded, so tests
+/// assert the D7 publish discipline of engine-external commits.
+pub(crate) fn recording_transitions(
+    pool: &RepositoryPool,
+) -> (Arc<WorkflowRunTransitions>, Arc<RecordingInvalidations>) {
+    let recording = Arc::new(RecordingInvalidations::default());
+    let transitions = Arc::new(WorkflowRunTransitions::new(pool.clone(), recording.clone()));
+    (transitions, recording)
 }
 
 /// Keeps bootstrap and every emitting operation under the same scoped TRACE subscriber.

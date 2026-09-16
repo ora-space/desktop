@@ -33,7 +33,10 @@ pub(crate) enum McpConfigurationEligibility {
         revision: u64,
         values: BTreeMap<String, SettingValue>,
     },
-    /// The plugin is installed but not yet configured; it is omitted from the Effective MCP Set.
+    /// The plugin is installed but not yet configured.
+    ///
+    /// Automatic discovery omits it, while an explicit Session permission fails setup so author
+    /// intent cannot silently shrink.
     Incomplete,
     /// The store or declaration cannot be re-read, which fails the whole setup.
     Unavailable,

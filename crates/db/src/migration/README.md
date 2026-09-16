@@ -7,7 +7,7 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains ten dependency-ordered modules: workspace core and application
+- The default catalog contains eleven dependency-ordered modules: workspace core and application
   configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, marketplace source
   configuration, Generic Effect persistence, immutable marketplace-source namespace bindings,
   marketplace enabled flags, artifact retrieval configuration, and independent Effect audit time.
@@ -39,6 +39,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   insert trigger. Project and task Workspace repositories create and seed the Scope within their
   write transaction using an injected audit clock. Existing Effect rows and authority are retained.
   Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
+- Migration `0011` persists the MCP selection owned by each Session. All existing Sessions
+  default to an empty explicit set because MCP authorization has not yet been used by users;
+  migration does not inspect workflow metadata. New Sessions explicitly persist their selection,
+  and rollback removes the column.
 - Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
   establish authority; audit time never grants a claim or changes retry eligibility.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a

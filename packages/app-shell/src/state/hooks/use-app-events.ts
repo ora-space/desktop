@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { refetchSessions, invalidateSessions } from "../data/sessions";
 import { invalidatePluginState } from "../data/plugin-lifecycle";
 import { invalidateAgentModels } from "../data/agent-runtime";
+import { invalidateWorkflowRun } from "../data/workflow-runs";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -52,6 +53,10 @@ export function useAppEvents(client: ContractsClient) {
             invalidatePluginState(queryClient);
           } else if (event.type === "agent_models_invalidated") {
             void invalidateAgentModels(queryClient, event.agent_ref);
+          } else if (event.type === "workflow_run_invalidated") {
+            // The event names only which run changed; the run rows stay the single source of
+            // truth and are re-queried here.
+            invalidateWorkflowRun(queryClient, event.run_id);
           }
         }
         handleDisconnect();

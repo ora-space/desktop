@@ -58,6 +58,7 @@ fn running_session_blocks_both_cascades_and_stopped_session_is_retired_with_its_
                 AgentRef::parse("ora-space.fixture").expect("agent identity"),
                 "provider-session",
                 SessionStatus::Running,
+                ora_domain::SessionMcpSelection::Automatic,
                 AuditFields::new(now, now, /*is_deleted*/ false),
             ))
             .expect("running session");

@@ -38,7 +38,7 @@ actor scheduler 只保留弱 command sender，因此 manager 关闭、删除或�
 
 ## 延迟创建 Session 与模型发现
 
-打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
+打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。首次发送和 Agent handoff 期间，界面将 Session 建立显示为独立的临时阶段并单独计时；时钟只在阶段结束后出现，并表示完成时刻。建立成功后，response turn 才开始自己的计时，且使用相同的完成时刻语义。连接阶段展示按 Session 缓存到当前 renderer 结束，因此切走再返回仍会保留；重启 Ora 或在新 renderer 中回放历史不会重建。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
 
 Session 创建前的模型来自按需调用的 `agent/list_models`，输入为 Workspace 的真实 cwd。Ora 不缓存，也不会在共享 ACP 连接启动时读取。模型发现拥有独立 60 秒预算，失败只影响该请求。Session 创建前选择的模型是本地 intent，只有新 Session 握手确实报告相同值时才应用；已存在 Session 始终使用自身配置。
 
@@ -84,31 +84,38 @@ ACP stdout 是带 8 MiB frame 上限的换行分隔 JSON-RPC。connection reader
 
 setup 阶段另有最多 256 条通知的临时 buffer，只在 `session/new` 尚未返回 provider id 时存在。注册 route 时只取匹配 provider id 的通知，最后一个 setup 窗口关闭后丢弃未匹配的陈旧通知。未知 Agent JSON-RPC request 返回关联的 `-32601`；畸形帧、无法匹配的 response、超大帧和 stdio 丢失会终止连接。route 绑定 generation，旧连接或已卸载 Session 的 update 会作为 stale 丢弃。
 
-permission request 与 update 共用有序 Session FIFO。发生在 load 或 idle 期间的 permission request 会以 cancelled 回答并报告生命周期违规。丢弃 Web body、关闭 Tauri stream 或 abort 前端 `AsyncIterable` 都发送 `session/cancel`。prompt inactivity timeout 同样先 cancel，等待 5 秒 settlement grace，再只卸载该 Session 的 route；共享连接与其他 Session 保持运行。显式 Stop 可在 Agent 支持时调用 `session/close`，并保留 provider history 供以后 load。
+permission request 与 update 共用有序 Session FIFO。发生在 load 或 idle 期间的 permission request 会以 cancelled 回答并报告生命周期违规。丢弃 Web body、关闭 Tauri stream 或 abort 前端 `AsyncIterable` 都发送 `session/cancel`。prompt inactivity timeout 同样先 cancel，等待 5 秒 settlement grace；只要重试计划还有剩余窗口，就在同一个 provider session 上重发同一个 prompt 而不是卸载 route（见[Prompt 无活动与重试](#prompt-无活动与重试)）。重试用尽或 Agent 未确认取消时，才只卸载该 Session 的 route；共享连接与其他 Session 保持运行。显式 Stop 可在 Agent 支持时调用 `session/close`，并保留 provider history 供以后 load。
 
 history replay 是唯一主动施加背压而非快速失败的 stream，因为完整历史远大于 256 项队列，而暂未消费不等于断开。
 
 ## 超时与限制
 
-| 边界                                  | 值                                  |
-| ------------------------------------- | ----------------------------------- |
-| `initialize` 握手                     | 15 秒                               |
-| 插件模型发现                          | 60 秒                               |
-| Session setup/load inactivity         | 30 秒，每个 session update 重置     |
-| Prompt meaningful-activity inactivity | 1 分钟；工具运行和权限等待期间暂停  |
-| 取消收敛 grace                        | 5 秒                                |
-| 连接重试退避                          | 250 ms 起，倍增至 30 秒上限         |
-| 连接失败熔断                          | 1 分钟内超过 3 次失败               |
-| Session 标题 list 请求                | 每次 5 秒                           |
-| 首标题 fallback                       | 首个符合条件 prompt 后 3 秒和 10 秒 |
-| Session update/event 队列             | 256 项                              |
-| JSON-RPC frame                        | 8 MiB                               |
-| 序列化 structured prompt              | 16 MiB                              |
-| handoff transcript                    | 无上限                              |
+| 边界                                  | 值                                                                |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `initialize` 握手                     | 15 秒                                                             |
+| 插件模型发现                          | 60 秒                                                             |
+| Session setup/load inactivity         | 30 秒，每个 session update 重置                                   |
+| Prompt meaningful-activity inactivity | 首次 45 秒，之后每次重试 60/90/120 秒；工具运行和权限等待期间暂停 |
+| Prompt 停滞重试                       | 每个 prompt 最多重发 3 次，同一 provider session                  |
+| 取消收敛 grace                        | 5 秒                                                              |
+| 连接重试退避                          | 250 ms 起，倍增至 30 秒上限                                       |
+| 连接失败熔断                          | 1 分钟内超过 3 次失败                                             |
+| Session 标题 list 请求                | 每次 5 秒                                                         |
+| 首标题 fallback                       | 首个符合条件 prompt 后 3 秒和 10 秒                               |
+| Session update/event 队列             | 256 项                                                            |
+| JSON-RPC frame                        | 8 MiB                                                             |
+| 序列化 structured prompt              | 16 MiB                                                            |
+| handoff transcript                    | 无上限                                                            |
+
+### Prompt 无活动与重试
 
 Prompt deadline 是 inactivity timer，不是总预算。Agent message、thought、plan 和 tool lifecycle update 会证明 prompt 前进并重置窗口。`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update` 属于 session chrome：即使 prompt 卡住也可能继续出现，因此不刷新 deadline。
 
-第一次观察到 pending 会重置一次；只要任意工具为 `in_progress` 就暂停，最后一个并行工具结束后重新获得完整窗口；等待权限期间同样暂停，权限返回后重新计时。因此合法长工具可以运行数小时而不超时，静默一分钟的 prompt 只失败自身 Session。系统不设 prompt 绝对运行上限。
+第一次观察到 pending 会重置一次；只要任意工具为 `in_progress` 就暂停，最后一个并行工具结束后重新获得完整窗口；等待权限期间同样暂停，权限返回后重新计时。因此合法长工具可以运行数小时而不超时。系统不设 prompt 绝对运行上限。
+
+窗口到期时 runtime 不会立刻放弃这个 prompt。它先发送 `session/cancel`，在 5 秒 grace 内等待停滞的那次 `session/prompt` 请求返回响应；如果响应带着 `stop_reason: cancelled` 到达，且重试计划还有剩余窗口，就在同一个 provider session 上重发相同的 prompt block，并先在 owning stream 上发出 `retrying { retry, maxRetries }`，让客户端能把后续输出归属到这次重试。窗口按尝试次数逐级放宽（首次 45 秒，三次重试分别 60、90、120 秒）：熬过第一个窗口的停滞更可能是上游变慢而不是偶发抖动，而每次重试都是一次新的 LLM turn。响应栅栏是硬条件：ACP update 不带 request id，只有 Agent 亲自确认停滞的 turn 已结束，才能证明它残留的在途输出不会被误认为重试的输出。栅栏迟到或缺失、响应带其他 stop reason、或重试计划用尽，都会以 `agent_timed_out` 失败该 prompt 并只隔离该 Session，与不重试的超时行为一致。
+
+重试不会调用 `session/close`，也不会重复记录 prompt：turn 只保留一条用户消息，工具计时覆盖整个 turn，prompt 携带的 transcript handoff 在第一次被接受的发送时即已结清。停滞尝试在取消前已经产出的内容仍保留在记录和界面上；重试会重新回答同一个 prompt，因此已经开始作答的 Agent 可能重复自己。Session follower 看到的是一个连续的 turn；只有 owning prompt stream 收到 `retrying` 标记，重新加载的 transcript 不携带该标记。
 
 Prompt 以有序 ACP `ContentBlock` 传递，包括文本、图片、音频、resource link 和 embedded resource。空列表、纯空白文本会被拒绝，16 MiB 限制在发送到 provider 前按序列化 JSON 计算。
 

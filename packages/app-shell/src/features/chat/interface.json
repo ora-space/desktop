@@ -25,6 +25,10 @@
       "exports": ["SessionHistoryBanner"],
       "purpose": "Workspace composes chat-owned history status above the conversation."
     },
+    "./session-setup": {
+      "exports": ["SessionSetupPresentation", "useSessionSetupStore"],
+      "purpose": "Workspace records provider setup timing through chat-owned session-scoped runtime state."
+    },
     "./session-usage-surface": {
       "exports": ["SessionUsageIndicator", "shouldShowSessionUsage"],
       "purpose": "Workspace composes chat-owned volatile usage presentation in the conversation header."

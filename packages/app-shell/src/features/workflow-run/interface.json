@@ -5,6 +5,10 @@
       "exports": ["RunWorkflowDialog"],
       "purpose": "Workspace dialogs compose the run launch interaction."
     },
+    "./run-status-style": {
+      "exports": ["runStatusTone"],
+      "purpose": "The workspace sidebar reuses Theater run status colours on tree dots."
+    },
     "./workflow-run-workspace": {
       "exports": ["WorkflowRunWorkspace"],
       "purpose": "Workspace hosts run execution through its top-level view."

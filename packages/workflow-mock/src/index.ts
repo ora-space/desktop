@@ -3,6 +3,7 @@ export * from "./capabilities";
 export * from "./annotation-data";
 export * from "./demo";
 export * from "./fixtures";
+export * from "./iteration-defaults";
 export * from "./node-data";
 export * from "./node-factory";
 export * from "./node-layout";

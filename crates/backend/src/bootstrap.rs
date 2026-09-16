@@ -150,9 +150,6 @@ impl Backend {
         let relative_path_base = paths.relative_path_base;
         let agent_runtime = Arc::new(
             AgentRuntimeManager::new(AgentRuntimeSetup {
-                mcp_selections: Arc::new(
-                    crate::workflow::run::WorkflowSessionMcpSelectionSource::new(pool.clone()),
-                ),
                 plugin_host: plugin.clone(),
                 pool: pool.clone(),
                 home_directory: paths.home_directory,
@@ -174,10 +171,12 @@ impl Backend {
             pool.clone(),
             baselines_root.clone(),
             clock,
+            app_events.publisher(),
         );
         let workflow_run_engine = workflow_run_assembly.control;
         let run_locks = workflow_run_assembly.run_locks;
         let workflow_engine = workflow_run_assembly.engine;
+        let workflow_transitions = workflow_run_assembly.transitions;
 
         // Crash recovery: fail orphaned node runs, then reconcile stalled Running runs left by a
         // previous process before serving new commands (best-effort; a failure must not block
@@ -215,6 +214,7 @@ impl Backend {
             agent_runtime: agent_runtime.clone(),
             engine: workflow_run_engine,
             run_locks,
+            transitions: workflow_transitions,
             clock,
         }));
 

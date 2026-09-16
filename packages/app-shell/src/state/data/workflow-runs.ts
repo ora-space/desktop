@@ -1,10 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   computeInactiveNodes,
   isTerminalRunStatus,
   parseWorkflowGraph,
   projectNodeStatus,
   projectRunStatus,
+  toListRunStatus,
   type GraphWorkflowNodeState,
   type GraphWorkflowNodeStatus,
   type GraphWorkflowRun,
@@ -26,12 +33,45 @@ export const workflowRunKeys = {
   workflowLists: ["workflowRun", "byWorkflow"] as const,
 };
 
-/** True while any run in the list is still pending or executing, so list views can poll. */
+/** Refreshes the open Theater view and every project sidebar list after a run mutates. */
+function invalidateRunViews(queryClient: QueryClient, runId: string) {
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.detail(runId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.projectLists,
+  });
+}
+
+/** True while any run in the list is still pending, executing, or waiting on HITL. */
 function hasActiveRun(runs: WorkflowRunSummary[] | undefined): boolean {
   return (
-    runs?.some((run) => run.status === "pending" || run.status === "running") ??
-    false
+    runs?.some(
+      (run) =>
+        run.status === "pending" ||
+        run.status === "running" ||
+        run.status === "awaitingInput",
+    ) ?? false
   );
+}
+
+/** Invalidates one run's detail and the run lists after a backend state transition.
+ *
+ * The backend publishes `workflow_run_invalidated` after every committed run or node-run
+ * transition; the event carries no state, so the only correct reaction is to re-query the
+ * authoritative run detail and lists. A dropped event leaves a stale view until the next
+ * event or the polling fallback converges it.
+ */
+export function invalidateWorkflowRun(queryClient: QueryClient, runId: string) {
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.detail(runId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.projectLists,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.workflowLists,
+  });
 }
 
 /** Lists the persisted workflow runs of one project. */
@@ -50,6 +90,24 @@ export function useWorkflowRunsByProject(
     // Completion is backend-driven with no frontend event, so poll while any run is active.
     refetchInterval: (query) =>
       enabled && hasActiveRun(query.state.data) ? 4000 : false,
+  });
+}
+
+/**
+ * Lists persisted runs for many projects so sidebar search can match run titles
+ * before those project rows expand and mount their own list queries.
+ */
+export function useWorkflowRunListsByProjects(projectIds: readonly string[]) {
+  const client = useContractsClient();
+  return useQueries({
+    queries: projectIds.map((projectId) => ({
+      queryKey: workflowRunKeys.byProject(projectId),
+      queryFn: async () => (await client.workflowRun.list({ projectId })).runs,
+      enabled: projectId.length > 0,
+      refetchInterval: (query: {
+        state: { data: WorkflowRunSummary[] | undefined };
+      }) => (hasActiveRun(query.state.data) ? 4000 : false),
+    })),
   });
 }
 
@@ -123,9 +181,7 @@ export function useStartWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.start(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -137,9 +193,7 @@ export function useCancelWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.cancel(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -151,9 +205,7 @@ export function useRestartWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.restart(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -193,10 +245,9 @@ export function useCompleteWorkflowNode() {
         runId: input.runId,
         nodeId: input.nodeId,
       }),
-    onSuccess: (_result, variables) =>
-      queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      }),
+    onSuccess: (_result, variables) => {
+      invalidateRunViews(queryClient, variables.runId);
+    },
   });
 }
 
@@ -257,6 +308,7 @@ export function useRenameWorkflowRun() {
  */
 export function useRealWorkflowRun(runId: string | null | undefined) {
   const client = useContractsClient();
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: workflowRunKeys.detail(runId ?? ""),
     queryFn: async (): Promise<RealWorkflowRunDetail> => {
@@ -264,8 +316,21 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
       const { snapshot } = await client.workflow.getSnapshot({
         snapshotId: detail.run.snapshotId,
       });
+      const run = buildDisplayRun(detail, snapshot.graph);
+      // Theater polls faster than the sidebar list and is the source of truth for
+      // HITL (`awaiting_input`). Copy that status onto the list cache so the tree
+      // dot cannot stay on a stale `running` / `succeeded` colour.
+      queryClient.setQueryData<WorkflowRunSummary[]>(
+        workflowRunKeys.byProject(detail.projectId),
+        (current) =>
+          current?.map((item) =>
+            item.id === run.id
+              ? { ...item, status: toListRunStatus(run.status) }
+              : item,
+          ),
+      );
       return {
-        run: buildDisplayRun(detail, snapshot.graph),
+        run,
         workspaceId: detail.workspaceId,
         projectId: detail.projectId,
       };
@@ -313,6 +378,8 @@ export function buildDisplayRun(
       output: string | null;
       payload: string | null;
       sessionId?: string | null;
+      /** Composite-region round; null for outer rows. */
+      iteration?: number | null;
     }>;
   },
   graph: string,
@@ -362,53 +429,92 @@ export function buildDisplayRun(
     nodes,
     edges: envelope.edges,
   };
-  const nodeRunByNodeId = new Map(
-    detail.nodes.map((node) => [node.nodeId, node]),
-  );
-  const nodeStates: Record<string, GraphWorkflowNodeState> = {};
-  for (const node of definitionSnapshot.nodes) {
-    const nodeRun = nodeRunByNodeId.get(node.id) ?? null;
+  // Region nodes hold one row per iteration round; outer nodes hold at most one row. Group
+  // rows by node id in (iteration, createdAt) order so each region node exposes its rounds
+  // while outer nodes keep their single row (ADR "iteration composite runtime" D7).
+  const rowsByNodeId = new Map<string, typeof detail.nodes>();
+  for (const nodeRun of detail.nodes) {
+    const rows = rowsByNodeId.get(nodeRun.nodeId) ?? [];
+    rows.push(nodeRun);
+    rowsByNodeId.set(nodeRun.nodeId, rows);
+  }
+  for (const rows of rowsByNodeId.values()) {
+    rows.sort((left, right) => {
+      const leftRound = left.iteration ?? -1;
+      const rightRound = right.iteration ?? -1;
+      if (leftRound !== rightRound) {
+        return leftRound - rightRound;
+      }
+      return Number(left.startedAt ?? 0n) - Number(right.startedAt ?? 0n);
+    });
+  }
+
+  /** Projects one persisted row onto one display state, tagged with its round. */
+  const stateFromRow = (
+    nodeId: string,
+    kind: string,
+    nodeRun: (typeof detail.nodes)[number],
+  ): GraphWorkflowNodeState => {
     const payload =
-      nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+      nodeRun.payload != null ? parseNodePayload(nodeRun.payload) : null;
     const conversation =
-      node.data.kind === "agent" && nodeRun?.output != null
+      kind === "agent" && nodeRun.output != null
         ? conversationFromNodeOutput(
             nodeRun.output,
             detail.run.id,
-            node.id,
+            nodeId,
             nodeRun.sessionId ?? undefined,
             nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
           )
         : undefined;
-    nodeStates[node.id] = {
+    return {
       status: projectNodeStatus(
         nodeRun as {
           status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-        } | null,
+        },
       ),
-      ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+      ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
+      ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""
         ? { sessionId: nodeRun.sessionId }
         : {}),
-      ...(nodeRun?.startedAt != null
+      ...(nodeRun.startedAt != null
         ? { startedAt: toIso(nodeRun.startedAt) }
         : {}),
-      ...(nodeRun?.finishedAt != null
+      ...(nodeRun.finishedAt != null
         ? { finishedAt: toIso(nodeRun.finishedAt) }
         : {}),
-      ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+      ...(nodeRun.error != null ? { errorMessage: nodeRun.error } : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
         : {}),
       ...(payload?.file_changes != null && payload.file_changes.length > 0
         ? { fileChanges: payload.file_changes }
         : {}),
-      ...(nodeRun?.output != null
+      ...(nodeRun.output != null
         ? { output: { summary: nodeRun.output } }
         : {}),
       ...(conversation != null && conversation.length > 0
         ? { conversation }
         : {}),
     };
+  };
+
+  const nodeStates: Record<string, GraphWorkflowNodeState> = {};
+  const roundStates: Record<string, GraphWorkflowNodeState[]> = {};
+  for (const node of definitionSnapshot.nodes) {
+    const rows = rowsByNodeId.get(node.id) ?? [];
+    if (rows.length === 0) {
+      nodeStates[node.id] = { status: "idle" };
+      continue;
+    }
+    const states = rows.map((row) =>
+      stateFromRow(node.id, node.data.kind, row),
+    );
+    if (states.length > 1 || states[0]?.iteration != null) {
+      roundStates[node.id] = states;
+    }
+    // The node-level state is the latest round's state for region nodes.
+    nodeStates[node.id] = states[states.length - 1] ?? { status: "idle" };
   }
   // A node behind a lost condition branch has no node-run and never will; mark it inactive so the
   // overview distinguishes it from a node still waiting on the active path.
@@ -442,6 +548,7 @@ export function buildDisplayRun(
     ),
     kickoffInput: kickoffInput ?? undefined,
     nodeStates,
+    ...(Object.keys(roundStates).length > 0 ? { roundStates } : {}),
     openHitls: [],
     createdAt: toIso(detail.run.createdAt),
     updatedAt: toIso(detail.run.updatedAt),

@@ -1,5 +1,6 @@
 //! Agent execution contracts retain author intent independently of installed catalogs.
 
+use ora_domain::PluginId;
 use serde::{Deserialize, Deserializer, de::Error};
 use std::collections::HashSet;
 
@@ -55,7 +56,7 @@ pub struct AgentExecutor {
     pub model_id: String,
 }
 
-/// One skill an agent node declares; only `enabled` skills are materialized at start.
+/// One skill an agent node requires the runtime prompt to invoke when enabled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSkill {
     pub skill_id: String,
@@ -66,7 +67,7 @@ pub struct AgentSkill {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentMcp {
-    pub mcp_id: String,
+    pub mcp_id: PluginId,
     pub enabled: bool,
 }
 
@@ -78,9 +79,9 @@ where
     let bindings = Vec::<AgentMcp>::deserialize(deserializer)?;
     let mut ids = HashSet::new();
     for binding in &bindings {
-        if binding.mcp_id.trim().is_empty() || !ids.insert(&binding.mcp_id) {
+        if !ids.insert(&binding.mcp_id) {
             return Err(D::Error::custom(
-                "MCP bindings require nonempty, unique IDs",
+                "MCP bindings require unique canonical plugin IDs",
             ));
         }
     }
@@ -91,6 +92,7 @@ where
 mod tests {
     use super::AgentMcp;
     use crate::WorkflowGraph;
+    use ora_domain::PluginId;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
@@ -114,11 +116,11 @@ mod tests {
                 .mcps,
             vec![
                 AgentMcp {
-                    mcp_id: "official/tools".into(),
+                    mcp_id: PluginId::parse("official/tools").unwrap(),
                     enabled: true
                 },
                 AgentMcp {
-                    mcp_id: "local/tools".into(),
+                    mcp_id: PluginId::parse("local/tools").unwrap(),
                     enabled: false
                 },
             ]
@@ -143,6 +145,7 @@ mod tests {
             json!(null),
             json!({}),
             json!([{"mcpId": " ", "enabled": true}]),
+            json!([{"mcpId": "github", "enabled": true}]),
             json!([{"mcpId": "a", "enabled": true}, {"mcpId": "a", "enabled": false}]),
             json!([{"mcpId": 12, "enabled": true}]),
             json!([{"mcpId": "a", "enabled": "true"}]),

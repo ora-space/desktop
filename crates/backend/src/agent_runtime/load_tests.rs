@@ -74,7 +74,6 @@ fn test_manager(root: &Path, pool: &RepositoryPool, scheduler: Scheduler) -> Age
         .expect("open plugin host"),
     );
     AgentRuntimeManager::new(AgentRuntimeSetup {
-        mcp_selections: Arc::new(crate::session_setup::SessionMcpSelection::Automatic),
         plugin_host,
         pool: pool.clone(),
         home_directory: root.to_path_buf(),
@@ -112,6 +111,7 @@ fn seed_session(root: &Path, pool: &RepositoryPool) -> Session {
             AgentRef::parse(AGENT).expect("agent identity"),
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(2, 2, false),
         ))
         .expect("create session")

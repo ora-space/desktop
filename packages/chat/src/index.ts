@@ -19,6 +19,7 @@ export {
   type ChatToolCallStatus,
   type ChatTurn,
   type ChatTurnItem,
+  type ChatTurnRetry,
   type ChatTurnStatus,
   type ChatSessionClient,
   type ChatState,

@@ -79,6 +79,7 @@ fn runtime_tables_use_direct_workspace_ownership() {
             "created_at",
             "updated_at",
             "is_deleted",
+            "mcp_selection",
         ],
     );
     assert_eq!(

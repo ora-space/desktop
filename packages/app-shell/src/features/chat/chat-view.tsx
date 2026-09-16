@@ -9,6 +9,7 @@ import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
 import type { Agent, SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
+import type { SessionSetupPresentation } from "./session-setup";
 
 interface ChatViewProps {
   taskId?: string;
@@ -19,6 +20,8 @@ interface ChatViewProps {
   modelChanges?: ChatModelChange[];
   userName: string;
   isResponding: boolean;
+  /** Frontend-only timings for newly created provider sessions. */
+  sessionSetups?: SessionSetupPresentation[];
   /** Output has begun for the live turn, so the composer shows stop rather than the startup spinner. */
   isStreaming?: boolean;
   /**
@@ -91,6 +94,7 @@ export function ChatView({
   modelChanges,
   userName,
   isResponding,
+  sessionSetups,
   isStreaming = false,
   isLoading = false,
   error,
@@ -188,6 +192,7 @@ export function ChatView({
           modelChanges={modelChanges}
           userName={userName}
           isResponding={isResponding}
+          sessionSetups={sessionSetups}
           taskId={taskId}
           projectId={projectId}
           workspaceId={workspaceId}

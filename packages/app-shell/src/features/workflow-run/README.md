@@ -112,6 +112,12 @@ Keep these stacks separate — shared chrome only where noted.
   task diff. Stage-scoped Diff is deferred until a session-level Git Diff API
   (or turn-level filter) exists; `nodeStates.sessionId` is projected for that
   follow-up.
+- **Iteration rounds**: persisted runs project region-node states grouped by
+  `(nodeId, iteration)` into `run.roundStates` — one state per executed round —
+  while `run.nodeStates` keeps each region node's latest round for existing
+  consumers. Overview marks member nodes with a round badge (`R2`), and the
+  Theater act inspector offers a per-round strip (with a per-round status dot)
+  to view each round's session output.
 - **Open location**: the run header reuses `LocationActionsButton`
   (File Manager / Terminal / VS Code / Copy Path). It resolves the run's
   Workspace location directly; non-local Workspace adapters remain responsible

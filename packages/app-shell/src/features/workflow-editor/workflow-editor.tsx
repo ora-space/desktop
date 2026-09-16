@@ -81,6 +81,7 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { organizeWorkflowNodes } from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
+import { applyIterationContainment } from "./workflow-iteration-containment";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { workflowMcpChoices } from "./mcp-catalog";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
@@ -1682,11 +1683,38 @@ function WorkflowEditorContent({
     );
   }
 
-  /** Finishes a node drag transaction after React Flow has applied its final position. */
-  function stopNodeDrag(): void {
+  /** Finishes a node drag transaction after React Flow has applied its final position.
+   *
+   * Iteration containment is derived from the final drop position: a workflow node whose
+   * center lands inside an iteration frame's region zone becomes that iteration's member
+   * (`parentId`), and a member dragged out of its frame returns to the outer canvas.
+   * Containment commits with the drag transaction as one undo step.
+   */
+  function stopNodeDrag(
+    _event: MouseEvent | TouchEvent,
+    _dragged: WorkflowCanvasNode,
+    draggedNodes: WorkflowCanvasNode[],
+  ): void {
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       workflowHistory.cancelTransaction();
+      return;
+    }
+    const draggedWorkflowNodes = draggedNodes.filter(
+      (candidate): candidate is Node<WorkflowNodeData, "workflow"> =>
+        !isWorkflowAnnotationNode(candidate),
+    );
+    const withContainment = applyIterationContainment(
+      current,
+      draggedWorkflowNodes,
+    );
+    if (withContainment !== current) {
+      updateWorkflow(() => withContainment as typeof current, {
+        persist: true,
+      });
+      workflowHistory.commitTransaction(
+        captureWorkflowHistorySnapshot(withContainment as typeof current),
+      );
       return;
     }
     workflowHistory.commitTransaction(captureWorkflowHistorySnapshot(current));
@@ -2087,6 +2115,7 @@ function WorkflowEditorContent({
                 node={selectedNode}
                 capabilities={capabilities}
                 variableCatalog={variableCatalog}
+                graphNodes={workflow?.nodes ?? []}
                 mcpCatalog={
                   capabilitiesOverride === undefined
                     ? {

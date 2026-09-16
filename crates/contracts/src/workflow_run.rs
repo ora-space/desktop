@@ -65,6 +65,10 @@ pub struct WorkflowNodeRun {
     pub output: Option<String>,
     pub error: Option<String>,
     pub payload: Option<String>,
+    /// Composite-region round this row executed in; `null` for outer rows. A region node holds
+    /// one row per round, so the run view groups states by `(node_id, iteration)`.
+    #[serde(default)]
+    pub iteration: Option<u32>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub created_at: i64,
@@ -445,10 +449,29 @@ mod tests {
             output: None,
             error: None,
             payload: None,
+            iteration: None,
             started_at: Some(30),
             finished_at: Some(31),
             created_at: 30,
             updated_at: 31,
+        };
+        // A region row carries its round on the wire; the outer form omits the field entirely.
+        let region_node = WorkflowNodeRun {
+            id: "node-2".to_string(),
+            run_id: "run-1".to_string(),
+            node_id: "fix".to_string(),
+            node_type: "agent".to_string(),
+            session_id: None,
+            status: WorkflowNodeStatus::Succeeded,
+            input: None,
+            output: None,
+            error: None,
+            payload: None,
+            iteration: Some(2),
+            started_at: Some(32),
+            finished_at: Some(33),
+            created_at: 32,
+            updated_at: 33,
         };
 
         assert_serialized_json(
@@ -561,6 +584,7 @@ mod tests {
                     "output": null,
                     "error": null,
                     "payload": null,
+                    "iteration": null,
                     "startedAt": 30,
                     "finishedAt": 31,
                     "createdAt": 30,
@@ -573,6 +597,27 @@ mod tests {
                     "value": 3,
                 }],
                 "conditionDecisions": { "condition-1": "case-1" },
+            }),
+        );
+        // Region rows serialize their round so run views can group by (nodeId, iteration).
+        assert_serialized_json(
+            &region_node,
+            json!({
+                "id": "node-2",
+                "runId": "run-1",
+                "nodeId": "fix",
+                "nodeType": "agent",
+                "sessionId": null,
+                "status": "succeeded",
+                "input": null,
+                "output": null,
+                "error": null,
+                "payload": null,
+                "iteration": 2,
+                "startedAt": 32,
+                "finishedAt": 33,
+                "createdAt": 32,
+                "updatedAt": 33,
             }),
         );
         assert_serialized_json(
@@ -667,6 +712,7 @@ mod tests {
                     "output": null,
                     "error": null,
                     "payload": null,
+                    "iteration": null,
                     "startedAt": 30,
                     "finishedAt": 31,
                     "createdAt": 30,

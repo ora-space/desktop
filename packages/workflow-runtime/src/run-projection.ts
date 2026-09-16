@@ -33,6 +33,20 @@ export function projectRunStatus(
   return status;
 }
 
+/** Maps a list/wire run status onto the Theater display status. */
+export function toDisplayRunStatus(
+  status: BackendRunStatus,
+): GraphWorkflowRunStatus {
+  return projectRunStatus(status, []);
+}
+
+/** Maps a Theater display status back onto the list/wire status. */
+export function toListRunStatus(
+  status: GraphWorkflowRunStatus,
+): BackendRunStatus {
+  return status === "awaiting_input" ? "awaitingInput" : status;
+}
+
 /**
  * Projects one backend node-run onto the frontend display model.
  *

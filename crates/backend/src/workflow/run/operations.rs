@@ -3,6 +3,7 @@
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
 use super::interactive::{CompletingNodeRuns, WorkflowSessionTurns};
+use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
@@ -27,6 +28,7 @@ pub(crate) struct WorkflowRunSetup {
     pub agent_runtime: Arc<AgentRuntimeManager>,
     pub engine: Arc<ConcreteWorkflowRunControl>,
     pub run_locks: Arc<KeyedResourceLocks>,
+    pub transitions: Arc<WorkflowRunTransitions>,
     pub clock: SystemClock,
 }
 
@@ -43,6 +45,7 @@ pub struct WorkflowRuns {
     engine: Arc<ConcreteWorkflowRunControl>,
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
+    transitions: Arc<WorkflowRunTransitions>,
 }
 
 impl WorkflowRuns {
@@ -57,6 +60,7 @@ impl WorkflowRuns {
             engine: setup.engine,
             run_locks: setup.run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            transitions: setup.transitions,
         }
     }
 
@@ -66,6 +70,7 @@ impl WorkflowRuns {
             self.pool.clone(),
             self.run_locks.clone(),
             self.completing_node_runs.clone(),
+            self.transitions.clone(),
         )
     }
 

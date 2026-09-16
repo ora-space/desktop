@@ -57,6 +57,10 @@ import {
   shouldShowSessionUsage,
 } from "../chat/session-usage-surface";
 import type { ChatTurn } from "@ora/chat";
+import {
+  type SessionSetupPresentation,
+  useSessionSetupStore,
+} from "../chat/session-setup";
 import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
@@ -106,6 +110,7 @@ interface PendingSend {
   /** The chat surface it was typed on, so it is retired when that surface is not on screen. */
   surfaceKey: string;
   turn: ChatTurn;
+  setup: SessionSetupPresentation;
 }
 
 /**
@@ -183,6 +188,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // the composer slide down and the message appear on the send itself rather
   // than a round trip later.
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  // Deliberately process-local: chat navigation and view remounts retain observed setup
+  // chrome, while restarting Ora cannot reconstruct it from history.
+  const sessionSetups = useSessionSetupStore((state) => state.setups);
+  const upsertSessionSetup = useSessionSetupStore((state) => state.upsert);
   // Bumped to abandon a send still waiting on its handshake, which only Stop
   // does — leaving the surface is handled by the key the turn carries. The
   // waiting `dispatchSend` compares the token it captured and gives up.
@@ -300,16 +309,44 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       const recorded = usePendingAgentStore.getState().switches[session.id];
       const pendingSwitch =
         recorded === session.agentRef ? undefined : recorded;
-      const prepare =
+      const handoffSetup: SessionSetupPresentation | undefined =
         pendingSwitch === undefined
+          ? undefined
+          : {
+              id: crypto.randomUUID(),
+              turnIndex:
+                chatStore.getState().conversations[session.id]?.turns.length ??
+                0,
+              status: "connecting",
+              startedAt: Date.now(),
+            };
+      if (handoffSetup !== undefined) {
+        upsertSessionSetup(session.id, handoffSetup);
+      }
+      const prepare =
+        pendingSwitch === undefined || handoffSetup === undefined
           ? undefined
           : async () => {
               const modelKey = pendingModelKey(selection, pendingSwitch);
-              const response = await client.session.switchAgent({
-                sessionId: session.id,
-                agentRef: pendingSwitch,
-                model: usePendingAgentStore.getState().models[modelKey] ?? null,
-              });
+              let response: Awaited<
+                ReturnType<typeof client.session.switchAgent>
+              >;
+              try {
+                response = await client.session.switchAgent({
+                  sessionId: session.id,
+                  agentRef: pendingSwitch,
+                  model:
+                    usePendingAgentStore.getState().models[modelKey] ?? null,
+                });
+              } catch (error) {
+                const failedSetup: SessionSetupPresentation = {
+                  ...handoffSetup,
+                  status: "failed",
+                  durationMs: Math.max(0, Date.now() - handoffSetup.startedAt),
+                };
+                upsertSessionSetup(session.id, failedSetup);
+                throw error;
+              }
               usePendingAgentStore.getState().clearPendingSwitch(session.id);
               usePendingAgentStore.getState().clearPendingModel(modelKey);
               queryClient.setQueryData<Session[]>(
@@ -321,6 +358,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               chatStore
                 .getState()
                 .adoptSwitchedAgent(session.id, response.configOptions);
+              const completedSetup: SessionSetupPresentation = {
+                ...handoffSetup,
+                status: "connected",
+                durationMs: Math.max(0, Date.now() - handoffSetup.startedAt),
+              };
+              upsertSessionSetup(session.id, completedSetup);
               return { availableCommands: response.availableCommands };
             };
       // A model recorded against the agent this session already runs on had nowhere to go
@@ -366,7 +409,18 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     // land on screen immediately instead of after the round trip.
     const token = (pendingSendToken.current += 1);
     const surfaceKey = chatSurfaceKeyFor(selection);
-    setPendingSend({ surfaceKey, turn: draftTurn(displayText, images) });
+    const setupStartedAt = Date.now();
+    const setupId = crypto.randomUUID();
+    setPendingSend({
+      surfaceKey,
+      turn: draftTurn(displayText, images),
+      setup: {
+        id: setupId,
+        turnIndex: 0,
+        status: "connecting",
+        startedAt: setupStartedAt,
+      },
+    });
     let started: Awaited<ReturnType<typeof client.session.start>>;
     const draftIdAtSend =
       useWorkspaceSelectionStore.getState().selection.draftId;
@@ -416,6 +470,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       // The message never reached an agent, so it stays on screen carrying the
       // failure rather than disappearing with the composer's optimistic clear.
       const message = errorMessage(error);
+      const setupDurationMs = Math.max(0, Date.now() - setupStartedAt);
       if (token !== pendingSendToken.current) {
         // Stop already cleared pendingSend; still drop it if a later path only
         // bumped the token, so returning to this surface cannot resurrect a
@@ -429,6 +484,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           : {
               ...current,
               turn: { ...current.turn, status: "failed", error: message },
+              setup: {
+                id: setupId,
+                turnIndex: 0,
+                status: "failed",
+                startedAt: setupStartedAt,
+                durationMs: setupDurationMs,
+              },
             },
       );
       // Composer already cleared locally; re-park so a surface that never left
@@ -461,6 +523,17 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       return;
     }
     const sessionId = started.session.id;
+    const setup: SessionSetupPresentation = {
+      id: setupId,
+      turnIndex: 0,
+      status: "connected",
+      startedAt: setupStartedAt,
+      durationMs: Math.max(0, Date.now() - setupStartedAt),
+    };
+    setPendingSend((current) =>
+      current === null ? null : { ...current, setup },
+    );
+    upsertSessionSetup(sessionId, setup);
     const workspaceId = started.session.workspaceId;
     const draftId = draftIdAtSend;
     const projectId = project.id;
@@ -597,11 +670,19 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       pendingTurn === null
         ? (conversation?.turns ?? [])
         : [...(conversation?.turns ?? []), pendingTurn];
-    // A pending send is waiting on its handshake, which is exactly the state the
-    // thinking indicator describes.
+    // Session setup owns its own status row; once prompting begins, the ordinary
+    // response indicator starts from the turn's later response-phase timestamp.
     const isResponding =
       (conversation?.isResponding ?? false) ||
       pendingTurn?.status === "streaming";
+    const visibleSessionSetups =
+      pendingTurn !== null
+        ? pendingSend === null
+          ? []
+          : [pendingSend.setup]
+        : selection.sessionId === null
+          ? []
+          : (sessionSetups[selection.sessionId] ?? []);
     const lastTurn = conversation?.turns.at(-1);
     // Output has begun once the live turn carries any item; until then the turn is
     // still starting up (session creation or the wait for the first token).
@@ -667,6 +748,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             modelChanges={conversation?.modelChanges}
             userName={userName}
             isResponding={isResponding}
+            sessionSetups={visibleSessionSetups}
             isStreaming={isStreaming}
             isLoading={isLoadingHistory}
             error={chatError}

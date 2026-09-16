@@ -24,6 +24,7 @@ import { useRenameSession } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
 interface SessionTreeRowProps {
@@ -174,23 +175,27 @@ export const SessionTreeRow = memo(function SessionTreeRow({
             />
           </div>
         ) : (
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={handleSelect}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              handleSelect();
-            }}
-            className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            style={{ paddingLeft: `${8 + depth * 18}px` }}
-          >
-            <span className="flex size-[18px] shrink-0 items-center justify-center">
-              {icon}
-            </span>
-            <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-          </div>
+          <TreeRowOverflowTooltip text={title}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={handleSelect}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                handleSelect();
+              }}
+              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              style={{ paddingLeft: `${8 + depth * 18}px` }}
+            >
+              <span className="flex size-[18px] shrink-0 items-center justify-center">
+                {icon}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-medium">
+                {title}
+              </span>
+            </div>
+          </TreeRowOverflowTooltip>
         )}
         {!renaming && (
           <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">

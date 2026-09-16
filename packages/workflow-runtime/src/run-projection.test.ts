@@ -3,6 +3,8 @@ import {
   isTerminalRunStatus,
   projectNodeStatus,
   projectRunStatus,
+  toDisplayRunStatus,
+  toListRunStatus,
 } from "./run-projection";
 
 describe("run status projection", () => {
@@ -14,11 +16,24 @@ describe("run status projection", () => {
     expect(projectRunStatus("pending", ["prompt-1"])).toBe("awaiting_input");
   });
 
+  it("maps the awaitingInput wire status onto awaiting_input", () => {
+    expect(projectRunStatus("awaitingInput", [])).toBe("awaiting_input");
+  });
+
   it("maps the terminal backend states one-to-one", () => {
     expect(projectRunStatus("running", [])).toBe("running");
     expect(projectRunStatus("succeeded", [])).toBe("succeeded");
     expect(projectRunStatus("failed", ["explore"])).toBe("failed");
     expect(projectRunStatus("cancelled", [])).toBe("cancelled");
+  });
+});
+
+describe("list and display status round-trip", () => {
+  it("keeps sidebar and Theater on the same display status", () => {
+    expect(toDisplayRunStatus("awaitingInput")).toBe("awaiting_input");
+    expect(toListRunStatus("awaiting_input")).toBe("awaitingInput");
+    expect(toDisplayRunStatus("running")).toBe("running");
+    expect(toListRunStatus("succeeded")).toBe("succeeded");
   });
 });
 
@@ -36,6 +51,20 @@ describe("node status projection", () => {
     expect(projectNodeStatus({ status: "succeeded" })).toBe("succeeded");
     expect(projectNodeStatus({ status: "failed" })).toBe("failed");
     expect(projectNodeStatus({ status: "cancelled" })).toBe("cancelled");
+  });
+});
+
+describe("toDisplayRunStatus", () => {
+  it("maps awaitingInput onto the display spelling used by Theater", () => {
+    expect(toDisplayRunStatus("awaitingInput")).toBe("awaiting_input");
+  });
+
+  it("keeps every other wire status unchanged", () => {
+    expect(toDisplayRunStatus("pending")).toBe("pending");
+    expect(toDisplayRunStatus("running")).toBe("running");
+    expect(toDisplayRunStatus("succeeded")).toBe("succeeded");
+    expect(toDisplayRunStatus("failed")).toBe("failed");
+    expect(toDisplayRunStatus("cancelled")).toBe("cancelled");
   });
 });
 

@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { IconWifi } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { AnchorHighlight } from "./anchor-highlight";
@@ -15,11 +16,12 @@ import {
 } from "./response-turn";
 import { TurnDiffSummary } from "./turn-diff-summary";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
-import type { ChatTurn } from "@ora/chat";
+import type { ChatTurn, ChatTurnRetry } from "@ora/chat";
 import type { MessageListRow } from "./message-list-rows";
 import { useElapsedDuration } from "./elapsed-clock";
-import { formatElapsedDuration } from "../../lib/format";
+import { formatClock, formatElapsedDuration } from "../../lib/format";
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionSetupPresentation } from "./session-setup";
 
 /** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
 const RUNNING_WORD_INTERVAL_MS = 5000;
@@ -62,6 +64,8 @@ export const MessageListRowView = memo(function MessageListRowView({
         </div>
       );
     }
+    case "sessionSetup":
+      return <SessionSetupIndicator setup={row} />;
     case "display": {
       const turn = turns[row.turnIndex];
       if (turn === undefined) {
@@ -145,11 +149,42 @@ export const MessageListRowView = memo(function MessageListRowView({
       );
     }
     case "running":
-      return <RunningIndicator startedAt={row.startedAt} />;
+      return <RunningIndicator startedAt={row.startedAt} retry={row.retry} />;
     case "pad":
       return <div className="h-8" />;
   }
 });
+
+/** Separates provider setup or handoff from the response turn that follows it. */
+function SessionSetupIndicator({ setup }: { setup: SessionSetupPresentation }) {
+  const { t } = useTranslation();
+  const duration = formatElapsedDuration(
+    useElapsedDuration(
+      setup.startedAt,
+      setup.status === "connecting" ? undefined : setup.durationMs,
+    ),
+  );
+  const label = t(`chat.sessionSetup.${setup.status}`);
+  const completedAt =
+    setup.status === "connecting"
+      ? undefined
+      : setup.startedAt + setup.durationMs;
+  return (
+    <p
+      className="py-1 text-xs text-muted-foreground"
+      role="status"
+      aria-label={label}
+    >
+      {completedAt === undefined
+        ? label
+        : `${formatClock(completedAt)} · ${label}`}
+      {duration !== null &&
+        ` · ${t(
+          setup.status === "connecting" ? "chat.elapsedTime" : "chat.totalTime",
+        )} ${duration}`}
+    </p>
+  );
+}
 
 function ResponseRow({
   turn,
@@ -212,7 +247,13 @@ function ModelChangeDivider({ modelName }: { modelName: string }) {
  * while the agent is busy. The nine-dot grid carries the motion; the rotating
  * phrase reassures that time is passing rather than that anything has stalled.
  */
-function RunningIndicator({ startedAt }: { startedAt: number }) {
+function RunningIndicator({
+  startedAt,
+  retry,
+}: {
+  startedAt: number;
+  retry?: ChatTurnRetry;
+}) {
   const { t } = useTranslation();
   const words = useMemo(
     () =>
@@ -244,7 +285,17 @@ function RunningIndicator({ startedAt }: { startedAt: number }) {
     return () => clearTimeout(timer);
   }, [words]);
 
-  const word = words[index % words.length] ?? words[0] ?? "";
+  // The retry count replaces the rotating phrase and a slowly breathing Wi-Fi
+  // icon replaces the dots: the agent is unreachable rather than working, and
+  // the elapsed time keeps counting from the original send so the wait reads
+  // as one turn.
+  const word =
+    retry === undefined
+      ? (words[index % words.length] ?? words[0] ?? "")
+      : t("chat.turnRetrying", {
+          retry: retry.retry,
+          maxRetries: retry.maxRetries,
+        });
   const elapsed = formatElapsedDuration(
     useElapsedDuration(startedAt, undefined),
   );
@@ -255,10 +306,18 @@ function RunningIndicator({ startedAt }: { startedAt: number }) {
       aria-label={t("chat.typing")}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        <AgentActivityDots
-          label={t("common.running")}
-          dotClassName="size-[3.5px]"
-        />
+        {retry === undefined ? (
+          <AgentActivityDots
+            label={t("common.running")}
+            dotClassName="size-[3.5px]"
+          />
+        ) : (
+          <IconWifi
+            role="img"
+            aria-label={t("chat.turnRetryUnreachable")}
+            className="size-4 animate-retry-pulse"
+          />
+        )}
       </span>
       {/* Keyed so each phrase crossfades in as the rotation advances. */}
       <span

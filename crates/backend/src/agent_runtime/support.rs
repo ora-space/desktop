@@ -162,6 +162,24 @@ pub(super) fn agent_start_failed(detail: impl Into<String>) -> BackendError {
     )
 }
 
+/// Reports that the actor cannot accept a second operation while one is in flight.
+pub(super) fn session_busy() -> BackendError {
+    BackendError::new(
+        ErrorClassification::Conflict,
+        PublicError::SessionBusy(EmptyErrorParams {}),
+        "session already has an active operation",
+    )
+}
+
+/// Reports that the requested permission no longer belongs to an active prompt.
+pub(super) fn permission_not_pending() -> BackendError {
+    BackendError::new(
+        ErrorClassification::Conflict,
+        PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
+        "permission request is not pending",
+    )
+}
+
 /// Builds the error reported when an agent did not answer within a runtime deadline.
 ///
 /// Every deadline in the runtime — process start, ACP initialize, session load, config exchange —

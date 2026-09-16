@@ -33,6 +33,11 @@ interface RunActInspectorProps {
   nodeId: string | null;
   data: WorkflowNodeData | null;
   state: GraphWorkflowNodeState | null;
+  /** Per-round states of composite-region nodes, keyed by node id. */
+  roundStates?: Record<string, GraphWorkflowNodeState[]>;
+  /** Currently viewed round; `null` shows the node-level (latest) state. */
+  selectedRound: number | null;
+  onRoundChange: (round: number | null) => void;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
   /**
@@ -105,6 +110,9 @@ export function RunActInspector({
   nodeId,
   data,
   state,
+  roundStates,
+  selectedRound,
+  onRoundChange,
   artifacts,
   revealedArtifactId,
   editable = false,
@@ -119,8 +127,17 @@ export function RunActInspector({
   onClose,
 }: RunActInspectorProps) {
   const { t } = useTranslation();
+  // Region nodes hold one state per round; the round strip lets the viewer switch rounds.
+  const rounds =
+    nodeId !== null && roundStates !== undefined
+      ? (roundStates[nodeId] ?? [])
+      : [];
+  const effectiveState =
+    selectedRound === null || rounds.length === 0
+      ? state
+      : (rounds.find((round) => round.iteration === selectedRound) ?? state);
   // The node's incremental worktree changes arrive in its run payload, captured by the engine.
-  const fileChanges = state?.fileChanges ?? [];
+  const fileChanges = effectiveState?.fileChanges ?? [];
 
   if (nodeId === null || data === null || state === null) {
     return (
@@ -152,7 +169,10 @@ export function RunActInspector({
     <RunActInspectorPanel
       nodeId={nodeId}
       data={data}
-      state={state}
+      state={effectiveState ?? state}
+      rounds={rounds}
+      selectedRound={selectedRound}
+      onRoundChange={onRoundChange}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
       editable={editable}
@@ -174,6 +194,9 @@ function RunActInspectorPanel({
   nodeId,
   data,
   state,
+  rounds,
+  selectedRound,
+  onRoundChange,
   artifacts,
   revealedArtifactId,
   editable,
@@ -191,6 +214,9 @@ function RunActInspectorPanel({
   nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
+  rounds: GraphWorkflowNodeState[];
+  selectedRound: number | null;
+  onRoundChange: (round: number | null) => void;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
   editable: boolean;
@@ -239,6 +265,49 @@ function RunActInspectorPanel({
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       aria-label={t("workflowRun.inspector.label")}
     >
+      {rounds.length > 1 && (
+        <div
+          className="flex items-center gap-1 overflow-x-auto border-b border-border px-3 py-2"
+          role="tablist"
+          aria-label={t("workflowRun.inspector.rounds")}
+        >
+          {rounds.map((round) => {
+            const roundIndex = round.iteration ?? 0;
+            const active = selectedRound === roundIndex;
+            return (
+              <button
+                key={roundIndex}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={cn(
+                  "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium tabular-nums transition-colors",
+                  active
+                    ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => onRoundChange(roundIndex)}
+              >
+                R{roundIndex + 1}
+                <span
+                  className={cn(
+                    "inline-block size-1.5 rounded-full",
+                    round.status === "succeeded" && "bg-emerald-500",
+                    round.status === "failed" && "bg-destructive",
+                    round.status === "running" &&
+                      "bg-sky-500 theater-live-breathe",
+                    (round.status === "idle" ||
+                      round.status === "inactive" ||
+                      round.status === "cancelled") &&
+                      "bg-muted-foreground/40",
+                    round.status === "awaiting_input" && "bg-amber-500",
+                  )}
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span

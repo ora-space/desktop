@@ -175,6 +175,11 @@ export type WorkflowNodeRun = {
   output: string | null;
   error: string | null;
   payload: string | null;
+  /**
+   * Composite-region round this row executed in; `null` for outer rows. A region node holds
+   * one row per round, so the run view groups states by `(node_id, iteration)`.
+   */
+  iteration: number | null;
   startedAt: bigint | null;
   finishedAt: bigint | null;
   createdAt: bigint;

@@ -1,3 +1,4 @@
+use super::iteration::{IterationLedger, RoundOutcome};
 use super::variable_pool::WorkflowVariablePool;
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::AgentRef;
@@ -113,6 +114,24 @@ pub struct WorkflowRunPayload {
     /// Internal Condition routing decisions kept outside the user-selectable variable pool.
     #[serde(default)]
     pub condition_decisions: BTreeMap<String, String>,
+    /// Per-round settled outcomes of each iteration node, keyed by iteration node id then round
+    /// index (ADR "iteration composite runtime" D5). Old payloads parse without it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub iteration_ledger: BTreeMap<String, IterationLedger>,
+    /// Per-round Condition decisions inside iteration regions, keyed by
+    /// `{condition_node_id}#{round}`. Condition node ids are unique per graph and each belongs
+    /// to at most one region, so the pair identifies the decision without ambiguity while
+    /// keeping a single flat map for `#[serde(default)]` compatibility.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub iteration_condition_decisions: BTreeMap<String, String>,
+}
+
+impl Default for WorkflowRunPayload {
+    /// A payload for runs persisted before typed payloads existed; the locale defaults to
+    /// English, matching how pre-locale runs were rendered.
+    fn default() -> Self {
+        Self::new(WorkflowRunLocale::EnUs, Default::default())
+    }
 }
 
 impl WorkflowRunPayload {
@@ -127,6 +146,8 @@ impl WorkflowRunPayload {
             start_node_id: None,
             variable_pool: WorkflowVariablePool::default(),
             condition_decisions: BTreeMap::new(),
+            iteration_ledger: BTreeMap::new(),
+            iteration_condition_decisions: BTreeMap::new(),
         }
     }
 
@@ -143,6 +164,8 @@ impl WorkflowRunPayload {
             start_node_id,
             variable_pool,
             condition_decisions: BTreeMap::new(),
+            iteration_ledger: BTreeMap::new(),
+            iteration_condition_decisions: BTreeMap::new(),
         }
     }
 
@@ -161,6 +184,62 @@ impl WorkflowRunPayload {
         decisions.extend(self.condition_decisions.clone());
         decisions
     }
+
+    /// Returns the Condition decisions active in one round of an iteration region, keyed by
+    /// condition node id. The iteration projection consumes only the current round's decisions
+    /// (ADR "iteration composite runtime" D5).
+    pub fn iteration_round_decisions(&self, round: u32) -> BTreeMap<String, String> {
+        let suffix = format!("#{round}");
+        self.iteration_condition_decisions
+            .iter()
+            .filter_map(|(key, branch)| {
+                let condition_id = key.strip_suffix(&suffix)?;
+                Some((condition_id.to_string(), branch.clone()))
+            })
+            .collect()
+    }
+
+    /// Returns the settled ledger of one iteration node, if any rounds have settled.
+    pub fn iteration_ledger(&self, iteration_node_id: &str) -> Option<&IterationLedger> {
+        self.iteration_ledger.get(iteration_node_id)
+    }
+
+    /// Builds the per-round Condition decision key for a condition node inside a region.
+    pub fn iteration_decision_key(condition_node_id: &str, round: u32) -> String {
+        format!("{condition_node_id}#{round}")
+    }
+
+    /// Records one round's settled outcome for an iteration node. Entries are append-only per
+    /// run: recording an already-settled round is rejected so ledger history stays immutable.
+    pub fn record_round_outcome(
+        &mut self,
+        iteration_node_id: &str,
+        round: u32,
+        outcome: RoundOutcome,
+    ) -> Result<(), WorkflowRunPayloadError> {
+        let ledger = self
+            .iteration_ledger
+            .entry(iteration_node_id.to_string())
+            .or_default();
+        if ledger.contains_key(&round) {
+            return Err(WorkflowRunPayloadError::RoundAlreadySettled {
+                iteration_node_id: iteration_node_id.to_string(),
+                round,
+            });
+        }
+        ledger.insert(round, outcome);
+        Ok(())
+    }
+}
+
+/// Failures raised while mutating private run payload state.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WorkflowRunPayloadError {
+    #[error("iteration {iteration_node_id} round {round} is already settled")]
+    RoundAlreadySettled {
+        iteration_node_id: String,
+        round: u32,
+    },
 }
 
 #[cfg(test)]

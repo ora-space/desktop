@@ -1,5 +1,21 @@
-use crate::{AgentRef, AuditFields, DomainModelError, WorkspaceId};
+use crate::{AgentRef, AuditFields, DomainModelError, PluginId, WorkspaceId};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+/// Records how a session chooses the MCP plugins it may receive.
+///
+/// Ordinary sessions discover the currently eligible installed catalog, while workflow sessions
+/// retain the explicit permissions frozen by their node. Keeping the choice on the session makes
+/// recovery fail closed even when workflow ownership metadata is damaged or unavailable.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", content = "pluginIds", rename_all = "snake_case")]
+pub enum SessionMcpSelection {
+    /// Resolve every currently eligible installed MCP plugin.
+    #[default]
+    Automatic,
+    /// Resolve only the canonical plugin IDs authorized for this session.
+    Explicit(BTreeSet<PluginId>),
+}
 
 /// Captures whether a conversation is registered on its shared CLI connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +96,7 @@ pub struct Session {
     pub title: Option<crate::SessionTitle>,
     pub status: SessionStatus,
     pub history_state: HistoryState,
+    pub mcp_selection: SessionMcpSelection,
     pub audit_fields: AuditFields,
 }
 
@@ -94,6 +111,7 @@ impl Session {
         agent_ref: AgentRef,
         agent_session_id: impl Into<String>,
         status: SessionStatus,
+        mcp_selection: SessionMcpSelection,
         audit_fields: AuditFields,
     ) -> Self {
         Self {
@@ -104,6 +122,7 @@ impl Session {
             title: None,
             status,
             history_state: HistoryState::Writable,
+            mcp_selection,
             audit_fields,
         }
     }

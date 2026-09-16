@@ -51,6 +51,7 @@ pub(crate) fn map_node_run(node_run: WorkflowNodeRun) -> ContractNodeRun {
         output: node_run.output,
         error: node_run.error,
         payload: node_run.payload,
+        iteration: node_run.iteration,
         started_at: node_run.started_at,
         finished_at: node_run.finished_at,
         created_at: node_run.audit_fields.created_at,

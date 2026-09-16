@@ -7,7 +7,8 @@ export type AppEvent =
   | { "type": "ready" }
   | { "type": "session_title_updated"; session_id: string }
   | { "type": "plugin_status_changed"; plugin_id: string }
-  | { "type": "agent_models_invalidated"; agent_ref: string };
+  | { "type": "agent_models_invalidated"; agent_ref: string }
+  | { "type": "workflow_run_invalidated"; run_id: string };
 
 /**
  * Opens the application event stream without filtering or ownership metadata.

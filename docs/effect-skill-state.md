@@ -6,6 +6,11 @@ one complete `DesiredState` generation. Every runtime that consumes Effects decl
 Targets bind to independently observable and mutable `EffectResource` values, and several Targets
 may contribute to the same physical Resource.
 
+Installed Skills are materialized into every eligible Workspace. Workflow Agent-node Skill
+bindings mean “required invocation” in that node's prompt; they are not a node-level security
+allowlist. MCP follows a different model: installation only adds a global catalog entry, and a
+Session receives MCP servers solely through its own runtime selection without Workspace files.
+
 The current architectural decision and its rationale are recorded in
 [`0-effect-system-foundation.md`](../specs/decisions/desktop/core/effect/0-effect-system-foundation.md);
 the implementation and this state description are updated together when that decision changes.

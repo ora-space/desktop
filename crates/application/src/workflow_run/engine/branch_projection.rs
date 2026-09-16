@@ -1,5 +1,6 @@
 use super::condition::ELSE_BRANCH_ID;
 use super::graph::{WorkflowGraph, WorkflowGraphEdge, WorkflowGraphNode};
+use super::iteration::CompositeRegion;
 use super::node_type::NodeType;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
 use std::collections::{BTreeMap, HashMap};
@@ -36,23 +37,43 @@ enum EdgeState {
     Failed,
 }
 
+/// Which subgraph one projection schedules (ADR "node runtime orchestration" D3).
+#[derive(Debug, Clone, Copy)]
+enum ProjectionScope<'a> {
+    /// The outer graph: composite regions are black boxes whose members never enter the ready
+    /// set and whose per-round rows never seed states.
+    Outer,
+    /// One round of a composite region: only member nodes and their round's rows participate;
+    /// the owner's entry edges resolve as active because the round has started.
+    Region {
+        owner_id: &'a str,
+        members: &'a CompositeRegion,
+    },
+}
+
 /// Computes the projected state of every node from persisted facts, converging on the active
 /// subgraph that branch-aware scheduling must dispatch.
 pub struct BranchProjection<'a> {
     graph: &'a WorkflowGraph,
     condition_decisions: &'a BTreeMap<String, String>,
+    scope: ProjectionScope<'a>,
     states: HashMap<String, ProjectedNodeState>,
 }
 
 impl<'a> BranchProjection<'a> {
-    /// Builds the projection from the frozen graph, node-runs, and internal branch decisions.
+    /// Builds the outer projection from the frozen graph, node-runs, and internal branch
+    /// decisions. Region members are invisible here: the composite node is the only node the
+    /// outer scheduler sees, and its per-round rows are excluded from state seeding.
     pub fn new(
         graph: &'a WorkflowGraph,
         node_runs: &[WorkflowNodeRun],
         condition_decisions: &'a BTreeMap<String, String>,
     ) -> Self {
         let mut states = HashMap::new();
-        for node_run in node_runs {
+        for node_run in node_runs
+            .iter()
+            .filter(|node_run| node_run.iteration.is_none())
+        {
             let state = match node_run.status {
                 WorkflowNodeStatus::Succeeded => ProjectedNodeState::Succeeded,
                 WorkflowNodeStatus::Failed => ProjectedNodeState::Failed,
@@ -65,6 +86,43 @@ impl<'a> BranchProjection<'a> {
         let mut projection = Self {
             graph,
             condition_decisions,
+            scope: ProjectionScope::Outer,
+            states,
+        };
+        projection.resolve_projected_nodes();
+        projection
+    }
+
+    /// Builds the iteration projection for one region round: only members participate, only the
+    /// round's rows seed states, and the owner's entry edges count as active because the round
+    /// has already started (ADR "node runtime orchestration" D3; iteration ADR D2).
+    pub fn new_region_round(
+        graph: &'a WorkflowGraph,
+        owner_id: &'a str,
+        members: &'a CompositeRegion,
+        round: u32,
+        node_runs: &[WorkflowNodeRun],
+        condition_decisions: &'a BTreeMap<String, String>,
+    ) -> Self {
+        let mut states = HashMap::new();
+        for node_run in node_runs
+            .iter()
+            .filter(|node_run| node_run.iteration == Some(round))
+            .filter(|node_run| members.contains(&node_run.node_id))
+        {
+            let state = match node_run.status {
+                WorkflowNodeStatus::Succeeded => ProjectedNodeState::Succeeded,
+                WorkflowNodeStatus::Failed => ProjectedNodeState::Failed,
+                WorkflowNodeStatus::Cancelled => ProjectedNodeState::Cancelled,
+                WorkflowNodeStatus::Running => ProjectedNodeState::Running,
+                WorkflowNodeStatus::Pending => ProjectedNodeState::AwaitingInput,
+            };
+            states.insert(node_run.node_id.clone(), state);
+        }
+        let mut projection = Self {
+            graph,
+            condition_decisions,
+            scope: ProjectionScope::Region { owner_id, members },
             states,
         };
         projection.resolve_projected_nodes();
@@ -83,6 +141,7 @@ impl<'a> BranchProjection<'a> {
     pub fn ready_nodes(&self) -> Vec<&WorkflowGraphNode> {
         self.graph
             .nodes()
+            .filter(|node| self.in_scope(&node.id))
             .filter(|node| self.state(&node.id) == ProjectedNodeState::Ready)
             .collect()
     }
@@ -97,13 +156,21 @@ impl<'a> BranchProjection<'a> {
         })
     }
 
+    /// Whether `node_id` participates in this projection's scope.
+    fn in_scope(&self, node_id: &str) -> bool {
+        match self.scope {
+            ProjectionScope::Outer => self.graph.region_owner(node_id).is_none(),
+            ProjectionScope::Region { members, .. } => members.contains(node_id),
+        }
+    }
+
     /// Repeatedly derives Ready/Inactive states until no node changes, so branch deactivation
     /// propagates downstream through each iteration.
     fn resolve_projected_nodes(&mut self) {
         loop {
             let mut changed = false;
             for node in self.graph.nodes() {
-                if self.states.contains_key(&node.id) {
+                if !self.in_scope(&node.id) || self.states.contains_key(&node.id) {
                     continue;
                 }
                 let computed = self.compute_projected_state(&node.id);
@@ -146,6 +213,13 @@ impl<'a> BranchProjection<'a> {
 
     /// Resolves one edge from its source node's projected state and internal branch decision.
     fn edge_state(&self, edge: &WorkflowGraphEdge) -> EdgeState {
+        // Inside a region round, the owner's entry edges are active by construction: the round
+        // has started, which is exactly what makes its members schedulable.
+        if let ProjectionScope::Region { owner_id, .. } = self.scope
+            && edge.source == owner_id
+        {
+            return EdgeState::Active;
+        }
         match self.states.get(&edge.source) {
             Some(ProjectedNodeState::Succeeded) => {
                 let Some(source) = self.graph.node(&edge.source) else {
@@ -349,6 +423,63 @@ mod tests {
         let projection = BranchProjection::new(&graph, &node_runs, &decisions);
         assert_eq!(projection.state("c"), ProjectedNodeState::Running);
         assert_eq!(projection.state("ok"), ProjectedNodeState::NotReached);
+        assert!(projection.has_in_flight());
+    }
+
+    /// Region members never enter the outer ready set while their iteration runs, and the
+    /// per-round rows never seed outer states; the iteration node itself is the only outer
+    /// in-flight fact (ADR "iteration composite runtime" D2; decision 0 invariant 5).
+    #[test]
+    fn outer_projection_treats_regions_as_black_boxes() {
+        let graph = WorkflowGraph::parse(
+            r#"{
+                "nodes": [
+                    {"id":"start","data":{"kind":"start","inputVariables":[{"name":"prs","valueType":"array[object]"}]}},
+                    {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+                        "iteratorSelector":["start","prs"],"collectSelector":["fix","output"]
+                    }}},
+                    {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{
+                        "executor":{"agentCli":"c","modelId":"m"},"prompt":"fix"
+                    }}},
+                    {"id":"out","data":{"kind":"output"}}
+                ],
+                "edges": [
+                    {"source":"start","target":"iter"},
+                    {"source":"iter","target":"fix"},
+                    {"source":"iter","target":"out"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let decisions = BTreeMap::new();
+        let node_runs = vec![
+            node_run("start", WorkflowNodeStatus::Succeeded),
+            node_run("iter", WorkflowNodeStatus::Running),
+        ];
+        // A region row exists for a member of the running iteration.
+        let region_row = WorkflowNodeRun::new(
+            ora_domain::WorkflowNodeRunId::new("fix-0"),
+            ora_domain::WorkflowRunId::new("run-1"),
+            "fix",
+            "agent",
+            None,
+            WorkflowNodeStatus::Succeeded,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            None,
+            ora_domain::AuditFields::new(1, 1, false),
+        )
+        .in_iteration(Some(0));
+        let node_runs = [node_runs, vec![region_row]].concat();
+        let projection = BranchProjection::new(&graph, &node_runs, &decisions);
+        // The outer ready set excludes the region member and the terminal output behind the
+        // still-running iteration; the iteration node is the only outer in-flight fact.
+        assert!(projection.ready_nodes().iter().all(|node| node.id != "fix"));
+        assert_eq!(projection.state("iter"), ProjectedNodeState::Running);
+        assert_eq!(projection.state("out"), ProjectedNodeState::NotReached);
         assert!(projection.has_in_flight());
     }
 

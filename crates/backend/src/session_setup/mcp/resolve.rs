@@ -74,14 +74,14 @@ fn select_effective_set(
         for id in ids {
             if !candidates
                 .iter()
-                .any(|candidate| candidate.plugin_id.canonical() == *id)
+                .any(|candidate| candidate.plugin_id == *id)
             {
                 return Err(SessionMcpError::SelectedPluginUnavailable {
                     plugin_id: id.clone(),
                 });
             }
         }
-        candidates.retain(|candidate| ids.contains(&candidate.plugin_id.canonical()));
+        candidates.retain(|candidate| ids.contains(&candidate.plugin_id));
     }
     candidates.sort_by_key(|candidate| candidate.plugin_id.canonical());
     let mut selected = Vec::new();
@@ -91,6 +91,14 @@ fn select_effective_set(
                 if matches!(selection, SessionMcpSelection::Explicit(_)) {
                     return Err(SessionMcpError::ConfigurationIncomplete {
                         plugin_id: candidate.plugin_id,
+                        transport: match candidate.configuration.transport {
+                            ora_plugin_config::McpTransport::Stdio(_) => {
+                                SessionMcpTransportKind::Stdio
+                            }
+                            ora_plugin_config::McpTransport::Http(_) => {
+                                SessionMcpTransportKind::Http
+                            }
+                        },
                     });
                 }
             }
