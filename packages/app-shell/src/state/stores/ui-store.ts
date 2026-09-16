@@ -31,8 +31,6 @@ export type DeleteTarget =
 
 export const UI_STORAGE_KEY = "ora.ui.v1";
 
-export const UI_STORAGE_KEY = "ora.ui.v1";
-
 /**
  * A one-shot destination inside the plugins pane requested by another surface: a
  * marketplace search, the installed-plugin manager, or one plugin's configuration editor.
