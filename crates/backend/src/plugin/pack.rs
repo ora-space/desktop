@@ -18,9 +18,8 @@ use crate::error::{BackendError, ErrorClassification};
 use ora_application::Clock;
 use ora_contracts::{
     EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
-    PackInstallFailure, PackInstallationStatus, PackInstalledMember, PackMemberInstallOutcome,
-    PackMemberParams, PackMemberReconciliationState, PackMemberStatus,
-    PackUninstallPlan as PackUninstallPlanDto, PackUninstallPreservation,
+    PackInstallFailure, PackInstallationStatus, PackMemberParams, PackMemberReconciliationState,
+    PackMemberStatus, PackUninstallPlan as PackUninstallPlanDto, PackUninstallPreservation,
     PackUninstallPreservationReason, PluginDataDisposition, PublicError, UninstallPluginRequest,
 };
 use ora_db::{PackInstallationMemberRecord, PackInstallationRecord, PackMemberOwnership};
@@ -494,10 +493,7 @@ impl PluginApi {
                 ledger.installed = residual.clone();
                 let members = residual
                     .iter()
-                    .map(|(member_id, _version)| PackInstalledMember {
-                        plugin_id: member_id.clone(),
-                        outcome: PackMemberInstallOutcome::Installed,
-                    })
+                    .map(|(member_id, _version)| member_id.clone())
                     .collect::<Vec<_>>();
                 return Ok((
                     InstallOutcome::PackInstalled {
@@ -515,65 +511,47 @@ impl PluginApi {
             // Finalize exactly like a single-plugin install so Skills, the installed snapshot,
             // and MCP desired state see the member immediately; a finalization failure is that
             // member's failure and stops the run on the same terms as a download failure.
-            let member_outcome = match self
+            // Finalization only lands the package: a member's Hook lifecycle commands wait for the
+            // user to authorize that Hook's own initialization.
+            if let Err(error) = self
                 .finalize_new_install(&member.plugin_id.canonical())
                 .await
             {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    let created = std::mem::take(&mut ledger.installed);
-                    let (residual, rollback_failures) =
-                        self.rollback_created_members(created).await;
-                    ledger.rollback_failed = residual
-                        .iter()
-                        .map(|(member_id, _version)| member_id.clone())
-                        .collect();
-                    // A failed run must not mint new PreExisting relationships, so the journal
-                    // ledger's skip list is emptied; the outcome still reports the real skips.
-                    ledger.skipped = Vec::new();
-                    // The residual members are the durable recovery evidence: the journal
-                    // keeps them as pack-managed (D3-D).
-                    ledger.installed = residual.clone();
-                    let members = residual
-                        .iter()
-                        .map(|(member_id, _version)| PackInstalledMember {
-                            plugin_id: member_id.clone(),
-                            outcome: PackMemberInstallOutcome::Installed,
-                        })
-                        .collect::<Vec<_>>();
-                    return Ok((
-                        InstallOutcome::PackInstalled {
-                            members,
-                            skipped,
-                            failed: Some(PackInstallFailure {
-                                plugin_id: member.plugin_id.canonical(),
-                                error_code: error.public_error().code().to_owned(),
-                                rollback_failures,
-                            }),
-                        },
-                        ledger,
-                    ));
-                }
-            };
-            let member_outcome = match member_outcome {
-                InstallOutcome::Installed => PackMemberInstallOutcome::Installed,
-                InstallOutcome::InstalledWithCommandConflict { conflict_plugin_id } => {
-                    PackMemberInstallOutcome::InstalledWithCommandConflict { conflict_plugin_id }
-                }
-                // Members run the single-plugin chain, which cannot produce a pack outcome.
-                InstallOutcome::PackInstalled { .. } => {
-                    unreachable!("member finalization cannot produce a pack outcome")
-                }
-            };
+                let created = std::mem::take(&mut ledger.installed);
+                let (residual, rollback_failures) = self.rollback_created_members(created).await;
+                ledger.rollback_failed = residual
+                    .iter()
+                    .map(|(member_id, _version)| member_id.clone())
+                    .collect();
+                // A failed run must not mint new PreExisting relationships, so the journal
+                // ledger's skip list is emptied; the outcome still reports the real skips.
+                ledger.skipped = Vec::new();
+                // The residual members are the durable recovery evidence: the journal
+                // keeps them as pack-managed (D3-D).
+                ledger.installed = residual.clone();
+                let members = residual
+                    .iter()
+                    .map(|(member_id, _version)| member_id.clone())
+                    .collect::<Vec<_>>();
+                return Ok((
+                    InstallOutcome::PackInstalled {
+                        members,
+                        skipped,
+                        failed: Some(PackInstallFailure {
+                            plugin_id: member.plugin_id.canonical(),
+                            error_code: error.public_error().code().to_owned(),
+                            rollback_failures,
+                        }),
+                    },
+                    ledger,
+                ));
+            }
             // This run created the member, so the durable relationship records it as
             // pack-managed (D3-A).
             ledger
                 .installed
                 .push((member.plugin_id.canonical(), member_version));
-            members.push(PackInstalledMember {
-                plugin_id: member.plugin_id.canonical(),
-                outcome: member_outcome,
-            });
+            members.push(member.plugin_id.canonical());
         }
         ledger.skipped = skipped.clone();
         Ok((
@@ -607,6 +585,7 @@ impl PluginApi {
         while let Some((member_id, version)) = pending.pop() {
             let result = self
                 .uninstall(UninstallPluginRequest {
+                    hook_execution_acknowledged: false,
                     plugin_id: member_id.clone(),
                     data_disposition: PluginDataDisposition::Delete,
                 })

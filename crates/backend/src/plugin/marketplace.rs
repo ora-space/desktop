@@ -8,8 +8,8 @@ use super::PluginApi;
 use crate::error::{BackendError, ErrorClassification};
 use crate::proxy;
 use ora_contracts::{
-    EmptyErrorParams, InstallPluginRequest, InstallPluginResponse, PublicError, StopPluginRequest,
-    UpdatePluginRequest, UpdatePluginResponse,
+    EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse, PublicError,
+    StopPluginRequest, UpdatePluginRequest, UpdatePluginResponse,
 };
 use ora_domain::{PluginId, PluginNamespace};
 use ora_logging::ora_info;
@@ -138,11 +138,11 @@ impl PluginApi {
             }
         }
         .map_err(|error| self.map_install_error("failed to install plugin", error))?;
-        let outcome = self.finalize_new_install(&request.plugin_id).await?;
-        ora_info!(plugin_id = %request.plugin_id, outcome = ?outcome, "installed marketplace plugin");
+        self.finalize_new_install(&request.plugin_id).await?;
+        ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
         Ok(InstallPluginResponse {
             plugin_id: request.plugin_id,
-            outcome,
+            outcome: InstallOutcome::Installed,
         })
     }
 

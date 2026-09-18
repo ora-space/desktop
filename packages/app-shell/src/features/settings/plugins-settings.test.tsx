@@ -134,6 +134,58 @@ function weatherInstalled(): InstalledPlugin {
   };
 }
 
+const HOOK_ID = "official/rtk-ai.rtk";
+
+/** An installed Hook package whose descriptor the manager row renders. */
+function hookInstalled(version = "0.1.0"): InstalledPlugin {
+  return {
+    id: HOOK_ID,
+    namespace: "official",
+    name: "rtk-ai.rtk",
+    displayName: "rtk-ai.rtk",
+    version,
+    description: "RTK command rewrite hook",
+    homepage: null,
+    license: null,
+    kind: "hook",
+    executable: "assets/rtk.exe",
+    supportedAgents: ["claude-code", "codex"],
+    target: "x86_64-pc-windows-msvc",
+    logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
+    runtime: "stopped",
+  };
+}
+
+/** One marketplace listing for the Hook, with nothing installed yet. */
+function clientWithHook(availableVersion = "0.1.0") {
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push({
+    id: HOOK_ID,
+    name: "rtk-ai.rtk",
+    title: "RTK",
+    kind: "hook",
+    namespace: "official",
+    sourceUrl: "https://github.com/ora-space/marketplace",
+    version: availableVersion,
+    description: "RTK command rewrite hook",
+    logo: null,
+    compatibility: "compatible",
+  });
+  const handlers = createFixtureHandlers(state);
+  return { state, handlers, client: createTestClient(handlers) };
+}
+
+/** One installed Hook and nothing else, so manager assertions count exactly that package. */
+function clientWithInstalledHook(version = "0.1.0") {
+  const state = createFixtureState();
+  state.installedPlugins = [hookInstalled(version)];
+  const handlers = createFixtureHandlers(state);
+  return { state, handlers, client: createTestClient(handlers) };
+}
+
 const PACK_ID = "official/ora-space.python-extension-pack";
 const CORE_MEMBER_ID = "official/ora-space.python-core";
 const LINT_MEMBER_ID = "official/ora-space.python-lint";
@@ -827,6 +879,7 @@ it("imports a local archive through the backend", async () => {
   await waitFor(() =>
     expect(importSpy).toHaveBeenCalledWith({
       path: "C:/downloads/weather.orax",
+      hookExecutionAcknowledged: false,
     }),
   );
   await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
@@ -1174,32 +1227,14 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
 it("shows hook descriptor fields and hides configure when settings are not declared", async () => {
   const user = userEvent.setup();
   const state = createFixtureState();
-  state.installedPlugins.push({
-    id: "official/rtk-ai.rtk",
-    namespace: "official",
-    name: "rtk-ai.rtk",
-    displayName: "rtk-ai.rtk",
-    version: "0.1.0",
-    description: "RTK command rewrite hook",
-    homepage: null,
-    license: null,
-    kind: "hook",
-    protocol: "rtk-rewrite-v1",
-    command: "rtk",
-    target: "x86_64-pc-windows-msvc",
-    toolVersion: "0.45.0",
-    logo: null,
-    installationValidity: { validity: "valid" },
-    configuration: { state: "not_declared" },
-    runtime: "stopped",
-  });
+  state.installedPlugins.push(hookInstalled());
   renderSettings(createTestClient(createFixtureHandlers(state)));
 
   await openManagePlugins(user);
   expect(await screen.findByText("official/rtk-ai.rtk")).toBeInTheDocument();
   expect(
     screen.getByText(
-      /0\.1\.0 · hook · stopped · rtk-rewrite-v1 · rtk · x86_64-pc-windows-msvc · 0\.45\.0/,
+      /0\.1\.0 · hook · stopped · assets\/rtk\.exe · claude-code, codex · x86_64-pc-windows-msvc/,
     ),
   ).toBeInTheDocument();
   expect(
@@ -1207,27 +1242,155 @@ it("shows hook descriptor fields and hides configure when settings are not decla
   ).not.toBeInTheDocument();
 });
 
-/** A command-alias conflict is a successful install that the toast must name the colliding plugin. */
-it("reports a command-alias conflict after a successful install", async () => {
+/** A Hook install discloses the program it will run before the request may carry the grant. */
+it("discloses hook execution before installing a marketplace hook", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
-  state.installOutcome = {
-    state: "installed_with_command_conflict",
-    conflictPluginId: "official/other-rtk",
-  };
-  const successToast = vi
-    .spyOn(toast, "success")
-    .mockClear()
-    .mockImplementation(() => "toast");
+  const { state, client } = clientWithHook();
+  const installSpy = vi.spyOn(client.plugin, "install");
   renderSettings(client);
 
   await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
 
-  await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
-  await waitFor(() => expect(successToast).toHaveBeenCalled());
-  expect(successToast.mock.calls[0]?.[0]).toEqual(
-    expect.stringMatching(/official\/other-rtk/),
+  const dialog = await screen.findByRole("alertdialog", {
+    name: /执行.*包含的程序|Run the program bundled with/,
+  });
+  expect(dialog).toHaveTextContent(
+    /此插件会执行包内程序，并可能读取或修改用户文件以及 Agent 配置文件|executes a program from its package/,
   );
+  expect(installSpy).not.toHaveBeenCalled();
+
+  await user.click(
+    within(dialog).getByRole("button", { name: /安装并执行|Install and run/ }),
+  );
+
+  await waitFor(() => expect(installSpy).toHaveBeenCalledOnce());
+  expect(installSpy.mock.calls[0]?.[0]).toEqual({
+    pluginId: HOOK_ID,
+    hookExecutionAcknowledged: true,
+  });
+  await waitFor(() => expect(state.hookLifecycleReports.size).toBe(1));
+  // The confirmation is answered from the card, so it must not also open the detail page.
+  expect(
+    screen.getByRole("button", { name: /查看 RTK 的 README|View RTK README/ }),
+  ).toBeInTheDocument();
+});
+
+/** An update re-runs `init`, so it asks for the grant again rather than reusing the install one. */
+it("discloses hook execution again before updating an installed hook", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithHook("0.2.0");
+  state.installedPlugins = [hookInstalled("0.1.0")];
+  const updateSpy = vi.spyOn(client.plugin, "update");
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(await screen.findByRole("button", { name: /更新|Update/ }));
+
+  const dialog = await screen.findByRole("alertdialog", {
+    name: /执行.*包含的程序|Run the program bundled with/,
+  });
+  expect(updateSpy).not.toHaveBeenCalled();
+
+  await user.click(
+    within(dialog).getByRole("button", { name: /更新并执行|Update and run/ }),
+  );
+
+  await waitFor(() => expect(updateSpy).toHaveBeenCalledOnce());
+  expect(updateSpy.mock.calls[0]?.[0]).toEqual({
+    pluginId: HOOK_ID,
+    hookExecutionAcknowledged: true,
+  });
+  expect(
+    await screen.findByText(/本次会话已初始化|Initialized this session/),
+  ).toBeInTheDocument();
+});
+
+/** With no result this session a Hook reads as unknown, and initializing it is an explicit act. */
+it("shows an uninitialized hook and initializes it on request", async () => {
+  const user = userEvent.setup();
+  const { client } = clientWithInstalledHook();
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  expect(
+    await screen.findByText(/本次会话未初始化|Not initialized this session/),
+  ).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /初始化|Initialize/ }));
+
+  expect(
+    await screen.findByText(/本次会话已初始化|Initialized this session/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/重启对应 Agent|restart the Agent/),
+  ).toBeInTheDocument();
+});
+
+/** A failed initialization stays visible with its diagnostic and remains retryable by the user. */
+it("keeps a failed hook initialization visible and retries it", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithInstalledHook();
+  state.hookOutcome = {
+    state: "failed",
+    exitCode: 1,
+    durationMs: 9,
+    reason: "the command exited with code 1",
+  };
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(screen.getByRole("button", { name: /初始化|Initialize/ }));
+
+  expect(
+    await screen.findByText(/初始化失败|Initialization failed/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/the command exited with code 1/),
+  ).toBeInTheDocument();
+  expect(state.installedPlugins).toHaveLength(1);
+
+  state.hookOutcome = undefined;
+  await user.click(screen.getByRole("button", { name: /初始化|Initialize/ }));
+
+  expect(
+    await screen.findByText(/本次会话已初始化|Initialized this session/),
+  ).toBeInTheDocument();
+});
+
+/** Removing a Hook states what runs and what stays behind, and its confirmation is the grant. */
+it("states the hook teardown before uninstalling and authorizes it once confirmed", async () => {
+  const user = userEvent.setup();
+  const { client } = clientWithInstalledHook();
+  const uninstallSpy = vi.spyOn(client.plugin, "uninstall");
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", {
+      name: /打开 rtk-ai\.rtk 的菜单|Open the rtk-ai\.rtk menu/,
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: /卸载|Uninstall/ }),
+  );
+
+  const dialog = await screen.findByRole("alertdialog", {
+    name: /卸载.*rtk-ai\.rtk|Uninstall rtk-ai\.rtk/,
+  });
+  expect(dialog).toHaveTextContent(
+    /卸载会先执行该工具声明的反初始化命令|Uninstalling runs the tool's declared teardown/,
+  );
+
+  await user.click(
+    within(dialog).getByRole("button", { name: /^卸载$|^Uninstall$/ }),
+  );
+
+  await waitFor(() => expect(uninstallSpy).toHaveBeenCalledOnce());
+  expect(uninstallSpy.mock.calls[0]?.[0]).toEqual({
+    pluginId: HOOK_ID,
+    dataDisposition: "delete",
+    hookExecutionAcknowledged: true,
+  });
 });
 
 /** The header gear offers the manage-plugin and manage-marketplace destinations. */

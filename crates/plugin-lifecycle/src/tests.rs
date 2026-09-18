@@ -137,6 +137,9 @@ async fn manages_static_skill_plugin_without_a_runtime() {
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: plugin_id.clone(),
                 data_disposition: PluginDataDisposition::Delete,
+                // This crate removes packages; it never runs a package program, so nothing here
+                // can be authorized by the flag.
+                hook_execution_acknowledged: false,
             })
             .await
             .expect("uninstall Skill plugin"),
@@ -179,6 +182,9 @@ async fn manages_static_hook_plugin_without_a_runtime() {
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: plugin_id.clone(),
                 data_disposition: PluginDataDisposition::Delete,
+                // The Hook's `deinit` belongs to the operation layer, which runs it while the
+                // package is still on disk; this crate only removes the package.
+                hook_execution_acknowledged: false,
             })
             .await
             .expect("uninstall Hook plugin"),
@@ -648,6 +654,9 @@ async fn uninstalls_running_plugin_after_stopping_it() {
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: "official/ora.example".to_string(),
                 data_disposition: PluginDataDisposition::Delete,
+                // This crate removes packages; it never runs a package program, so nothing here
+                // can be authorized by the flag.
+                hook_execution_acknowledged: false,
             })
             .await
     });
@@ -725,6 +734,9 @@ async fn uninstall_records_stopped_state_before_package_removal() {
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: "official/ora.example".to_string(),
                 data_disposition: PluginDataDisposition::Delete,
+                // This crate removes packages; it never runs a package program, so nothing here
+                // can be authorized by the flag.
+                hook_execution_acknowledged: false,
             })
             .await
     });
@@ -843,10 +855,9 @@ fn expected_hook_plugin() -> InstalledPlugin {
         homepage: None,
         license: None,
         contribution: InstalledPluginContribution::Hook {
-            protocol: "rtk-rewrite-v1".to_string(),
-            command: "rtk".to_string(),
+            executable: "assets/rtk.exe".to_string(),
+            supported_agents: vec!["claude-code".to_string(), "codex".to_string()],
             target: Some("x86_64-pc-windows-msvc".to_string()),
-            tool_version: "0.45.0".to_string(),
         },
         logo: Some(universal_logo("official/rtk-ai.rtk")),
         installation_validity: PluginInstallationValidity::Valid,
@@ -1235,7 +1246,7 @@ description = "Example Skill plugin"
     .expect("write Skill plugin manifest");
 }
 
-/// Writes one processless Hook package with a contained executable and no `main.js`.
+/// Writes one Hook package with a contained executable and no plugin entrypoint.
 fn write_hook_plugin_package(data_dir: &std::path::Path, name: &str) {
     let package_root = package_version_root(data_dir, name);
     fs::create_dir_all(package_root.join("assets")).expect("create Hook plugin assets");
@@ -1245,10 +1256,12 @@ fn write_hook_plugin_package(data_dir: &std::path::Path, name: &str) {
         r#"{
             "schemaVersion": 1,
             "hook": {
-                "protocol": "rtk-rewrite-v1",
                 "executable": "assets/rtk.exe",
-                "command": "rtk",
-                "toolVersion": "0.45.0"
+                "supportedAgents": ["claude-code", "codex"],
+                "lifecycle": {
+                    "init": {"args": ["--init"]},
+                    "deinit": {"args": ["--deinit"]}
+                }
             }
         }"#,
     )

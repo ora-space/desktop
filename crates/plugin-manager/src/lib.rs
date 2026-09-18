@@ -18,7 +18,7 @@ mod kind_tests;
 mod tests;
 
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
-pub use hook::InstalledHookDescriptor;
+pub use hook::{InstalledHookDescriptor, validate_executable_containment};
 pub use install::{
     HostTarget, InstallError, InstalledPackage, Installer, ResolvedReleaseSource, UpdateError,
     select_release,
@@ -31,7 +31,7 @@ pub use skill::{
 };
 pub use validation::{
     CONFIGURATION_FILE, INSTALLED_ENTRYPOINT, InstalledPlugin, InstalledPluginAgent,
-    PluginConfigurationDeclarationValidity, PluginContribution,
+    ManifestValidationError, PluginConfigurationDeclarationValidity, PluginContribution,
 };
 pub use webview::InstalledWebviewDescriptor;
 pub use workbench::{

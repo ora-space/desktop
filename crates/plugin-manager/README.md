@@ -17,7 +17,9 @@ orchestrates checksum-verified installs of new plugin releases.
   than accepted as an identity.
 - Resolve the fixed `main.js` entrypoint for agent and workbench packages as an existing regular
   file whose canonical target remains inside its package, then retain its portable relative path.
-  Webview, skill, MCP, and hook packages have no process entrypoint.
+  Webview, skill, MCP, and hook packages have no plugin-runtime entrypoint; a hook package instead
+  carries a native executable that the host executes only as an authorized lifecycle command, which
+  this crate never does.
 - Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
   `::Webview`, `::Skill`, `::Mcp`, or `::Hook`), so a validated plugin always carries exactly what
   its kind promises. Skill contributions carry no additional contract fields, but the package must
@@ -111,11 +113,13 @@ or on the package on disk:
 - An MCP package is configuration-only: it must not ship `main.js`, must provide an MCP-shaped
   `assets/config.json` (settings subset plus exactly one transport), and, for a stdio transport,
   its command must resolve to a regular file inside the package (executable on Unix).
-- A hook package is processless: it must not ship `main.js`, must provide a Hook-shaped
-  `assets/config.json` (schema version, protocol, package-relative executable, bare command alias,
-  embedded tool version), and its executable must resolve to a regular non-symlink file under
-  `assets/` (Windows requires the `.exe` suffix). The installer verifies the installed artifact
-  target against the selected release target without executing the payload.
+- A hook package carries a native executable instead of a process entrypoint: it must not ship
+  `main.js`, and must provide a Hook-shaped `assets/config.json` (schema version, package-relative
+  executable, optional supported agents, required `init` and optional `deinit` lifecycle commands)
+  whose executable resolves to a regular non-symlink file under `assets/` (Windows requires the
+  `.exe` suffix). The installer verifies the installed artifact target against the selected release
+  target; executing the payload is the backend's job, behind an explicit authorization, and never
+  this crate's.
 - `display_name` is the plugin identifier for every kind. One agent-kind package contributes
   exactly one agent with no identifier of its own: the package's plugin id is that agent's
   identity everywhere in the host.

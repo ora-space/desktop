@@ -1077,7 +1077,7 @@ mod tests {
                 ),
                 (
                     "assets/config.json",
-                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                    br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]}}}}"#.as_slice(),
                 ),
                 ("assets/rtk.exe", b"MZdummy".as_slice()),
             ],
@@ -1123,7 +1123,7 @@ mod tests {
                 ),
                 (
                     "assets/config.json",
-                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                    br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]}}}}"#.as_slice(),
                 ),
                 ("assets/rtk.exe", b"MZdummy".as_slice()),
             ],
@@ -1295,7 +1295,7 @@ mod tests {
                 ),
                 (
                     "assets/config.json",
-                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                    br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]}}}}"#.as_slice(),
                 ),
                 ("assets/rtk.exe", b"MZdummy".as_slice()),
             ],
@@ -1326,7 +1326,7 @@ mod tests {
                 ),
                 (
                     "assets/config.json",
-                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                    br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]}}}}"#.as_slice(),
                 ),
                 ("assets/rtk.exe", b"MZdummy".as_slice()),
             ],
@@ -1443,7 +1443,7 @@ mod tests {
                 ),
                 (
                     "assets/config.json",
-                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                    br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]}}}}"#.as_slice(),
                 ),
                 ("assets/rtk.exe", b"MZdummy".as_slice()),
             ],

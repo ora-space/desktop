@@ -3,6 +3,20 @@ import { useContractsClient } from "../../contracts-client-context";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { invalidatePluginQueries } from "../data/plugins";
 
+/** What one install request carries beyond the plugin it names. */
+interface InstallPluginVariables {
+  /** Lets the caller cancel the pending request. */
+  signal?: AbortSignal;
+  /**
+   * Declares that the user authorized running the package's Hook `init` command.
+   *
+   * Defaults to withholding execution: a Hook only runs when a caller that showed the user the
+   * execution disclosure asks for it, so a missed wiring step installs a dormant package instead
+   * of running a program nobody was warned about.
+   */
+  hookExecutionAcknowledged?: boolean;
+}
+
 /**
  * Installs one marketplace plugin and refreshes the installed and available
  * surfaces once the backend settles. The optional `signal` lets the caller
@@ -17,8 +31,14 @@ export function useInstallPlugin(pluginId: string) {
   const invalidate = () => invalidatePluginQueries(queryClient);
 
   const mutation = useMutation({
-    mutationFn: ({ signal }: { signal?: AbortSignal } = {}) =>
-      client.plugin.install({ pluginId }, { signal }),
+    mutationFn: ({
+      signal,
+      hookExecutionAcknowledged = false,
+    }: InstallPluginVariables = {}) =>
+      client.plugin.install(
+        { pluginId, hookExecutionAcknowledged },
+        { signal },
+      ),
     onSettled: async (_response, error) => {
       try {
         await invalidate();

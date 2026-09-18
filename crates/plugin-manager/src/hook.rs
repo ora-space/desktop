@@ -1,5 +1,6 @@
-//! Host-side validation of the `hook` kind: a processless package whose single artifact is the
-//! compiled Hook Configuration from `assets/config.json` plus one package-contained executable.
+//! Host-side validation of the `hook` kind: a package that never runs as an Ora plugin process,
+//! but whose single artifact is the compiled Hook Configuration from `assets/config.json` plus one
+//! package-contained executable that the host may later execute as a lifecycle command.
 
 use crate::validation::{
     CONFIGURATION_FILE, INSTALLED_ENTRYPOINT, ManifestValidationError, invalid,
@@ -10,13 +11,14 @@ use ora_plugin_config::{
 };
 use ora_plugin_manifest::{HookTarget, PluginArtifact};
 use ora_utils::path::CanonicalPathRoot;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 /// Holds the validated Hook descriptor of one hook-kind package.
 ///
-/// The descriptor proves the package is statically valid. It is not a `ResolvedHook`: it says
-/// nothing about a future Agent Plugin consuming it, and runnability is established by isolated
-/// release and end-to-end tests, never by executing the payload during installation.
+/// The descriptor proves the package is statically valid and names an executable that currently
+/// resolves inside the package. It says nothing about that executable's behaviour, about whether
+/// any Agent on this machine will accept the Hook, or about which lifecycle commands have run:
+/// installation performs no execution, and each later execution re-validates containment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledHookDescriptor {
     pub configuration: CompiledHookConfiguration,
@@ -26,7 +28,7 @@ pub struct InstalledHookDescriptor {
 /// Validates one hook-kind package around its already-compiled configuration file and the
 /// installed artifact self-declaration.
 ///
-/// A Hook package must not look runnable (no `main.js`), must ship a Hook-shaped
+/// A Hook package must not look runnable as a plugin (no `main.js`), must ship a Hook-shaped
 /// `assets/config.json`, must contain the declared executable as a real regular file inside the
 /// package `assets/` tree, and — for a targeted package — must self-declare a target whose host
 /// compatibility is checked by the installer. Validation never executes the executable.
@@ -84,12 +86,20 @@ pub(crate) fn validate_hook(
 }
 
 /// Confirms the compiled executable resolves to a regular non-symlink file contained under this
-/// package's `assets/` tree, refusing symlink or reparse-point escapes. On Windows the milestone
-/// requires the `.exe` suffix; PE headers are not parsed here.
-fn validate_executable_containment(
+/// package's `assets/` tree, refusing symlink or reparse-point escapes, and returns the canonical
+/// path that was checked. On Windows the milestone requires the `.exe` suffix; PE headers are not
+/// parsed here.
+///
+/// Discovery runs this once per package and discards the path. The Hook lifecycle executor runs
+/// it again against the installed package root immediately before every spawn and runs the
+/// returned path: discovery-time validity cannot be carried across the interval in which a
+/// package could be replaced on disk, and spawning the path this check resolved — rather than
+/// re-deriving it — is what keeps the file that was validated and the file that is executed
+/// identical.
+pub fn validate_executable_containment(
     package_root: &Path,
     hook: &HookDescriptor,
-) -> Result<(), ManifestValidationError> {
+) -> Result<PathBuf, ManifestValidationError> {
     let executable = hook.executable.as_str();
     let declared = Path::new(executable);
     if declared
@@ -150,5 +160,5 @@ fn validate_executable_containment(
             ));
         }
     }
-    Ok(())
+    Ok(resolved)
 }

@@ -2,7 +2,7 @@
 
 use super::tests::{SymlinkKind, agent_manifest, create_symlink, replace_path, write_manifest};
 use super::{PluginContribution, PluginManager};
-use ora_plugin_config::{HookProtocol, McpHttpTransport, McpTransport, McpValueExpression};
+use ora_plugin_config::{McpHttpTransport, McpTransport, McpValueExpression};
 use ora_plugin_manifest::MethodName;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
@@ -441,14 +441,16 @@ fn hook_manifest() -> Value {
 const HOOK_CONFIG: &str = r#"{
     "schemaVersion": 1,
     "hook": {
-        "protocol": "rtk-rewrite-v1",
         "executable": "assets/rtk.exe",
-        "command": "rtk",
-        "toolVersion": "0.45.0"
+        "supportedAgents": ["claude-code", "codex"],
+        "lifecycle": {
+            "init": {"args": ["--init"]},
+            "deinit": {"args": ["--deinit"]}
+        }
     }
 }"#;
 
-/// Writes a processless Hook package: configuration, executable, and no `main.js`.
+/// Writes a Hook package: configuration, executable, and no plugin entrypoint.
 fn write_hook_package(package_root: &std::path::Path, config: &str) {
     fs::create_dir_all(package_root.join("assets")).unwrap();
     fs::write(package_root.join("assets").join("config.json"), config).unwrap();
@@ -456,8 +458,8 @@ fn write_hook_package(package_root: &std::path::Path, config: &str) {
     fs::remove_file(package_root.join("main.js")).unwrap();
 }
 
-/// A Hook package compiles into an Installed Hook Descriptor carrying protocol, command, and
-/// the installed artifact target.
+/// A Hook package compiles into an Installed Hook Descriptor carrying the executable, the
+/// advertised Agents, the lifecycle commands, and the installed artifact target.
 #[test]
 fn discovers_hook_package_with_executable() {
     let temp_dir = TempDir::new().unwrap();
@@ -472,13 +474,29 @@ fn discovers_hook_package_with_executable() {
         panic!("expected a hook contribution, got {:?}", plugin.contributes)
     };
     assert_eq!(
-        descriptor.configuration.hook.protocol,
-        HookProtocol::RtkRewriteV1
-    );
-    assert_eq!(descriptor.configuration.hook.command.as_str(), "rtk");
-    assert_eq!(
-        descriptor.configuration.hook.executable.as_str(),
-        "assets/rtk.exe"
+        descriptor.configuration.hook,
+        ora_plugin_config::HookDescriptor {
+            executable: ora_utils::path::PortableRelativePath::parse("assets/rtk.exe")
+                .expect("valid executable path"),
+            supported_agents: vec![
+                ora_utils::Slug::parse("claude-code").expect("valid agent"),
+                ora_utils::Slug::parse("codex").expect("valid agent"),
+            ],
+            lifecycle: ora_plugin_config::HookLifecycle {
+                init: ora_plugin_config::HookLifecycleCommand::parse(
+                    "hook.lifecycle.init.args",
+                    vec!["--init".to_string()],
+                )
+                .expect("valid init arguments"),
+                deinit: Some(
+                    ora_plugin_config::HookLifecycleCommand::parse(
+                        "hook.lifecycle.deinit.args",
+                        vec!["--deinit".to_string()],
+                    )
+                    .expect("valid deinit arguments"),
+                ),
+            },
+        }
     );
     assert_eq!(
         descriptor
@@ -533,6 +551,33 @@ fn rejects_hook_package_entrypoint_and_config_shape_violations() {
     }
 }
 
+/// A Hook package written for the declaration shape this decision replaced is rejected with the
+/// removed member named, so its author learns to repackage instead of reading a field list.
+#[test]
+fn rejects_hook_package_declared_with_removed_descriptor_members() {
+    let data_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(data_dir.path(), NAME, hook_manifest());
+    write_hook_package(
+        &package_root,
+        r#"{
+            "schemaVersion": 1,
+            "hook": {
+                "protocol": "rtk-rewrite-v1",
+                "executable": "assets/rtk.exe",
+                "command": "rtk",
+                "toolVersion": "0.45.0"
+            }
+        }"#,
+    );
+
+    let manager = PluginManager::discover(data_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    let issue = &manager.discovery_issues()[0];
+    assert_eq!(issue.field_path(), Some("assets/config.json"));
+    assert!(issue.message().contains("hook.protocol"), "{issue:?}");
+}
+
 /// The executable must be a regular file contained under `assets/`; a path outside that
 /// tree, a missing file, and (on Windows) a missing `.exe` suffix each fail closed.
 #[test]
@@ -544,10 +589,8 @@ fn rejects_hook_executable_containment_and_extension_violations() {
         r#"{
             "schemaVersion": 1,
             "hook": {
-                "protocol": "rtk-rewrite-v1",
                 "executable": "bin/rtk.exe",
-                "command": "rtk",
-                "toolVersion": "0.45.0"
+                "lifecycle": {"init": {}}
             }
         }"#,
     );
@@ -579,10 +622,8 @@ fn rejects_hook_executable_containment_and_extension_violations() {
             r#"{
                 "schemaVersion": 1,
                 "hook": {
-                    "protocol": "rtk-rewrite-v1",
                     "executable": "assets/rtk",
-                    "command": "rtk",
-                    "toolVersion": "0.45.0"
+                    "lifecycle": {"init": {}}
                 }
             }"#,
         );

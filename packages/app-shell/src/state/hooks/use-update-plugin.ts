@@ -3,6 +3,19 @@ import { useContractsClient } from "../../contracts-client-context";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { invalidatePluginQueries } from "../data/plugins";
 
+/** What one update request carries beyond the plugin it names. */
+interface UpdatePluginVariables {
+  /** Lets the caller cancel the pending request. */
+  signal?: AbortSignal;
+  /**
+   * Declares that the user authorized running the package's Hook `init` command.
+   *
+   * Updates re-run `init` every time so the tool can migrate what an earlier version wrote, which
+   * makes the disclosure a per-update one rather than a one-time consent at install.
+   */
+  hookExecutionAcknowledged?: boolean;
+}
+
 /**
  * Updates one installed marketplace plugin to the version its source publishes and refreshes
  * the installed and available surfaces once the backend settles. The optional `signal` lets the
@@ -17,8 +30,11 @@ export function useUpdatePlugin(pluginId: string) {
   const invalidate = () => invalidatePluginQueries(queryClient);
 
   const mutation = useMutation({
-    mutationFn: ({ signal }: { signal?: AbortSignal } = {}) =>
-      client.plugin.update({ pluginId }, { signal }),
+    mutationFn: ({
+      signal,
+      hookExecutionAcknowledged = false,
+    }: UpdatePluginVariables = {}) =>
+      client.plugin.update({ pluginId, hookExecutionAcknowledged }, { signal }),
     onSettled: async () => {
       try {
         await invalidate();

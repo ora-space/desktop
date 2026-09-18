@@ -50,6 +50,10 @@ import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import {
+  HookExecutionConfirm,
+  type HookExecutionAction,
+} from "./hook-execution-confirm";
 import { useUiStore } from "../../state/stores/ui-store";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
@@ -128,10 +132,13 @@ export function PluginsSettings({
   const queryClient = useQueryClient();
   const client = useContractsClient();
   const uninstallPackMutation = useMutation({
+    // A pack removal never runs a member's lifecycle commands, so it authorizes nothing: the
+    // declaration stays false even though the user did confirm the removal.
     mutationFn: (packId: string) =>
       client.plugin.uninstall({
         pluginId: packId,
         dataDisposition: "delete" as const,
+        hookExecutionAcknowledged: false,
       }),
     onSuccess: () => {
       toast.success(t("settings.plugins.packUninstallSuccess"));
@@ -524,6 +531,9 @@ function AvailablePluginCard({
   const update = useUpdatePlugin(plugin.id);
   const hasUpdate = plugin.version !== installed?.version;
   const incompatible = plugin.compatibility === "incompatible";
+  const isHook = plugin.kind === "hook";
+  const [confirmAction, setConfirmAction] =
+    useState<HookExecutionAction | null>(null);
 
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
@@ -534,123 +544,160 @@ function AvailablePluginCard({
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
+  /** Asks for the Hook execution disclosure before the one action that would run a program. */
+  const start = (action: HookExecutionAction) => {
+    if (isHook) {
+      setConfirmAction(action);
+      return;
+    }
+    if (action === "install") {
+      install.mutate({}, { onError: failInstall, onSuccess: succeedInstall });
+      return;
+    }
+    update.mutate({}, { onError: failUpdate });
+  };
+  const confirm = (action: HookExecutionAction) => {
+    setConfirmAction(null);
+    if (action === "install") {
+      install.mutate(
+        { hookExecutionAcknowledged: true },
+        { onError: failInstall, onSuccess: succeedInstall },
+      );
+      return;
+    }
+    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
+  };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label={t("settings.plugins.viewReadme", {
-        title: plugin.title || plugin.name,
-      })}
-      onClick={() => onSelect(plugin)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect(plugin);
-        }
-      }}
-      className="flex cursor-pointer items-center gap-3 rounded-lg border border-border p-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <PluginLogo logo={plugin.logo} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">
-          {plugin.title || plugin.name}
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={t("settings.plugins.viewReadme", {
+          title: plugin.title || plugin.name,
+        })}
+        onClick={() => onSelect(plugin)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect(plugin);
+          }
+        }}
+        className="flex cursor-pointer items-center gap-3 rounded-lg border border-border p-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <PluginLogo logo={plugin.logo} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">
+            {plugin.title || plugin.name}
+          </span>
+          {plugin.description !== "" && (
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {plugin.description}
+            </span>
+          )}
+          {plugin.packMembers !== null && plugin.packMembers !== undefined && (
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {t("settings.plugins.packMembersCount", {
+                count: plugin.packMembers.length,
+              })}
+              {": "}
+              {plugin.packMembers.join(", ")}
+            </span>
+          )}
+          {incompatible && (
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {plugin.reason}
+            </span>
+          )}
         </span>
-        {plugin.description !== "" && (
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            {plugin.description}
-          </span>
-        )}
-        {plugin.packMembers !== null && plugin.packMembers !== undefined && (
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            {t("settings.plugins.packMembersCount", {
-              count: plugin.packMembers.length,
-            })}
-            {": "}
-            {plugin.packMembers.join(", ")}
-          </span>
-        )}
-        {incompatible && (
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            {plugin.reason}
-          </span>
-        )}
-      </span>
-      <span className="flex shrink-0 items-center">
-        {install.isPending ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled
-            className="shrink-0 disabled:opacity-100"
-            aria-label={t("settings.plugins.installing")}
-          >
-            <PluginDownloadProgress
-              progress={install.progress}
-              label={t("settings.plugins.downloadProgress")}
-            />
-          </Button>
-        ) : update.isPending ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled
-            className="shrink-0 disabled:opacity-100"
-            aria-label={t("settings.plugins.updating")}
-          >
-            <PluginDownloadProgress
-              progress={update.progress}
-              label={t("settings.plugins.downloadProgress")}
+        <span className="flex shrink-0 items-center">
+          {install.isPending ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              className="shrink-0 disabled:opacity-100"
+              aria-label={t("settings.plugins.installing")}
             >
-              <IconArrowBigUpLines className="size-3.5" />
-            </PluginDownloadProgress>
-          </Button>
-        ) : installed === undefined ? (
-          <Button
-            variant="outline"
-            size="icon"
-            className="shrink-0"
-            disabled={incompatible}
-            aria-label={t("settings.plugins.install")}
-            onClick={(event) => {
-              event.stopPropagation();
-              install.mutate(
-                {},
-                { onError: failInstall, onSuccess: succeedInstall },
-              );
-            }}
-          >
-            <IconDownload />
-          </Button>
-        ) : hasUpdate ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            aria-label={t("settings.plugins.update")}
-            onClick={(event) => {
-              event.stopPropagation();
-              update.mutate({}, { onError: failUpdate });
-            }}
-          >
-            <IconArrowBigUpLines />
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled
-            className="shrink-0"
-            aria-label={t("settings.plugins.installed")}
-          >
-            <CompletedInstallIcon
-              animate={install.completionId !== null}
-              onAnimationComplete={install.consumeCompletion}
-            />
-          </Button>
-        )}
-      </span>
-    </div>
+              <PluginDownloadProgress
+                progress={install.progress}
+                label={t("settings.plugins.downloadProgress")}
+              />
+            </Button>
+          ) : update.isPending ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              className="shrink-0 disabled:opacity-100"
+              aria-label={t("settings.plugins.updating")}
+            >
+              <PluginDownloadProgress
+                progress={update.progress}
+                label={t("settings.plugins.downloadProgress")}
+              >
+                <IconArrowBigUpLines className="size-3.5" />
+              </PluginDownloadProgress>
+            </Button>
+          ) : installed === undefined ? (
+            <Button
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              disabled={incompatible}
+              aria-label={t("settings.plugins.install")}
+              onClick={(event) => {
+                event.stopPropagation();
+                start("install");
+              }}
+            >
+              <IconDownload />
+            </Button>
+          ) : hasUpdate ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              aria-label={t("settings.plugins.update")}
+              onClick={(event) => {
+                event.stopPropagation();
+                start("update");
+              }}
+            >
+              <IconArrowBigUpLines />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              className="shrink-0"
+              aria-label={t("settings.plugins.installed")}
+            >
+              <CompletedInstallIcon
+                animate={install.completionId !== null}
+                onAnimationComplete={install.consumeCompletion}
+              />
+            </Button>
+          )}
+        </span>
+      </div>
+      {/*
+        Sits beside the card rather than inside it: the card is one big button, and React portals
+        still bubble their events along the React tree, so a dialog rendered within it would open
+        the detail page as soon as the user answered the confirmation.
+      */}
+      {isHook && (
+        <HookExecutionConfirm
+          name={plugin.title || plugin.name}
+          action={confirmAction ?? "install"}
+          open={confirmAction !== null}
+          onOpenChange={(open) => setConfirmAction(open ? "install" : null)}
+          onConfirm={() => confirm(confirmAction ?? "install")}
+          busy={install.isPending || update.isPending}
+        />
+      )}
+    </>
   );
 }
 

@@ -166,13 +166,25 @@ export const pluginTranslations = {
     "settings.plugins.uninstallDescription":
       "插件进程会先停止，然后移除已安装的代码。",
     "settings.plugins.deleteConfigurationData": "同时删除配置数据（推荐）",
+    "settings.plugins.hook.confirmTitle": "执行“{{name}}”包含的程序？",
+    "settings.plugins.hook.executionDisclosure":
+      "此插件会执行包内程序，并可能读取或修改用户文件以及 Agent 配置文件。该程序以你的账户权限运行，不在 Ora 的插件沙箱内；确认即表示你授权这次执行。",
+    "settings.plugins.hook.confirmInstall": "安装并执行",
+    "settings.plugins.hook.confirmUpdate": "更新并执行",
+    "settings.plugins.hook.removalDisclosure":
+      "卸载会先执行该工具声明的反初始化命令（如 deinit），由它自己撤销写入的配置；如果该工具没有声明，它此前写入的配置会保留。",
+    "settings.plugins.hook.notInitialized": "本次会话未初始化",
+    "settings.plugins.hook.initialized": "本次会话已初始化",
+    "settings.plugins.hook.initializeFailed": "初始化失败",
+    "settings.plugins.hook.initialize": "初始化",
+    "settings.plugins.hook.restartHint":
+      "初始化成功只表示命令执行成功；重启对应 Agent 或新建会话后才会生效。",
+    "settings.plugins.hook.outputTruncated": "（输出已截断）",
     "settings.plugins.installing": "安装中",
     "settings.plugins.downloadProgress": "插件下载进度",
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
     "settings.plugins.installSuccess": "插件已安装。",
-    "settings.plugins.installCommandConflict":
-      "插件已安装。其命令别名与 {{pluginId}} 冲突，两包均保持可用。",
     "settings.plugins.uninstallFailed": "卸载失败",
     "settings.plugins.import": "导入插件",
     "settings.plugins.importSuccess": "插件已导入。",
@@ -487,13 +499,26 @@ export const pluginTranslations = {
       "The plugin process will stop before installed code is removed.",
     "settings.plugins.deleteConfigurationData":
       "Also delete configuration data (recommended)",
+    "settings.plugins.hook.confirmTitle":
+      "Run the program bundled with {{name}}?",
+    "settings.plugins.hook.executionDisclosure":
+      "This plugin executes a program from its package, which can read or modify your files and your Agent configuration. The program runs with your account's permissions, outside Ora's plugin sandbox; confirming is what authorizes this run.",
+    "settings.plugins.hook.confirmInstall": "Install and run",
+    "settings.plugins.hook.confirmUpdate": "Update and run",
+    "settings.plugins.hook.removalDisclosure":
+      "Uninstalling runs the tool's declared teardown command (such as deinit) first, so the tool can remove what it wrote. When the tool declares none, whatever it wrote stays in your Agent configuration.",
+    "settings.plugins.hook.notInitialized": "Not initialized this session",
+    "settings.plugins.hook.initialized": "Initialized this session",
+    "settings.plugins.hook.initializeFailed": "Initialization failed",
+    "settings.plugins.hook.initialize": "Initialize",
+    "settings.plugins.hook.restartHint":
+      "A successful initialization only means the command ran; restart the Agent or start a new session for it to take effect.",
+    "settings.plugins.hook.outputTruncated": "(output truncated)",
     "settings.plugins.installing": "Installing",
     "settings.plugins.downloadProgress": "Plugin download progress",
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",
     "settings.plugins.installSuccess": "Plugin installed.",
-    "settings.plugins.installCommandConflict":
-      "Plugin installed. Its command alias conflicts with {{pluginId}}; both packages remain available.",
     "settings.plugins.uninstallFailed": "Uninstall failed",
     "settings.plugins.import": "Import plugin",
     "settings.plugins.importSuccess": "Plugin imported.",

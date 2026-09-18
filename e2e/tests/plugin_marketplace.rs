@@ -597,6 +597,8 @@ async fn marketplace_plugin_full_lifecycle_walkthrough() -> Result<(), Box<dyn s
         .plugins()
         .import(ImportPluginRequest {
             path: skill_artifact.to_string_lossy().into_owned(),
+            // The archive holds a Skill package, which declares no lifecycle command.
+            hook_execution_acknowledged: false,
         })
         .await?;
     assert_eq!(imported.plugin_id, IMPORTED_SKILL_ID);
@@ -645,6 +647,8 @@ async fn marketplace_plugin_full_lifecycle_walkthrough() -> Result<(), Box<dyn s
             .uninstall(UninstallPluginRequest {
                 plugin_id: AGENT_ID.to_string(),
                 data_disposition: PluginDataDisposition::Delete,
+                // An agent package declares no lifecycle command, so nothing runs here.
+                hook_execution_acknowledged: false,
             })
             .await
         {

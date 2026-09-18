@@ -39,7 +39,13 @@ import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
+import { useInitializeHook } from "../../state/hooks/use-initialize-hook";
+import { useHookLifecycleReports } from "../../state/hooks/use-hook-lifecycle-reports";
 import { PluginDownloadProgress } from "./plugin-download-progress";
+import {
+  HookExecutionConfirm,
+  HookRemovalDisclosure,
+} from "./hook-execution-confirm";
 
 /** The installed-plugin manager exposes package lifecycle commands without process start/stop. */
 export function PluginManager({
@@ -184,17 +190,45 @@ function InstalledPluginRow({
     plugin.id,
     plugin.kind === "agent" ? plugin.id : undefined,
   );
+  const isHook = plugin.kind === "hook";
+  const initialize = useInitializeHook(plugin.id);
+  const reports = useHookLifecycleReports(isHook);
+  // Only an `init` result answers "is this Hook initialized": a `deinit` result belongs to a
+  // removal, and a package reinstalled after one has not run anything in this session yet.
+  const lastInit = reports.data?.get(plugin.id);
+  const report = lastInit?.phase === "init" ? lastInit : undefined;
   const uninstalling = mutations.uninstall.isPending;
-  const busy = uninstalling || update.isPending;
+  const busy = uninstalling || update.isPending || initialize.isPending;
   const hasUpdate =
     available !== undefined && available.version !== plugin.version;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
+  };
+  const failInitialize = (cause: unknown) => {
+    showContractError(cause, t("settings.plugins.hook.initializeFailed"));
+  };
+  /**
+   * Runs the update the user just authorized.
+   *
+   * An authorized update re-runs the Hook's `init`, so the confirmation has to be answered before
+   * the request leaves; every other kind updates directly, the way it always has.
+   */
+  const startUpdate = () => {
+    if (isHook) {
+      setConfirmOpen(true);
+      return;
+    }
+    update.mutate({}, { onError: failUpdate });
+  };
+  const confirmUpdate = () => {
+    setConfirmOpen(false);
+    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
   };
 
   return (
@@ -214,7 +248,7 @@ function InstalledPluginRow({
               ? plugin.failureReason
               : plugin.runtime}
             {plugin.kind === "hook" &&
-              ` · ${plugin.protocol} · ${plugin.command}${plugin.target ? ` · ${plugin.target}` : ""} · ${plugin.toolVersion}`}
+              ` · ${plugin.executable}${plugin.supportedAgents.length > 0 ? ` · ${plugin.supportedAgents.join(", ")}` : ""}${plugin.target ? ` · ${plugin.target}` : ""}`}
           </span>
           {plugin.configuration.state === "available" &&
             plugin.configuration.completeness === "incomplete" && (
@@ -232,6 +266,59 @@ function InstalledPluginRow({
               {t("settings.plugins.invalidDeclaration")}
             </Badge>
           )}
+          {isHook && (
+            <>
+              <span className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge
+                  variant={
+                    report?.outcome.state === "failed"
+                      ? "destructive"
+                      : "secondary"
+                  }
+                >
+                  {report === undefined
+                    ? // No result is the absence of knowledge, not a failure: the session has not
+                      // run anything for this package, which is also the state a pack member and a
+                      // never-authorized install start in (D8).
+                      t("settings.plugins.hook.notInitialized")
+                    : report.outcome.state === "succeeded"
+                      ? t("settings.plugins.hook.initialized")
+                      : t("settings.plugins.hook.initializeFailed")}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    initialize.mutate(undefined, { onError: failInitialize })
+                  }
+                >
+                  {initialize.isPending ? (
+                    <IconLoader2 className="animate-spin" />
+                  ) : (
+                    <IconSettingsBolt />
+                  )}
+                  {t("settings.plugins.hook.initialize")}
+                </Button>
+              </span>
+              {report?.outcome.state === "succeeded" && (
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                  {t("settings.plugins.hook.restartHint")}
+                </span>
+              )}
+              {report?.outcome.state === "failed" && (
+                // The command's own explanation is the actionable part of a failure, so it is
+                // shown rather than reduced to a status the user cannot act on (D8).
+                <span className="mt-0.5 block max-w-2xl whitespace-pre-wrap text-[11px] text-destructive/90">
+                  {report.outcome.reason}
+                  {report.output.length > 0 ? ` ${report.output}` : ""}
+                  {report.outputTruncated
+                    ? ` ${t("settings.plugins.hook.outputTruncated")}`
+                    : ""}
+                </span>
+              )}
+            </>
+          )}
         </span>
 
         {hasUpdate && (
@@ -240,7 +327,7 @@ function InstalledPluginRow({
             size="sm"
             disabled={busy}
             className={update.isPending ? "disabled:opacity-100" : undefined}
-            onClick={() => update.mutate({}, { onError: failUpdate })}
+            onClick={startUpdate}
           >
             {update.isPending ? (
               <PluginDownloadProgress
@@ -327,6 +414,7 @@ function InstalledPluginRow({
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -343,10 +431,16 @@ function InstalledPluginRow({
               variant="destructive"
               disabled={uninstalling}
               onClick={() =>
-                mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
-                  onError: failUninstall,
-                  onSuccess: () => setUninstallOpen(false),
-                })
+                mutations.uninstall.mutate(
+                  {
+                    dataDisposition: deleteData ? "delete" : "retain",
+                    hookExecutionAcknowledged: isHook,
+                  },
+                  {
+                    onError: failUninstall,
+                    onSuccess: () => setUninstallOpen(false),
+                  },
+                )
               }
             >
               {t("settings.plugins.uninstall")}
@@ -354,6 +448,16 @@ function InstalledPluginRow({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {isHook && (
+        <HookExecutionConfirm
+          name={plugin.displayName}
+          action="update"
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          onConfirm={confirmUpdate}
+          busy={update.isPending}
+        />
+      )}
     </>
   );
 }

@@ -15,8 +15,8 @@ pub use declaration::{
 };
 pub use filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
 pub use hook::{
-    CompileHookConfigurationError, CompiledHookConfiguration, HookCommand, HookDescriptor,
-    HookProtocol, compile_hook_configuration_from_bytes,
+    CompileHookConfigurationError, CompiledHookConfiguration, HookDescriptor, HookLifecycle,
+    HookLifecycleCommand, compile_hook_configuration_from_bytes,
 };
 pub use mcp::{
     CompileConfigurationFileError, CompileMcpConfigurationError, CompiledConfigurationFile,

@@ -9,6 +9,20 @@ import {
 import { refreshPluginAgent } from "../data/plugin-lifecycle";
 import { invalidatePluginQueries } from "../data/plugins";
 
+/** What one removal request carries beyond the plugin it names. */
+interface UninstallPluginVariables {
+  /** Whether the package's own data directory is removed with the package. */
+  dataDisposition: PluginDataDisposition;
+  /**
+   * Declares that the user authorized running the package's Hook `deinit` command.
+   *
+   * Unlike the install and update acknowledgements this one is part of a confirmation the user
+   * was going to see anyway, so the dialogs that disclose what removal runs can declare it while
+   * every other caller leaves the package's program untouched.
+   */
+  hookExecutionAcknowledged?: boolean;
+}
+
 /** Provides lifecycle mutations for one installed plugin and invalidates the plugin queries on settle. */
 export function usePluginMutations(pluginId: string, agentRef?: string) {
   const client = useContractsClient();
@@ -42,10 +56,14 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
     },
   });
   const uninstall = useMutation({
-    mutationFn: (dataDisposition?: PluginDataDisposition) =>
+    mutationFn: ({
+      dataDisposition,
+      hookExecutionAcknowledged = false,
+    }: UninstallPluginVariables) =>
       client.plugin.uninstall({
         pluginId,
-        dataDisposition: dataDisposition ?? "delete",
+        dataDisposition,
+        hookExecutionAcknowledged,
       }),
     // Unlike the other lifecycle endpoints, uninstall returns only the plugin
     // id. Callers that still own the installed snapshot provide its package

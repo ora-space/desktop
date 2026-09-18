@@ -33,6 +33,11 @@ import { MarkdownDocument } from "../chat/markdown-message";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { PluginLogo } from "./plugin-logo";
 import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import {
+  HookExecutionConfirm,
+  HookRemovalDisclosure,
+  type HookExecutionAction,
+} from "./hook-execution-confirm";
 
 /** The marketplace detail page: breadcrumb back navigation plus the listing's rendered README. */
 export function PluginReadmeView({
@@ -120,8 +125,11 @@ function PluginDetailAction({
   );
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const [confirmAction, setConfirmAction] =
+    useState<HookExecutionAction | null>(null);
   const uninstalling = mutations.uninstall.isPending;
   const incompatible = plugin.compatibility === "incompatible";
+  const isHook = plugin.kind === "hook";
   const hasUpdate =
     installed !== undefined && plugin.version !== installed.version;
 
@@ -136,6 +144,29 @@ function PluginDetailAction({
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
+  };
+  /** Asks for the Hook execution disclosure before the one action that would run a program. */
+  const start = (action: HookExecutionAction) => {
+    if (isHook) {
+      setConfirmAction(action);
+      return;
+    }
+    if (action === "install") {
+      install.mutate({}, { onError: failInstall, onSuccess: succeedInstall });
+      return;
+    }
+    update.mutate({}, { onError: failUpdate });
+  };
+  const confirm = (action: HookExecutionAction) => {
+    setConfirmAction(null);
+    if (action === "install") {
+      install.mutate(
+        { hookExecutionAcknowledged: true },
+        { onError: failInstall, onSuccess: succeedInstall },
+      );
+      return;
+    }
+    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
   };
 
   if (install.isPending) {
@@ -164,31 +195,47 @@ function PluginDetailAction({
   }
   if (installed === undefined) {
     return (
-      <Button
-        variant="outline"
-        className="shrink-0"
-        disabled={incompatible}
-        onClick={() =>
-          install.mutate(
-            {},
-            { onError: failInstall, onSuccess: succeedInstall },
-          )
-        }
-      >
-        <IconDownload />
-        {t("settings.plugins.install")}
-      </Button>
+      <>
+        <Button
+          variant="outline"
+          className="shrink-0"
+          disabled={incompatible}
+          onClick={() => start("install")}
+        >
+          <IconDownload />
+          {t("settings.plugins.install")}
+        </Button>
+        {isHook && (
+          <HookExecutionConfirm
+            name={plugin.title || plugin.name}
+            action="install"
+            open={confirmAction !== null}
+            onOpenChange={(open) => setConfirmAction(open ? "install" : null)}
+            onConfirm={() => confirm("install")}
+            busy={install.isPending}
+          />
+        )}
+      </>
     );
   }
   if (hasUpdate) {
     return (
-      <Button
-        className="shrink-0"
-        onClick={() => update.mutate({}, { onError: failUpdate })}
-      >
-        <IconArrowBigUpLines />
-        {t("settings.plugins.update")}
-      </Button>
+      <>
+        <Button className="shrink-0" onClick={() => start("update")}>
+          <IconArrowBigUpLines />
+          {t("settings.plugins.update")}
+        </Button>
+        {isHook && (
+          <HookExecutionConfirm
+            name={plugin.title || plugin.name}
+            action="update"
+            open={confirmAction !== null}
+            onOpenChange={(open) => setConfirmAction(open ? "update" : null)}
+            onConfirm={() => confirm("update")}
+            busy={update.isPending}
+          />
+        )}
+      </>
     );
   }
 
@@ -229,6 +276,7 @@ function PluginDetailAction({
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -245,10 +293,16 @@ function PluginDetailAction({
               variant="destructive"
               disabled={uninstalling}
               onClick={() =>
-                mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
-                  onError: failUninstall,
-                  onSuccess: () => setUninstallOpen(false),
-                })
+                mutations.uninstall.mutate(
+                  {
+                    dataDisposition: deleteData ? "delete" : "retain",
+                    hookExecutionAcknowledged: isHook,
+                  },
+                  {
+                    onError: failUninstall,
+                    onSuccess: () => setUninstallOpen(false),
+                  },
+                )
               }
             >
               {t("settings.plugins.uninstall")}

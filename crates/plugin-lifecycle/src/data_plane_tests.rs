@@ -611,6 +611,9 @@ async fn surfaces_close_before_the_runtime_stops() {
         .uninstall_plugin(UninstallPluginRequest {
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Delete,
+            // This crate removes packages; it never runs a package program, so nothing here can
+            // be authorized by the flag.
+            hook_execution_acknowledged: false,
         })
         .await
         .expect("uninstall plugin");

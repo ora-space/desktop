@@ -1,17 +1,22 @@
-//! Covers Hook install outcomes after the host dropped plugin enablement.
+//! Covers Hook and pack install outcomes after the host dropped plugin enablement.
 
 use super::Plugins;
 use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
+use crate::plugin::hook_lifecycle::{
+    HookCommandError, HookCommandExecution, HookCommandFinished, HookCommandOutput,
+    HookCommandRunner, HookCommandSpec,
+};
 use crate::plugin::pack_reconcile::PackMemberReconciliation;
 use crate::settings::Settings;
 use ora_contracts::{
-    ImportPluginRequest, InstallOutcome, InstallPluginRequest, ListInstalledPluginsRequest,
-    ListPackInstallationsRequest, PackInstallFailure, PackInstalledMember,
-    PackMemberInstallOutcome, PackUninstallPlanRequest, PluginDataDisposition, PublicError,
-    UninstallPluginRequest, UpdatePluginRequest,
+    HookLifecycleOutcome, HookLifecyclePhase, ImportPluginRequest, InitializeHookRequest,
+    InstallOutcome, InstallPluginRequest, ListHookLifecycleReportsRequest,
+    ListInstalledPluginsRequest, ListPackInstallationsRequest, PackInstallFailure,
+    PackUninstallPlanRequest, PluginDataDisposition, PublicError, UninstallPluginRequest,
+    UpdatePluginRequest,
 };
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqlitePackInstallationRepository,
@@ -23,6 +28,7 @@ use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_plugin_registry::RegistrySource;
 use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;
+use std::collections::VecDeque;
 use std::fs;
 use std::fs::File;
 use std::io::Write as _;
@@ -30,7 +36,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(windows)]
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -80,13 +86,19 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
     Plugins::new(host, runtime)
 }
 
-/// Writes a processless Hook `.orax` whose command alias is `rtk` and whose artifact matches
-/// `host`.
-fn write_hook_orax(path: &Path, identifier: &str, host: &str) {
+/// Writes a Hook `.orax` that ships `assets/rtk.exe` and declares both lifecycle commands.
+///
+/// A local import refuses a Hook package that declares no artifact target, so `target` is that
+/// path's requirement; a marketplace release is universal and the package carries none. Returns
+/// the artifact's lowercase hex SHA-256 so a listing can declare it.
+fn write_hook_orax(path: &Path, identifier: &str, target: Option<&str>) -> String {
+    let artifact = target
+        .map(|target| format!("\n[artifact]\ntarget = \"{target}\"\n"))
+        .unwrap_or_default();
     let manifest = format!(
-        "resolver = 1\nidentifier = \"{identifier}\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"Hook command rewrite\"\n\n[artifact]\ntarget = \"{host}\"\n"
+        "resolver = 1\nidentifier = \"{identifier}\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"Hook command rewrite\"\n{artifact}"
     );
-    let config = br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#;
+    let config = br#"{"schemaVersion":1,"hook":{"executable":"assets/rtk.exe","lifecycle":{"init":{"args":["--init"]},"deinit":{"args":["--deinit"]}}}}"#;
     let mut writer = ZipWriter::new(File::create(path).unwrap());
     let options = SimpleFileOptions::default();
     writer.start_file("orax.toml", options).unwrap();
@@ -96,6 +108,14 @@ fn write_hook_orax(path: &Path, identifier: &str, host: &str) {
     writer.start_file("assets/rtk.exe", options).unwrap();
     writer.write_all(b"MZdummy").unwrap();
     writer.finish().unwrap();
+    ora_utils::hash::sha256_file(path).expect("hash the Hook artifact")
+}
+
+/// Builds one Hook listing with a universal release, so the package installs on any host.
+fn hook_listing(identifier: &str, sha256: &str) -> String {
+    format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\ntitle = \"RTK\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"Hook command rewrite\"\nurl = \"https://example.com/{identifier}.orax\"\nsha256 = \"{sha256}\"\n"
+    )
 }
 
 /// Marketplace README reads resolve from the source checkout beside the listing's manifest.
@@ -520,14 +540,8 @@ async fn pack_install_installs_every_applicable_member_in_declaration_order() {
         outcome,
         InstallOutcome::PackInstalled {
             members: vec![
-                PackInstalledMember {
-                    plugin_id: format!("official/{HIDDEN_MEMBER}"),
-                    outcome: PackMemberInstallOutcome::Installed,
-                },
-                PackInstalledMember {
-                    plugin_id: format!("official/{VISIBLE_MEMBER}"),
-                    outcome: PackMemberInstallOutcome::Installed,
-                },
+                format!("official/{HIDDEN_MEMBER}"),
+                format!("official/{VISIBLE_MEMBER}"),
             ],
             skipped: Vec::new(),
             failed: None,
@@ -926,13 +940,7 @@ async fn pack_install_skips_an_already_installed_member() {
             skipped,
             failed,
         } => {
-            assert_eq!(
-                members
-                    .iter()
-                    .map(|member| member.plugin_id.as_str())
-                    .collect::<Vec<_>>(),
-                vec![format!("official/{HIDDEN_MEMBER}")],
-            );
+            assert_eq!(members, vec![format!("official/{HIDDEN_MEMBER}")]);
             assert_eq!(
                 skipped,
                 vec![format!("official/{VISIBLE_MEMBER}")],
@@ -1103,7 +1111,7 @@ async fn pack_install_applies_an_agent_gated_member_whose_agent_is_installed() {
             failed,
         } => {
             assert_eq!(members.len(), 1);
-            assert_eq!(members[0].plugin_id, format!("official/{VISIBLE_MEMBER}"));
+            assert_eq!(members[0], format!("official/{VISIBLE_MEMBER}"));
             assert!(skipped.is_empty());
             assert_eq!(failed, None);
         }
@@ -1241,15 +1249,13 @@ async fn pack_install_stops_at_a_failing_member_and_rolls_back_created_members()
     assert_eq!(ledger.installed(), &[]);
 }
 
-/// Two Hook packages that share a command alias both stay installed; the second import reports
-/// the colliding identity instead of claiming the new package was disabled.
+/// A locally imported Hook package installs as an ordinary plugin, and the installed entry reports
+/// the executable the host would run together with the target it was built for.
 #[test]
-fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disabling() {
+fn importing_a_hook_package_reports_its_executable_and_target() {
     with_trace_logging(|| {
         let Some(host) = ora_plugin_registry::current_host_target() else {
-            eprintln!(
-                "skipping Hook command-conflict import: compiled host is not a plugin target"
-            );
+            eprintln!("skipping Hook import: compiled host is not a plugin target");
             return;
         };
         tokio::runtime::Builder::new_current_thread()
@@ -1260,47 +1266,40 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                 let data_dir = TempDir::new().expect("data dir");
                 let pool = test_pool(data_dir.path());
                 let api = test_plugin_api(data_dir.path(), &pool);
-                let first = data_dir.path().join("first.orax");
-                let second = data_dir.path().join("second.orax");
-                write_hook_orax(&first, "rtk-ai.rtk", host.as_str());
-                write_hook_orax(&second, "other.rtk", host.as_str());
+                let package = data_dir.path().join("rtk.orax");
+                write_hook_orax(&package, "rtk-ai.rtk", Some(host.as_str()));
 
-                let first_response = api
+                let response = api
                     .import(ImportPluginRequest {
-                        path: first.to_string_lossy().into_owned(),
+                        hook_execution_acknowledged: false,
+                        path: package.to_string_lossy().into_owned(),
                     })
                     .await
-                    .expect("import first Hook");
+                    .expect("import Hook package");
                 assert_eq!(
-                    first_response.outcome,
-                    InstallOutcome::Installed,
-                    "the first Hook must be available without a conflict"
-                );
-
-                let second_response = api
-                    .import(ImportPluginRequest {
-                        path: second.to_string_lossy().into_owned(),
-                    })
-                    .await
-                    .expect("import second Hook");
-                assert_eq!(
-                    second_response.outcome,
-                    InstallOutcome::InstalledWithCommandConflict {
-                        conflict_plugin_id: "local/rtk-ai.rtk".to_string(),
-                    }
+                    response,
+                    ora_contracts::ImportPluginResponse {
+                        plugin_id: "local/rtk-ai.rtk".to_string(),
+                        outcome: InstallOutcome::Installed,
+                    },
+                    "a Hook import is an ordinary install with no conflict outcome"
                 );
 
                 let listed = api
                     .list_installed(ListInstalledPluginsRequest {})
                     .expect("installed snapshot");
-                let ids: Vec<&str> = listed
+                let installed = listed
                     .plugins
                     .iter()
-                    .map(|plugin| plugin.id.as_str())
-                    .collect();
-                assert!(
-                    ids.contains(&"local/rtk-ai.rtk") && ids.contains(&"local/other.rtk"),
-                    "both Hooks must remain installed and available, got {ids:?}"
+                    .find(|plugin| plugin.id == "local/rtk-ai.rtk")
+                    .expect("the imported Hook is listed");
+                assert_eq!(
+                    installed.contribution,
+                    ora_contracts::InstalledPluginContribution::Hook {
+                        executable: "assets/rtk.exe".to_string(),
+                        supported_agents: Vec::new(),
+                        target: Some(host.as_str().to_string()),
+                    }
                 );
             });
     });
@@ -1491,6 +1490,7 @@ async fn pack_uninstall_removes_every_managed_member_and_clears_the_journal() {
 
     let response = plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -1536,6 +1536,7 @@ async fn pack_uninstall_preserves_a_pre_existing_member() {
 
     plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -1579,6 +1580,7 @@ async fn pack_uninstall_preserves_an_independently_upgraded_member() {
 
     plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -1631,6 +1633,7 @@ async fn pack_uninstall_completes_when_a_managed_member_is_already_missing() {
 
     plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -1733,6 +1736,7 @@ async fn pack_uninstall_removes_only_the_eligible_member_in_a_mixed_pack() {
 
     plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -2101,10 +2105,7 @@ async fn a_failed_rollback_keeps_residual_members_and_journals_them() {
             skipped: _,
         } => {
             assert_eq!(
-                members
-                    .iter()
-                    .map(|member| member.plugin_id.as_str())
-                    .collect::<Vec<_>>(),
+                members,
                 vec![format!("official/{HIDDEN_MEMBER}")],
                 "the residual member is reported as installed"
             );
@@ -2354,6 +2355,7 @@ async fn partial_rollback_residual_is_reconciled_after_a_restart() {
     for attempt in 0..5 {
         match restarted_plugins
             .uninstall(UninstallPluginRequest {
+                hook_execution_acknowledged: false,
                 plugin_id: PACK_ID.to_string(),
                 data_disposition: PluginDataDisposition::Delete,
             })
@@ -2575,6 +2577,7 @@ async fn lifecycle_path_a_install_reconcile_upgrade_uninstall() {
     // removed, and the journal is cleared.
     plugins
         .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -2887,6 +2890,7 @@ async fn marketplace_member_version_bump_updates_through_production_flow() {
     host.use_local_marketplace_release(MEMBER_A_ID, artifact_v1);
     plugins
         .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: MEMBER_A_ID.to_owned(),
         })
         .await
@@ -2930,6 +2934,7 @@ async fn marketplace_member_version_bump_updates_through_production_flow() {
     host.use_local_marketplace_release(MEMBER_A_ID, artifact_v2);
     plugins
         .update(UpdatePluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: MEMBER_A_ID.to_owned(),
         })
         .await
@@ -3050,6 +3055,7 @@ async fn pack_manifest_content_update_adds_new_resolvable_member() {
     host.use_local_marketplace_release("official/ora-space.python-mcp", mcp_artifact);
     let installed = plugins
         .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_owned(),
         })
         .await
@@ -3200,6 +3206,7 @@ async fn sha256_mismatch_aborts_install_without_phantom_ownership() {
     host.use_local_marketplace_release(MEMBER_ID, artifact);
     let installed = plugins
         .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_owned(),
         })
         .await
@@ -3292,6 +3299,7 @@ async fn missing_artifact_aborts_install_without_creating_directory() {
     host.use_local_marketplace_release(MISSING_MEMBER_ID, missing_artifact);
     let installed = plugins
         .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PACK_ID.to_owned(),
         })
         .await
@@ -3340,5 +3348,460 @@ async fn missing_artifact_aborts_install_without_creating_directory() {
             .expect("load the failed member relation"),
         None,
         "the failed member gains no phantom pack_installation_member relation"
+    );
+}
+
+// ---- Hook lifecycle execution: authorization, initialization, and removal ----
+
+const HOOK_MEMBER: &str = "rtk-ai.rtk";
+const HOOK_ID: &str = "official/rtk-ai.rtk";
+
+/// One lifecycle command the host resolved, with what it would have run it against.
+#[derive(Debug, PartialEq, Eq)]
+struct HookCall {
+    program: PathBuf,
+    args: Vec<String>,
+    working_directory: PathBuf,
+    /// Whether the package's executable still existed when the command was asked to run: removing
+    /// a package must execute its `deinit` before the file the command needs is gone.
+    executable_present: bool,
+}
+
+/// Answers each Hook lifecycle command with the next scripted exit code and records the calls.
+///
+/// A lifecycle command is the package's own program, so a test that drives the real install,
+/// initialization, and uninstall operations substitutes only the process boundary: what is under
+/// test is which command the host decided to run, when, and on whose authorization.
+struct ScriptedHookRunner {
+    exit_codes: Mutex<VecDeque<i32>>,
+    calls: Mutex<Vec<HookCall>>,
+}
+
+impl ScriptedHookRunner {
+    /// Builds a runner that answers the commands with `exit_codes`, in order.
+    fn new(exit_codes: impl IntoIterator<Item = i32>) -> Self {
+        Self {
+            exit_codes: Mutex::new(exit_codes.into_iter().collect()),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Returns the calls recorded so far, in order.
+    fn calls(&self) -> Vec<HookCall> {
+        std::mem::take(&mut *self.calls.lock().expect("calls lock"))
+    }
+}
+
+impl HookCommandRunner for Arc<ScriptedHookRunner> {
+    /// Records the resolved command and answers with the next scripted exit code.
+    async fn run(&self, spec: &HookCommandSpec) -> Result<HookCommandExecution, HookCommandError> {
+        let exit_code = self
+            .exit_codes
+            .lock()
+            .expect("exit codes lock")
+            .pop_front()
+            .expect("a scripted exit code for every lifecycle command");
+        self.calls.lock().expect("calls lock").push(HookCall {
+            executable_present: spec.program.is_file(),
+            program: spec.program.clone(),
+            args: spec.args.clone(),
+            working_directory: spec.working_directory.clone(),
+        });
+        Ok(HookCommandExecution {
+            finished: HookCommandFinished::Exited {
+                code: Some(exit_code),
+            },
+            stderr: HookCommandOutput::default(),
+        })
+    }
+}
+
+/// Returns the host triple a Hook package has to declare, or `None` on an unsupported host.
+///
+/// A Hook package carries a native executable and self-declares the host triple it was built for,
+/// so a case that installs one needs a host the plugin registry supports; nothing else in these
+/// cases depends on the host.
+fn hook_host_target() -> Option<ora_plugin_manifest::HookTarget> {
+    let target = ora_plugin_registry::current_host_target();
+    if target.is_none() {
+        eprintln!("skipping Hook install case: compiled host is not a plugin target");
+    }
+    target
+}
+
+/// Writes one Hook archive for `target` under the data directory and returns it with its digest.
+fn write_hook_artifact(data_dir: &Path, identifier: &str, target: &str) -> (PathBuf, String) {
+    let artifact = data_dir
+        .join("artifacts")
+        .join(format!("{identifier}.orax"));
+    fs::create_dir_all(artifact.parent().expect("artifacts directory")).expect("create artifacts");
+    let sha256 = write_hook_orax(&artifact, identifier, Some(target));
+    (artifact, sha256)
+}
+
+/// Stages one Hook release in the marketplace checkout and returns its artifact path.
+///
+/// The listing declares a universal release — a URL and a digest, no `[[targets]]` — so resolution
+/// never enters the target-selecting path; the archive itself still self-declares the host triple
+/// an installed Hook must carry.
+fn stage_hook_release(data_dir: &Path, identifier: &str, target: &str) -> PathBuf {
+    let (artifact, sha256) = write_hook_artifact(data_dir, identifier, target);
+    stage_marketplace_checkout(data_dir, &[(identifier, hook_listing(identifier, &sha256))]);
+    artifact
+}
+
+/// Installs one staged Hook release by its canonical id.
+async fn install_hook(
+    plugins: &Plugins,
+    host: &PluginApi,
+    artifact: PathBuf,
+    acknowledged: bool,
+) -> ora_contracts::InstallPluginResponse {
+    host.use_local_marketplace_release(HOOK_ID, artifact);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: acknowledged,
+            plugin_id: HOOK_ID.to_owned(),
+        })
+        .await
+        .expect("install the Hook")
+}
+
+/// Returns the canonical path the host resolves for one installed member's declared executable.
+fn installed_executable(root: &Path, member: &str, version: &str) -> PathBuf {
+    root.join("plugins")
+        .join("installed")
+        .join("official")
+        .join(member)
+        .join(version)
+        .join("assets")
+        .join("rtk.exe")
+        .canonicalize()
+        .expect("canonical installed executable")
+}
+
+/// Returns this session's Hook lifecycle reports, in identifier order.
+fn hook_reports(plugins: &Plugins) -> Vec<ora_contracts::HookLifecycleReport> {
+    plugins
+        .list_hook_lifecycle_reports(ListHookLifecycleReportsRequest {})
+        .expect("read this session's Hook lifecycle reports")
+        .reports
+}
+
+/// An install that declares no authorization lands the package and runs nothing: laying a package
+/// down and running a program it ships are separate authorizations.
+#[tokio::test]
+async fn installing_a_hook_without_authorization_runs_nothing() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+
+    let installed = install_hook(&plugins, &host, artifact, /*acknowledged*/ false).await;
+
+    assert_eq!(
+        installed,
+        ora_contracts::InstallPluginResponse {
+            plugin_id: HOOK_ID.to_owned(),
+            outcome: InstallOutcome::Installed,
+        }
+    );
+    assert!(
+        member_installed(data_dir.path(), HOOK_MEMBER, "0.1.0"),
+        "the package lands as an ordinary install"
+    );
+    assert_eq!(
+        runner.calls(),
+        Vec::new(),
+        "the package's own program never runs without the authorization that names it"
+    );
+    assert_eq!(
+        hook_reports(&plugins),
+        Vec::new(),
+        "nothing ran, so there is no lifecycle result to report"
+    );
+}
+
+/// An authorized install runs the declared `init` exactly once and reports the result, which is
+/// what the settings surface shows next to the Hook.
+#[tokio::test]
+async fn an_authorized_install_runs_init_once() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+
+    install_hook(&plugins, &host, artifact, /*acknowledged*/ true).await;
+
+    assert_eq!(
+        runner.calls(),
+        vec![HookCall {
+            program: installed_executable(data_dir.path(), HOOK_MEMBER, "0.1.0"),
+            args: vec!["--init".to_owned()],
+            working_directory: data_dir.path().to_path_buf(),
+            executable_present: true,
+        }],
+        "the install runs `init` once from the installed package"
+    );
+}
+
+/// A failed `init` does not undo the install: the package stays installed and visible, and the
+/// explicit initialization the user asks for afterwards replaces the failed result.
+#[tokio::test]
+async fn a_failed_init_keeps_the_hook_installed_and_retryable() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([3, 0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+
+    install_hook(&plugins, &host, artifact, /*acknowledged*/ true).await;
+
+    let listed = plugins
+        .list_installed(ListInstalledPluginsRequest {})
+        .expect("installed snapshot");
+    assert!(
+        listed.plugins.iter().any(|plugin| plugin.id == HOOK_ID),
+        "a failed lifecycle command keeps the package installed"
+    );
+    let failed = hook_reports(&plugins);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].plugin_id, HOOK_ID);
+    assert_eq!(failed[0].phase, HookLifecyclePhase::Init);
+    assert!(
+        matches!(
+            failed[0].outcome,
+            HookLifecycleOutcome::Failed {
+                exit_code: Some(3),
+                ..
+            }
+        ),
+        "the failure names the exit code the tool reported, got {:?}",
+        failed[0].outcome
+    );
+
+    let retried = plugins
+        .initialize_hook(InitializeHookRequest {
+            plugin_id: HOOK_ID.to_owned(),
+            hook_execution_acknowledged: true,
+        })
+        .await
+        .expect("retry the initialization");
+
+    assert!(
+        matches!(
+            retried.report.outcome,
+            HookLifecycleOutcome::Succeeded { .. }
+        ),
+        "the retry runs the same command again, got {:?}",
+        retried.report.outcome
+    );
+    assert_eq!(
+        hook_reports(&plugins),
+        vec![retried.report],
+        "the retry replaces the failed result instead of accumulating history"
+    );
+}
+
+/// The explicit initialization is gated by the same authorization as the automatic one, so a
+/// request that declares none is refused rather than treated as consent.
+#[tokio::test]
+async fn initializing_a_hook_without_authorization_is_refused() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+    install_hook(&plugins, &host, artifact, /*acknowledged*/ true).await;
+
+    let error = plugins
+        .initialize_hook(InitializeHookRequest {
+            plugin_id: HOOK_ID.to_owned(),
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect_err("an unacknowledged initialization is refused");
+
+    assert!(matches!(
+        error.public_error(),
+        PublicError::InvalidRequest(_)
+    ));
+    assert_eq!(
+        runner.calls().len(),
+        1,
+        "only the authorized install ran a command"
+    );
+}
+
+/// An authorized uninstall runs the declared `deinit` while the package is still on disk, because
+/// a lifecycle command is the package's own program and cannot run once it has been removed.
+#[tokio::test]
+async fn uninstall_runs_deinit_before_the_package_is_removed() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([0, 0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+    install_hook(&plugins, &host, artifact, /*acknowledged*/ true).await;
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: true,
+            plugin_id: HOOK_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the Hook");
+
+    let calls = runner.calls();
+    assert_eq!(
+        calls.len(),
+        2,
+        "the install ran `init` and the uninstall ran `deinit`"
+    );
+    assert_eq!(calls[1].args, vec!["--deinit".to_owned()]);
+    assert!(
+        calls[1].executable_present,
+        "`deinit` runs while the package's executable is still in place"
+    );
+    assert!(
+        !member_installed(data_dir.path(), HOOK_MEMBER, "0.1.0"),
+        "the package is removed once its removal command has run"
+    );
+}
+
+/// An uninstall that declares no authorization removes the package without running its program.
+#[tokio::test]
+async fn uninstall_without_authorization_runs_nothing() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let artifact = stage_hook_release(data_dir.path(), HOOK_MEMBER, target.as_str());
+    let runner = Arc::new(ScriptedHookRunner::new([0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+    install_hook(&plugins, &host, artifact, /*acknowledged*/ true).await;
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: HOOK_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the Hook");
+
+    assert_eq!(
+        runner.calls().len(),
+        1,
+        "nothing runs on removal beyond the install's own `init`"
+    );
+    assert!(
+        !member_installed(data_dir.path(), HOOK_MEMBER, "0.1.0"),
+        "the package is removed either way"
+    );
+}
+
+/// A pack install lands its Hook member without executing it, and that member is initialized only
+/// once the user authorizes the member itself: the pack's authorization covers the pack, not the
+/// programs its members ship.
+#[tokio::test]
+async fn a_pack_install_does_not_run_a_hook_member() {
+    let _trace = trace_guard();
+    let Some(target) = hook_host_target() else {
+        return;
+    };
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let member_id = format!("official/{HOOK_MEMBER}");
+    let (member_artifact, sha256) =
+        write_hook_artifact(data_dir.path(), HOOK_MEMBER, target.as_str());
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[
+            (HOOK_MEMBER, hook_listing(HOOK_MEMBER, &sha256)),
+            (
+                PACK_IDENTIFIER,
+                pack_listing(PACK_IDENTIFIER, &member_table(HOOK_MEMBER)),
+            ),
+        ],
+    );
+    let runner = Arc::new(ScriptedHookRunner::new([0]));
+    host.install_hook_command_runner(Arc::clone(&runner));
+    host.use_local_marketplace_release(&member_id, member_artifact);
+
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: true,
+            plugin_id: PACK_ID.to_owned(),
+        })
+        .await
+        .expect("install the pack");
+
+    assert_eq!(
+        installed.outcome,
+        InstallOutcome::PackInstalled {
+            members: vec![member_id.clone()],
+            skipped: Vec::new(),
+            failed: None,
+        },
+        "the pack lands its Hook member like any other member"
+    );
+    assert!(member_installed(data_dir.path(), HOOK_MEMBER, "0.1.0"));
+    assert_eq!(
+        runner.calls(),
+        Vec::new(),
+        "an authorized pack install still runs nothing its members ship"
+    );
+    assert_eq!(
+        hook_reports(&plugins),
+        Vec::new(),
+        "an unexecuted member reports no lifecycle result, which is how the surface shows it as not initialized"
+    );
+
+    let initialized = plugins
+        .initialize_hook(InitializeHookRequest {
+            plugin_id: member_id,
+            hook_execution_acknowledged: true,
+        })
+        .await
+        .expect("initialize the member the user authorized");
+
+    assert_eq!(initialized.report.phase, HookLifecyclePhase::Init);
+    assert_eq!(
+        runner.calls().len(),
+        1,
+        "the member's own authorization is what runs its program"
     );
 }

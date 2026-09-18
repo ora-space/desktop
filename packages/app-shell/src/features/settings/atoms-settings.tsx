@@ -420,17 +420,20 @@ function DeletePluginSkillsDialog({
             variant="destructive"
             disabled={uninstalling}
             onClick={() =>
-              mutations.uninstall.mutate("delete", {
-                onError: (cause) =>
-                  showContractError(
-                    cause,
-                    t("settings.plugins.uninstallFailed"),
-                  ),
-                onSuccess: () => {
-                  void invalidateSkills(queryClient);
-                  onOpenChange(false);
+              mutations.uninstall.mutate(
+                { dataDisposition: "delete" },
+                {
+                  onError: (cause) =>
+                    showContractError(
+                      cause,
+                      t("settings.plugins.uninstallFailed"),
+                    ),
+                  onSuccess: () => {
+                    void invalidateSkills(queryClient);
+                    onOpenChange(false);
+                  },
                 },
-              })
+              )
             }
           >
             {uninstalling ? (

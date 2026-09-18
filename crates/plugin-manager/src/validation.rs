@@ -99,16 +99,20 @@ pub enum PluginConfigurationDeclarationValidity {
 }
 
 /// Reports a semantic manifest constraint after structural deserialization succeeds.
+///
+/// Public because discovery-time validation is not the only caller: the Hook lifecycle executor
+/// re-runs containment against an installed package immediately before every spawn and reports the
+/// same field and message when the package no longer satisfies what discovery accepted.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("{message}")]
-pub(crate) struct ManifestValidationError {
+pub struct ManifestValidationError {
     field_path: String,
     message: String,
 }
 
 impl ManifestValidationError {
     /// Returns the stable manifest field associated with the failed constraint.
-    pub(crate) fn field_path(&self) -> &str {
+    pub fn field_path(&self) -> &str {
         &self.field_path
     }
 }

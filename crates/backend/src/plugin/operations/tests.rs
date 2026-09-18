@@ -39,6 +39,7 @@ async fn tavily_mcp_local_import_and_configuration() {
     backend
         .plugins()
         .import(ImportPluginRequest {
+            hook_execution_acknowledged: false,
             path: orax_archive.to_string_lossy().into_owned(),
         })
         .await
@@ -210,6 +211,7 @@ async fn tavily_mcp_marketplace_install_and_configuration() {
     backend
         .plugins()
         .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: PLUGIN_ID.to_string(),
         })
         .await

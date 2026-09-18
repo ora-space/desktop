@@ -159,14 +159,22 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         },
         PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
         PluginContribution::Mcp(_) => InstalledPluginContribution::Mcp,
+        // Unlike the other kinds, a Hook's executable path is part of what the user agreed to when
+        // they accepted the execution disclosure, so it is projected rather than kept host-side.
         PluginContribution::Hook(descriptor) => InstalledPluginContribution::Hook {
-            protocol: descriptor.configuration.hook.protocol.as_str().to_string(),
-            command: descriptor.configuration.hook.command.as_str().to_string(),
+            executable: descriptor.configuration.hook.executable.as_str().to_owned(),
+            supported_agents: descriptor
+                .configuration
+                .hook
+                .supported_agents
+                .iter()
+                .map(ora_utils::Slug::as_str)
+                .map(str::to_string)
+                .collect(),
             target: descriptor
                 .artifact_target
                 .as_ref()
                 .map(|target| target.as_str().to_string()),
-            tool_version: descriptor.configuration.hook.tool_version.to_string(),
         },
     };
 

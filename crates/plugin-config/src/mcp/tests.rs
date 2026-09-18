@@ -510,10 +510,8 @@ fn rejects_a_mixed_transport_and_hook_declaration() {
             "command": "assets/server"
         },
         "hook": {
-            "protocol": "rtk-rewrite-v1",
             "executable": "assets/rtk.exe",
-            "command": "rtk",
-            "toolVersion": "0.45.0"
+            "lifecycle": {"init": {"args": ["--init"]}}
         }
     }"#;
     assert_eq!(
@@ -528,10 +526,8 @@ fn compiles_hook_files_through_the_shared_configuration_router() {
     let source = br#"{
             "schemaVersion": 1,
             "hook": {
-                "protocol": "rtk-rewrite-v1",
                 "executable": "assets/rtk.exe",
-                "command": "rtk",
-                "toolVersion": "0.45.0"
+                "lifecycle": {"init": {"args": ["--init"]}}
             }
         }"#;
 

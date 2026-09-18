@@ -98,6 +98,71 @@ export type GetPluginConfigurationResponse = {
 };
 
 /**
+ * Reports how one lifecycle execution ended.
+ *
+ * The two states are a closed enum rather than a success flag plus optional error text so a
+ * caller cannot observe a failure without a reason to show the user.
+ */
+export type HookLifecycleOutcome = {
+  "state": "succeeded";
+  /**
+   * Wall-clock time the command took, so a slow tool is visible without reading logs.
+   */
+  durationMs: number;
+} | {
+  "state": "failed";
+  /**
+   * The process exit code, absent when the command was killed or never started.
+   */
+  exitCode: number | null;
+  /**
+   * Wall-clock time the attempt took, including the timeout that ended it.
+   */
+  durationMs: number;
+  /**
+   * Why the attempt failed, shown to the user so retrying is an informed decision.
+   */
+  reason: string;
+};
+
+/**
+ * Names one lifecycle phase a Hook package declares a command for.
+ */
+export type HookLifecyclePhase = "init" | "deinit";
+
+/**
+ * Describes the most recent lifecycle execution the host performed for one installed package.
+ *
+ * The result is keyed by plugin rather than by phase: an update re-runs `init`, and an uninstall
+ * runs `deinit` immediately before the package disappears, so only the latest execution is ever
+ * meaningful to a reader. A Hook the host has never executed for has no report at all, which is
+ * how a pack-installed member reports "not initialized" without the pack path having to run
+ * anything (D2).
+ */
+export type HookLifecycleReport = {
+  pluginId: string;
+  phase: HookLifecyclePhase;
+  /**
+   * The package-relative executable that ran, so the result stays tied to the disclosure the
+   * user authorized even if a later version of the package ships a different one.
+   */
+  executable: string;
+  outcome: HookLifecycleOutcome;
+  /**
+   * The command's captured `stderr`, bounded by the host's capture limit and trimmed.
+   *
+   * A tool that refuses to install its Hook explains why on its error stream, so the failure
+   * stays actionable in the UI instead of only in the host logs. Empty when the command wrote
+   * nothing or never started.
+   */
+  output: string;
+  /**
+   * Whether `output` was cut at the host's capture limit.
+   */
+  outputTruncated: boolean;
+};
+
+/**
  * Requests importing one local `.orax` release archive into the installed plugins tree.
  */
 export type ImportPluginRequest = {
@@ -105,6 +170,11 @@ export type ImportPluginRequest = {
    * Absolute path to the local `.orax` archive.
    */
   path: string;
+  /**
+   * Declares that the user authorized the Hook lifecycle command this import would run; see
+   * [`InstallPluginRequest::hook_execution_acknowledged`].
+   */
+  hookExecutionAcknowledged: boolean;
 };
 
 /**
@@ -119,22 +189,38 @@ export type ImportPluginResponse = {
 };
 
 /**
+ * Requests the `init` lifecycle command of one installed Hook package.
+ *
+ * This is the retry path for a failed `init` and the only way a pack-installed Hook member is
+ * ever initialized: a pack install lands packages without running anything (D2), so the user
+ * authorizes each member individually afterwards.
+ */
+export type InitializeHookRequest = {
+  pluginId: string;
+  /**
+   * Declares that the user authorized this execution; see
+   * [`InstallPluginRequest::hook_execution_acknowledged`](crate::InstallPluginRequest).
+   */
+  hookExecutionAcknowledged: boolean;
+};
+
+/**
+ * Returns the result of the initialization the caller asked for.
+ */
+export type InitializeHookResponse = { report: HookLifecycleReport };
+
+/**
  * Models the closed set of installation outcomes.
  *
  * The outcome is a closed enum rather than a pair of booleans so a caller can never observe
- * contradictory success flags. Installation always succeeds and the package remains available;
- * a command-alias collision is reported rather than silently sharing a PATH alias or pretending
- * the new package was disabled.
+ * contradictory success flags. Installation always succeeds and the package remains available.
  */
 export type InstallOutcome = { "state": "installed" } | {
-  "state": "installed_with_command_conflict";
-  conflictPluginId: string;
-} | {
   "state": "pack_installed";
   /**
    * Applicable members that were installed by this operation, in declaration order.
    */
-  members: Array<PackInstalledMember>;
+  members: Array<string>;
   /**
    * Applicable members that were already installed (any version) and therefore skipped;
    * their existing versions were left untouched.
@@ -149,7 +235,20 @@ export type InstallOutcome = { "state": "installed" } | {
 /**
  * Requests installation of one marketplace plugin by its registry identifier.
  */
-export type InstallPluginRequest = { pluginId: string };
+export type InstallPluginRequest = {
+  pluginId: string;
+  /**
+   * Declares that the user authorized the Hook lifecycle command this operation would run.
+   *
+   * The flag is the request-side form of the confirmation dialog the user answered. It is a
+   * process gate rather than a security boundary — the host still re-validates the package
+   * before every spawn — and it defaults to "not authorized" so a caller that never learned
+   * about Hook execution cannot silently start a package's program. The install itself is
+   * always authorized: without the declaration the package still lands, its `init` simply does
+   * not run until the user asks for it explicitly.
+   */
+  hookExecutionAcknowledged: boolean;
+};
 
 /**
  * Confirms the identifier installed after download, verification, and extraction complete.
@@ -157,11 +256,9 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = {
   pluginId: string;
   /**
-   * The typed installation outcome. Installation always retains the package. A conflict-free
-   * install reports `installed`; a Hook whose command alias collides with another installed
-   * Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
-   * packages remain available: the host has no enablement state, and uniqueness is deferred
-   * to a future consumer.
+   * The typed installation outcome. Installation always retains the package and never executes
+   * anything the package ships; a Hook's lifecycle commands run only on an explicitly
+   * authorized single-plugin operation.
    */
   outcome: InstallOutcome;
 };
@@ -197,17 +294,21 @@ export type InstalledPlugin =
     | { "kind": "mcp" }
     | {
       "kind": "hook";
-      protocol: string;
-      command: string;
+      /**
+       * The package-relative executable path the host runs. It is always inside the installed
+       * package; the path is shown so the user can see which file the disclosure refers to.
+       */
+      executable: string;
+      /**
+       * Agent identifiers the author claims the tool supports. Display only: the host validates
+       * their shape and never matches them against Agents it knows about.
+       */
+      supportedAgents: Array<string>;
       /**
        * The target triple the installed physical artifact self-declares, absent for a
        * universal release.
        */
       target: string | null;
-      /**
-       * The embedded tool version, independent from the Hook Plugin version.
-       */
-      toolVersion: string;
     }
   )
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
@@ -231,17 +332,21 @@ export type InstalledPluginContribution =
   | { "kind": "mcp" }
   | {
     "kind": "hook";
-    protocol: string;
-    command: string;
+    /**
+     * The package-relative executable path the host runs. It is always inside the installed
+     * package; the path is shown so the user can see which file the disclosure refers to.
+     */
+    executable: string;
+    /**
+     * Agent identifiers the author claims the tool supports. Display only: the host validates
+     * their shape and never matches them against Agents it knows about.
+     */
+    supportedAgents: Array<string>;
     /**
      * The target triple the installed physical artifact self-declares, absent for a
      * universal release.
      */
     target: string | null;
-    /**
-     * The embedded tool version, independent from the Hook Plugin version.
-     */
-    toolVersion: string;
   };
 
 /**
@@ -255,6 +360,22 @@ export type ListAvailablePluginsRequest = Record<symbol, never>;
 export type ListAvailablePluginsResponse = {
   updatedAt: bigint;
   plugins: Array<AvailablePlugin>;
+};
+
+/**
+ * Requests this session's Hook lifecycle results.
+ */
+export type ListHookLifecycleReportsRequest = Record<symbol, never>;
+
+/**
+ * Returns one result per Hook package this session has executed a command for.
+ *
+ * Packages with no result are absent rather than reported as a state of their own: the caller
+ * distinguishes "never ran" from "ran and failed" by presence, which is the same distinction the
+ * host makes.
+ */
+export type ListHookLifecycleReportsResponse = {
+  reports: Array<HookLifecycleReport>;
 };
 
 /**
@@ -391,22 +512,6 @@ export type PackInstallationStatus = {
    * Every journaled member, reconciled against the installed tree.
    */
   members: Array<PackMemberStatus>;
-};
-
-/**
- * One member installed by a pack installation, with its single-plugin outcome.
- */
-export type PackInstalledMember = {
-  pluginId: string;
-  outcome: PackMemberInstallOutcome;
-};
-
-/**
- * The closed set of single-plugin outcomes a pack member can report.
- */
-export type PackMemberInstallOutcome = { "state": "installed" } | {
-  "state": "installed_with_command_conflict";
-  conflictPluginId: string;
 };
 
 /**
@@ -708,6 +813,11 @@ export type SyncAvailablePluginsResponse = {
 export type UninstallPluginRequest = {
   pluginId: string;
   dataDisposition: PluginDataDisposition;
+  /**
+   * Declares that the user authorized the `deinit` command this removal would run; see
+   * [`InstallPluginRequest::hook_execution_acknowledged`].
+   */
+  hookExecutionAcknowledged: boolean;
 };
 
 /**
@@ -740,7 +850,15 @@ export type UpdateMarketplaceSourceResponse = {
 /**
  * Requests updating one installed marketplace plugin to the version its source publishes.
  */
-export type UpdatePluginRequest = { pluginId: string };
+export type UpdatePluginRequest = {
+  pluginId: string;
+  /**
+   * Declares that the user authorized the `init` command this update would run; every update
+   * re-runs it, because only the tool knows whether the new version needs a migration. See
+   * [`InstallPluginRequest::hook_execution_acknowledged`].
+   */
+  hookExecutionAcknowledged: boolean;
+};
 
 /**
  * Confirms the identifier updated after the new release is verified and stale versions removed.

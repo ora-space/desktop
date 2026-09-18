@@ -103,4 +103,14 @@ pub(super) const BINDINGS: &[Binding] = &[
         handler: "commands::plugin::import_plugin",
         permission: Permission::MainWebview,
     },
+    Binding::Unary {
+        operation: "listHookLifecycleReports",
+        handler: "commands::plugin::list_hook_lifecycle_reports",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "initializeHook",
+        handler: "commands::plugin::initialize_hook",
+        permission: Permission::MainWebview,
+    },
 ];

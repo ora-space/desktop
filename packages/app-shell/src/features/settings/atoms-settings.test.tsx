@@ -225,7 +225,11 @@ describe("atom settings content", () => {
 
     await waitFor(() =>
       expect(uninstallPlugin).toHaveBeenCalledWith(
-        { pluginId, dataDisposition: "delete" },
+        {
+          pluginId,
+          dataDisposition: "delete",
+          hookExecutionAcknowledged: false,
+        },
         undefined,
       ),
     );

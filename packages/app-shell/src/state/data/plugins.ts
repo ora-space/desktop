@@ -15,6 +15,7 @@ export function invalidatePluginQueries(
     invalidateInstalledPlugins(queryClient),
     invalidateAvailablePlugins(queryClient),
     invalidatePackInstallations(queryClient),
+    invalidateHookLifecycleReports(queryClient),
   ]);
 }
 
@@ -25,9 +26,23 @@ export const pluginKeys = {
   marketplaceSources: ["marketplace-sources"] as const,
   installedPlugins: ["installed-plugins"] as const,
   packInstallations: ["pack-installations"] as const,
+  hookLifecycleReports: ["hook-lifecycle-reports"] as const,
   pluginConfiguration: (pluginId: string) =>
     ["plugin-configuration", pluginId] as const,
 };
+
+/**
+ * Refreshes this session's Hook lifecycle results after any operation that can run one.
+ *
+ * Installing, updating, removing, and explicitly initializing a Hook are all triggers, and the
+ * result is session-scoped state rather than part of the installed snapshot, so it is invalidated
+ * alongside the installed list instead of being merged into it.
+ */
+export function invalidateHookLifecycleReports(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({
+    queryKey: pluginKeys.hookLifecycleReports,
+  });
+}
 
 /** Refreshes installed state after a scan without forcing a marketplace fetch. */
 export function invalidateInstalledPlugins(queryClient: QueryClient) {

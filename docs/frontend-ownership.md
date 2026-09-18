@@ -53,9 +53,12 @@ Plugin refresh scopes are deliberately different:
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
 | Agent activation             | Runtime availability and that agent's model queries in every workspace                        |
 | Agent stop/removal           | Runtime availability, **not** model discovery against the stopped runtime                     |
-| Settled plugin mutation      | Installed and available plugins                                                               |
+| Settled plugin mutation      | Installed and available plugins, and this session's Hook lifecycle results                    |
 | External plugin-status event | Installed plugins, runtime availability, and Skills; not available plugins or model discovery |
 | Agent-model event            | Only that agent's model-query prefix                                                          |
+
+Explicitly initializing a Hook refreshes only the lifecycle results: the command changes no package
+state, so invalidating the installed or marketplace snapshots for it would be noise.
 
 The application event hook owns reconnect/abort state, but delegates those cache rules. A ready
 event or a disconnect explicitly **refetches** sessions to close missed-event gaps; a title event

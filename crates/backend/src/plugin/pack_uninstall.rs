@@ -109,6 +109,7 @@ impl PluginApi {
         for member_id in plan.remove {
             let result = self
                 .uninstall(UninstallPluginRequest {
+                    hook_execution_acknowledged: false,
                     plugin_id: member_id.clone(),
                     data_disposition,
                 })

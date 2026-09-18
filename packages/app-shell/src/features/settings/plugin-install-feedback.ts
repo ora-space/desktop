@@ -11,14 +11,6 @@ export function showPluginInstallOutcome(
   t: TFunction,
   successKey: InstallSuccessKey = "settings.plugins.installSuccess",
 ): void {
-  if (outcome.state === "installed_with_command_conflict") {
-    toast.success(
-      t("settings.plugins.installCommandConflict", {
-        pluginId: outcome.conflictPluginId,
-      }),
-    );
-    return;
-  }
   if (outcome.state !== "pack_installed") {
     toast.success(t(successKey));
     return;

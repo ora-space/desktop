@@ -1,17 +1,30 @@
+mod configuration;
+mod hook_lifecycle;
 mod marketplace_sync;
 mod pack_install;
 mod pack_status;
 
+pub use configuration::{
+    GetPluginConfigurationRequest, GetPluginConfigurationResponse, PluginConfigurationCompleteness,
+    PluginConfigurationDetails, PluginConfigurationSummary, PluginSettingDeclaration,
+    PluginSettingDetails, PluginSettingType, PluginSettingValue, PluginSettingValueSource,
+    ResetPluginConfigurationMode, ResetPluginConfigurationRequest,
+    ResetPluginConfigurationResponse, SavePluginConfigurationRequest,
+    SavePluginConfigurationResponse,
+};
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
 
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt};
+use std::fmt;
 use ts_rs::TS;
 
-pub(crate) use pack_install::export as export_pack_install;
-pub use pack_install::{
-    PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackRollbackFailure,
+pub(crate) use hook_lifecycle::export as export_hook_lifecycle;
+pub use hook_lifecycle::{
+    HookLifecycleOutcome, HookLifecyclePhase, HookLifecycleReport, InitializeHookRequest,
+    InitializeHookResponse, ListHookLifecycleReportsRequest, ListHookLifecycleReportsResponse,
 };
+pub(crate) use pack_install::export as export_pack_install;
+pub use pack_install::{PackInstallFailure, PackRollbackFailure};
 pub(crate) use pack_status::export as export_pack_status;
 pub use pack_status::{
     ListPackInstallationsRequest, ListPackInstallationsResponse, PackInstallationStatus,
@@ -51,17 +64,20 @@ pub enum InstalledPluginContribution {
     Skill,
     /// A configuration-only kind describing one MCP Server; transport details stay host-side.
     Mcp,
-    /// A processless Hook contribution: one immutable Hook Protocol descriptor and one
-    /// package-contained executable. The frontend never learns the executable path; it renders
-    /// the protocol, command alias, target, and embedded tool version for audit.
+    /// A Hook contribution: a package that never runs as an Ora plugin process, but whose bundled
+    /// executable the host runs as lifecycle commands. The frontend renders what will be executed
+    /// and which Agents the author claims to support, so the disclosure the user agreed to stays
+    /// inspectable after installation.
     Hook {
-        protocol: String,
-        command: String,
+        /// The package-relative executable path the host runs. It is always inside the installed
+        /// package; the path is shown so the user can see which file the disclosure refers to.
+        executable: String,
+        /// Agent identifiers the author claims the tool supports. Display only: the host validates
+        /// their shape and never matches them against Agents it knows about.
+        supported_agents: Vec<String>,
         /// The target triple the installed physical artifact self-declares, absent for a
         /// universal release.
         target: Option<String>,
-        /// The embedded tool version, independent from the Hook Plugin version.
-        tool_version: String,
     },
 }
 
@@ -76,106 +92,6 @@ pub enum InstalledPluginContribution {
 pub enum PluginInstallationValidity {
     Valid,
     InvalidDeclaration { error_code: String },
-}
-
-/// Reports whether every required Setting has an effective type-correct value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "plugin.ts")]
-pub enum PluginConfigurationCompleteness {
-    Complete,
-    Incomplete,
-}
-
-/// Represents the exclusive list-facing Plugin Configuration state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(
-    tag = "state",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-#[ts(export_to = "plugin.ts")]
-pub enum PluginConfigurationSummary {
-    NotDeclared,
-    Available {
-        completeness: PluginConfigurationCompleteness,
-    },
-    Unavailable {
-        error_code: String,
-    },
-}
-
-/// Enumerates Setting types supported by declaration schema version one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "plugin.ts")]
-pub enum PluginSettingType {
-    String,
-    Number,
-    Boolean,
-}
-
-/// Carries one non-secret scalar override accepted by schema version one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(untagged)]
-#[ts(export_to = "plugin.ts")]
-pub enum PluginSettingValue {
-    String(String),
-    Number(f64),
-    Boolean(bool),
-}
-
-/// Describes one immutable plugin-authored Setting.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PluginSettingDeclaration {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    #[serde(rename = "type")]
-    #[ts(rename = "type")]
-    pub setting_type: PluginSettingType,
-    pub required: bool,
-    pub order: Option<i64>,
-    pub default: Option<PluginSettingValue>,
-}
-
-/// Identifies the source of one effective editor value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "plugin.ts")]
-pub enum PluginSettingValueSource {
-    Stored,
-    Default,
-    Absent,
-}
-
-/// Projects one Setting into an editor field without exposing raw files.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PluginSettingDetails {
-    pub declaration: PluginSettingDeclaration,
-    pub stored_value: Option<PluginSettingValue>,
-    pub effective_value: Option<PluginSettingValue>,
-    /// True when the host deliberately withholds a value used by an MCP process.
-    pub redacted: bool,
-    pub source: PluginSettingValueSource,
-    pub value_error_code: Option<String>,
-}
-
-/// Carries one complete editor snapshot bound to a revision and declaration fingerprint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PluginConfigurationDetails {
-    pub plugin_id: String,
-    pub schema_version: u32,
-    pub revision: u64,
-    pub declaration_fingerprint: String,
-    pub settings: Vec<PluginSettingDetails>,
-    pub summary: PluginConfigurationSummary,
 }
 
 /// Represents the process-scoped lifecycle of one installed plugin.
@@ -601,6 +517,10 @@ pub struct StopPluginResponse {
 pub struct UninstallPluginRequest {
     pub plugin_id: String,
     pub data_disposition: PluginDataDisposition,
+    /// Declares that the user authorized the `deinit` command this removal would run; see
+    /// [`InstallPluginRequest::hook_execution_acknowledged`].
+    #[serde(default)]
+    pub hook_execution_acknowledged: bool,
 }
 
 /// Selects whether uninstall retains or deletes host-owned plugin data.
@@ -626,6 +546,16 @@ pub struct UninstallPluginResponse {
 #[ts(export_to = "plugin.ts")]
 pub struct InstallPluginRequest {
     pub plugin_id: String,
+    /// Declares that the user authorized the Hook lifecycle command this operation would run.
+    ///
+    /// The flag is the request-side form of the confirmation dialog the user answered. It is a
+    /// process gate rather than a security boundary — the host still re-validates the package
+    /// before every spawn — and it defaults to "not authorized" so a caller that never learned
+    /// about Hook execution cannot silently start a package's program. The install itself is
+    /// always authorized: without the declaration the package still lands, its `init` simply does
+    /// not run until the user asks for it explicitly.
+    #[serde(default)]
+    pub hook_execution_acknowledged: bool,
 }
 
 /// Confirms the identifier installed after download, verification, and extraction complete.
@@ -634,20 +564,16 @@ pub struct InstallPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct InstallPluginResponse {
     pub plugin_id: String,
-    /// The typed installation outcome. Installation always retains the package. A conflict-free
-    /// install reports `installed`; a Hook whose command alias collides with another installed
-    /// Hook reports `installed_with_command_conflict` carrying the colliding identity. Both
-    /// packages remain available: the host has no enablement state, and uniqueness is deferred
-    /// to a future consumer.
+    /// The typed installation outcome. Installation always retains the package and never executes
+    /// anything the package ships; a Hook's lifecycle commands run only on an explicitly
+    /// authorized single-plugin operation.
     pub outcome: InstallOutcome,
 }
 
 /// Models the closed set of installation outcomes.
 ///
 /// The outcome is a closed enum rather than a pair of booleans so a caller can never observe
-/// contradictory success flags. Installation always succeeds and the package remains available;
-/// a command-alias collision is reported rather than silently sharing a PATH alias or pretending
-/// the new package was disabled.
+/// contradictory success flags. Installation always succeeds and the package remains available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "state",
@@ -658,10 +584,6 @@ pub struct InstallPluginResponse {
 pub enum InstallOutcome {
     /// The package was installed and is available.
     Installed,
-    /// The package was installed and remains available, but another installed Hook already owns
-    /// the same command alias. The colliding plugin identity is carried so a future consumer can
-    /// refuse ambiguous PATH resolution instead of silently selecting the wrong Hook.
-    InstalledWithCommandConflict { conflict_plugin_id: String },
     /// The pack orchestration outcome: applicable members were installed in declaration order
     /// through the ordinary single-plugin chain, already-installed members were skipped, and the
     /// first member failure stopped the run without rolling back what had landed. A partial
@@ -669,7 +591,7 @@ pub enum InstallOutcome {
     /// decide between retrying and giving up (extension-pack decision D6/D7).
     PackInstalled {
         /// Applicable members that were installed by this operation, in declaration order.
-        members: Vec<PackInstalledMember>,
+        members: Vec<String>,
         /// Applicable members that were already installed (any version) and therefore skipped;
         /// their existing versions were left untouched.
         skipped: Vec<String>,
@@ -684,6 +606,11 @@ pub enum InstallOutcome {
 #[ts(export_to = "plugin.ts")]
 pub struct UpdatePluginRequest {
     pub plugin_id: String,
+    /// Declares that the user authorized the `init` command this update would run; every update
+    /// re-runs it, because only the tool knows whether the new version needs a migration. See
+    /// [`InstallPluginRequest::hook_execution_acknowledged`].
+    #[serde(default)]
+    pub hook_execution_acknowledged: bool,
 }
 
 /// Confirms the identifier updated after the new release is verified and stale versions removed.
@@ -701,6 +628,10 @@ pub struct UpdatePluginResponse {
 pub struct ImportPluginRequest {
     /// Absolute path to the local `.orax` archive.
     pub path: String,
+    /// Declares that the user authorized the Hook lifecycle command this import would run; see
+    /// [`InstallPluginRequest::hook_execution_acknowledged`].
+    #[serde(default)]
+    pub hook_execution_acknowledged: bool,
 }
 
 /// Confirms the identifier imported after the archive is verified and extracted.
@@ -713,89 +644,12 @@ pub struct ImportPluginResponse {
     pub outcome: InstallOutcome,
 }
 
-/// Requests the current editor snapshot for one installed plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct GetPluginConfigurationRequest {
-    pub plugin_id: String,
-}
-
-/// Returns the resolved editor snapshot without exposing its filesystem location.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct GetPluginConfigurationResponse {
-    pub configuration: PluginConfigurationDetails,
-}
-
-/// Replaces every explicit override recognized by the loaded declaration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct SavePluginConfigurationRequest {
-    pub plugin_id: String,
-    pub expected_revision: u64,
-    pub declaration_fingerprint: String,
-    pub values: BTreeMap<String, PluginSettingValue>,
-    /// Host-redacted stored values that an unchanged editor must retain.
-    pub preserve_setting_ids: Vec<String>,
-}
-
-/// Returns the authoritative post-save editor snapshot and list summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct SavePluginConfigurationResponse {
-    pub configuration: PluginConfigurationDetails,
-}
-
-/// Selects the explicit reset operation authorized by the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(
-    tag = "mode",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-#[ts(export_to = "plugin.ts")]
-pub enum ResetPluginConfigurationMode {
-    ResetAll { expected_revision: u64 },
-    RecoverCorrupt,
-}
-
-/// Requests Reset All or confirmed damaged-data recovery for one plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct ResetPluginConfigurationRequest {
-    pub plugin_id: String,
-    pub declaration_fingerprint: String,
-    #[serde(flatten)]
-    #[ts(flatten)]
-    pub reset: ResetPluginConfigurationMode,
-}
-
-/// Returns the authoritative editor snapshot after a reset operation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct ResetPluginConfigurationResponse {
-    pub configuration: PluginConfigurationDetails,
-}
-
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    configuration::export(config)?;
     marketplace_sync::export(config)?;
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
-    PluginConfigurationCompleteness::export(config)?;
-    PluginConfigurationSummary::export(config)?;
-    PluginSettingType::export(config)?;
-    PluginSettingValue::export(config)?;
-    PluginSettingDeclaration::export(config)?;
-    PluginSettingValueSource::export(config)?;
-    PluginSettingDetails::export(config)?;
-    PluginConfigurationDetails::export(config)?;
     PluginRuntimeStatus::export(config)?;
     PluginLogo::export(config)?;
     InstalledPlugin::export(config)?;
@@ -803,6 +657,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AvailablePlugin::export(config)?;
     export_pack_status(config)?;
     export_pack_install(config)?;
+    export_hook_lifecycle(config)?;
     ListAvailablePluginsRequest::export(config)?;
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;
@@ -839,13 +694,6 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     UpdatePluginResponse::export(config)?;
     ImportPluginRequest::export(config)?;
     ImportPluginResponse::export(config)?;
-    GetPluginConfigurationRequest::export(config)?;
-    GetPluginConfigurationResponse::export(config)?;
-    SavePluginConfigurationRequest::export(config)?;
-    SavePluginConfigurationResponse::export(config)?;
-    ResetPluginConfigurationMode::export(config)?;
-    ResetPluginConfigurationRequest::export(config)?;
-    ResetPluginConfigurationResponse::export(config)?;
     Ok(())
 }
 
@@ -1288,9 +1136,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(InstallPluginRequest {
                 plugin_id: "official/weather".to_string(),
+                hook_execution_acknowledged: false,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather" })
+            json!({ "pluginId": "official/weather", "hookExecutionAcknowledged": false })
         );
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
@@ -1308,9 +1157,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(UpdatePluginRequest {
                 plugin_id: "official/weather".to_string(),
+                hook_execution_acknowledged: false,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather" })
+            json!({ "pluginId": "official/weather", "hookExecutionAcknowledged": false })
         );
         assert_eq!(
             serde_json::to_value(UpdatePluginResponse {
@@ -1327,9 +1177,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ImportPluginRequest {
                 path: "C:/downloads/weather.orax".to_string(),
+                hook_execution_acknowledged: false,
             })
             .unwrap(),
-            json!({ "path": "C:/downloads/weather.orax" })
+            json!({ "path": "C:/downloads/weather.orax", "hookExecutionAcknowledged": false })
         );
         assert_eq!(
             serde_json::to_value(ImportPluginResponse {

@@ -1,3 +1,4 @@
+mod hook_lifecycle;
 mod listing;
 mod logo_roots;
 mod marketplace;
@@ -7,6 +8,8 @@ mod pack_reconcile;
 mod pack_uninstall;
 mod registry_sync;
 pub use operations::{AdmittedSync, Plugins};
+
+use hook_lifecycle::HookLifecycle;
 
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
@@ -194,6 +197,8 @@ pub(crate) struct PluginApi {
     effect_reconcile: OnceLock<EffectWorkerHandle>,
     /// Secret-free wakeup that asks live Sessions to re-read Desired MCP.
     mcp_wakeup: OnceLock<Arc<dyn Fn() + Send + Sync>>,
+    /// Runs the lifecycle commands Hook packages declare, and holds this session's results.
+    hook_lifecycle: HookLifecycle,
     clock: SystemClock,
     /// Test-only transport substitution for production-entry marketplace qualification.
     #[cfg(test)]
@@ -238,6 +243,8 @@ impl PluginApi {
         )
         .map_err(BackendError::from)?;
 
+        let hook_lifecycle = HookLifecycle::new(home_directory.clone());
+
         Ok(Self {
             lifecycle,
             marketplace_sources,
@@ -259,6 +266,7 @@ impl PluginApi {
             rebuilding: Mutex::new(()),
             effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
+            hook_lifecycle,
             clock,
             #[cfg(test)]
             local_marketplace_releases: Mutex::new(BTreeMap::new()),
@@ -678,69 +686,26 @@ impl PluginApi {
             error => BackendError::internal("failed to import plugin archive", error),
         })?;
         let plugin_id = package.id.canonical();
-        let outcome = self.finalize_new_install(&plugin_id).await?;
-        ora_info!(plugin_id = %plugin_id, outcome = ?outcome, "imported plugin release from local archive");
-        Ok(ImportPluginResponse { plugin_id, outcome })
+        self.finalize_new_install(&plugin_id).await?;
+        ora_info!(plugin_id = %plugin_id, "imported plugin release from local archive");
+        Ok(ImportPluginResponse {
+            plugin_id,
+            outcome: InstallOutcome::Installed,
+        })
     }
 
-    /// Refreshes the installed-plugin snapshot after a new package lands and reports the typed
-    /// installation outcome. Every installed package is available; a Hook command-alias conflict
-    /// still returns `InstalledWithCommandConflict` so callers can surface the colliding identity
-    /// instead of silently sharing a PATH alias. Both packages remain installed and available;
-    /// uniqueness is deferred to a future consumer.
-    async fn finalize_new_install(&self, plugin_id: &str) -> Result<InstallOutcome, BackendError> {
+    /// Refreshes the installed-plugin snapshot after a new package lands.
+    ///
+    /// Installing a Hook package performs no execution: a Hook's lifecycle commands run only on
+    /// an explicitly authorized single-plugin operation, never as a side effect of landing a
+    /// package.
+    async fn finalize_new_install(&self, plugin_id: &str) -> Result<(), BackendError> {
         self.sync_plugin_skills(plugin_id)?;
         if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
             ora_warn!(plugin_id = %plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
         }
         self.notify_mcp_desired_changed();
-        // A second Hook with the same bare command still makes PATH resolution ambiguous, so the
-        // typed outcome carries the colliding identity instead of looking like an ordinary success.
-        if let Some(conflict) = self.detect_hook_command_conflict(plugin_id) {
-            ora_warn!(
-                plugin_id = %plugin_id,
-                conflict_plugin_id = %conflict,
-                "installed hook plugin reports a command conflict"
-            );
-            return Ok(InstallOutcome::InstalledWithCommandConflict {
-                conflict_plugin_id: conflict,
-            });
-        }
-        Ok(InstallOutcome::Installed)
-    }
-
-    /// Returns the canonical plugin id of another installed Hook that owns the same command
-    /// alias as the freshly installed Hook `plugin_id`, if any.
-    ///
-    /// The new Hook itself is excluded so a re-install of the same package does not conflict
-    /// with its own contribution.
-    fn detect_hook_command_conflict(&self, plugin_id: &str) -> Option<String> {
-        let manager = PluginManager::discover(&self.home_directory);
-        let installed = manager.installed_plugins();
-        let new_hook = installed
-            .iter()
-            .find(|plugin| plugin.id.canonical() == plugin_id)?;
-        let new_command = match &new_hook.contributes {
-            PluginContribution::Hook(descriptor) => descriptor.configuration.hook.command.as_str(),
-            PluginContribution::Agent(_)
-            | PluginContribution::Workbench(_)
-            | PluginContribution::Webview(_)
-            | PluginContribution::Skill(_)
-            | PluginContribution::Mcp(_) => return None,
-        };
-        let snapshot = self.lifecycle.list_installed_plugins();
-        for plugin in snapshot.plugins.iter() {
-            if plugin.id == plugin_id {
-                continue;
-            }
-            if let ora_contracts::InstalledPluginContribution::Hook { command, .. } =
-                &plugin.contribution
-                && command == new_command
-            {
-                return Some(plugin.id.clone());
-            }
-        }
-        None
+        Ok(())
     }
 
     /// Projects validated static Skill metadata into the shared catalog and Effect source tables.
@@ -1018,29 +983,30 @@ mod tests {
             .find(|p| p.id == "official/rtk-ai.rtk")
             .expect("installed RTK listed");
         let ora_contracts::InstalledPluginContribution::Hook {
-            protocol,
-            command,
+            executable,
+            supported_agents: _,
             target,
-            tool_version,
         } = &rtk.contribution
         else {
             panic!("expected a Hook contribution, got {:?}", rtk.contribution);
         };
-        assert_eq!(protocol, "rtk-rewrite-v1");
-        assert_eq!(command, "rtk");
+        // The advertised Agent list is author-provided display data, so this test asserts only the
+        // facts the host itself derives from the installed package.
+        assert!(
+            executable.starts_with("assets/"),
+            "a Hook executable must be a package-relative path, got {executable}"
+        );
         assert_eq!(target.as_deref(), Some("x86_64-pc-windows-msvc"));
-        assert_eq!(tool_version, "0.45.0");
         assert_eq!(
             rtk.runtime,
             ora_contracts::PluginRuntimeStatus::Stopped,
-            "a processless Hook reports stopped once discovered"
+            "a Hook never runs as an Ora plugin process, so discovery reports stopped"
         );
-        // Every installed valid Hook is available and processless. Command-alias uniqueness is
-        // not resolved here; a future consumer refuses ambiguous PATH resolution.
 
         // 7. Uninstall: removes the installed package so the Hook is no longer available.
         lifecycle
             .uninstall_plugin(ora_contracts::UninstallPluginRequest {
+                hook_execution_acknowledged: false,
                 plugin_id: "official/rtk-ai.rtk".to_string(),
                 data_disposition: ora_contracts::PluginDataDisposition::Delete,
             })

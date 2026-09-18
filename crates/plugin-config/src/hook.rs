@@ -1,9 +1,11 @@
-//! Compiles one Hook Plugin's `assets/config.json` — the immutable Hook Protocol descriptor and
-//! optional Settings subset — into a strongly typed Hook Configuration.
+//! Compiles one Hook Plugin's `assets/config.json` — the package-contained executable, the
+//! optional `supportedAgents` list, and the lifecycle commands the host may execute — into a
+//! strongly typed Hook Configuration.
 //!
-//! The compiled value is static install-time truth only: it proves the descriptor is legal, not
-//! that a future Agent Plugin will consume it or that the executable starts. Resolution against a
-//! running process is a later, separate step and is deliberately not modeled here.
+//! The compiled value is static install-time truth only: it proves the declaration is legal and
+//! names a package-relative executable, not that the executable can run or that it will find any
+//! Agent on this machine. Executing a lifecycle command is a later, separate step owned by the
+//! backend, which re-validates the executable against the installed package before every spawn.
 
 #[cfg(test)]
 mod tests;
@@ -12,11 +14,24 @@ use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES,
     compile_declaration_from_value, parse_strict_json,
 };
+use ora_utils::Slug;
 use ora_utils::path::PortableRelativePath;
-use semver::Version;
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
+
+/// Maximum number of arguments one lifecycle phase may declare.
+const MAX_LIFECYCLE_ARGS: usize = 16;
+/// Maximum byte length of one lifecycle argument.
+const MAX_LIFECYCLE_ARG_BYTES: usize = 512;
+/// Maximum number of Agent identifiers one Hook may advertise.
+const MAX_SUPPORTED_AGENTS: usize = 16;
+
+/// Descriptor members removed when the Hook declaration converged to executable + lifecycle.
+///
+/// They are reported by name rather than as unknown fields: a package written for the previous
+/// shape must be repackaged, and serde's generic "unknown field" list cannot say that.
+const REMOVED_DESCRIPTOR_FIELDS: [&str; 3] = ["protocol", "command", "toolVersion"];
 
 /// Reports a Hook Configuration that cannot be compiled without ambiguity.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -27,9 +42,11 @@ pub enum CompileHookConfigurationError {
     InvalidStructure(String),
     #[error("unsupported Hook configuration schema version {0}")]
     UnsupportedSchemaVersion(u32),
-    #[error("unsupported Hook protocol `{0}`")]
-    UnsupportedProtocol(String),
-    #[error("invalid Hook protocol descriptor `{field}`: {reason}")]
+    #[error(
+        "Hook descriptor field `{field}` was removed: repackage the plugin with `executable`, an optional `supportedAgents`, and `lifecycle`"
+    )]
+    RemovedDescriptorField { field: String },
+    #[error("invalid Hook descriptor `{field}`: {reason}")]
     InvalidDescriptor { field: String, reason: String },
     #[error(
         "invalid Setting `{setting_id}`: type `{found}` is not supported by Hook configuration schema version one"
@@ -46,88 +63,77 @@ pub struct CompiledHookConfiguration {
     pub hook: HookDescriptor,
 }
 
-/// Holds the validated, versioned Hook Protocol descriptor.
+/// Holds the validated Hook declaration: which package-contained program to run, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookDescriptor {
-    pub protocol: HookProtocol,
     /// Package-relative executable path under `assets/`; filesystem containment is re-checked by
-    /// the package validator that owns the package root.
+    /// the package validator that owns the package root, and again before every execution.
     pub executable: PortableRelativePath,
-    pub command: HookCommand,
-    /// Embedded tool version, independent from the Hook Plugin version.
-    pub tool_version: Version,
+    /// Agent identifiers the author claims the tool supports. Display only: the host validates
+    /// each identifier's shape and nothing else, and never matches them against Agents it knows.
+    pub supported_agents: Vec<Slug>,
+    pub lifecycle: HookLifecycle,
 }
 
-/// Enumerates the closed set of supported Hook Protocols.
-///
-/// A protocol is a versioned, strongly typed contract that identifies how an Agent Plugin
-/// integrates a Hook Plugin. RTK uses `rtk-rewrite-v1`; future protocols are added here as
-/// explicit variants rather than accepting arbitrary strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookProtocol {
-    /// Invokes `rtk rewrite` and preserves the command decision represented by exit status and
-    /// output. The descriptor reports the embedded RTK tool version independently.
-    RtkRewriteV1,
-}
-
-impl HookProtocol {
-    /// Parses one protocol string into its closed enum variant.
-    pub fn parse(value: &str) -> Result<Self, CompileHookConfigurationError> {
-        match value {
-            "rtk-rewrite-v1" => Ok(Self::RtkRewriteV1),
-            found => Err(CompileHookConfigurationError::UnsupportedProtocol(
-                found.to_owned(),
-            )),
-        }
-    }
-
-    /// Returns the canonical protocol spelling.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::RtkRewriteV1 => "rtk-rewrite-v1",
-        }
-    }
-}
-
-/// Holds the validated bare command alias through which an Agent Plugin may expose a Hook.
+/// Holds the lifecycle commands a Hook Plugin declares for the host to execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HookCommand(String);
+pub struct HookLifecycle {
+    /// Runs after install, local import and update, and on explicit user initialization.
+    pub init: HookLifecycleCommand,
+    /// Runs before uninstall when the tool provides it. Absent means the host executes nothing on
+    /// uninstall and reports that whatever the tool wrote stays in place.
+    pub deinit: Option<HookLifecycleCommand>,
+}
 
-impl HookCommand {
-    /// Parses a normalized bare command alias, rejecting path separators and emptiness so PATH
-    /// resolution can never silently select the wrong Hook.
-    pub fn parse(value: &str) -> Result<Self, CompileHookConfigurationError> {
-        if value.is_empty() {
+/// Holds the validated fixed arguments of one lifecycle phase.
+///
+/// The host passes these arguments verbatim and never composes its own: the tool decides which
+/// flag means "register" and which means "revoke", so the host needs no per-tool knowledge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookLifecycleCommand {
+    args: Vec<String>,
+}
+
+impl HookLifecycleCommand {
+    /// Validates one phase's declared argument list, rejecting values that cannot be passed to a
+    /// process safely or would be invisible in a diagnostic record.
+    pub fn parse(field: &str, args: Vec<String>) -> Result<Self, CompileHookConfigurationError> {
+        if args.len() > MAX_LIFECYCLE_ARGS {
             return Err(CompileHookConfigurationError::InvalidDescriptor {
-                field: "hook.command".to_string(),
-                reason: "command must not be empty".to_string(),
+                field: field.to_string(),
+                reason: format!("at most {MAX_LIFECYCLE_ARGS} arguments are allowed"),
             });
         }
-        // A command alias is a bare name: a path separator would let a Hook masquerade as an
-        // arbitrary filesystem path and break deterministic PATH resolution.
-        if value.contains('/') || value.contains('\\') {
-            return Err(CompileHookConfigurationError::InvalidDescriptor {
-                field: "hook.command".to_string(),
-                reason: "command must not contain a path separator".to_string(),
-            });
+        // Arguments are produced by packaging scripts and handed to the operating system without
+        // a shell, so an empty or control-bearing value is always a packaging mistake. Control
+        // characters in particular would corrupt the very log lines used to diagnose a failure.
+        for (index, arg) in args.iter().enumerate() {
+            let field = format!("{field}[{index}]");
+            if arg.is_empty() {
+                return Err(CompileHookConfigurationError::InvalidDescriptor {
+                    field,
+                    reason: "argument must not be empty".to_string(),
+                });
+            }
+            if arg.len() > MAX_LIFECYCLE_ARG_BYTES {
+                return Err(CompileHookConfigurationError::InvalidDescriptor {
+                    field,
+                    reason: format!("argument must be at most {MAX_LIFECYCLE_ARG_BYTES} bytes"),
+                });
+            }
+            if arg.chars().any(char::is_control) {
+                return Err(CompileHookConfigurationError::InvalidDescriptor {
+                    field,
+                    reason: "argument must not contain control characters".to_string(),
+                });
+            }
         }
-        // Command names are produced by build scripts and consumed verbatim, so control
-        // characters, whitespace, or non-ASCII bytes are packaging mistakes.
-        if value.chars().any(|character| {
-            character.is_control() || character.is_whitespace() || !character.is_ascii()
-        }) {
-            return Err(CompileHookConfigurationError::InvalidDescriptor {
-                field: "hook.command".to_string(),
-                reason: "command must contain ASCII text without whitespace or control characters"
-                    .to_string(),
-            });
-        }
-        Ok(Self(value.to_owned()))
+        Ok(Self { args })
     }
 
-    /// Returns the canonical command spelling.
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// Returns the arguments in declaration order.
+    pub fn args(&self) -> &[String] {
+        &self.args
     }
 }
 
@@ -143,16 +149,35 @@ struct RawHookConfiguration {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawHookDescriptor {
-    protocol: String,
     executable: String,
-    command: String,
-    tool_version: String,
+    #[serde(default)]
+    supported_agents: Vec<String>,
+    lifecycle: RawHookLifecycle,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawHookLifecycle {
+    init: RawLifecycleCommand,
+    #[serde(default)]
+    deinit: Option<RawLifecycleCommand>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawLifecycleCommand {
+    /// Omitted arguments mean the executable is invoked with no arguments for that phase.
+    #[serde(default)]
+    args: Vec<String>,
 }
 
 /// Compiles one duplicate-free Hook configuration JSON value.
 pub(crate) fn compile_hook_configuration(
     value: Value,
 ) -> Result<CompiledHookConfiguration, CompileHookConfigurationError> {
+    // Removed members are detected before structural parsing so a package written for the
+    // previous shape gets one actionable error instead of serde's unknown-field list.
+    reject_removed_descriptor_fields(&value)?;
     let raw: RawHookConfiguration = serde_json::from_value(value)
         .map_err(|error| CompileHookConfigurationError::InvalidStructure(error.to_string()))?;
     if raw.schema_version != 1 {
@@ -194,31 +219,85 @@ fn compile_settings_subset(
     Ok(compile_declaration_from_value(wrapped)?)
 }
 
-/// Compiles the Hook Protocol descriptor fields in declaration order.
+/// Rejects a Hook declaration written for the shape that this decision replaced.
+///
+/// The removed members are probed in a fixed order so the same package always reports the same
+/// field regardless of how the author ordered their keys.
+fn reject_removed_descriptor_fields(value: &Value) -> Result<(), CompileHookConfigurationError> {
+    let Some(descriptor) = value.get("hook").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    for field in REMOVED_DESCRIPTOR_FIELDS {
+        if descriptor.contains_key(field) {
+            return Err(CompileHookConfigurationError::RemovedDescriptorField {
+                field: format!("hook.{field}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Compiles the Hook descriptor fields in declaration order.
 fn compile_hook_descriptor(
     raw: RawHookDescriptor,
 ) -> Result<HookDescriptor, CompileHookConfigurationError> {
-    let protocol = HookProtocol::parse(&raw.protocol)?;
     let executable = PortableRelativePath::parse(&raw.executable).map_err(|error| {
         CompileHookConfigurationError::InvalidDescriptor {
             field: "hook.executable".to_string(),
             reason: format!("executable must be a safe relative path: {error}"),
         }
     })?;
-    let command = HookCommand::parse(&raw.command)?;
-    let tool_version = Version::parse(&raw.tool_version).map_err(|error| {
-        CompileHookConfigurationError::InvalidDescriptor {
-            field: "hook.toolVersion".to_string(),
-            reason: format!("toolVersion must be a semantic version: {error}"),
-        }
-    })?;
+    let supported_agents = compile_supported_agents(raw.supported_agents)?;
+    let lifecycle = compile_lifecycle(raw.lifecycle)?;
 
     Ok(HookDescriptor {
-        protocol,
         executable,
-        command,
-        tool_version,
+        supported_agents,
+        lifecycle,
     })
+}
+
+/// Compiles the advertised Agent identifiers, rejecting duplicates so the displayed list cannot
+/// claim the same Agent twice.
+fn compile_supported_agents(
+    agents: Vec<String>,
+) -> Result<Vec<Slug>, CompileHookConfigurationError> {
+    if agents.len() > MAX_SUPPORTED_AGENTS {
+        return Err(CompileHookConfigurationError::InvalidDescriptor {
+            field: "hook.supportedAgents".to_string(),
+            reason: format!("at most {MAX_SUPPORTED_AGENTS} identifiers are allowed"),
+        });
+    }
+    let mut compiled = Vec::with_capacity(agents.len());
+    for (index, agent) in agents.iter().enumerate() {
+        let slug = Slug::parse(agent).map_err(|error| {
+            CompileHookConfigurationError::InvalidDescriptor {
+                field: format!("hook.supportedAgents[{index}]"),
+                reason: format!("identifier must be a lowercase slug: {error}"),
+            }
+        })?;
+        if compiled.contains(&slug) {
+            return Err(CompileHookConfigurationError::InvalidDescriptor {
+                field: format!("hook.supportedAgents[{index}]"),
+                reason: "duplicate Agent identifier".to_string(),
+            });
+        }
+        compiled.push(slug);
+    }
+    Ok(compiled)
+}
+
+/// Compiles both lifecycle phases, keeping `init` mandatory and `deinit` optional.
+fn compile_lifecycle(
+    raw: RawHookLifecycle,
+) -> Result<HookLifecycle, CompileHookConfigurationError> {
+    let init = HookLifecycleCommand::parse("hook.lifecycle.init.args", raw.init.args)?;
+    let deinit = raw
+        .deinit
+        .map(|command| HookLifecycleCommand::parse("hook.lifecycle.deinit.args", command.args))
+        .transpose()?;
+
+    Ok(HookLifecycle { init, deinit })
 }
 
 /// Compiles one Hook-shaped `assets/config.json` payload.

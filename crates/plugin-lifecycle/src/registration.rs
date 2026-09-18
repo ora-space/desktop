@@ -191,14 +191,15 @@ mod tests {
         );
     }
 
-    /// Hook plugins are processless and have no runtime handshake.
+    /// Hook plugins never start as an Ora plugin process: their executable runs only as a
+    /// lifecycle command the host spawns itself, so there is no runtime to hand a channel to.
     #[test]
     fn hook_plugins_cannot_register() {
         use ora_plugin_config::{CompiledConfigurationFile, compile_configuration_file};
         use ora_plugin_manager::InstalledHookDescriptor;
 
         let CompiledConfigurationFile::Hook(configuration) = compile_configuration_file(
-            br#"{ "schemaVersion": 1, "hook": { "protocol": "rtk-rewrite-v1", "executable": "assets/rtk.exe", "command": "rtk", "toolVersion": "0.45.0" } }"#,
+            br#"{ "schemaVersion": 1, "hook": { "executable": "assets/rtk.exe", "lifecycle": { "init": { "args": ["--init"] } } } }"#,
         )
         .expect("compile fixture") else {
             panic!("expected the Hook shape");

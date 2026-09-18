@@ -53,6 +53,7 @@ async fn locally_built_opencode_and_claude_packages_import_together() {
         backend
             .plugins()
             .import(ImportPluginRequest {
+                hook_execution_acknowledged: false,
                 path: path.to_string_lossy().into_owned(),
             })
             .await

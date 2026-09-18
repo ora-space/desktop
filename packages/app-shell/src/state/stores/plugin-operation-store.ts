@@ -2,7 +2,7 @@ import type { PluginInstallProgress } from "../../platform";
 import { create } from "zustand";
 
 export type PluginOperationKind =
-  "install" | "update" | "activate" | "stop" | "uninstall";
+  "install" | "update" | "activate" | "stop" | "uninstall" | "initialize";
 
 export type PluginOperationActivity =
   | {

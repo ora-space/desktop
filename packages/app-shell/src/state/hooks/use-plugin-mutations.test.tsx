@@ -109,7 +109,9 @@ describe("usePluginMutations", () => {
     await waitFor(() => expect(result.current.runtime.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.models.isSuccess).toBe(true));
     await act(async () => {
-      await result.current.mutations.uninstall.mutateAsync("delete");
+      await result.current.mutations.uninstall.mutateAsync({
+        dataDisposition: "delete",
+      });
     });
 
     await waitFor(() =>
@@ -147,7 +149,9 @@ describe("usePluginMutations", () => {
       queryClient,
     );
 
-    act(() => first.result.current.uninstall.mutate("delete"));
+    act(() =>
+      first.result.current.uninstall.mutate({ dataDisposition: "delete" }),
+    );
     await waitFor(() => expect(uninstall).toHaveBeenCalledOnce());
     expect(first.result.current.uninstall.isPending).toBe(true);
     first.unmount();
@@ -159,7 +163,9 @@ describe("usePluginMutations", () => {
     );
     expect(second.result.current.uninstall.isPending).toBe(true);
     act(() => second.result.current.stop.mutate());
-    act(() => second.result.current.uninstall.mutate("delete"));
+    act(() =>
+      second.result.current.uninstall.mutate({ dataDisposition: "delete" }),
+    );
     expect(uninstall).toHaveBeenCalledOnce();
     expect(stop).not.toHaveBeenCalled();
 
