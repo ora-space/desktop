@@ -8,6 +8,11 @@ use thiserror::Error;
 /// installed Hook is globally available; its lifecycle runtime stays `stopped`. `Pack` is a
 /// marketplace-only listing that names a set of member plugins; it never becomes an installed
 /// package and never carries a release of its own.
+///
+/// `Workflow` is processless and declares no section of its own. Its package is a delivery
+/// vehicle for workflow documents under `assets/workflows/`, which the host imports into the
+/// workflow library as user data rather than executing as plugin code. Because an imported
+/// workflow outlives the package that carried it, uninstalling the plugin never removes it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PluginKind {
     Workbench,
@@ -17,6 +22,7 @@ pub enum PluginKind {
     Mcp,
     Hook,
     Pack,
+    Workflow,
 }
 
 impl PluginKind {
@@ -30,7 +36,12 @@ impl PluginKind {
     pub fn may_ship_targeted_artifact(self) -> bool {
         match self {
             Self::Hook | Self::Agent => true,
-            Self::Workbench | Self::Webview | Self::Skill | Self::Mcp | Self::Pack => false,
+            Self::Workbench
+            | Self::Webview
+            | Self::Skill
+            | Self::Mcp
+            | Self::Pack
+            | Self::Workflow => false,
         }
     }
 
@@ -44,6 +55,7 @@ impl PluginKind {
             Self::Mcp => "mcp",
             Self::Hook => "hook",
             Self::Pack => "pack",
+            Self::Workflow => "workflow",
         }
     }
 }
@@ -68,6 +80,7 @@ impl FromStr for PluginKind {
             "mcp" => Ok(Self::Mcp),
             "hook" => Ok(Self::Hook),
             "pack" => Ok(Self::Pack),
+            "workflow" => Ok(Self::Workflow),
             found => Err(PluginKindError::Unsupported {
                 found: found.to_owned(),
             }),

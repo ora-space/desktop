@@ -159,6 +159,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         },
         PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
         PluginContribution::Mcp(_) => InstalledPluginContribution::Mcp,
+        PluginContribution::Workflow(_) => InstalledPluginContribution::Workflow,
         PluginContribution::Hook(descriptor) => InstalledPluginContribution::Hook {
             protocol: descriptor.configuration.hook.protocol.as_str().to_string(),
             command: descriptor.configuration.hook.command.as_str().to_string(),

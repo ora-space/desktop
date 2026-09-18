@@ -237,6 +237,65 @@ fn skill_kind_rejects_workbench_and_webview_sections() {
         })
     ));
 }
+
+/// Verifies the Workflow kind is accepted by the installed manifest schema and round-trips to
+/// its manifest spelling. A Workflow package contributes an asset tree, not a manifest section.
+#[test]
+fn parses_workflow_kind_installed_manifest() {
+    let installed = "identifier = \"user.workflow-pack\"\nkind = \"workflow\"\nversion = \"1.2.0\"\ndescription = \"A Workflow package\"\n";
+    let manifest = success(
+        PluginManifest::parse_installed(installed),
+        "installed Workflow manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Workflow);
+    assert_eq!(manifest.kind().as_str(), "workflow");
+    assert_eq!(manifest.release(), None);
+}
+
+/// Verifies Workflow plugins cannot smuggle either existing kind-specific section.
+#[test]
+fn workflow_kind_rejects_workbench_and_webview_sections() {
+    let workbench = WORKBENCH_MANIFEST.replacen("kind = \"workbench\"", "kind = \"workflow\"", 1);
+    let webview = WEBVIEW_MANIFEST.replacen("kind = \"webview\"", "kind = \"workflow\"", 1);
+
+    assert!(matches!(
+        PluginManifest::parse_installed(&workbench),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Workbench,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Workflow
+            },
+        })
+    ));
+    assert!(matches!(
+        PluginManifest::parse_installed(&webview),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Webview,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Workflow
+            },
+        })
+    ));
+}
+
+/// Verifies a Workflow package carries no native executable, so `[artifact]` is refused on its
+/// kind rather than being accepted as a universal package.
+#[test]
+fn workflow_kind_rejects_artifact_section() {
+    let manifest = "identifier = \"user.workflow-pack\"\nkind = \"workflow\"\nversion = \"1.2.0\"\ndescription = \"A Workflow package\"\n\n[artifact]\ntarget = \"x86_64-pc-windows-msvc\"\n";
+
+    assert!(matches!(
+        PluginManifest::parse_installed(manifest),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Artifact,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Workflow
+            },
+        })
+    ));
+}
+
 /// Verifies an installed package manifest omits download-only fields and still parses.
 #[test]
 fn parses_installed_manifest_without_download_fields() {

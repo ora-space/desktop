@@ -8,10 +8,10 @@ use crate::plugin::PluginApi;
 use crate::plugin::pack_reconcile::PackMemberReconciliation;
 use crate::settings::Settings;
 use ora_contracts::{
-    ImportPluginRequest, InstallOutcome, InstallPluginRequest, ListInstalledPluginsRequest,
-    ListPackInstallationsRequest, PackInstallFailure, PackInstalledMember,
-    PackMemberInstallOutcome, PackUninstallPlanRequest, PluginDataDisposition, PublicError,
-    UninstallPluginRequest, UpdatePluginRequest,
+    ImportPluginRequest, ImportedWorkflowOutcome, InstallOutcome, InstallPluginRequest,
+    ListInstalledPluginsRequest, ListPackInstallationsRequest, PackInstallFailure,
+    PackInstalledMember, PackMemberInstallOutcome, PackUninstallPlanRequest, PluginDataDisposition,
+    PublicError, UninstallPluginRequest, UpdatePluginRequest,
 };
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqlitePackInstallationRepository,
@@ -77,7 +77,11 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
         })
         .expect("agent runtime"),
     );
-    Plugins::new(host, runtime)
+    Plugins::new(
+        host,
+        runtime,
+        Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+    )
 }
 
 /// Writes a processless Hook `.orax` whose command alias is `rtk` and whose artifact matches
@@ -350,7 +354,14 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
         })
         .expect("agent runtime"),
     );
-    (Plugins::new(host.clone(), runtime), host)
+    (
+        Plugins::new(
+            host.clone(),
+            runtime,
+            Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+        ),
+        host,
+    )
 }
 
 /// Asserts the installed state of one member package directory.
@@ -1302,6 +1313,98 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                     ids.contains(&"local/rtk-ai.rtk") && ids.contains(&"local/other.rtk"),
                     "both Hooks must remain installed and available, got {ids:?}"
                 );
+            });
+    });
+}
+
+/// One Start-only workflow document the run engine accepts, carrying an explicit version.
+const WORKFLOW_DOCUMENT: &str = r#"{"name":"导入流程","version":"1.0.0","viewport":{"x":0,"y":0,"zoom":1},"nodes":[{"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","title":"开始"}}],"edges":[]}"#;
+
+/// Writes a Workflow `.orax` carrying the given `assets/workflows/<name>` documents.
+fn write_workflow_orax(path: &Path, identifier: &str, documents: &[(&str, &str)]) {
+    let manifest = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"workflow\"\nversion = \"0.1.0\"\ndescription = \"Workflow package\"\n"
+    );
+    let mut writer = ZipWriter::new(File::create(path).unwrap());
+    let options = SimpleFileOptions::default();
+    writer.start_file("orax.toml", options).unwrap();
+    writer.write_all(manifest.as_bytes()).unwrap();
+    for (name, contents) in documents {
+        writer
+            .start_file(format!("assets/workflows/{name}"), options)
+            .unwrap();
+        writer.write_all(contents.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// A Workflow package installs and turns each document into a workflow with a published
+/// snapshot, reporting one malformed document on its own without costing the user the working
+/// workflow beside it.
+#[test]
+fn imports_workflow_package_documents_alongside_the_plugin() {
+    with_trace_logging(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async move {
+                let data_dir = TempDir::new().expect("data dir");
+                let pool = test_pool(data_dir.path());
+                let api = test_plugin_api(data_dir.path(), &pool);
+                let archive = data_dir.path().join("workflows.orax");
+                write_workflow_orax(
+                    &archive,
+                    "ora.workflows",
+                    &[
+                        ("1.0.0.json", WORKFLOW_DOCUMENT),
+                        ("2.0.0.json", "{ not json"),
+                    ],
+                );
+
+                let response = api
+                    .import(ImportPluginRequest {
+                        path: archive.to_string_lossy().into_owned(),
+                    })
+                    .await
+                    .expect("import workflow package");
+
+                // The package itself installs under the reserved local namespace.
+                assert_eq!(response.plugin_id, "local/ora.workflows");
+                assert_eq!(response.outcome, InstallOutcome::Installed);
+
+                let [imported, failed] = response.workflows.as_slice() else {
+                    panic!(
+                        "expected two document outcomes, got {:?}",
+                        response.workflows
+                    );
+                };
+                let ImportedWorkflowOutcome::Imported {
+                    source_file,
+                    workflow_id,
+                    name,
+                    version,
+                } = imported
+                else {
+                    panic!("expected the valid document to import, got {imported:?}");
+                };
+                assert_eq!(source_file, "assets/workflows/1.0.0.json");
+                assert_eq!(name, "导入流程");
+                assert_eq!(version, "1.0.0");
+                assert!(
+                    !workflow_id.is_empty(),
+                    "import must report the created workflow"
+                );
+
+                let ImportedWorkflowOutcome::Failed {
+                    source_file,
+                    reason,
+                } = failed
+                else {
+                    panic!("expected the malformed document to fail, got {failed:?}");
+                };
+                assert_eq!(source_file, "assets/workflows/2.0.0.json");
+                assert!(reason.contains("not valid JSON"), "{reason}");
             });
     });
 }

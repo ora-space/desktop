@@ -177,6 +177,9 @@ export const pluginTranslations = {
     "settings.plugins.import": "导入插件",
     "settings.plugins.importSuccess": "插件已导入。",
     "settings.plugins.importFailed": "导入失败",
+    "settings.plugins.importWorkflowsImported": "并导入了 {{count}} 个工作流。",
+    "settings.plugins.importWorkflowsSummary":
+      "导入了 {{imported}} 个工作流，{{failed}} 个被拒绝。",
     "settings.plugins.pathSelectionError": "无法选择插件文件。",
     "settings.plugins.uninstalling": "卸载中",
     "settings.plugins.runtimeFailing": "运行失败",
@@ -498,6 +501,10 @@ export const pluginTranslations = {
     "settings.plugins.import": "Import plugin",
     "settings.plugins.importSuccess": "Plugin imported.",
     "settings.plugins.importFailed": "Import failed",
+    "settings.plugins.importWorkflowsImported":
+      "Imported {{count}} workflow(s) as well.",
+    "settings.plugins.importWorkflowsSummary":
+      "Imported {{imported}} workflow(s); {{failed}} were refused.",
     "settings.plugins.pathSelectionError": "Unable to select a plugin file.",
     "settings.plugins.uninstalling": "Uninstalling",
     "settings.plugins.runtimeFailing": "Runtime failed",

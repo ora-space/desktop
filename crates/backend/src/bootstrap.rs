@@ -252,7 +252,11 @@ impl Backend {
             ),
             settings,
             session,
-            plugin: Plugins::new(plugin, agent_runtime.clone()),
+            plugin: Plugins::new(
+                plugin,
+                agent_runtime.clone(),
+                Arc::new(crate::workflow::workflow_import(pool.clone(), clock)),
+            ),
             agent_runtime: AgentRuntime::new(agent_runtime),
             skill: Arc::new(SkillApi::new(
                 pool.clone(),

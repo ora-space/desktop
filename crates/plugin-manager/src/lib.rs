@@ -11,6 +11,7 @@ mod skill;
 mod validation;
 mod webview;
 mod workbench;
+mod workflow;
 
 #[cfg(test)]
 mod kind_tests;
@@ -36,6 +37,9 @@ pub use validation::{
 pub use webview::InstalledWebviewDescriptor;
 pub use workbench::{
     InstalledWorkbenchDescriptor, WORKBENCH_ASSET_DIRECTORY, WORKBENCH_PAGE_ENTRY,
+};
+pub use workflow::{
+    InstalledWorkflowDescriptor, WORKFLOW_ASSET_DIRECTORY, WORKFLOW_FILE_EXTENSION,
 };
 
 use std::path::Path;

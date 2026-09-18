@@ -6,6 +6,15 @@ const MAX_PACKAGE_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 /// Cap on the cumulative bytes one package may materialize on disk.
 const MAX_PACKAGE_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// Cap on the workflow documents one Workflow plugin package may contribute.
+///
+/// The extract budget already bounds the bytes, so this bounds the work instead: importing a
+/// package reads, validates, and persists every document it carries, and the import response
+/// reports each one. A workflow package is a delivery vehicle for user data rather than a
+/// program, so the ceiling is set by what one intentional import should be able to carry in a
+/// single step, not by what a package could physically hold.
+pub(crate) const MAX_WORKFLOWS_PER_PACKAGE: usize = 256;
+
 /// Returns the extraction limits applied to every plugin package.
 ///
 /// A plugin package is not a document bundle. An Agent Plugin may ship the CLI it drives so the

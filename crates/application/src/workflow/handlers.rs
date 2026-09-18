@@ -23,9 +23,9 @@ use crate::workflow::ports::{
     RollbackDraftResult, UpdateDraftResult, UpdateWorkflowResult, WorkflowIdGenerator,
     WorkflowRepository,
 };
+use crate::workflow::version::{DRAFT_VERSION, is_valid_user_version};
 use crate::{ApplicationError, Clock};
 
-const DRAFT_VERSION: &str = "draft";
 // Every valid workflow is created with its required Start node; the node catalog deliberately
 // hides the start kind, so the seed graph must carry one.
 const DEFAULT_GRAPH: &str = r#"{"nodes":[{"id":"start","type":"workflow","deletable":false,"position":{"x":120,"y":260},"data":{"kind":"start","title":"开始","description":"接收工作流输入"}}],"edges":[]}"#;
@@ -426,12 +426,7 @@ where
                 return Err(ApplicationError::WorkflowVersionReserved);
             }
             Some(v) => {
-                if v.trim().is_empty()
-                    || v.len() > 128
-                    || matches!(v.as_str(), "." | "..")
-                    || v.chars()
-                        .any(|character| character.is_control() || matches!(character, '/' | '\\'))
-                {
+                if !is_valid_user_version(&v) {
                     return Err(ApplicationError::WorkflowVersionInvalid);
                 }
                 (v, false)

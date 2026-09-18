@@ -1,9 +1,10 @@
 //! Public plugin use cases, including reconciliation of the process-local agent set.
 
-use super::PluginApi;
+use super::{ImportedPlugin, PluginApi};
 use crate::BackendError;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::plugin_gateway::PluginGateway;
+use crate::workflow::WorkflowImport;
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -21,13 +22,19 @@ mod tests;
 pub struct Plugins {
     host: Arc<PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
+    workflow_import: Arc<WorkflowImport>,
 }
 
 impl Plugins {
-    pub(crate) fn new(host: Arc<PluginApi>, agent_runtime: Arc<AgentRuntimeManager>) -> Self {
+    pub(crate) fn new(
+        host: Arc<PluginApi>,
+        agent_runtime: Arc<AgentRuntimeManager>,
+        workflow_import: Arc<WorkflowImport>,
+    ) -> Self {
         Self {
             host,
             agent_runtime,
+            workflow_import,
         }
     }
 
@@ -299,17 +306,28 @@ impl Plugins {
         Ok(response)
     }
 
-    /// Imports one local release archive and reconciles the agent set afterwards.
+    /// Imports one local release archive, its workflow documents, and reconciles the agent set.
     ///
     /// The agent set is reconciled so the imported package supplies a reachable agent in this
-    /// process rather than only after the next restart.
+    /// process rather than only after the next restart. Workflow documents import only once the
+    /// package is committed: a package that fails to install therefore creates no workflows,
+    /// while a document that fails to import never removes the package that carried it.
     pub async fn import(
         &self,
         request: ImportPluginRequest,
     ) -> Result<ImportPluginResponse, BackendError> {
-        let response = self.host.import(request).await?;
+        let ImportedPlugin {
+            plugin_id,
+            outcome,
+            workflow_documents,
+        } = self.host.import(request).await?;
         self.agent_runtime.sync_plugin_agents();
-        Ok(response)
+        let workflows = self.workflow_import.handle(workflow_documents);
+        Ok(ImportPluginResponse {
+            plugin_id,
+            outcome,
+            workflows,
+        })
     }
 }
 

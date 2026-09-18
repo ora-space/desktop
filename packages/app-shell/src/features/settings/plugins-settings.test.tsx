@@ -838,6 +838,95 @@ it("imports a local archive through the backend", async () => {
   );
 });
 
+/** A workflow package reports how many documents imported and how many were refused. */
+it("summarizes the workflow documents an imported package carried", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+    {
+      state: "failed",
+      sourceFile: "assets/workflows/2.0.0.json",
+      reason: "document is not valid JSON",
+    },
+  ];
+  const platform = createStubPlatform();
+  platform.selectPath = vi
+    .fn()
+    .mockResolvedValue("C:/downloads/workflows.orax");
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client, platform);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(successToast.mock.calls[0]?.[0]).toEqual(
+    expect.stringMatching(/插件已导入|Plugin imported/),
+  );
+  expect(successToast.mock.calls[0]?.[1]).toEqual({
+    description: expect.stringMatching(
+      /导入了 1 个工作流，1 个被拒绝|Imported 1 workflow\(s\); 1 were refused/,
+    ),
+  });
+});
+
+/** A package whose documents all imported reports only the imported count. */
+it("reports a fully successful workflow import without a refusal count", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/2.0.0.json",
+      workflowId: "workflow-4",
+      name: "回归流程",
+      version: "2.0.0",
+    },
+  ];
+  const platform = createStubPlatform();
+  platform.selectPath = vi
+    .fn()
+    .mockResolvedValue("C:/downloads/workflows.orax");
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client, platform);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(successToast.mock.calls[0]?.[1]).toEqual({
+    description: expect.stringMatching(
+      /并导入了 2 个工作流|Imported 2 workflow\(s\)/,
+    ),
+  });
+});
+
 /** A path picker that rejects surfaces an error toast without touching the backend. */
 it("reports a path-picker failure when importing", async () => {
   const user = userEvent.setup();

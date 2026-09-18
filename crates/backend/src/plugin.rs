@@ -6,6 +6,7 @@ mod pack;
 mod pack_reconcile;
 mod pack_uninstall;
 mod registry_sync;
+mod workflow_documents;
 pub use operations::{AdmittedSync, Plugins};
 
 use crate::app_event::AppEventPublisher;
@@ -17,16 +18,16 @@ use crate::marketplace_sources::{
 };
 use crate::proxy;
 use crate::settings::Settings;
-use ora_application::Clock;
+use ora_application::{Clock, WorkflowDocument};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest,
     AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse,
-    EmptyErrorParams, ImportPluginRequest, ImportPluginResponse, InstallOutcome,
-    ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
-    ListMarketplaceSourcesResponse, MarketplaceArtifactRetrieval, PublicError,
-    ReadPluginReadmeRequest, ReadPluginReadmeResponse, ScanPluginsRequest, ScanPluginsResponse,
-    StopPluginRequest, StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
-    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
+    EmptyErrorParams, ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest,
+    ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse,
+    MarketplaceArtifactRetrieval, PublicError, ReadPluginReadmeRequest, ReadPluginReadmeResponse,
+    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
+    UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest,
+    UpdateMarketplaceSourceResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
@@ -198,6 +199,20 @@ pub(crate) struct PluginApi {
     /// Test-only transport substitution for production-entry marketplace qualification.
     #[cfg(test)]
     local_marketplace_releases: Mutex<BTreeMap<String, PathBuf>>,
+}
+
+/// Carries one installed package and the workflow documents it contributes, still uninterpreted.
+///
+/// The plugin layer stops at reading the document text: it has no business deciding what a
+/// workflow is, so the caller turns these into workflows through the workflow use case once the
+/// package itself is committed and the agent set is reconciled.
+pub(crate) struct ImportedPlugin {
+    /// Canonical identifier of the installed package.
+    pub plugin_id: String,
+    /// The typed installation outcome, identical in shape to a marketplace install.
+    pub outcome: InstallOutcome,
+    /// Every workflow document the package carries, in package order; empty for other kinds.
+    pub workflow_documents: Vec<WorkflowDocument>,
 }
 
 impl PluginApi {
@@ -644,11 +659,12 @@ impl PluginApi {
         Ok(response)
     }
     /// Imports a local `.orax` release archive: verifies and extracts it, refreshes the installed
-    /// snapshot so the plugin is immediately usable without a restart.
+    /// snapshot so the plugin is immediately usable without a restart, and returns the workflow
+    /// documents it carries for the caller to turn into workflows.
     pub(crate) async fn import(
         &self,
         request: ImportPluginRequest,
-    ) -> Result<ImportPluginResponse, BackendError> {
+    ) -> Result<ImportedPlugin, BackendError> {
         let archive_path = PathBuf::from(&request.path);
         ora_info!(path = %request.path, "importing plugin release from local archive");
         // Extracting and verifying the archive is CPU/IO bound, so it runs on the blocking
@@ -679,8 +695,21 @@ impl PluginApi {
         })?;
         let plugin_id = package.id.canonical();
         let outcome = self.finalize_new_install(&plugin_id).await?;
-        ora_info!(plugin_id = %plugin_id, outcome = ?outcome, "imported plugin release from local archive");
-        Ok(ImportPluginResponse { plugin_id, outcome })
+        // Read after the snapshot refresh, because the documents are located through the
+        // discovered contribution rather than guessed from the package layout.
+        let workflow_documents =
+            workflow_documents::read_workflow_documents(&self.home_directory, &plugin_id)?;
+        ora_info!(
+            plugin_id = %plugin_id,
+            outcome = ?outcome,
+            workflow_documents = workflow_documents.len(),
+            "imported plugin release from local archive"
+        );
+        Ok(ImportedPlugin {
+            plugin_id,
+            outcome,
+            workflow_documents,
+        })
     }
 
     /// Refreshes the installed-plugin snapshot after a new package lands and reports the typed
@@ -726,7 +755,8 @@ impl PluginApi {
             | PluginContribution::Workbench(_)
             | PluginContribution::Webview(_)
             | PluginContribution::Skill(_)
-            | PluginContribution::Mcp(_) => return None,
+            | PluginContribution::Mcp(_)
+            | PluginContribution::Workflow(_) => return None,
         };
         let snapshot = self.lifecycle.list_installed_plugins();
         for plugin in snapshot.plugins.iter() {

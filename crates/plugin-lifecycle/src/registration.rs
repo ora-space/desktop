@@ -57,6 +57,9 @@ pub fn validate_registration(
         PluginContribution::Hook(_) => Err(PluginRuntimeFailure::new(
             "hook plugins have no process and cannot register",
         )),
+        PluginContribution::Workflow(_) => Err(PluginRuntimeFailure::new(
+            "workflow plugins have no process and cannot register",
+        )),
     }
 }
 

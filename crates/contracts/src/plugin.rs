@@ -1,6 +1,7 @@
 mod marketplace_sync;
 mod pack_install;
 mod pack_status;
+mod workflow_import;
 
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
 
@@ -19,6 +20,7 @@ pub use pack_status::{
     PackUninstallPlanRequest, PackUninstallPlanResponse, PackUninstallPreservation,
     PackUninstallPreservationReason,
 };
+pub use workflow_import::ImportedWorkflowOutcome;
 
 /// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
@@ -49,6 +51,10 @@ pub enum InstalledPluginContribution {
     },
     /// A static package kind whose Skill assets are cataloged without a runtime process.
     Skill,
+    /// A processless delivery kind whose workflow documents are imported into the workflow
+    /// library. The imported workflows are user data that outlives the package, so this
+    /// contribution carries no package contents the frontend could act on.
+    Workflow,
     /// A configuration-only kind describing one MCP Server; transport details stay host-side.
     Mcp,
     /// A processless Hook contribution: one immutable Hook Protocol descriptor and one
@@ -711,6 +717,10 @@ pub struct ImportPluginResponse {
     pub plugin_id: String,
     /// The typed installation outcome, identical in shape to a marketplace install.
     pub outcome: InstallOutcome,
+    /// One entry per workflow document the package carried, in package order. Empty for every
+    /// kind that contributes no workflow documents, so an ordinary plugin import reports nothing
+    /// here rather than a caller having to know which kinds can carry workflows.
+    pub workflows: Vec<ImportedWorkflowOutcome>,
 }
 
 /// Requests the current editor snapshot for one installed plugin.
@@ -837,6 +847,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstallPluginResponse::export(config)?;
     UpdatePluginRequest::export(config)?;
     UpdatePluginResponse::export(config)?;
+    workflow_import::export(config)?;
     ImportPluginRequest::export(config)?;
     ImportPluginResponse::export(config)?;
     GetPluginConfigurationRequest::export(config)?;
@@ -854,16 +865,16 @@ mod tests {
     use super::{
         AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, AvailablePlugin,
         DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, ImportPluginRequest,
-        ImportPluginResponse, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
-        InstalledPlugin, InstalledPluginContribution, ListAvailablePluginsRequest,
-        ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-        ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse,
-        MarketplaceArtifactRetrieval, MarketplaceArtifactRetrievalUpdate,
-        MarketplaceS3CredentialsUpdate, MarketplaceSource, PluginConfigurationSummary,
-        PluginInstallationValidity, PluginLogo, PluginRuntimeStatus, ReadPluginReadmeRequest,
-        ReadPluginReadmeResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
-        UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse, UpdatePluginRequest,
-        UpdatePluginResponse,
+        ImportPluginResponse, ImportedWorkflowOutcome, InstallOutcome, InstallPluginRequest,
+        InstallPluginResponse, InstalledPlugin, InstalledPluginContribution,
+        ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
+        ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
+        ListMarketplaceSourcesResponse, MarketplaceArtifactRetrieval,
+        MarketplaceArtifactRetrievalUpdate, MarketplaceS3CredentialsUpdate, MarketplaceSource,
+        PluginConfigurationSummary, PluginInstallationValidity, PluginLogo, PluginRuntimeStatus,
+        ReadPluginReadmeRequest, ReadPluginReadmeResponse, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
+        UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1322,6 +1333,9 @@ mod tests {
     }
 
     /// Verifies the import request/response wire shape for a local `.orax` archive.
+    ///
+    /// A package of a kind that carries no workflow documents still reports the field as an empty
+    /// list, so a caller never has to know which kinds can contribute workflows.
     #[test]
     fn serializes_import_plugin_contract() {
         assert_eq!(
@@ -1335,9 +1349,47 @@ mod tests {
             serde_json::to_value(ImportPluginResponse {
                 plugin_id: "official/weather".to_string(),
                 outcome: InstallOutcome::Installed,
+                workflows: Vec::new(),
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
+            json!({
+                "pluginId": "official/weather",
+                "outcome": { "state": "installed" },
+                "workflows": []
+            })
+        );
+    }
+
+    /// Verifies each per-document workflow outcome keeps its own shape and camelCase fields.
+    #[test]
+    fn serializes_imported_workflow_outcomes() {
+        assert_eq!(
+            serde_json::to_value(ImportedWorkflowOutcome::Imported {
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                workflow_id: "workflow-1".to_string(),
+                name: "发布流程".to_string(),
+                version: "1.0.0".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "imported",
+                "sourceFile": "assets/workflows/1.0.0.json",
+                "workflowId": "workflow-1",
+                "name": "发布流程",
+                "version": "1.0.0"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ImportedWorkflowOutcome::Failed {
+                source_file: "assets/workflows/2.0.0.json".to_string(),
+                reason: "document is not valid JSON".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "failed",
+                "sourceFile": "assets/workflows/2.0.0.json",
+                "reason": "document is not valid JSON"
+            })
         );
     }
 

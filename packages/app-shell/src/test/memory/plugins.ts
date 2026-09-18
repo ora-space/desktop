@@ -3,6 +3,7 @@ import {
   type AvailablePlugin,
   type MarketplaceSource,
   type InstalledPlugin,
+  type ImportedWorkflowOutcome,
   type InstallOutcome,
   type PackInstallationStatus,
   type PackUninstallPlan,
@@ -32,6 +33,11 @@ export interface PluginMemoryState {
    * `installed`; a conflict test supplies `installed_with_command_conflict`.
    */
   installOutcome?: InstallOutcome;
+  /**
+   * Per-document workflow outcomes a local `.orax` import should report. Defaults to none, which
+   * is what every kind other than a Workflow package reports.
+   */
+  importedWorkflows?: ImportedWorkflowOutcome[];
   /** Ownership journal rows served by the pack presentation queries. */
   packInstallations: PackInstallationStatus[];
   /** Installable member packages keyed by their owning pack listing id. */
@@ -429,6 +435,7 @@ export function pluginHandlers(state: PluginMemoryState) {
       return {
         pluginId: target.id,
         outcome,
+        workflows: state.importedWorkflows ?? [],
       };
     },
     installPlugin: async (req) => {

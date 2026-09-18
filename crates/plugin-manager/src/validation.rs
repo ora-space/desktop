@@ -3,6 +3,7 @@ use crate::mcp::{InstalledMcpDescriptor, validate_mcp};
 use crate::skill::{InstalledSkillDescriptor, validate_skill};
 use crate::webview::{InstalledWebviewDescriptor, validate_webview};
 use crate::workbench::{InstalledWorkbenchDescriptor, validate_workbench};
+use crate::workflow::{InstalledWorkflowDescriptor, validate_workflow};
 use ora_domain::{PluginId, PluginNamespace};
 use ora_plugin_asset::PluginLogoVariants;
 use ora_plugin_config::{CompiledConfigurationFile, ConfigurationError, ConfigurationService};
@@ -33,6 +34,7 @@ pub enum PluginContribution {
     Skill(InstalledSkillDescriptor),
     Mcp(InstalledMcpDescriptor),
     Hook(InstalledHookDescriptor),
+    Workflow(InstalledWorkflowDescriptor),
 }
 
 impl PluginContribution {
@@ -45,6 +47,7 @@ impl PluginContribution {
             Self::Skill(_) => "skill",
             Self::Mcp(_) => "mcp",
             Self::Hook(_) => "hook",
+            Self::Workflow(_) => "workflow",
         }
     }
 
@@ -53,7 +56,11 @@ impl PluginContribution {
         match self {
             Self::Agent(agent) => Some(&agent.entrypoint),
             Self::Workbench(workbench) => Some(&workbench.entrypoint),
-            Self::Webview(_) | Self::Skill(_) | Self::Mcp(_) | Self::Hook(_) => None,
+            Self::Webview(_)
+            | Self::Skill(_)
+            | Self::Mcp(_)
+            | Self::Hook(_)
+            | Self::Workflow(_) => None,
         }
     }
 }
@@ -218,6 +225,7 @@ pub(crate) fn validate(
         // A pack never becomes an installed package, so it can never reach package validation:
         // the manifest parser rejects `kind = "pack"` in the installed form outright.
         PluginKind::Pack => unreachable!("installed pack manifests are rejected at parse time"),
+        PluginKind::Workflow => PluginContribution::Workflow(validate_workflow(package_root)?),
     };
     let configuration_declaration = match &configuration_file {
         Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,

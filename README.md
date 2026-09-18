@@ -19,6 +19,8 @@ live in `packages/`. All Rust packages share the root Cargo workspace.
   runtime
 - [Workflow](docs/workflow.md) — definition management, draft/publish lifecycle,
   versioned snapshots, and run CRUD
+- [Workflow orax Import](docs/workflow-orax-import.md) — the `workflow` plugin kind,
+  the document format it ships, and per-document import semantics
 
 ## Runtime Docs
 

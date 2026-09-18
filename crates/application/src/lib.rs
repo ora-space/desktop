@@ -58,10 +58,11 @@ pub use user_config::{DeveloperMode, NetworkProxySettings, UserConfigService};
 pub use workflow::{
     ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
     DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
-    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler, ListVersionsHandler,
-    ListWorkflowsHandler, PublishSnapshotResult, PublishWorkflowHandler, RollbackDraftResult,
-    RollbackWorkflowHandler, UpdateDraftHandler, UpdateDraftResult, UpdateWorkflowHandler,
-    UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowIdGenerator, WorkflowRepository,
+    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler, ImportWorkflowsHandler,
+    ListVersionsHandler, ListWorkflowsHandler, PublishSnapshotResult, PublishWorkflowHandler,
+    RollbackDraftResult, RollbackWorkflowHandler, UpdateDraftHandler, UpdateDraftResult,
+    UpdateWorkflowHandler, UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowDocument,
+    WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
     AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentMcp, AgentOutputContract,

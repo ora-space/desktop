@@ -3,8 +3,8 @@ use crate::clock::SystemClock;
 use ora_application::{
     ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler, DeleteWorkflowHandler,
     GetDraftHandler, GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
-    ListVersionsHandler, ListWorkflowsHandler, PublishWorkflowHandler, RollbackWorkflowHandler,
-    UpdateDraftHandler, UpdateWorkflowHandler, UuidWorkflowIdGenerator,
+    ImportWorkflowsHandler, ListVersionsHandler, ListWorkflowsHandler, PublishWorkflowHandler,
+    RollbackWorkflowHandler, UpdateDraftHandler, UpdateWorkflowHandler, UuidWorkflowIdGenerator,
 };
 use ora_contracts::{
     ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest,
@@ -18,6 +18,22 @@ use ora_contracts::{
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRepository};
 use std::sync::Arc;
+
+/// The concrete workflow import use case, composed alongside the other workflow handlers.
+///
+/// It stays a standalone alias rather than a `WorkflowApi` field because its only caller is the
+/// plugin import path, which needs nothing else the workflow API exposes.
+pub(crate) type WorkflowImport =
+    ImportWorkflowsHandler<SqliteWorkflowRepository, UuidWorkflowIdGenerator, SystemClock>;
+
+/// Builds the workflow import use case from the shared repository pool.
+pub(crate) fn workflow_import(pool: RepositoryPool, clock: SystemClock) -> WorkflowImport {
+    ImportWorkflowsHandler::new(
+        Arc::new(SqliteWorkflowRepository::new(pool)),
+        UuidWorkflowIdGenerator::new(),
+        clock,
+    )
+}
 
 /// Groups the concrete workflow handlers shared by runtime adapters.
 pub struct WorkflowApi {

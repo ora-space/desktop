@@ -1,9 +1,11 @@
-//! Discovery tests for the host-side policy of the `workbench`, `webview`, `mcp`, and `hook` kinds.
+//! Discovery tests for the host-side policy of the `workbench`, `webview`, `mcp`, `hook`, and
+//! `workflow` kinds.
 
 use super::tests::{SymlinkKind, agent_manifest, create_symlink, replace_path, write_manifest};
 use super::{PluginContribution, PluginManager};
 use ora_plugin_config::{HookProtocol, McpHttpTransport, McpTransport, McpValueExpression};
 use ora_plugin_manifest::MethodName;
+use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 use std::fs;
@@ -86,7 +88,8 @@ fn discovers_workbench_package_with_and_without_methods() {
             | PluginContribution::Webview(_)
             | PluginContribution::Skill(_)
             | PluginContribution::Mcp(_)
-            | PluginContribution::Hook(_) => {
+            | PluginContribution::Hook(_)
+            | PluginContribution::Workflow(_) => {
                 panic!("expected workbench contributions")
             }
         })
@@ -156,7 +159,8 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
         | PluginContribution::Workbench(_)
         | PluginContribution::Skill(_)
         | PluginContribution::Mcp(_)
-        | PluginContribution::Hook(_) => {
+        | PluginContribution::Hook(_)
+        | PluginContribution::Workflow(_) => {
             panic!("expected a webview contribution")
         }
     };
@@ -635,4 +639,65 @@ fn rejects_hook_executable_symlink_escape() {
         manager.discovery_issues()[0].field_path(),
         Some("hook.executable"),
     );
+}
+
+/// Builds a workflow-kind manifest from the shared fixture.
+fn workflow_manifest() -> Value {
+    let mut manifest = agent_manifest();
+    manifest["kind"] = Value::from("workflow");
+    manifest
+}
+
+/// Writes a processless Workflow package: documents under `assets/workflows/` and no `main.js`.
+fn write_workflow_package(package_root: &std::path::Path, documents: &[&str]) {
+    let asset_root = package_root.join("assets").join("workflows");
+    fs::create_dir_all(&asset_root).unwrap();
+    for document in documents {
+        fs::write(asset_root.join(document), "{}").unwrap();
+    }
+    fs::remove_file(package_root.join("main.js")).unwrap();
+}
+
+/// A Workflow package catalogs its documents in stable name order without a runtime process.
+#[test]
+fn discovers_workflow_package_documents() {
+    let temp_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(temp_dir.path(), NAME, workflow_manifest());
+    write_workflow_package(&package_root, &["2.0.0.json", "1.0.0.json"]);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    let plugin = &manager.installed_plugins()[0];
+    let PluginContribution::Workflow(descriptor) = &plugin.contributes else {
+        panic!(
+            "expected a workflow contribution, got {:?}",
+            plugin.contributes
+        )
+    };
+    assert_eq!(
+        descriptor.files,
+        vec![
+            PortableRelativePath::parse("assets/workflows/1.0.0.json").unwrap(),
+            PortableRelativePath::parse("assets/workflows/2.0.0.json").unwrap(),
+        ]
+    );
+}
+
+/// A Workflow package must ship at least one document: a missing asset directory and one holding
+/// no `*.json` file are both reported against the `workflow` field.
+#[test]
+fn rejects_workflow_package_without_documents() {
+    let missing = TempDir::new().unwrap();
+    let package_root = write_manifest(missing.path(), NAME, workflow_manifest());
+    fs::remove_file(package_root.join("main.js")).unwrap();
+    let documentless = TempDir::new().unwrap();
+    let package_root = write_manifest(documentless.path(), NAME, workflow_manifest());
+    write_workflow_package(&package_root, &[]);
+
+    for data_dir in [&missing, &documentless] {
+        let manager = PluginManager::discover(data_dir.path());
+        assert_eq!(manager.installed_plugins(), &[]);
+        assert_eq!(manager.discovery_issues()[0].field_path(), Some("workflow"));
+    }
 }

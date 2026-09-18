@@ -85,7 +85,8 @@ impl SurfaceDefinition {
             PluginContribution::Agent(_)
             | PluginContribution::Skill(_)
             | PluginContribution::Mcp(_)
-            | PluginContribution::Hook(_) => {
+            | PluginContribution::Hook(_)
+            | PluginContribution::Workflow(_) => {
                 return None;
             }
             PluginContribution::Workbench(descriptor) => {

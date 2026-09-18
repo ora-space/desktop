@@ -116,6 +116,49 @@ export type ImportPluginResponse = {
    * The typed installation outcome, identical in shape to a marketplace install.
    */
   outcome: InstallOutcome;
+  /**
+   * One entry per workflow document the package carried, in package order. Empty for every
+   * kind that contributes no workflow documents, so an ordinary plugin import reports nothing
+   * here rather than a caller having to know which kinds can carry workflows.
+   */
+  workflows: Array<ImportedWorkflowOutcome>;
+};
+
+/**
+ * Describes what happened to one workflow document an imported `.orax` package carried.
+ *
+ * Each document is imported on its own, so one unparseable or unrunnable document never costs
+ * the user the working workflows beside it. The outcome carries the document's package-relative
+ * path in both arms so a caller can report a failure against the exact file that produced it.
+ */
+export type ImportedWorkflowOutcome = {
+  "state": "imported";
+  /**
+   * Package-relative path the document was read from, e.g. `assets/workflows/1.0.0.json`.
+   */
+  sourceFile: string;
+  /**
+   * Identifier of the created workflow.
+   */
+  workflowId: string;
+  /**
+   * Workflow name taken from the document.
+   */
+  name: string;
+  /**
+   * The version the new snapshot was published under.
+   */
+  version: string;
+} | {
+  "state": "failed";
+  /**
+   * Package-relative path the document was read from, e.g. `assets/workflows/1.0.0.json`.
+   */
+  sourceFile: string;
+  /**
+   * Human-readable reason the document could not become a workflow.
+   */
+  reason: string;
 };
 
 /**
@@ -194,6 +237,7 @@ export type InstalledPlugin =
     | { "kind": "workbench"; title: string }
     | { "kind": "webview"; title: string; startUrl: string }
     | { "kind": "skill" }
+    | { "kind": "workflow" }
     | { "kind": "mcp" }
     | {
       "kind": "hook";
@@ -228,6 +272,7 @@ export type InstalledPluginContribution =
   | { "kind": "workbench"; title: string }
   | { "kind": "webview"; title: string; startUrl: string }
   | { "kind": "skill" }
+  | { "kind": "workflow" }
   | { "kind": "mcp" }
   | {
     "kind": "hook";

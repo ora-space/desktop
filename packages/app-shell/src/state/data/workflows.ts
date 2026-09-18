@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import type {
   WorkflowSnapshot,
   WorkflowSummary,
@@ -6,11 +7,34 @@ import type {
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 
-const workflowLibraryKey = ["workflow", "library"] as const;
+/** Cache identity root owned by the workflow data layer; consumers never repeat the tuple. */
+const workflowQueriesPrefix = ["workflow"] as const;
+const workflowLibraryKey = [...workflowQueriesPrefix, "library"] as const;
 const workflowDraftKey = (workflowId: string) =>
-  ["workflow", "draft", workflowId] as const;
+  [...workflowQueriesPrefix, "draft", workflowId] as const;
 const workflowVersionsKey = (workflowId: string) =>
-  ["workflow", "versions", workflowId] as const;
+  [...workflowQueriesPrefix, "versions", workflowId] as const;
+
+/** Cache identity owned by the workflow data layer; consumers never repeat its tuples. */
+export const workflowKeys = {
+  all: workflowQueriesPrefix,
+  library: workflowLibraryKey,
+  draft: workflowDraftKey,
+  versions: workflowVersionsKey,
+};
+
+/**
+ * Refreshes the workflow library and every loaded draft and version cache.
+ *
+ * The whole prefix is invalidated because an import creates workflows whose identifiers the
+ * caller never saw, so there is no narrower key to target. Invalidation only refetches queries
+ * that are currently mounted, so a caller with no workflow view open pays nothing.
+ */
+export function invalidateWorkflowQueries(
+  queryClient: QueryClient,
+): Promise<void> {
+  return queryClient.invalidateQueries({ queryKey: workflowQueriesPrefix });
+}
 
 /**
  * Loads the persisted workflow library summaries shown by the editor list
