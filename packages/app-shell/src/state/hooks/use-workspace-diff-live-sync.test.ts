@@ -26,6 +26,7 @@ const SESSION: Session = {
   status: "running",
   title: null,
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 
 /** Builds one conversation state with just enough lifecycle data for diff syncing. */

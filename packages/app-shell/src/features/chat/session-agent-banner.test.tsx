@@ -79,6 +79,7 @@ function session(agentRef: string): Session {
     agentRef,
     status: "running",
     historyState: { type: "writable" },
+    mcpSelection: { mode: "automatic" },
   };
 }
 

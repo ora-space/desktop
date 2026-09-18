@@ -5,7 +5,7 @@ use super::super::SessionChannel;
 use super::super::events::settle_idle_event;
 use super::super::routing::SessionEvent;
 use super::super::scheduling::{ActiveInput, ActiveInputState};
-use super::super::start::log_session_mcp_request;
+use super::super::start::record_session_mcp_boundary;
 use super::super::support::{
     agent_timed_out, contract_session, map_acp_error, protocol_violation, runtime_unavailable,
     session_event_overflow, session_stopped,
@@ -222,13 +222,14 @@ impl RuntimeActor {
         let request =
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
                 .mcp_servers(snapshot.servers().to_vec());
-        log_session_mcp_request(
+        record_session_mcp_boundary(
+            &self.session_mcp,
             &self.session.id,
             &self.session.agent_ref,
             Some(&agent_session_id),
             AGENT_METHOD_NAMES.session_load,
-            &self.session_mcp.selection,
             &snapshot,
+            &self.cwd,
         );
         ora_debug!(session_id = %self.session.id, "session/load MCP refresh sent");
         let pending = match client

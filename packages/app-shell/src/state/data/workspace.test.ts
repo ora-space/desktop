@@ -32,6 +32,7 @@ function aggregate() {
     status: "running",
     title: null,
     historyState: { type: "writable" },
+    mcpSelection: { mode: "automatic" },
   }));
   client.setQueryData(workspaceKeys.projects, projects);
   client.setQueryData(workspaceKeys.tasks, tasks);

@@ -23,7 +23,9 @@ English | [中文](agent-runtime.zh.md)
 
 ## Session MCP
 
-Configured MCP plugins are Session Runtime Input. `startSession` `session/new`, prompt-time attach `session/load`, rebuild `session/new`, live refresh, workflow start, and agent replacement all resolve one Snapshot and send it as ACP `mcpServers`. Live Sessions keep Desired/Active revisions in memory; a configuration change wakes idle Sessions immediately and busy Sessions after the current prompt. Refresh and Skill Effect mutation share one Agent Session Barrier. Setting values never enter Effect state, SQLite, Workspace files, logs, or UI. See [Session MCP](session-mcp.md).
+Configured MCP plugins are Session Runtime Input. `startSession` `session/new`, prompt-time attach `session/load`, rebuild `session/new`, live refresh, workflow start, and agent replacement all resolve one Snapshot and send it as ACP `mcpServers`. Live Sessions keep Desired/Active revisions in memory; a configuration change wakes idle Sessions immediately and busy Sessions after the current prompt. Refresh and Skill Effect mutation share one Agent Session Barrier. Setting values never enter Effect state, SQLite, Workspace files, logs, or UI. Setup success does not
+mean those servers completed a handshake; the Host observes that separately, in memory. See
+[Session MCP](session-mcp.md#runtime-health).
 
 - Connection loss fails that agent's in-flight operations, marks only its registered Sessions Stopped, asks the plugin lifecycle to stop the old process, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - The `initialize` handshake advertises the client's session config-option capability. Agents withhold configuration options from clients that do not, so the model selector depends on it. Boolean options stay undeclared because Ora renders only id-valued selectors.

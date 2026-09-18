@@ -223,6 +223,10 @@ export type Session = {
   agentRef: string;
   status: SessionStatus;
   historyState: SessionHistoryState;
+  /**
+   * The persisted MCP authorization this session resolves against.
+   */
+  mcpSelection: SessionMcpSelection;
 };
 
 /**
@@ -244,6 +248,18 @@ export type SessionHistoryNotice = {
 export type SessionHistoryState = { "type": "writable" } | {
   "type": "degraded";
   reason: string;
+};
+
+/**
+ * Records how a session chooses the MCP plugins it may receive.
+ *
+ * Ordinary sessions discover every currently eligible installed MCP (`automatic`); workflow
+ * sessions keep the frozen whitelist their node authorized (`explicit`). The presentation layer
+ * needs this to scope a session's MCP surface to the servers that session may actually use.
+ */
+export type SessionMcpSelection = { "mode": "automatic" } | {
+  "mode": "explicit";
+  "pluginIds": Array<string>;
 };
 
 /**

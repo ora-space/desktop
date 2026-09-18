@@ -1,9 +1,10 @@
 //! Pure Session MCP resolver: Effective MCP Set → ACP `mcpServers` + secret-free revision.
 
+use super::member::{EligibleMcpMember, effective_members};
 use super::{
-    AgentSessionMcpCapabilities, InstalledMcpCandidate, McpConfigurationEligibility,
-    SessionMcpCatalog, SessionMcpConfigurationSource, SessionMcpError, SessionMcpMemberRevision,
-    SessionMcpRevision, SessionMcpSelection, SessionMcpSnapshot, SessionMcpTransportKind,
+    AgentSessionMcpCapabilities, SessionMcpCatalog, SessionMcpConfigurationSource, SessionMcpError,
+    SessionMcpMemberRevision, SessionMcpRevision, SessionMcpSelection, SessionMcpSnapshot,
+    SessionMcpTransportKind,
 };
 use agent_client_protocol_schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
@@ -24,7 +25,7 @@ pub(crate) fn resolve_session_mcp_revision(
     configurations: &impl SessionMcpConfigurationSource,
     selection: &SessionMcpSelection,
 ) -> Result<SessionMcpRevision, SessionMcpError> {
-    let selected = select_effective_set(catalog, configurations, selection)?;
+    let selected = effective_members(catalog, configurations, selection)?;
     Ok(revision_from_selected(&selected))
 }
 
@@ -41,9 +42,9 @@ pub(crate) fn resolve_session_mcp(
     selection: &SessionMcpSelection,
 ) -> Result<SessionMcpSnapshot, SessionMcpError> {
     for _ in 0..MAX_REVISION_RETRIES {
-        let selected = select_effective_set(catalog, configurations, selection)?;
+        let selected = effective_members(catalog, configurations, selection)?;
         let snapshot = build_snapshot(&selected, cwd, capabilities)?;
-        let current = select_effective_set(catalog, configurations, selection)?;
+        let current = effective_members(catalog, configurations, selection)?;
         if identities_match(&selected, &current) {
             return Ok(snapshot);
         }
@@ -51,84 +52,11 @@ pub(crate) fn resolve_session_mcp(
     Err(SessionMcpError::RevisionChanged { plugin_id: None })
 }
 
-struct SelectedMcp {
-    candidate: InstalledMcpCandidate,
-    configuration_revision: u64,
-    values: std::collections::BTreeMap<String, ora_plugin_config::SettingValue>,
-}
-
-/// Enumerates installed MCP plugins and keeps only those whose configuration is currently complete.
-fn select_effective_set(
-    catalog: &impl SessionMcpCatalog,
-    configurations: &impl SessionMcpConfigurationSource,
-    selection: &SessionMcpSelection,
-) -> Result<Vec<SelectedMcp>, SessionMcpError> {
-    // An explicit empty set must work even when unrelated installed plugins are broken.
-    if matches!(selection, SessionMcpSelection::Explicit(ids) if ids.is_empty()) {
-        return Ok(Vec::new());
-    }
-    let mut candidates = catalog
-        .installed_mcps()
-        .map_err(|_| SessionMcpError::CatalogUnavailable)?;
-    if let SessionMcpSelection::Explicit(ids) = selection {
-        for id in ids {
-            if !candidates
-                .iter()
-                .any(|candidate| candidate.plugin_id == *id)
-            {
-                return Err(SessionMcpError::SelectedPluginUnavailable {
-                    plugin_id: id.clone(),
-                });
-            }
-        }
-        candidates.retain(|candidate| ids.contains(&candidate.plugin_id));
-    }
-    candidates.sort_by_key(|candidate| candidate.plugin_id.canonical());
-    let mut selected = Vec::new();
-    for candidate in candidates {
-        match configurations.eligibility(&candidate)? {
-            McpConfigurationEligibility::Incomplete => {
-                if matches!(selection, SessionMcpSelection::Explicit(_)) {
-                    return Err(SessionMcpError::ConfigurationIncomplete {
-                        plugin_id: candidate.plugin_id,
-                        transport: match candidate.configuration.transport {
-                            ora_plugin_config::McpTransport::Stdio(_) => {
-                                SessionMcpTransportKind::Stdio
-                            }
-                            ora_plugin_config::McpTransport::Http(_) => {
-                                SessionMcpTransportKind::Http
-                            }
-                        },
-                    });
-                }
-            }
-            McpConfigurationEligibility::NoSettings => selected.push(SelectedMcp {
-                candidate,
-                configuration_revision: 0,
-                values: std::collections::BTreeMap::new(),
-            }),
-            McpConfigurationEligibility::Complete { revision, values } => {
-                selected.push(SelectedMcp {
-                    candidate,
-                    configuration_revision: revision,
-                    values,
-                });
-            }
-            McpConfigurationEligibility::Unavailable => {
-                return Err(SessionMcpError::ConfigurationUnavailable {
-                    plugin_id: candidate.plugin_id,
-                });
-            }
-        }
-    }
-    Ok(selected)
-}
-
-fn identities_match(left: &[SelectedMcp], right: &[SelectedMcp]) -> bool {
+fn identities_match(left: &[EligibleMcpMember], right: &[EligibleMcpMember]) -> bool {
     revision_from_selected(left) == revision_from_selected(right)
 }
 
-fn revision_from_selected(selected: &[SelectedMcp]) -> SessionMcpRevision {
+fn revision_from_selected(selected: &[EligibleMcpMember]) -> SessionMcpRevision {
     SessionMcpRevision::new(
         selected
             .iter()
@@ -147,7 +75,7 @@ fn revision_from_selected(selected: &[SelectedMcp]) -> SessionMcpRevision {
 
 /// Maps every selected member into ACP servers, failing the whole Snapshot if one member cannot.
 fn build_snapshot(
-    selected: &[SelectedMcp],
+    selected: &[EligibleMcpMember],
     cwd: &Path,
     capabilities: AgentSessionMcpCapabilities,
 ) -> Result<SessionMcpSnapshot, SessionMcpError> {
@@ -165,7 +93,7 @@ fn build_snapshot(
 }
 
 fn map_member(
-    member: &SelectedMcp,
+    member: &EligibleMcpMember,
     cwd: &Path,
     capabilities: AgentSessionMcpCapabilities,
 ) -> Result<McpServer, SessionMcpError> {
@@ -240,7 +168,7 @@ fn map_member(
 }
 
 /// Re-checks that the stdio command is still an ordinary file inside this exact package version.
-fn revalidate_stdio_command(
+pub(super) fn revalidate_stdio_command(
     package_root: &Path,
     command: &ora_utils::path::PortableRelativePath,
     plugin_id: &ora_domain::PluginId,

@@ -63,6 +63,7 @@ describe("useRenameSession", () => {
         status: "running",
         title: "Old",
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -99,6 +100,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
       {
         id: "s2",
@@ -107,6 +109,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -137,6 +140,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -176,6 +180,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -225,6 +230,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -278,6 +284,7 @@ describe("delete mutations clear parked composer state", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);

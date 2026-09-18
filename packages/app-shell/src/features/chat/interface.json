@@ -25,6 +25,10 @@
       "exports": ["SessionHistoryBanner"],
       "purpose": "Workspace composes chat-owned history status above the conversation."
     },
+    "./session-mcp-health-banner": {
+      "exports": ["SessionMcpHealthBanner"],
+      "purpose": "Workspace composes chat-owned MCP health status above the conversation, scoped to that session's MCP selection."
+    },
     "./session-setup": {
       "exports": ["SessionSetupPresentation", "useSessionSetupStore"],
       "purpose": "Workspace records provider setup timing through chat-owned session-scoped runtime state."

@@ -106,6 +106,21 @@ pub enum SessionHistoryState {
     },
 }
 
+/// Records how a session chooses the MCP plugins it may receive.
+///
+/// Ordinary sessions discover every currently eligible installed MCP (`automatic`); workflow
+/// sessions keep the frozen whitelist their node authorized (`explicit`). The presentation layer
+/// needs this to scope a session's MCP surface to the servers that session may actually use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "mode", content = "pluginIds", rename_all = "snake_case")]
+#[ts(export_to = "session.ts")]
+pub enum SessionMcpSelection {
+    /// Discover every currently eligible installed MCP plugin.
+    Automatic,
+    /// Only the canonical plugin IDs authorized for this session, in canonical order.
+    Explicit(Vec<String>),
+}
+
 /// Describes the public session payload without exposing the provider session identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +134,8 @@ pub struct Session {
     pub agent_ref: AgentRef,
     pub status: SessionStatus,
     pub history_state: SessionHistoryState,
+    /// The persisted MCP authorization this session resolves against.
+    pub mcp_selection: SessionMcpSelection,
 }
 
 /// Sets one selectable configuration option on a persisted session.
@@ -556,6 +573,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;
     SessionHistoryState::export(config)?;
+    SessionMcpSelection::export(config)?;
     Session::export(config)?;
     SwitchSessionAgentRequest::export(config)?;
     SwitchSessionAgentResponse::export(config)?;

@@ -1,8 +1,10 @@
 //! Session MCP types, resolver, and in-memory live-session convergence.
 
 mod error;
+mod health;
 mod host;
 mod live;
+mod member;
 mod resolve;
 
 #[cfg(test)]
@@ -11,6 +13,7 @@ mod selection_tests;
 mod tests;
 
 pub(crate) use error::SessionMcpError;
+pub(crate) use health::{McpHealthStore, observe_session_mcp_health};
 pub(crate) use host::{
     InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,
     SessionMcpConfigurationSource, SessionMcpHost,
@@ -48,7 +51,9 @@ pub(crate) struct SessionMcpMemberRevision {
 }
 
 /// Distinguishes transport kinds in the Desired revision without carrying Setting values.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+///
+/// `Hash` lets health identities key a process-local cache by transport without a second enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum SessionMcpTransportKind {
     Stdio,
     Http,

@@ -123,6 +123,9 @@ export const chatTranslations = {
     "chat.historyNotice.unreadableRecords":
       "有 {{count}} 条历史记录无法读取，缺失位置未知。",
     "chat.historyNotice.unrecordedContent": "部分对话未能记录：{{reason}}",
+    "chat.mcpHealth.title": "当前会话有 MCP 在 Host 侧连不上",
+    "chat.mcpHealth.member": "{{name}}（{{code}}）",
+    "chat.mcpHealth.configure": "配置",
     "chat.send": "发送消息",
     "chat.starting": "正在启动…",
     "chat.unsupportedCommand":
@@ -446,6 +449,10 @@ export const chatTranslations = {
       "{{count}} history records could not be read; their positions are unknown.",
     "chat.historyNotice.unrecordedContent":
       "Part of the conversation was not recorded: {{reason}}",
+    "chat.mcpHealth.title":
+      "Some MCP servers in this session are unreachable from the Host",
+    "chat.mcpHealth.member": "{{name}} ({{code}})",
+    "chat.mcpHealth.configure": "Configure",
     "chat.send": "Send message",
     "chat.starting": "Starting…",
     "chat.unsupportedCommand":

@@ -51,6 +51,7 @@ import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
+import { SessionMcpHealthBanner } from "../chat/session-mcp-health-banner";
 import { SessionHistoryBanner } from "../chat/session-history-banner";
 import {
   SessionUsageIndicator,
@@ -735,6 +736,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           <WindowControls />
         </div>
         <SessionAgentBanner session={session} />
+        <SessionMcpHealthBanner session={session} />
         <SessionHistoryBanner
           session={session}
           notices={conversation?.historyNotices ?? []}

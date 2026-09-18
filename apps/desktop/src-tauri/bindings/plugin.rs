@@ -103,4 +103,14 @@ pub(super) const BINDINGS: &[Binding] = &[
         handler: "commands::plugin::import_plugin",
         permission: Permission::MainWebview,
     },
+    Binding::Unary {
+        operation: "listMcpHealth",
+        handler: "commands::plugin::list_mcp_health",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "probeMcpHealth",
+        handler: "commands::plugin::probe_mcp_health",
+        permission: Permission::MainWebview,
+    },
 ];

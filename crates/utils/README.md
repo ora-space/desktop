@@ -33,6 +33,12 @@ that any other crate can consume without introducing dependency cycles.
   through CryptoAPI, so enterprise roots and platform chain policy match Schannel-backed system
   Git on the same machine. It also preserves the full reqwest cause chain in network errors for
   diagnosability.
+- `mcp` (Cargo feature `mcp`): a domain-free MCP client used for bounded handshakes over stdio
+  (newline-delimited JSON-RPC) and Streamable HTTP. `probe` performs only `initialize`,
+  `notifications/initialized`, and `tools/list`, then tears the connection down — a stdio probe
+  closes the child's stdin, kills it at the deadline, and confirms it was reaped. Failures come
+  back as a closed set of transport-level kinds (`ProbeError`) and never carry OS text or HTTP
+  response bodies, so callers can map them onto their own stable codes.
 - `html` (Cargo feature `validation`): conservative validation rejecting README text that embeds
   scriptable HTML (forbidden tags, `on*` event handlers, `javascript:`/`data:` URIs).
 - `svg` (Cargo feature `validation`): security validation for SVG icons — accepts well-formed
@@ -48,15 +54,15 @@ that any other crate can consume without introducing dependency cycles.
 
 The `validation` feature is enabled by default because its dependencies are small and already in
 the workspace dependency graph; path-only consumers can opt out with `default-features = false`.
-Heavier capabilities such as `archive`, `http`, and `http-reqwest` stay opt-in.
+Heavier capabilities such as `archive`, `http`, `http-reqwest`, and `mcp` stay opt-in.
 
 ## Non-responsibilities
 
 - No `ora-*` dependencies and no domain vocabulary (skills, plugins, tasks, workspaces). Callers
   wrap these primitives with their own semantics and error codes.
-- No async runtime in the default/light feature set; `http-reqwest` is the only feature that brings
-  a runtime (`tokio`) and a transport (`reqwest`), and it requires the caller to run an async
-  runtime.
+- No async runtime in the default/light feature set; `http-reqwest` and `mcp` are the features
+  that bring a runtime (`tokio`) and a transport (`reqwest`), and they require the caller to run an
+  async runtime.
 - No workspace-level filesystem services; those live in `ora-fs`.
 
 ## Admission rule

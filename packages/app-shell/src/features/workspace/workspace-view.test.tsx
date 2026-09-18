@@ -138,6 +138,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -191,6 +192,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -385,6 +387,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -443,6 +446,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -764,6 +768,7 @@ describe("WorkspaceView", () => {
           status: "running",
           title: null,
           historyState: { type: "writable" },
+          mcpSelection: { mode: "automatic" },
         },
       ]);
       expect(calls).toEqual(["start", "prompt"]);
@@ -1027,6 +1032,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: "Other",
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -1199,6 +1205,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -1506,6 +1513,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -1666,6 +1674,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
   }
@@ -1932,6 +1941,7 @@ describe("WorkspaceView", () => {
         status: "running",
         title: null,
         historyState: { type: "degraded", reason: "no space left on device" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);

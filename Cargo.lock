@@ -3109,6 +3109,7 @@ version = "0.0.0"
 dependencies = [
  "agent-client-protocol-schema",
  "chrono-tz",
+ "futures",
  "gitlancer",
  "ora-acp",
  "ora-application",

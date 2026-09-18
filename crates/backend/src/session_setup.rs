@@ -9,8 +9,9 @@ mod mcp;
 pub(crate) use barrier::{AgentSessionBarriers, BarrierGuard, BarrierReason};
 pub(crate) use mcp::{
     AgentSessionMcpCapabilities, LiveMcpEvent, LiveMcpPromptAdmission, LiveMcpState,
-    SessionMcpError, SessionMcpHost, SessionMcpRevision, SessionMcpSelection, SessionMcpSnapshot,
-    resolve_session_mcp, resolve_session_mcp_revision,
+    McpHealthStore, SessionMcpError, SessionMcpHost, SessionMcpRevision, SessionMcpSelection,
+    SessionMcpSnapshot, observe_session_mcp_health, resolve_session_mcp,
+    resolve_session_mcp_revision,
 };
 #[cfg(test)]
 pub(crate) use mcp::{SessionMcpMemberRevision, SessionMcpTransportKind};

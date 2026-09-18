@@ -16,6 +16,7 @@ use crate::marketplace_sources::{
     ConfiguredMarketplaceSource, MarketplaceSourceStore, map_marketplace_source_error,
 };
 use crate::proxy;
+use crate::session_setup::McpHealthStore;
 use crate::settings::Settings;
 use ora_application::Clock;
 use ora_contracts::{
@@ -194,6 +195,8 @@ pub(crate) struct PluginApi {
     effect_reconcile: OnceLock<EffectWorkerHandle>,
     /// Secret-free wakeup that asks live Sessions to re-read Desired MCP.
     mcp_wakeup: OnceLock<Arc<dyn Fn() + Send + Sync>>,
+    /// Process-local Host MCP health, shared with the Session runtime and plugin queries.
+    pub(crate) mcp_health: McpHealthStore,
     clock: SystemClock,
     /// Test-only transport substitution for production-entry marketplace qualification.
     #[cfg(test)]
@@ -227,6 +230,8 @@ impl PluginApi {
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
         let configuration = ConfigurationService::new(home_directory.clone());
+        let mcp_health =
+            McpHealthStore::new(publisher.clone(), ora_utils::mcp::DEFAULT_PROBE_TIMEOUT);
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: home_directory.clone(),
@@ -259,6 +264,7 @@ impl PluginApi {
             rebuilding: Mutex::new(()),
             effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
+            mcp_health,
             clock,
             #[cfg(test)]
             local_marketplace_releases: Mutex::new(BTreeMap::new()),
@@ -312,6 +318,11 @@ impl PluginApi {
         if let Some(wakeup) = self.mcp_wakeup.get() {
             wakeup();
         }
+    }
+
+    /// Returns the shared process-local Host MCP health store.
+    pub(crate) fn mcp_health(&self) -> McpHealthStore {
+        self.mcp_health.clone()
     }
 
     /// Returns the plugin data root used to rediscover installed packages.

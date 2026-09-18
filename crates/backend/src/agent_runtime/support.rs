@@ -7,10 +7,10 @@ use agent_client_protocol_schema::v1::{
 use ora_contracts::{
     AgentRef as ContractAgentRef, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
-    SessionStatus as ContractSessionStatus,
+    SessionMcpSelection as ContractSessionMcpSelection, SessionStatus as ContractSessionStatus,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_domain::{AgentRef, HistoryState, Session, SessionStatus};
+use ora_domain::{AgentRef, HistoryState, Session, SessionMcpSelection, SessionStatus};
 use std::collections::HashMap;
 
 /// Responds to a pending permission after validating the public request ownership.
@@ -74,6 +74,17 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
             HistoryState::Writable => ContractSessionHistoryState::Writable,
             HistoryState::Degraded { reason } => ContractSessionHistoryState::Degraded { reason },
         },
+        mcp_selection: contract_mcp_selection(session.mcp_selection),
+    }
+}
+
+/// Projects the persisted MCP authorization as canonical plugin IDs only.
+fn contract_mcp_selection(selection: SessionMcpSelection) -> ContractSessionMcpSelection {
+    match selection {
+        SessionMcpSelection::Automatic => ContractSessionMcpSelection::Automatic,
+        SessionMcpSelection::Explicit(ids) => ContractSessionMcpSelection::Explicit(
+            ids.iter().map(ora_domain::PluginId::canonical).collect(),
+        ),
     }
 }
 

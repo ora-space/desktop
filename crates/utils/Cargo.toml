@@ -18,6 +18,16 @@ http-reqwest = [
     "dep:tokio",
     "dep:time",
 ]
+# Domain-free MCP client used for bounded health handshakes: newline JSON-RPC over stdio and
+# Streamable HTTP. Gated so path-only consumers stay light.
+mcp = [
+    "dep:reqwest",
+    "reqwest?/json",
+    "dep:tokio",
+    "tokio?/process",
+    "tokio?/io-util",
+    "dep:url",
+]
 validation = ["dep:sha2", "dep:quick-xml"]
 rust-source = ["dep:proc-macro2", "dep:syn"]
 
@@ -29,7 +39,7 @@ proc-macro2 = { workspace = true, optional = true, features = ["span-locations"]
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true, optional = true }
 syn = { workspace = true, optional = true, features = ["full", "visit"] }
@@ -53,6 +63,6 @@ rcgen = { workspace = true }
 sha2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "process"] }
 tokio-rustls = { workspace = true }
 zip = { workspace = true }

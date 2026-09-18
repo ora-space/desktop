@@ -171,7 +171,8 @@ mod tests {
     use crate::RepositoryError;
     use ora_contracts::{
         RenameSessionResponse, Session as ContractSession,
-        SessionHistoryState as ContractHistoryState, SessionStatus as ContractSessionStatus,
+        SessionHistoryState as ContractHistoryState,
+        SessionMcpSelection as ContractSessionMcpSelection, SessionStatus as ContractSessionStatus,
     };
     use ora_domain::{
         AgentRef, AuditFields, HistoryState, MAX_SESSION_TITLE_CHARS, Session, SessionStatus,
@@ -313,6 +314,7 @@ mod tests {
                     agent_ref: "ora-space.nga".to_string(),
                     status: ContractSessionStatus::Running,
                     history_state: ContractHistoryState::Writable,
+                    mcp_selection: ContractSessionMcpSelection::Automatic,
                 },
             },
         );

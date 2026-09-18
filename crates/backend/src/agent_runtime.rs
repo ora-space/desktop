@@ -38,6 +38,8 @@ use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
 pub use operations::AgentRuntime;
+#[cfg(test)]
+pub(crate) use start::record_session_mcp_boundary;
 pub use stream::SessionEventStream;
 use support::*;
 use title_acquisition::TitleAcquisition;

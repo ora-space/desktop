@@ -137,6 +137,7 @@ function selectPersistedSession(state: FixtureState) {
       agentRef: AGENT_REF.opencode,
       status: "stopped",
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     },
   ];
   useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
@@ -700,6 +701,7 @@ describe("ModelSelector remembered model for not-yet-started chats", () => {
           agentRef: AGENT_REF.opencode,
           status: "running",
           historyState: { type: "writable" },
+          mcpSelection: { mode: "automatic" },
         },
       ];
     });

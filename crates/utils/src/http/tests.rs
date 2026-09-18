@@ -460,8 +460,12 @@ mod reqwest_integration {
     #[tokio::test]
     async fn probe_reports_a_refused_connection() {
         let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        // A refused connection resolves immediately, but the probe still initializes the platform
+        // TLS verifier first. On a loaded machine that initialization can occasionally exceed a
+        // tight budget and surface as the probe's own timeout, so allow generous headroom: this
+        // test is about the classification, not about how fast the client is built.
         let error = ReqwestDownloader::new(Default::default())
-            .probe(url, std::time::Duration::from_secs(2))
+            .probe(url, std::time::Duration::from_secs(20))
             .await
             .unwrap_err();
 

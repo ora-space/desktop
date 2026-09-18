@@ -35,8 +35,9 @@ ora-process = { workspace = true }
 ora-runtime-settings = { workspace = true }
 ora-scheduler = { workspace = true }
 ora-skill-package = { workspace = true }
-ora-utils = { workspace = true, features = ["http-reqwest"] }
+ora-utils = { workspace = true, features = ["http-reqwest", "mcp"] }
 ora-user-config = { workspace = true }
+futures = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -184,6 +184,7 @@ function selectPersistedSession(state: FixtureState) {
       agentRef: AGENT_REF.opencode,
       status: "stopped",
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     },
   ];
   useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");

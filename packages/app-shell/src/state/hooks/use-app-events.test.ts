@@ -13,6 +13,7 @@ import {
 import { sessionKeys } from "../data/sessions";
 import { pluginKeys } from "../data/plugins";
 import { agentRuntimeKeys } from "../data/agent-runtime";
+import { mcpHealthKeys } from "../data/mcp-health";
 import { workflowRunKeys } from "../data/workflow-runs";
 import { useAppEvents } from "./use-app-events";
 
@@ -133,6 +134,43 @@ describe("useAppEvents", () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: workflowRunKeys.workflowLists,
     });
+
+    unmount();
+  });
+
+  it("re-queries Host MCP health for a health change event", async () => {
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    clientHandlers.watchAppEvents = async function* (
+      _request,
+      options,
+    ): AsyncGenerator<AppEvent> {
+      yield { type: "ready" };
+      yield { type: "mcp_health_changed", plugin_id: "official/tavily" };
+      await new Promise<void>((resolve) => {
+        const signal = options?.signal;
+        if (signal === undefined || signal.aborted) {
+          resolve();
+          return;
+        }
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    };
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result, unmount } = renderHookWithClient(
+      () => useAppEvents(client),
+      client,
+      queryClient,
+    );
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    // The event carries identity only; the health views are re-queried rather than written from
+    // the event, so a lost event can never leave a fabricated result behind.
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: mcpHealthKeys.all }),
+    );
 
     unmount();
   });

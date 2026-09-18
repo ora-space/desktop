@@ -10,6 +10,9 @@ secret-free revision used by live sessions.
 - Produce one ordered ACP server snapshot and a secret-free revision from the same inputs.
 - Reject missing explicit selections, incomplete explicit configuration, unsupported transports,
   and revision races without returning a partial server list.
+- Hold process-local Host MCP health (`health`): identity-keyed status, single-flight probes after
+  install/save/session, secret-free list/probe queries, `McpHealthChanged` invalidation, and the
+  Session pairing log. Probe failure never fails setup or shrinks `mcpServers`.
 
 ## Selection invariant
 
@@ -23,4 +26,5 @@ that stored selection and never infer authority from workflow-run relationships.
 This module does not install plugins, materialize Skills, expose Setting values in logs, or decide
 which MCP bindings an editor should offer. The workflow graph parser validates canonical plugin
 IDs when a run starts, while this runtime verifies current installation and configuration only
-when a Session is set up.
+when a Session is set up. Host health probing is not Agent-side connection state and must never be
+named or presented as `MCP Ready`.

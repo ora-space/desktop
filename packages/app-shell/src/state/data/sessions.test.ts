@@ -15,6 +15,7 @@ const session: Session = {
   status: "running",
   title: "Before",
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 
 describe("session list cache policy", () => {

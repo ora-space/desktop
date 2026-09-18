@@ -216,3 +216,17 @@ async_backend_command!(
     plugins.import,
     "Imports one local .orax release archive; the installed plugin is immediately available."
 );
+backend_command!(
+    list_mcp_health,
+    ListMcpHealthRequest,
+    ListMcpHealthResponse,
+    plugins.list_mcp_health,
+    "Lists Host MCP health for currently eligible installed members."
+);
+async_backend_command!(
+    probe_mcp_health,
+    ProbeMcpHealthRequest,
+    ProbeMcpHealthResponse,
+    plugins.probe_mcp_health,
+    "Awaits one Host MCP health probe for a currently eligible member."
+);

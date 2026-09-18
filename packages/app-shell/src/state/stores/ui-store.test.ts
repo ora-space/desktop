@@ -282,6 +282,7 @@ describe("useUiStore", () => {
       status: "running",
       title: null,
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     };
 
     useUiStore.getState().setDialog({ kind: "project" });

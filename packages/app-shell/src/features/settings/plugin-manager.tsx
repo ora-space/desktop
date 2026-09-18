@@ -34,6 +34,7 @@ import {
   IconUpload,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
@@ -232,6 +233,17 @@ function InstalledPluginRow({
               {t("settings.plugins.invalidDeclaration")}
             </Badge>
           )}
+          {plugin.kind === "mcp" &&
+            // Host health is a third, independent fact shown for every eligible MCP. That covers
+            // a member which declares no Settings (`not_declared`) as well as one whose required
+            // Settings are present (`available`/`complete`). A member that still needs
+            // configuration or whose configuration is unavailable is not probed at all, so it
+            // keeps exactly its existing display.
+            (plugin.configuration.state === "not_declared" ||
+              (plugin.configuration.state === "available" &&
+                plugin.configuration.completeness === "complete")) && (
+              <McpHealthRow pluginId={plugin.id} />
+            )}
         </span>
 
         {hasUpdate && (

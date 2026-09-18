@@ -81,6 +81,7 @@ impl SessionMcpCatalog for FakeCatalog {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct FakeConfigurations {
     pub(super) by_id: BTreeMap<String, McpConfigurationEligibility>,
 }

@@ -22,6 +22,8 @@ pub mod http;
 #[cfg(feature = "validation")]
 pub mod image;
 pub mod jsonc;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod path;
 pub mod process;
 #[cfg(feature = "rust-source")]

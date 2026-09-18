@@ -117,6 +117,7 @@ describe("chat interaction MVP", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
 

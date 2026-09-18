@@ -9,7 +9,7 @@ use super::handoff::HandoffDebt;
 use super::routing::{SessionChannel, SessionControl, SessionEvent};
 use super::start::{
     PendingProviderSession, ProviderSessionRelease, apply_model_intent, create_provider_session,
-    log_session_mcp_request,
+    record_session_mcp_boundary,
 };
 use super::support::{agent_timed_out, map_acp_error, protocol_violation, session_event_overflow};
 use super::{RuntimeActor, session_setup_window};
@@ -129,13 +129,14 @@ impl RuntimeActor {
         let request =
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
                 .mcp_servers(snapshot.servers().to_vec());
-        log_session_mcp_request(
+        record_session_mcp_boundary(
+            &self.session_mcp,
             &self.session.id,
             &self.session.agent_ref,
             Some(&agent_session_id),
             AGENT_METHOD_NAMES.session_load,
-            &self.session_mcp.selection,
             snapshot,
+            &self.cwd,
         );
         ora_debug!(session_id = %self.session.id, "session/load sent");
         let pending = client

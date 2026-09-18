@@ -1,9 +1,9 @@
 use ora_contracts::{
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
-    SessionStatus as ContractSessionStatus,
+    SessionMcpSelection as ContractSessionMcpSelection, SessionStatus as ContractSessionStatus,
 };
 use ora_domain::{
-    HistoryState as DomainHistoryState, Session as DomainSession,
+    HistoryState as DomainHistoryState, Session as DomainSession, SessionMcpSelection,
     SessionStatus as DomainSessionStatus,
 };
 
@@ -16,6 +16,17 @@ pub(crate) fn map_session(session: DomainSession) -> ContractSession {
         agent_ref: session.agent_ref.into(),
         status: map_session_status(session.status),
         history_state: map_history_state(session.history_state),
+        mcp_selection: map_mcp_selection(session.mcp_selection),
+    }
+}
+
+/// Projects the persisted MCP authorization as canonical plugin IDs only.
+fn map_mcp_selection(selection: SessionMcpSelection) -> ContractSessionMcpSelection {
+    match selection {
+        SessionMcpSelection::Automatic => ContractSessionMcpSelection::Automatic,
+        SessionMcpSelection::Explicit(ids) => ContractSessionMcpSelection::Explicit(
+            ids.iter().map(ora_domain::PluginId::canonical).collect(),
+        ),
     }
 }
 

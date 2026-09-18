@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{SessionMcpError, SessionMcpSelection};
+use super::{McpHealthStore, SessionMcpError, SessionMcpSelection};
 
 /// One statically valid installed MCP package version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,6 +95,14 @@ impl SessionMcpHost {
                 let plugin_id = PluginId::parse(&plugin.id).ok()?;
                 (AgentRef::for_plugin(&plugin_id) == *agent_ref).then_some(plugin_id)
             })
+    }
+
+    /// Returns the process-local Host MCP health store owned by this host's plugin API.
+    ///
+    /// Probe results are a third, delivery-independent fact, so every consumer shares the one
+    /// store rather than keeping a copy that could disagree about what was observed.
+    pub(crate) fn mcp_health(&self) -> McpHealthStore {
+        self.plugin_host.mcp_health()
     }
 }
 

@@ -388,6 +388,7 @@ describe("WorkspaceDialogs project deletion", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
       {
         id: "s2",
@@ -396,6 +397,7 @@ describe("WorkspaceDialogs project deletion", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const calls: string[] = [];
@@ -468,6 +470,7 @@ describe("WorkspaceDialogs task deletion", () => {
       status: "running",
       title: null,
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     }));
     const calls: string[] = [];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);

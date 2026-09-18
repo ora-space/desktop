@@ -43,6 +43,7 @@ export function sessionHandlers(state: SessionMemoryState) {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       };
       state.sessions.push(session);
       return { session, availableCommands: [], configOptions };

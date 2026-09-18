@@ -4,6 +4,7 @@ use super::PluginApi;
 use crate::BackendError;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::plugin_gateway::PluginGateway;
+use crate::session_setup::SessionMcpHost;
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -11,6 +12,8 @@ use ora_utils::http::ProgressCallback;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(test)]
+mod health_tests;
 #[cfg(test)]
 mod install_tests;
 #[cfg(test)]
@@ -77,7 +80,14 @@ impl Plugins {
         &self,
         request: SavePluginConfigurationRequest,
     ) -> Result<SavePluginConfigurationResponse, BackendError> {
-        self.host.save_configuration(request)
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
+        let response = self.host.save_configuration(request)?;
+        // A save publishes a new configuration revision, so every result on the previous revision
+        // is stale immediately; a member that is now complete is re-probed once.
+        if let Some(plugin_id) = plugin_id {
+            self.refresh_mcp_health(plugin_id);
+        }
+        Ok(response)
     }
 
     /// Executes an explicit Reset All or damaged-data recovery operation.
@@ -85,7 +95,14 @@ impl Plugins {
         &self,
         request: ResetPluginConfigurationRequest,
     ) -> Result<ResetPluginConfigurationResponse, BackendError> {
-        self.host.reset_configuration(request)
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
+        let response = self.host.reset_configuration(request)?;
+        // Clearing settings changes the revision or removes eligibility; either way the old health
+        // result may not be presented any more.
+        if let Some(plugin_id) = plugin_id {
+            self.refresh_mcp_health(plugin_id);
+        }
+        Ok(response)
     }
 
     /// Returns the directory one plugin's icon candidates are served from under `root`.
@@ -226,6 +243,14 @@ impl Plugins {
             for member_id in &member_ids {
                 self.agent_runtime.resume_plugin_agent(member_id);
             }
+            // A removed member's health identity may not keep presenting once its package is gone.
+            if result.is_ok() {
+                for member_id in &plan.remove {
+                    if let Ok(plugin_id) = PluginId::parse(member_id) {
+                        self.host.mcp_health().invalidate_plugin(&plugin_id);
+                    }
+                }
+            }
             self.agent_runtime.sync_plugin_agents();
             return result;
         }
@@ -234,6 +259,10 @@ impl Plugins {
         let result = self.host.uninstall(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        // The package is gone, so no identity of it may keep presenting health.
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.host.mcp_health().invalidate_plugin(&plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -247,7 +276,9 @@ impl Plugins {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install(request).await?;
+        self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -258,7 +289,9 @@ impl Plugins {
         request: InstallPluginRequest,
         progress: ProgressCallback,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install_with_progress(request, progress).await?;
+        self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -279,6 +312,11 @@ impl Plugins {
         let result = self.host.update(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        // The exact package version is part of the health identity, so the replaced version's
+        // result is dropped before the new version is probed once.
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.refresh_mcp_health(plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -295,6 +333,9 @@ impl Plugins {
         let result = self.host.update_with_progress(request, progress).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.refresh_mcp_health(plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -308,8 +349,51 @@ impl Plugins {
         request: ImportPluginRequest,
     ) -> Result<ImportPluginResponse, BackendError> {
         let response = self.host.import(request).await?;
+        self.probe_installed_mcp(PluginId::parse(&response.plugin_id).ok());
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
+    }
+
+    /// Lists secret-free Host MCP health for the plugin card (no cwd) or one Session view.
+    ///
+    /// Only currently eligible installed members appear, and a workspace-context member without a
+    /// real cwd reports `context_missing` instead of a fabricated result.
+    pub fn list_mcp_health(
+        &self,
+        request: ListMcpHealthRequest,
+    ) -> Result<ListMcpHealthResponse, BackendError> {
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().list(&host, &host, request)
+    }
+
+    /// Runs or joins one Host MCP probe for a currently eligible member and awaits its result.
+    ///
+    /// This is the user-initiated "re-detect" path: waiting is allowed because completing the probe
+    /// is exactly what the request asked for, and the probe's hard timeout still bounds it.
+    pub async fn probe_mcp_health(
+        &self,
+        request: ProbeMcpHealthRequest,
+    ) -> Result<ProbeMcpHealthResponse, BackendError> {
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().probe(&host, &host, request).await
+    }
+
+    /// Probes one freshly installed member for the plugin card.
+    ///
+    /// The probe is independent of any Session selection; ineligible packages (not MCP, or still
+    /// configuration-incomplete) are simply not probed.
+    fn probe_installed_mcp(&self, plugin_id: Option<PluginId>) {
+        let Some(plugin_id) = plugin_id else {
+            return;
+        };
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().spawn_card_probe(host, plugin_id);
+    }
+
+    /// Drops a plugin's old health result, then probes it once when it is currently eligible.
+    fn refresh_mcp_health(&self, plugin_id: PluginId) {
+        self.host.mcp_health().invalidate_plugin(&plugin_id);
+        self.probe_installed_mcp(Some(plugin_id));
     }
 }
 

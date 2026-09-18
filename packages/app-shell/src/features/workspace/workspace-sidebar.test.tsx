@@ -98,6 +98,7 @@ const SESSION: Session = {
   status: "running",
   title: null,
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 const DIRECT_SESSION: Session = {
   id: "s-direct",
@@ -106,6 +107,7 @@ const DIRECT_SESSION: Session = {
   status: "running",
   title: null,
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
@@ -729,6 +731,7 @@ describe("WorkspaceSidebar", () => {
       status: "running",
       title: null,
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     });
     renderSidebar(state);
 
@@ -1763,6 +1766,7 @@ describe("WorkspaceSidebar", () => {
         status: "running",
         title: "Direct chat",
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     renderSidebar(state);

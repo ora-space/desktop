@@ -85,8 +85,9 @@ responsibility: Gemini CLI fixed the identical race by making prompt handling wa
 initialization ([gemini-cli #18893](https://github.com/google-gemini/gemini-cli/issues/18893), fixed in
 [#20205](https://github.com/google-gemini/gemini-cli/pull/20205)), and Claude Code tracks the same
 class of first-turn tool race in
-[claude-code #83555](https://github.com/anthropics/claude-code/issues/83555). Host-side connection
-observation without changing delivery semantics remains a separate proposed decision in `specs`.
+[claude-code #83555](https://github.com/anthropics/claude-code/issues/83555). Ora observes Host-side
+connection health itself, in memory and without changing delivery semantics; see
+[Runtime health](#runtime-health).
 
 ## Security and compatibility
 
@@ -101,3 +102,70 @@ exclude files, or any other Workspace path for MCP. Existing user-authored MCP c
 left untouched. There is no runtime migration off the unpublished file-materialization design.
 Installing an MCP therefore adds it to the global catalog only; a workflow node's explicit
 selection is the Session-level authorization decision.
+
+## Runtime health
+
+Setup success means the Host sent a complete `mcpServers` list. It does not mean the Agent
+connected to those servers, listed their tools, or made them visible to the model: ACP 1.6.0
+carries no receipt for MCP connections, and an Agent that skips or fails a server while still
+answering `session/new` is compliant. Ora therefore keeps a third, delivery-independent fact of its
+own — **Host MCP health** — established by a bounded MCP client handshake the Host performs itself.
+
+After an MCP package is installed and eligible, after its configuration is saved as `Complete`, and
+after every `session/new` or `session/load`, the Host runs one handshake against the same binding
+product Session setup delivers: the output of the same `resolve_mcp_transport` used to build the
+ACP payload, never a second configuration parse. The handshake performs `initialize`,
+`notifications/initialized`, and `tools/list`, then tears the connection down; a stdio probe also
+closes the child's stdin and confirms the process was reclaimed. Its hard timeout is 8 seconds,
+well below the session-setup budget, so a probe cannot impersonate setup.
+
+Health is a separate channel and never changes delivery. A failed probe does not fail `session/new`
+or `session/load`, does not remove the member from the Effective MCP Set, and never produces a
+partial `mcpServers` list; resolution failures still fail the whole setup as described above.
+Installing, saving, and starting a Session never wait for a probe. Concurrent triggers for one
+identity share a single probe, a save probes once without retrying on its own, and the only other
+probe sources are the user's "re-detect" action and the Session backfill for members that are still
+unknown.
+
+An entry's identity is the canonical Plugin ID, the exact package version, the configuration
+revision, and the transport. Members whose arguments substitute `{ "context": "workspace" }` also
+bind the absolute Session `cwd`. The plugin card has no Session directory, so those members stay
+`Unknown(context_missing)` there and are never probed against an invented path; a Session result is
+never written back to the card. Uninstall, an update to a new version, a configuration revision
+change, or lost eligibility drops the old identity's result immediately. Nothing is persisted and
+there is no TTL or background re-check, so after Ora restarts every identity starts from
+`Unknown(not_probed)` again.
+
+An outcome is `Healthy`, `Unhealthy { code }`, or `Unknown { reason }`. `reason` is only
+`not_probed` or `context_missing`, and `code` is one of `mcp_spawn_failed`,
+`mcp_exited_prematurely`, `mcp_handshake_failed`, `mcp_probe_timeout`, `mcp_tools_unavailable`,
+`mcp_http_unreachable`, `mcp_http_unauthorized`, or `mcp_http_server_error`. The family is closed
+and deliberately separate from the setup codes (`mcp_setting_missing`,
+`mcp_http_capability_missing`, …): a probe result is a runtime observation, not a delivery error.
+
+**A successful Host probe is not "in effect in the session".** It says the Host completed a
+handshake at that moment; it is not `MCP Ready`, it is not an Active revision, and it does not mean
+the Agent connected the server or made its tools visible to the model. The Agent still connects and
+runs the servers on its own, so a probe and a Session can disagree in either direction.
+
+Presentation stays secret-free and independent of the other facts:
+
+- The plugin card shows health as a third status line beside install state and configuration
+  completeness, with the stable code and a re-detect action. A configuration-incomplete or
+  ineligible plugin is not probed and shows no such line.
+- A non-blocking banner in a Session lists the `Unhealthy` members of that Session's Effective MCP
+  Set — the automatically discovered set for a chat, the frozen whitelist for a workflow — and links
+  into plugin configuration. An unselected MCP never appears there, an explicit empty selection
+  shows no banner, and `Unknown` is not a failure and never blocks a prompt.
+- `listMcpHealth` answers the card view (no `cwd`) or one Session view (absolute `cwd`), returning
+  identity, status, and stable code only — never Setting values, credentials, argv, env, headers, or
+  third-party response text. `AppEvent::McpHealthChanged { plugin_id }` tells clients to re-query;
+  it carries no status of its own.
+- After the existing INFO event `sending ACP session configuration`, a structured probe-result event
+  pairs each Session with its members' identity, stable code, and probe duration. It records what
+  the Host observed; it does not claim the Agent did the same.
+
+The MCP client used for probing lives in `ora-utils` with no Ora domain vocabulary, behind its own
+Cargo feature, and is deliberately absent from the plugin-manager install-verification path:
+installation still neither executes a command nor opens a connection to decide whether a package is
+valid.

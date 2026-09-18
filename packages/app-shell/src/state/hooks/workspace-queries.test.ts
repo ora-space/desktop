@@ -81,6 +81,7 @@ describe("useSessions", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     const client = createTestClient(sessionHandlers(state));
@@ -94,6 +95,7 @@ describe("useSessions", () => {
         status: "running",
         title: null,
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ]);
   });

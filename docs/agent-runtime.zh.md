@@ -19,7 +19,7 @@ Backend 启动时，会为每个已安装的 [Agent 插件](../crates/backend/sr
 
 ## Session MCP
 
-已配置的 MCP 插件属于 Session Runtime Input。`startSession`、prompt attach、重建、在线刷新、workflow 启动和 Agent 替换都会解析一个 Snapshot，并作为 ACP `mcpServers` 发送。在线 Session 在内存中维护 Desired/Active revision；配置变化立即唤醒空闲 Session，并在繁忙 Session 的当前 prompt 结束后刷新。MCP 刷新与 Skill Effect 修改共享同一个 Agent Session Barrier。设置值不会进入 Effect 状态、SQLite、Workspace 文件、日志或 UI。详见 [Session MCP](session-mcp.md)。
+已配置的 MCP 插件属于 Session Runtime Input。`startSession`、prompt attach、重建、在线刷新、workflow 启动和 Agent 替换都会解析一个 Snapshot，并作为 ACP `mcpServers` 发送。在线 Session 在内存中维护 Desired/Active revision；配置变化立即唤醒空闲 Session，并在繁忙 Session 的当前 prompt 结束后刷新。MCP 刷新与 Skill Effect 修改共享同一个 Agent Session Barrier。设置值不会进入 Effect 状态、SQLite、Workspace 文件、日志或 UI。setup 成功不表示这些 Server 已完成握手；Host 侧健康是另一项只在内存中的观察，详见 [Session MCP](session-mcp.zh.md#运行健康)。
 
 - 连接丢失会失败该 Agent 的进行中操作，只把已注册 Session 标为 Stopped，先让插件生命周期停止旧进程，再启动 replacement。Session 仅按需重新 load，prompt 永不自动重放。
 - `initialize` 会声明 session config-option 能力。模型选择依赖这一能力；Ora 当前不声明布尔配置选项，因为 UI 只渲染带 id 的 selector。

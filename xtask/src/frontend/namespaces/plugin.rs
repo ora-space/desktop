@@ -165,4 +165,20 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "ImportPluginResponse",
         response_mode: FrontendResponseMode::Unary,
     },
+    FrontendEndpoint {
+        operation_name: "listMcpHealth",
+        namespace: NAMESPACE,
+        member_name: "listMcpHealth",
+        request_type: "ListMcpHealthRequest",
+        response_type: "ListMcpHealthResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "probeMcpHealth",
+        namespace: NAMESPACE,
+        member_name: "probeMcpHealth",
+        request_type: "ProbeMcpHealthRequest",
+        response_type: "ProbeMcpHealthResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
 ];

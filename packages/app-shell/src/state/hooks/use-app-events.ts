@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { refetchSessions, invalidateSessions } from "../data/sessions";
 import { invalidatePluginState } from "../data/plugin-lifecycle";
 import { invalidateAgentModels } from "../data/agent-runtime";
+import { invalidateMcpHealth } from "../data/mcp-health";
 import { invalidateWorkflowRun } from "../data/workflow-runs";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -51,6 +52,10 @@ export function useAppEvents(client: ContractsClient) {
             void invalidateSessions(queryClient);
           } else if (event.type === "plugin_status_changed") {
             invalidatePluginState(queryClient);
+          } else if (event.type === "mcp_health_changed") {
+            // The event names only the plugin; the health views stay the single source of truth
+            // and are re-queried. A probe result is never carried in the event itself.
+            void invalidateMcpHealth(queryClient);
           } else if (event.type === "agent_models_invalidated") {
             void invalidateAgentModels(queryClient, event.agent_ref);
           } else if (event.type === "workflow_run_invalidated") {

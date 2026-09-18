@@ -14,6 +14,12 @@ pub enum AppEvent {
     PluginStatusChanged { plugin_id: String },
     /// Tells clients that a replaced agent process may expose a different model catalog.
     AgentModelsInvalidated { agent_ref: String },
+    /// Tells clients that one plugin's Host MCP health may have changed.
+    ///
+    /// Like `PluginStatusChanged`, the event carries no state of its own: clients re-query the
+    /// secret-free health surface for that plugin identity. A lost or reordered event only leaves
+    /// a stale view until the next probe result or manual re-detect.
+    McpHealthChanged { plugin_id: String },
     /// Tells clients that the persisted workflow run state should be queried again.
     ///
     /// The event carries no workflow state: the run, node, and variable rows remain the only
@@ -76,6 +82,17 @@ mod tests {
             serde_json::json!({
                 "type": "workflow_run_invalidated",
                 "run_id": "run-1",
+            }),
+        );
+        // An MCP health invalidation carries only the plugin identity, never a status body.
+        assert_eq!(
+            serde_json::to_value(AppEvent::McpHealthChanged {
+                plugin_id: "official/tavily".to_string(),
+            })
+            .expect("mcp health invalidation serializes"),
+            serde_json::json!({
+                "type": "mcp_health_changed",
+                "plugin_id": "official/tavily",
             }),
         );
     }
