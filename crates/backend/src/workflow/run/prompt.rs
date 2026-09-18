@@ -1,11 +1,13 @@
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use ora_application::{AgentOutputContract, WorkflowGraph, WorkflowGraphNode};
+use ora_application::{AgentOutputContract, NodeFailureKind, WorkflowGraph, WorkflowGraphNode};
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
+
+use super::last_failure::PreviousFailure;
 
 /// One required skill already resolved from the run's frozen materialization receipt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +27,7 @@ pub(crate) struct WorkflowPromptRequest<'a> {
     pub(crate) node_runs: &'a [WorkflowNodeRun],
     pub(crate) required_skills: &'a [RequiredWorkflowSkill],
     pub(crate) locale: WorkflowRunLocale,
+    pub(crate) previous_failure: Option<&'a PreviousFailure>,
 }
 
 /// Builds a structured prompt that identifies the current step and its workflow context.
@@ -67,6 +70,13 @@ pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Ve
         );
     } else if let Some(input) = request.run_input.filter(|input| !input.trim().is_empty()) {
         push_text_block(&mut blocks, render_original_request(input, request.locale));
+    }
+
+    if let Some(previous) = request.previous_failure {
+        push_text_block(
+            &mut blocks,
+            render_previous_failure(previous, request.locale),
+        );
     }
 
     if let Some(contract) = render_structured_output_contract(request.node, request.locale) {
@@ -367,6 +377,11 @@ struct PromptCopy {
     none: &'static str,
     original_request: &'static str,
     original_request_intro: &'static str,
+    previous_failure_heading: &'static str,
+    previous_failure_intro: &'static str,
+    previous_failure_kind: &'static str,
+    previous_failure_message: &'static str,
+    previous_failure_output: &'static str,
 }
 
 /// Selects workflow prompt copy from the display language frozen on the run.
@@ -390,6 +405,11 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             none: "（无）",
             original_request: "工作流原始请求",
             original_request_intro: "本次工作流由以下请求启动。请将其作为全局目标，同时优先遵守范围更具体的当前步骤要求。",
+            previous_failure_heading: "## 上一次尝试（第 {attempt} 次）失败信息",
+            previous_failure_intro: "该步骤此前已尝试 {attempt} 次并失败。以下是最近一次失败的原因，请避免重蹈覆辙，并按当前步骤要求重新完成。",
+            previous_failure_kind: "失败类型：",
+            previous_failure_message: "失败信息：",
+            previous_failure_output: "上一次的最终输出（供对照，可能已截断）：",
         },
         WorkflowRunLocale::EnUs => PromptCopy {
             current_step_intro: "You are responsible for the workflow step identified below. Focus on this step and make your final response a clear handoff for downstream steps.",
@@ -409,6 +429,11 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             none: "(none)",
             original_request: "Original workflow request",
             original_request_intro: "The workflow was started with the following request. Use it as global intent while obeying the narrower current-step instructions.",
+            previous_failure_heading: "## Previous attempt ({attempt}) failed",
+            previous_failure_intro: "This step already ran {attempt} time(s) and failed. Below is the most recent failure; do not repeat it, and complete the step as instructed.",
+            previous_failure_kind: "Failure type: ",
+            previous_failure_message: "Failure message: ",
+            previous_failure_output: "Previous final output (for reference, may be truncated):",
         },
     }
 }
@@ -489,11 +514,96 @@ fn text_block(text: String) -> ContentBlock {
     ContentBlock::Text(TextContent::new(text))
 }
 
+/// Renders the last agent-behaviour failure so the next attempt can avoid repeating it.
+pub(crate) fn render_previous_failure(
+    previous: &PreviousFailure,
+    locale: WorkflowRunLocale,
+) -> String {
+    let copy = prompt_copy(locale);
+    let attempt = previous.attempt.to_string();
+    let kind = failure_kind_label(previous.kind, locale);
+    let mut text = format!(
+        "{}\n{}\n{}{kind}\n{}{}",
+        copy.previous_failure_heading.replace("{attempt}", &attempt),
+        copy.previous_failure_intro.replace("{attempt}", &attempt),
+        copy.previous_failure_kind,
+        copy.previous_failure_message,
+        previous.message
+    );
+    if let Some(output) = &previous.output {
+        let _ = write!(
+            text,
+            "\n{}\n```text\n{output}\n```",
+            copy.previous_failure_output
+        );
+    }
+    text
+}
+
+/// Localized labels that mirror the frontend `workflowRun.errorKind.*` copy.
+fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'static str {
+    match (locale, kind) {
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::MissingAgentRef) => "节点未指定智能体",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::WorkflowModelNotFound) => "模型不可用",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::MissingAgentConfig) => "智能体配置缺失",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::InvalidRunPayload) => "运行的冻结数据无效",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::PromptTemplate) => "提示词模板无法渲染",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::StructuredOutput) => "结构化输出不合格",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::MissingSkillMaterialization) => "技能未就绪",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::SessionEndedWithoutStopReason) => "会话异常结束",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::SessionBindingRejected) => "会话未能建立",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::BaselinePersist) => "工作区基线保存失败",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::Repository) => "数据库操作失败",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::Session) => "智能体会话失败",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::AgentRefusal) => "智能体拒绝了请求",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::UnknownStopReason) => "未知的停止原因",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::InterruptedByRestart) => "被应用重启打断",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::MultipleOutputs) => "多个输出节点同时完成",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::ConditionEvaluation) => "条件无法判断",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::MissingAgentRef) => "Node names no agent",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::WorkflowModelNotFound) => "Model not available",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::MissingAgentConfig) => {
+            "Agent configuration missing"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::InvalidRunPayload) => "Frozen run data invalid",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::PromptTemplate) => {
+            "Prompt template cannot render"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::StructuredOutput) => "Structured output invalid",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::MissingSkillMaterialization) => {
+            "Skill not materialized"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::SessionEndedWithoutStopReason) => {
+            "Session ended unexpectedly"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::SessionBindingRejected) => {
+            "Session could not start"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::BaselinePersist) => {
+            "Worktree baseline could not be saved"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::Repository) => "Database operation failed",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::Session) => "Agent session failed",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::AgentRefusal) => "Agent refused the request",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::UnknownStopReason) => "Unknown stop reason",
+        (WorkflowRunLocale::EnUs, NodeFailureKind::InterruptedByRestart) => {
+            "Interrupted by app restart"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::MultipleOutputs) => {
+            "Multiple output nodes completed"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::ConditionEvaluation) => {
+            "Condition could not be evaluated"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ora_application::{
-        AgentConfig, AgentExecutor, AgentOutputContract, NodeType, StructuredTextExposure,
+        AgentConfig, AgentExecutor, AgentOutputContract, NodeFailureKind, NodeType,
+        StructuredTextExposure,
     };
     use ora_domain::{AuditFields, WorkflowNodeRunId, WorkflowRunId};
     use pretty_assertions::assert_eq;
@@ -596,6 +706,7 @@ mod tests {
                 },
             ],
             locale: WorkflowRunLocale::EnUs,
+            previous_failure: None,
         }));
         assert!(
             raw_texts[..raw_texts.len() - 1]
@@ -689,6 +800,7 @@ mod tests {
             node_runs: &[],
             required_skills: &[],
             locale: WorkflowRunLocale::ZhCn,
+            previous_failure: None,
         }));
 
         assert_eq!(texts.len(), 4);
@@ -700,6 +812,125 @@ mod tests {
         assert!(texts[3].contains(r#""approved": true"#));
         assert!(texts[3].contains("\"approved\": {"));
         assert!(texts[3].ends_with("</structured_output_contract>"));
+    }
+
+    /// A re-run after an agent-behaviour failure injects the previous attempt between context and
+    /// the structured-output contract.
+    #[test]
+    fn previous_failure_block_follows_the_workflow_context() {
+        let node = WorkflowGraphNode {
+            id: "review".to_string(),
+            node_type: NodeType::Agent,
+            title: "Review".to_string(),
+            description: String::new(),
+            instruction: None,
+            input_variables: Vec::new(),
+            agent_config: Some(AgentConfig {
+                mcps: Vec::new(),
+                executor: AgentExecutor {
+                    agent_cli: "open_code".to_string(),
+                    model_id: "m".to_string(),
+                },
+                role_id: None,
+                skills: Vec::new(),
+                prompt: "Review the proposal.".to_string(),
+                interactive: false,
+                output_contract: Some(AgentOutputContract::Structured {
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": { "approved": { "type": "boolean" } },
+                        "required": ["approved"]
+                    }),
+                    text_exposure: StructuredTextExposure::StructuredOnly,
+                }),
+            }),
+            condition_config: None,
+            output_config: None,
+            iteration_config: None,
+        };
+        let previous = PreviousFailure {
+            attempt: 2,
+            kind: NodeFailureKind::StructuredOutput,
+            message: "bad json".to_string(),
+            output: Some("{bad json".to_string()),
+        };
+        let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
+            node: &node,
+            graph: None,
+            worktree_root: Path::new("worktrees").join("run-1").as_path(),
+            role_content: None,
+            graph_json: GRAPH,
+            run_input: Some("审查这次修改。"),
+            node_runs: &[],
+            required_skills: &[],
+            locale: WorkflowRunLocale::ZhCn,
+            previous_failure: Some(&previous),
+        }));
+        let failure = texts
+            .iter()
+            .find(|text| text.contains("## 上一次尝试（第 2 次）失败信息"))
+            .expect("previous-failure block");
+        assert_eq!(
+            failure.strip_suffix("\n\n").unwrap_or(failure),
+            "## 上一次尝试（第 2 次）失败信息\n该步骤此前已尝试 2 次并失败。以下是最近一次失败的原因，请避免重蹈覆辙，并按当前步骤要求重新完成。\n失败类型：结构化输出不合格\n失败信息：bad json\n上一次的最终输出（供对照，可能已截断）：\n```text\n{bad json\n```"
+        );
+        assert!(failure.contains("结构化输出不合格"));
+        assert!(failure.contains("失败信息：bad json"));
+        assert!(failure.contains("```text\n{bad json\n```"));
+        let context_idx = texts
+            .iter()
+            .position(|text| text.contains("<workflow_context>"))
+            .expect("workflow context");
+        let failure_idx = texts
+            .iter()
+            .position(|text| text.contains("## 上一次尝试（第 2 次）失败信息"))
+            .expect("previous-failure block index");
+        let contract_idx = texts
+            .iter()
+            .position(|text| text.contains("<structured_output_contract>"))
+            .expect("structured-output contract");
+        assert!(context_idx < failure_idx);
+        assert!(failure_idx < contract_idx);
+    }
+
+    #[test]
+    fn no_previous_failure_block_when_none() {
+        let node = WorkflowGraphNode {
+            id: "review".to_string(),
+            node_type: NodeType::Agent,
+            title: "Review".to_string(),
+            description: String::new(),
+            instruction: None,
+            input_variables: Vec::new(),
+            agent_config: Some(AgentConfig {
+                mcps: Vec::new(),
+                executor: AgentExecutor {
+                    agent_cli: "open_code".to_string(),
+                    model_id: "m".to_string(),
+                },
+                role_id: None,
+                skills: Vec::new(),
+                prompt: "Review the proposal.".to_string(),
+                interactive: false,
+                output_contract: None,
+            }),
+            condition_config: None,
+            output_config: None,
+            iteration_config: None,
+        };
+        let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
+            node: &node,
+            graph: None,
+            worktree_root: Path::new("worktrees").join("run-1").as_path(),
+            role_content: None,
+            graph_json: GRAPH,
+            run_input: Some("Audit the change."),
+            node_runs: &[],
+            required_skills: &[],
+            locale: WorkflowRunLocale::EnUs,
+            previous_failure: None,
+        }));
+        assert!(texts.iter().all(|text| !text.contains("Previous attempt")));
     }
 
     #[test]

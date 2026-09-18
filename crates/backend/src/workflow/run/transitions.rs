@@ -65,6 +65,14 @@ impl WorkflowRunTransitions {
         }
         Ok(result)
     }
+
+    /// Publishes one run invalidation after a commit that happened outside this sink.
+    ///
+    /// Resume snapshot-switch commits through the engine repository rather than this sink; the
+    /// caller publishes afterwards so observers re-query the switched snapshot (ADR D7).
+    pub(crate) fn publish_run_invalidated(&self, run_id: &ora_domain::WorkflowRunId) {
+        self.events.publish_run_invalidated(run_id);
+    }
 }
 
 #[cfg(test)]

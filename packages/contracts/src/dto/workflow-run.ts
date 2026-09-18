@@ -34,6 +34,10 @@ export type CreateWorkflowRunRequest = {
   snapshotId?: string;
   kickoffInput?: string;
   name?: string;
+  /**
+   * `None` means inject last-failure context (the same as `Some(true)`).
+   */
+  injectLastFailure?: boolean;
 };
 
 /**
@@ -50,6 +54,21 @@ export type DeleteWorkflowRunRequest = { runId: string };
  * Returns the identifier of the soft-deleted run.
  */
 export type DeleteWorkflowRunResponse = { runId: string };
+
+/**
+ * Identifies the failed agent node whose one-off AI diagnosis should be generated.
+ */
+export type DiagnoseWorkflowNodeFailureRequest = {
+  runId: string;
+  nodeId: string;
+};
+
+/**
+ * Returns the generated diagnosis; nothing in scheduling or resume reads this value.
+ */
+export type DiagnoseWorkflowNodeFailureResponse = {
+  diagnosis: WorkflowNodeAiDiagnosis;
+};
 
 /**
  * Identifies the workflow run to retrieve by its stable identifier.
@@ -119,6 +138,48 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
 export type NodeCompletionRequester = "human";
 
 /**
+ * Identifies the failed or cancelled run whose resume preview should be loaded.
+ */
+export type PreviewWorkflowRunResumeRequest = { runId: string };
+
+/**
+ * Describes whether a run can be resumed and which rollback modes are available.
+ */
+export type PreviewWorkflowRunResumeResponse = {
+  /**
+   * Run is failed/cancelled, no running node, and at least one failed/cancelled node.
+   */
+  resumable: boolean;
+  failedNodes: Array<ResumeFailedNodePreview>;
+  /**
+   * Every failed node has a checkpoint.
+   */
+  nodeFilesAvailable: boolean;
+  /**
+   * `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
+   * `"composite_region"` when the resume unit is an iteration composite.
+   */
+  nodeFilesUnavailableReason: string | null;
+  /**
+   * Available when the run is resumable, the resume unit has a checkpoint, and no live node
+   * run outside that unit was still active after the unit's earliest start (`finished_at` is
+   * none or later than that instant, or `started_at` is later). Start/Condition/Output rows
+   * that finished before the unit started do not count.
+   */
+  checkpointAvailable: boolean;
+  /**
+   * `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
+   */
+  checkpointUnavailableReason: string | null;
+  currentSnapshotId: string;
+  currentSnapshotVersion: string;
+  publishedSnapshotId: string | null;
+  publishedSnapshotVersion: string | null;
+  publishedSnapshotSwitchable: boolean;
+  publishedSnapshotIncompatibleReason: string | null;
+};
+
+/**
  * Identifies the workflow run whose Workspace-owned display name should change.
  */
 export type RenameWorkflowRunRequest = { runId: string; name: string };
@@ -137,6 +198,57 @@ export type RestartWorkflowRunRequest = { runId: string };
  * Returns the reset and re-running run.
  */
 export type RestartWorkflowRunResponse = { run: WorkflowRun };
+
+/**
+ * Preview of one failed or cancelled node that would be re-run.
+ */
+export type ResumeFailedNodePreview = {
+  nodeId: string;
+  nodeRunId: string;
+  startedAt: bigint | null;
+  checkpoint: string | null;
+  checkpointError: string | null;
+  /**
+   * What the node itself recorded (`payload.file_changes` of the failed run).
+   */
+  nodeFileChanges: Array<WorkflowFileChange>;
+  /**
+   * Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
+   */
+  changedSinceCheckpoint: Array<WorkflowFileChange>;
+  /**
+   * Owning composite node id when this row belongs to an iteration resume unit.
+   */
+  resumeUnitNodeId?: string;
+};
+
+/**
+ * How the worktree is treated before a failed run is resumed.
+ */
+export type ResumeRollbackMode = "keep" | "node_files" | "checkpoint";
+
+/**
+ * Identifies the failed or cancelled run to resume from its failed nodes.
+ */
+export type ResumeWorkflowRunRequest = {
+  runId: string;
+  /**
+   * `None` keeps the worktree as it is.
+   */
+  rollback?: ResumeRollbackMode;
+  /**
+   * `None` keeps the run on its current snapshot.
+   */
+  snapshotId?: string;
+};
+
+/**
+ * Returns the resumed and re-running run.
+ */
+export type ResumeWorkflowRunResponse = {
+  run: WorkflowRun;
+  preRollbackCheckpoint: string | null;
+};
 
 /**
  * Identifies the run to start executing against its frozen snapshot graph.
@@ -187,6 +299,25 @@ export type WorkflowExecutionScopeStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
+
+/**
+ * One file's incremental change, matching the node payload `file_changes` shape.
+ */
+export type WorkflowFileChange = {
+  path: string;
+  additions: bigint;
+  deletions: bigint;
+};
+
+/**
+ * Plain-text diagnosis stored on the node run as `payload.ai_diagnosis` and shown as an AI guess.
+ */
+export type WorkflowNodeAiDiagnosis = {
+  text: string;
+  agentCli: string;
+  model: string;
+  generatedAt: bigint;
+};
 
 /**
  * Public node-run payload without persistence audit metadata.

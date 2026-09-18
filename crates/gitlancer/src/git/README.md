@@ -13,6 +13,7 @@ This module exposes the operations callers perform through `Git<R: GitRunner>` a
 - Push operations publish the verified checked-out branch to its default remote without enabling credential prompts.
 - Status uses porcelain v2 NUL-delimited output, exposing both raw records and structured per-file staging entries; global identity reads treat an unset Git key as `None`, not an execution failure.
 - Sync operations clone a repository into a fresh directory, fetch a remote, check out a branch, and fast-forward a branch against its remote so marketplace sources can be refreshed deterministically.
+- Checkpoint operations snapshot a worktree into `refs/ora/checkpoints/<name>` through a temporary index, list paths changed since that commit, and restore selected (or all) paths in the worktree without touching the caller's index.
 
 Every command is classified by `GitIntent` and executed through the injected runner. Mutating operations perform domain checks such as duplicate/missing branch validation before issuing the mutation when the use case requires it.
 

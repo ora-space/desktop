@@ -1,5 +1,5 @@
 use crate::workflow_run::engine::variable_value::{
-    is_supported_variable_type, workflow_value_matches_type,
+    file_reference_rejection, is_supported_variable_type, workflow_value_matches_type,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -232,6 +232,14 @@ fn validate_node(value: &Value, schema: &Value, path: &str) -> Result<(), Struct
     if let Some(expected) = schema.get("type").and_then(Value::as_str) {
         let actual = type_label(value);
         if !matches_type(value, expected) {
+            if expected == "file"
+                && let Some(reason) = file_reference_rejection(value)
+            {
+                return Err(StructuredOutputError::SchemaViolation {
+                    path: path.to_string(),
+                    message: reason,
+                });
+            }
             return Err(StructuredOutputError::InvalidType {
                 path: path.to_string(),
                 expected: expected.to_string(),
@@ -549,6 +557,59 @@ mod tests {
         ));
     }
 
+    /// File objects that almost match the wire shape name the actual rejection, not a type error.
+    #[test]
+    fn reports_why_a_file_reference_was_rejected() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "report": { "type": "file" } },
+            "required": ["report"]
+        });
+        let reserved = validate_against_schema(
+            &json!({
+                "report": { "kind": "workspace_file", "path": "notes/nul.md" }
+            }),
+            &schema,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &reserved,
+                StructuredOutputError::SchemaViolation { path, message }
+                    if path == "$.report" && message.contains("Windows reserved device name")
+            ),
+            "{reserved:?}"
+        );
+        let traversal = validate_against_schema(
+            &json!({
+                "report": { "kind": "workspace_file", "path": "../x" }
+            }),
+            &schema,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &traversal,
+                StructuredOutputError::SchemaViolation { path, message }
+                    if path == "$.report" && message.contains("parent traversal")
+            ),
+            "{traversal:?}"
+        );
+        assert_eq!(
+            validate_against_schema(&json!({ "report": { "path": "notes/a.md" } }), &schema,)
+                .unwrap_err(),
+            StructuredOutputError::SchemaViolation {
+                path: "$.report".to_string(),
+                message: "file reference must have exactly the keys \"kind\" and \"path\""
+                    .to_string(),
+            }
+        );
+        assert!(matches!(
+            validate_against_schema(&json!({ "report": "notes/a.md" }), &schema),
+            Err(StructuredOutputError::InvalidType { .. })
+        ));
+    }
+
     /// Invalid schema keywords fail before an Agent value can be accepted.
     #[test]
     fn rejects_invalid_schema_definitions() {
@@ -567,5 +628,87 @@ mod tests {
             })),
             Err(StructuredOutputError::SchemaViolation { .. })
         ));
+    }
+
+    /// Each `file_reference_rejection` branch inside `array[file]` names the indexed JSON path.
+    #[test]
+    fn reports_file_reference_rejection_paths_inside_array_file_fields() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "files": { "type": "array", "items": { "type": "file" } }
+            },
+            "required": ["files"]
+        });
+        let valid = json!({ "kind": "workspace_file", "path": "ok.txt" });
+        let cases: &[(&str, Value, &str)] = &[
+            (
+                "missing keys",
+                json!({ "kind": "workspace_file" }),
+                "file reference must have exactly the keys \"kind\" and \"path\"",
+            ),
+            (
+                "wrong kind",
+                json!({ "kind": "other", "path": "notes/a.md" }),
+                "file reference kind must be \"workspace_file\"",
+            ),
+            (
+                "path not a string",
+                json!({ "kind": "workspace_file", "path": 1 }),
+                "file reference path must be a string",
+            ),
+            (
+                "empty path",
+                json!({ "kind": "workspace_file", "path": "" }),
+                "file path must not be empty",
+            ),
+            (
+                "non-canonical path",
+                json!({ "kind": "workspace_file", "path": "docs\\input.txt" }),
+                "must be written in canonical form",
+            ),
+            (
+                "reserved device",
+                json!({ "kind": "workspace_file", "path": "notes/nul.md" }),
+                "Windows reserved device name",
+            ),
+            (
+                "parent traversal",
+                json!({ "kind": "workspace_file", "path": "../x" }),
+                "parent traversal",
+            ),
+        ];
+        for (label, invalid, needle) in cases {
+            let error = validate_against_schema(
+                &json!({ "files": [valid.clone(), invalid.clone()] }),
+                &schema,
+            )
+            .unwrap_err();
+            match error {
+                StructuredOutputError::SchemaViolation { path, message } => {
+                    assert_eq!(path, "$.files[1]", "{label}");
+                    assert!(
+                        message.contains(needle),
+                        "{label}: {message} should contain {needle:?}"
+                    );
+                }
+                other => panic!("{label}: expected SchemaViolation, got {other:?}"),
+            }
+        }
+        let not_object = validate_against_schema(
+            &json!({
+                "files": [valid.clone(), "notes/a.md"]
+            }),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(
+            not_object,
+            StructuredOutputError::InvalidType {
+                path: "$.files[1]".to_string(),
+                expected: "file".to_string(),
+                actual: "string".to_string(),
+            }
+        );
     }
 }

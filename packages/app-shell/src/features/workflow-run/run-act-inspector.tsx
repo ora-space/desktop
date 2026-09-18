@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Button, Input, Textarea, cn } from "@ora/ui";
+import { Button, Input, Spinner, Textarea, cn } from "@ora/ui";
 import {
   IconLayoutSidebarRightCollapse,
   IconSparkles,
@@ -21,8 +21,12 @@ import { RunBriefPopover } from "./run-brief-popover";
 import { RunLoopRoundHistory } from "./run-loop-round-history";
 import { RunStatusBadge } from "./run-status-mark";
 import { shouldPreviewBrief } from "./should-preview-brief";
+import { useDiagnoseWorkflowNodeFailure } from "../../state/data/workflow-runs";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRunStatus,
   GraphWorkflowRound,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
@@ -30,6 +34,9 @@ import type {
   WorkflowNodeFileChange,
   WorkflowVariableValueType,
 } from "@ora/workflow-runtime";
+import { NODE_FAILURE_KINDS } from "./node-failure-kinds";
+
+const KNOWN_NODE_FAILURE_KINDS = new Set<string>(NODE_FAILURE_KINDS);
 
 interface RunActInspectorProps {
   nodeId: string | null;
@@ -68,6 +75,8 @@ interface RunActInspectorProps {
   instructionSavePending?: boolean;
   /** Fallback close action when no stage card can host the persistent toggle. */
   onClose?: () => void;
+  runStatus?: GraphWorkflowRunStatus;
+  runSnapshotId?: string;
 }
 
 /** Formats an optional typed Start value for the compact read-only summary. */
@@ -138,6 +147,8 @@ export function RunActInspector({
   onDiscardInstructionDraft,
   instructionSavePending = false,
   onClose,
+  runStatus,
+  runSnapshotId,
 }: RunActInspectorProps) {
   const { t } = useTranslation();
   // Region nodes hold one state per round; the round strip lets the viewer switch rounds.
@@ -204,6 +215,8 @@ export function RunActInspector({
       instructionSavePending={instructionSavePending}
       fileChanges={fileChanges}
       onClose={onClose}
+      runStatus={runStatus}
+      runSnapshotId={runSnapshotId}
     />
   );
 }
@@ -233,6 +246,8 @@ function RunActInspectorPanel({
   instructionSavePending,
   fileChanges,
   onClose,
+  runStatus,
+  runSnapshotId,
 }: {
   nodeId: string;
   data: WorkflowNodeData;
@@ -258,8 +273,13 @@ function RunActInspectorPanel({
   instructionSavePending?: boolean;
   fileChanges: WorkflowNodeFileChange[];
   onClose?: () => void;
+  runStatus?: GraphWorkflowRunStatus;
+  runSnapshotId?: string;
 }) {
   const { i18n, t } = useTranslation();
+  const runId = useWorkspaceSelectionStore((s) => s.selection.workflowRunId);
+  const diagnose = useDiagnoseWorkflowNodeFailure();
+  const showContractError = useContractErrorToast();
   const locale =
     i18n.resolvedLanguage === "en-US" ? ("en-US" as const) : ("zh-CN" as const);
   const nodeType = createMockWorkflowNodeType(data.kind, locale);
@@ -366,6 +386,13 @@ function RunActInspectorPanel({
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {data.description}
         </p>
+        {state.snapshotId != null &&
+          runSnapshotId != null &&
+          state.snapshotId !== runSnapshotId && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("workflowRun.nodeFromOlderSnapshotHint")}
+            </p>
+          )}
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
@@ -568,13 +595,100 @@ function RunActInspectorPanel({
             </p>
           )}
           {state.errorMessage !== undefined && state.errorMessage !== "" && (
-            <p
+            <div
               role="alert"
               className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] leading-5 text-destructive"
             >
-              {state.errorMessage}
-            </p>
+              {state.errorDetail != null && (
+                <div className="mb-2 space-y-1">
+                  <p className="font-medium">
+                    {KNOWN_NODE_FAILURE_KINDS.has(state.errorDetail.kind)
+                      ? t(`workflowRun.errorKind.${state.errorDetail.kind}`)
+                      : state.errorDetail.kind}
+                  </p>
+                  {KNOWN_NODE_FAILURE_KINDS.has(state.errorDetail.kind) && (
+                    <p>
+                      {t(`workflowRun.errorHint.${state.errorDetail.kind}`)}
+                    </p>
+                  )}
+                  <p>
+                    {t("workflowRun.errorAttempt", {
+                      count: state.errorDetail.attempt,
+                    })}
+                  </p>
+                  {state.errorDetail.resumable === false &&
+                    state.errorDetail.injectsPreviousFailure === true && (
+                      <p>{t("workflowRun.errorInjectedResumeHint")}</p>
+                    )}
+                  {state.errorDetail.resumable === false &&
+                    state.errorDetail.injectsPreviousFailure === false && (
+                      <p>{t("workflowRun.errorNotResumableHint")}</p>
+                    )}
+                </div>
+              )}
+              <p>{state.errorMessage}</p>
+            </div>
           )}
+          {(state.status === "failed" || state.status === "cancelled") &&
+            (runStatus === "failed" || runStatus === "cancelled") && (
+              <p className="text-[11px] text-muted-foreground">
+                {t("workflowRun.resumeFromTopHint")}
+              </p>
+            )}
+          {state.injectedFailureContext !== undefined &&
+            state.injectedFailureContext !== "" && (
+              <details>
+                <summary>{t("workflowRun.injectedFailure.title")}</summary>
+                <pre className="whitespace-pre-wrap text-[11px] leading-5">
+                  {state.injectedFailureContext}
+                </pre>
+              </details>
+            )}
+          {state.status === "failed" &&
+          data.kind === "agent" &&
+          runId != null ? (
+            <div className="space-y-2">
+              {state.aiDiagnosis != null ? (
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <h5 className="text-[11px] font-medium">
+                    {t("workflowRun.aiDiagnosis.title", {
+                      model: state.aiDiagnosis.model,
+                    })}
+                  </h5>
+                  <p className="mt-1 whitespace-pre-wrap text-[11px] leading-5">
+                    {state.aiDiagnosis.text}
+                  </p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {t("workflowRun.aiDiagnosis.disclaimer")}
+                  </p>
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="cursor-pointer"
+                disabled={diagnose.isPending}
+                onClick={() => {
+                  diagnose.mutate(
+                    { runId, nodeId },
+                    { onError: (error) => showContractError(error) },
+                  );
+                }}
+              >
+                {diagnose.isPending ? (
+                  <>
+                    <Spinner className="size-3.5" />
+                    {t("workflowRun.aiDiagnosis.running")}
+                  </>
+                ) : state.aiDiagnosis != null ? (
+                  t("workflowRun.aiDiagnosis.rerun")
+                ) : (
+                  t("workflowRun.aiDiagnosis.run")
+                )}
+              </Button>
+            </div>
+          ) : null}
         </InspectorSection>
 
         {data.kind === "loop" && (

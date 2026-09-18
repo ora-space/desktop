@@ -152,6 +152,10 @@ pub struct CreateWorkflowRunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub name: Option<String>,
+    /// `None` means inject last-failure context (the same as `Some(true)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub inject_last_failure: Option<bool>,
 }
 
 /// Returns the created workspace-owned run.
@@ -344,6 +348,106 @@ pub struct RestartWorkflowRunResponse {
     pub run: WorkflowRun,
 }
 
+/// How the worktree is treated before a failed run is resumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "workflow-run.ts")]
+pub enum ResumeRollbackMode {
+    Keep,
+    NodeFiles,
+    Checkpoint,
+}
+
+/// Identifies the failed or cancelled run to resume from its failed nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeWorkflowRunRequest {
+    pub run_id: String,
+    /// `None` keeps the worktree as it is.
+    #[serde(default)]
+    #[ts(optional)]
+    pub rollback: Option<ResumeRollbackMode>,
+    /// `None` keeps the run on its current snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub snapshot_id: Option<String>,
+}
+
+/// Returns the resumed and re-running run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeWorkflowRunResponse {
+    pub run: WorkflowRun,
+    pub pre_rollback_checkpoint: Option<String>,
+}
+
+/// Identifies the failed or cancelled run whose resume preview should be loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct PreviewWorkflowRunResumeRequest {
+    pub run_id: String,
+}
+
+/// One file's incremental change, matching the node payload `file_changes` shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowFileChange {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// Preview of one failed or cancelled node that would be re-run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeFailedNodePreview {
+    pub node_id: String,
+    pub node_run_id: String,
+    pub started_at: Option<i64>,
+    pub checkpoint: Option<String>,
+    pub checkpoint_error: Option<String>,
+    /// What the node itself recorded (`payload.file_changes` of the failed run).
+    pub node_file_changes: Vec<WorkflowFileChange>,
+    /// Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
+    pub changed_since_checkpoint: Vec<WorkflowFileChange>,
+    /// Owning composite node id when this row belongs to an iteration resume unit.
+    #[ts(optional)]
+    pub resume_unit_node_id: Option<String>,
+}
+
+/// Describes whether a run can be resumed and which rollback modes are available.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct PreviewWorkflowRunResumeResponse {
+    /// Run is failed/cancelled, no running node, and at least one failed/cancelled node.
+    pub resumable: bool,
+    pub failed_nodes: Vec<ResumeFailedNodePreview>,
+    /// Every failed node has a checkpoint.
+    pub node_files_available: bool,
+    /// `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
+    /// `"composite_region"` when the resume unit is an iteration composite.
+    pub node_files_unavailable_reason: Option<String>,
+    /// Available when the run is resumable, the resume unit has a checkpoint, and no live node
+    /// run outside that unit was still active after the unit's earliest start (`finished_at` is
+    /// none or later than that instant, or `started_at` is later). Start/Condition/Output rows
+    /// that finished before the unit started do not count.
+    pub checkpoint_available: bool,
+    /// `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
+    pub checkpoint_unavailable_reason: Option<String>,
+    pub current_snapshot_id: String,
+    pub current_snapshot_version: String,
+    pub published_snapshot_id: Option<String>,
+    pub published_snapshot_version: Option<String>,
+    pub published_snapshot_switchable: bool,
+    pub published_snapshot_incompatible_reason: Option<String>,
+}
+
 /// Sets the kickoff input of a pending run, used as the start node's input on start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -397,6 +501,34 @@ pub struct CompleteWorkflowNodeResponse {
     pub run: WorkflowRun,
 }
 
+/// Identifies the failed agent node whose one-off AI diagnosis should be generated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct DiagnoseWorkflowNodeFailureRequest {
+    pub run_id: String,
+    pub node_id: String,
+}
+
+/// Plain-text diagnosis stored on the node run as `payload.ai_diagnosis` and shown as an AI guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowNodeAiDiagnosis {
+    pub text: String,
+    pub agent_cli: String,
+    pub model: String,
+    pub generated_at: i64,
+}
+
+/// Returns the generated diagnosis; nothing in scheduling or resume reads this value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct DiagnoseWorkflowNodeFailureResponse {
+    pub diagnosis: WorkflowNodeAiDiagnosis,
+}
+
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowRunStatus::export(config)?;
@@ -428,11 +560,21 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CancelWorkflowRunResponse::export(config)?;
     RestartWorkflowRunRequest::export(config)?;
     RestartWorkflowRunResponse::export(config)?;
+    ResumeRollbackMode::export(config)?;
+    ResumeWorkflowRunRequest::export(config)?;
+    ResumeWorkflowRunResponse::export(config)?;
+    PreviewWorkflowRunResumeRequest::export(config)?;
+    WorkflowFileChange::export(config)?;
+    ResumeFailedNodePreview::export(config)?;
+    PreviewWorkflowRunResumeResponse::export(config)?;
     UpdateWorkflowRunInputRequest::export(config)?;
     UpdateWorkflowRunInputResponse::export(config)?;
     NodeCompletionRequester::export(config)?;
     CompleteWorkflowNodeRequest::export(config)?;
     CompleteWorkflowNodeResponse::export(config)?;
+    DiagnoseWorkflowNodeFailureRequest::export(config)?;
+    WorkflowNodeAiDiagnosis::export(config)?;
+    DiagnoseWorkflowNodeFailureResponse::export(config)?;
     Ok(())
 }
 
@@ -441,12 +583,13 @@ mod tests {
     use super::{
         CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, CreateWorkflowRunRequest,
         CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse,
-        GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest,
-        ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
-        ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-        NodeCompletionRequester, WorkflowExecutionScope, WorkflowExecutionScopeStatus,
-        WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunLocale, WorkflowRunStatus,
-        WorkflowRunSummary, WorkflowRunVariable,
+        DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest, GetWorkflowRunResponse,
+        ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
+        ListWorkflowRunsByWorkflowRequest, ListWorkflowRunsByWorkflowResponse,
+        ListWorkflowRunsRequest, ListWorkflowRunsResponse, NodeCompletionRequester,
+        ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowExecutionScope,
+        WorkflowExecutionScopeStatus, WorkflowNodeAiDiagnosis, WorkflowNodeRun, WorkflowNodeStatus,
+        WorkflowRun, WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary, WorkflowRunVariable,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -546,6 +689,7 @@ mod tests {
                 snapshot_id: None,
                 kickoff_input: None,
                 name: None,
+                inject_last_failure: None,
             },
             json!({
                 "workspaceId": "workspace-1",
@@ -828,6 +972,94 @@ mod tests {
             }),
         );
         assert_serialized_json(&WorkflowRunStatus::AwaitingInput, json!("awaitingInput"));
+    }
+
+    /// Omitting the run-level switch deserializes as `None` (handlers treat that as on).
+    #[test]
+    fn create_workflow_run_request_defaults_inject_last_failure_to_none() {
+        let omitted: CreateWorkflowRunRequest =
+            serde_json::from_str(r#"{"workspaceId":"w","workflowId":"f","locale":"zh-CN"}"#)
+                .unwrap();
+        assert_eq!(omitted.inject_last_failure, None);
+        let off: CreateWorkflowRunRequest = serde_json::from_str(
+            r#"{"workspaceId":"w","workflowId":"f","locale":"zh-CN","injectLastFailure":false}"#,
+        )
+        .unwrap();
+        assert_eq!(off.inject_last_failure, Some(false));
+    }
+
+    /// A resume request without `rollback` stays `Keep`; snake_case values map onto the enum.
+    #[test]
+    fn deserializes_resume_workflow_run_request_rollback() {
+        let omitted: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r" })).unwrap();
+        assert_eq!(
+            omitted,
+            ResumeWorkflowRunRequest {
+                run_id: "r".to_string(),
+                rollback: None,
+                snapshot_id: None,
+            }
+        );
+        let node_files: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r", "rollback": "node_files" })).unwrap();
+        assert_eq!(
+            node_files,
+            ResumeWorkflowRunRequest {
+                run_id: "r".to_string(),
+                rollback: Some(ResumeRollbackMode::NodeFiles),
+                snapshot_id: None,
+            }
+        );
+    }
+
+    /// Omitting `snapshotId` deserializes as `None` so keep-resume stays the default.
+    #[test]
+    fn deserializes_resume_workflow_run_request_without_snapshot_id() {
+        let omitted: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r" })).unwrap();
+        assert_eq!(omitted.snapshot_id, None);
+    }
+
+    /// Diagnosis request identifiers stay camelCase on the wire.
+    #[test]
+    fn diagnose_workflow_node_failure_request_round_trips() {
+        let request = DiagnoseWorkflowNodeFailureRequest {
+            run_id: "run-1".to_string(),
+            node_id: "agent".to_string(),
+        };
+        assert_serialized_json(&request, json!({ "runId": "run-1", "nodeId": "agent" }));
+        let parsed: DiagnoseWorkflowNodeFailureRequest =
+            serde_json::from_value(json!({ "runId": "run-1", "nodeId": "agent" })).unwrap();
+        assert_eq!(parsed, request);
+    }
+
+    /// Diagnosis payload field names stay camelCase so the inspector can render the guess as stored.
+    #[test]
+    fn workflow_node_ai_diagnosis_round_trips() {
+        let diagnosis = WorkflowNodeAiDiagnosis {
+            text: "the schema rejected the reply".to_string(),
+            agent_cli: "open_code".to_string(),
+            model: "m".to_string(),
+            generated_at: 50,
+        };
+        assert_serialized_json(
+            &diagnosis,
+            json!({
+                "text": "the schema rejected the reply",
+                "agentCli": "open_code",
+                "model": "m",
+                "generatedAt": 50,
+            }),
+        );
+        let parsed: WorkflowNodeAiDiagnosis = serde_json::from_value(json!({
+            "text": "the schema rejected the reply",
+            "agentCli": "open_code",
+            "model": "m",
+            "generatedAt": 50,
+        }))
+        .unwrap();
+        assert_eq!(parsed, diagnosis);
     }
 
     /// Serializes one value and compares the full JSON payload so field names stay stable.

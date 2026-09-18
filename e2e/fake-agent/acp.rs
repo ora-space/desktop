@@ -300,7 +300,10 @@ impl FakeAcpAgent {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let response = if prompt.trim().is_empty() {
+        let response = if prompt.contains("## Previous attempt") || prompt.contains("## 上一次尝试")
+        {
+            r#"{"ok":true}"#.to_string()
+        } else if prompt.trim().is_empty() {
             "Fake agent completed the prompt.".to_string()
         } else {
             format!("Fake agent received: {prompt}")

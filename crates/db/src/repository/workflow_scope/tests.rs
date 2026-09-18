@@ -438,8 +438,10 @@ fn child_failure_settles_the_loop_scope() {
             repository
                 .fail_node(
                     &failed.id,
-                    "boom".into(),
-                    None,
+                    ora_application::NodeFailure::new(
+                        ora_application::NodeFailureKind::Session,
+                        "boom"
+                    ),
                     ora_application::FailurePropagation::Run,
                     /*now*/ 5
                 )

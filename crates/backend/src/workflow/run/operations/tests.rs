@@ -1,10 +1,19 @@
 use super::WorkflowRuns;
-use crate::workflow::run::test_fixture::{AGENT_GRAPH, bind_and_park, run_test, started_run};
+use crate::git_cleanup::KeyedResourceLocks;
+use crate::workflow::run::test_fixture::{
+    AGENT_GRAPH, RecordingExecutor, bind_and_park, bootstrap, run_test, started_run,
+    started_run_with,
+};
 use crate::{Backend, test_backend::backend_paths};
 use agent_client_protocol_schema::v1::{ContentBlock, ContentChunk, SessionUpdate, TextContent};
-use ora_application::{SessionRepository, WorkflowRunEngineRepository};
+use ora_application::{
+    NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, SessionRepository,
+    WorkflowRunEngineRepository, WorkflowRunRepository,
+};
 use ora_contracts::*;
-use ora_db::{SqliteSessionRepository, SqliteWorkflowRunEngineRepository};
+use ora_db::{
+    SqliteSessionRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
+};
 use ora_domain::{SessionId, WorkflowNodeRunId};
 use ora_history::{HistoryLine, HistoryRecord, history_path};
 use pretty_assertions::assert_eq;
@@ -379,5 +388,82 @@ fn recovery_fails_interrupted_turns_and_resumes_stalled_runs() {
                 .expect("recovered run");
             assert_eq!(detail.run.status, recovered_run_status);
         }
+    });
+}
+
+/// B10: exclusive run lock admits exactly one concurrent resume.
+///
+/// Driven through the same lock-then-resume protocol as `WorkflowRuns::resume_from_failure`,
+/// but with `RecordingExecutor` so the rerun node stays `Running`. The Backend composition has
+/// no executor seam; its real dispatcher fails the agent within milliseconds and would make a
+/// second serialized resume legitimate product behaviour.
+#[test]
+fn concurrent_resume_from_failure_reruns_the_failed_node_once() {
+    ora_logging::with_trace_logging(|| {
+        let (temporary, pool) = bootstrap();
+        let (run_id, nodes, engine) =
+            started_run_with(&temporary, &pool, AGENT_GRAPH, RecordingExecutor::default());
+        let agent = nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node")
+            .clone();
+        engine
+            .fail_node(
+                &run_id,
+                &agent.id,
+                NodeFailure::new(NodeFailureKind::Session, "agent failed"),
+            )
+            .unwrap();
+        let locks = KeyedResourceLocks::new();
+        let start = std::sync::Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                start.wait();
+                let _gate = locks.acquire_exclusive(run_id.as_ref());
+                engine.resume_from_failure(&run_id)
+            });
+            let second = scope.spawn(|| {
+                start.wait();
+                let _gate = locks.acquire_exclusive(run_id.as_ref());
+                engine.resume_from_failure(&run_id)
+            });
+            (
+                first.join().expect("join first"),
+                second.join().expect("join second"),
+            )
+        });
+        let outcomes = [first, second].map(|result| match result.expect("resume") {
+            ResumeWorkflowRunResult::Resumed => Ok(()),
+            ResumeWorkflowRunResult::NotResumable => {
+                Err(PublicError::WorkflowRunNotResumable(EmptyErrorParams {}))
+            }
+            ResumeWorkflowRunResult::NotFound => {
+                Err(PublicError::WorkflowRunNotFound(EmptyErrorParams {}))
+            }
+        });
+        let resumed = outcomes.iter().filter(|result| result.is_ok()).count();
+        let refused = outcomes
+            .iter()
+            .filter(|result| {
+                result.as_ref().is_err_and(|error| {
+                    matches!(
+                        error,
+                        PublicError::WorkflowRunNotResumable(_) | PublicError::WorkflowRunActive(_)
+                    )
+                })
+            })
+            .count();
+        assert_eq!((resumed, refused), (1, 1), "{outcomes:?}");
+        let live = SqliteWorkflowRunRepository::new(pool)
+            .list_node_runs(&run_id)
+            .unwrap();
+        let agent_live: Vec<_> = live.iter().filter(|node| node.node_id == "agent").collect();
+        assert_eq!(agent_live.len(), 1);
+        assert_ne!(agent_live[0].id.as_ref(), agent.id.as_ref());
+        assert_eq!(
+            agent_live[0].status,
+            ora_domain::WorkflowNodeStatus::Running
+        );
     });
 }

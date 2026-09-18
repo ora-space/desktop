@@ -1,8 +1,9 @@
-use crate::RepositoryError;
 use crate::project::Clock;
 use crate::workflow_run::engine::branch_projection::BranchProjection;
 use crate::workflow_run::engine::condition::ELSE_BRANCH_ID;
-use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
+use crate::workflow_run::engine::failure::NodeFailure;
+use crate::workflow_run::engine::graph::{WorkflowGraph, WorkflowGraphNode};
+use crate::workflow_run::engine::node_executor::SharedNodeExecutor;
 use crate::workflow_run::engine::node_runtime::{
     NodeRuntimeRegistry, RegisteredNodeRuntime, SwiftCompletion, standard_node_runtimes,
 };
@@ -10,112 +11,30 @@ use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
     AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FailurePropagation,
     FileChange, NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult,
-    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator,
-    WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
+    ResumeWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
 };
+use crate::workflow_run::engine::region::region_failure_propagation;
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
+use crate::workflow_run::engine::start_input::validate_start_inputs;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
+use ora_domain::{
+    WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus,
+};
 use std::collections::HashSet;
 use std::sync::Arc;
-use thiserror::Error;
+
+pub use super::node_executor::{
+    EngineError, NodeExecutor, WorkflowRunCallback, WorkflowValidationError,
+};
 
 mod composite_scheduler;
 mod loop_scheduler;
-
-/// Executes one agent node through a real session, calling the engine back when done.
-///
-/// The implementation lives in the backend and drives the session asynchronously; it MUST report
-/// completion through `WorkflowRunEngine::complete_node`/`fail_node` on the same per-run serial
-/// executor so state transitions stay serial. The engine wraps every `NodeExecutor` as the
-/// Agent node runtime, so this port remains the backend's single integration seam.
-pub trait NodeExecutor: Send + Sync {
-    /// Dispatches one agent node; returns immediately while the session runs in the background.
-    fn dispatch(
-        &self,
-        node_run_id: &WorkflowNodeRunId,
-        node: &WorkflowGraphNode,
-        graph: &WorkflowGraph,
-        context: &ExecutionContext,
-        scope_id: &ora_domain::WorkflowScopeId,
-        variable_pool: &WorkflowVariablePool,
-    );
-}
-
-/// Reports node completion from the session driver back to the run engine.
-///
-/// The backend session driver invokes this when an agent node's session finishes; callbacks MUST
-/// be routed through the run's serial executor so state transitions stay serial.
-pub trait WorkflowRunCallback: Send + Sync {
-    /// Reports a successful node completion with its final assistant output, stop reason, and
-    /// incremental file changes.
-    ///
-    /// `structured_output` is the parsed, schema-validated object of a structured-output contract.
-    fn complete_node(
-        &self,
-        run_id: &WorkflowRunId,
-        node_run_id: &WorkflowNodeRunId,
-        output: Option<String>,
-        structured_output: Option<serde_json::Value>,
-        stop_reason: Option<String>,
-        file_changes: Vec<FileChange>,
-    );
-
-    /// Reports a failed node execution with an actionable error and any accumulated output.
-    fn fail_node(
-        &self,
-        run_id: &WorkflowRunId,
-        node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
-    );
-}
 
 /// Result of one scheduling pass inside a running Loop container.
 enum LoopScheduleOutcome {
     Progressed,
     Waiting,
-}
-
-/// Structural validation failures raised when starting a workflow run.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum WorkflowValidationError {
-    #[error("workflow graph has no start node")]
-    MissingStartNode,
-    #[error("node {node_id} has unsupported node type {node_type}")]
-    UnsupportedNodeType {
-        node_id: String,
-        node_type: NodeType,
-    },
-    #[error("nodes are unreachable from the start node: {node_ids:?}")]
-    UnreachableNodes { node_ids: Vec<String> },
-    #[error("output node {node_id} has outgoing edges; output must be terminal")]
-    OutputNodeHasSuccessors { node_id: String },
-    #[error("condition node {node_id} declares case {case_id} more than once")]
-    DuplicateConditionCase { node_id: String, case_id: String },
-    #[error("condition node {node_id} has an edge on unknown branch {handle}")]
-    UnknownConditionBranch { node_id: String, handle: String },
-    #[error("output node {node_id} declares the result name {name} more than once")]
-    DuplicateOutputName { node_id: String, name: String },
-    #[error("required Start variable has no value: {name}")]
-    MissingRequiredStartVariable { name: String },
-    #[error("Start variable {name} is not one of its configured options")]
-    InvalidStartVariableOption { name: String },
-}
-
-/// Failures surfaced by the workflow run engine.
-#[derive(Debug, Error)]
-pub enum EngineError {
-    #[error("workflow run not found: {run_id}")]
-    WorkflowRunNotFound { run_id: String },
-    #[error("workflow graph is invalid")]
-    GraphParse(#[from] GraphError),
-    #[error("workflow graph is not executable")]
-    Validation(#[from] WorkflowValidationError),
-    #[error("workflow run repository operation failed")]
-    Repository(#[from] RepositoryError),
-    #[error("workflow Loop state cannot be serialized: {message}")]
-    LoopState { message: String },
 }
 
 /// Drives one workflow run through start/cancel/restart and the reactive DAG scheduler.
@@ -129,6 +48,7 @@ pub enum EngineError {
 pub struct WorkflowRunEngine<R, G, C> {
     repository: R,
     runtimes: NodeRuntimeRegistry,
+    node_executor: Arc<dyn NodeExecutor>,
     node_run_id_generator: G,
     clock: C,
     run_events: Arc<dyn WorkflowRunInvalidationPublisher>,
@@ -162,9 +82,11 @@ impl<R, G, C> WorkflowRunEngine<R, G, C> {
     where
         E: NodeExecutor + 'static,
     {
+        let node_executor: Arc<dyn NodeExecutor> = Arc::new(agent_executor);
         Self {
             repository,
-            runtimes: standard_node_runtimes(agent_executor),
+            runtimes: standard_node_runtimes(SharedNodeExecutor(node_executor.clone())),
+            node_executor,
             node_run_id_generator,
             clock,
             run_events,
@@ -238,6 +160,52 @@ where
         Ok(result)
     }
 
+    /// Resumes a `Failed`/`Cancelled` run from its failed nodes: every `Failed`/`Cancelled` node
+    /// run and all of its transitive successors are cleared, succeeded work is kept, and
+    /// scheduling recomputes the ready set from the surviving state.
+    ///
+    /// The resume unit for anything inside a region is the owning composite node. Partial
+    /// in-loop resume is explicitly out of scope: a failed or cancelled region row, or a
+    /// failed/cancelled composite row, restarts the loop from round 1.
+    ///
+    /// The invalidation is published after the resume transaction commits and before the
+    /// scheduling wave, matching every other committed transition (ADR "node runtime
+    /// orchestration" D7).
+    pub fn resume_from_failure(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<ResumeWorkflowRunResult, EngineError> {
+        let context = self.execution_context(run_id)?;
+        if !matches!(
+            context.run.status,
+            WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled
+        ) {
+            return Ok(ResumeWorkflowRunResult::NotResumable);
+        }
+        let graph = WorkflowGraph::parse(&context.graph_json)?;
+        let node_runs = self.repository.list_node_runs(run_id)?;
+        let to_clear =
+            crate::workflow_run::engine::region::resume_clear_node_ids(&graph, &node_runs);
+        if to_clear.is_empty() {
+            return Ok(ResumeWorkflowRunResult::NotResumable);
+        }
+        let now = self.clock.now_timestamp_millis();
+        match self
+            .repository
+            .resume_from_failure(run_id, &to_clear, now)?
+        {
+            ResumeWorkflowRunResult::Resumed => {
+                self.run_events.publish_run_invalidated(run_id);
+                self.run_schedule(run_id)?;
+                Ok(ResumeWorkflowRunResult::Resumed)
+            }
+            result
+            @ (ResumeWorkflowRunResult::NotResumable | ResumeWorkflowRunResult::NotFound) => {
+                Ok(result)
+            }
+        }
+    }
+
     /// Restarts a non-running run by resetting it and re-running it immediately.
     pub fn restart(&self, run_id: &WorkflowRunId) -> Result<RestartWorkflowRunResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
@@ -303,14 +271,13 @@ where
         &self,
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
         let propagation = self.failure_propagation(run_id, node_run_id)?;
         match self
             .repository
-            .fail_node(node_run_id, error, output, propagation, now)?
+            .fail_node(node_run_id, failure, propagation, now)?
         {
             AdvanceWorkflowRunResult::Advanced => {
                 self.run_events.publish_run_invalidated(run_id);
@@ -322,6 +289,27 @@ where
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {}
         }
         Ok(())
+    }
+
+    /// Records the git checkpoint taken before a node started, or why none could be taken.
+    ///
+    /// Provenance only: a missing node row is a no-op, matching the repository contract. This
+    /// does not change run or node-run status, so it does not publish a run invalidation.
+    pub fn record_node_checkpoint(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        snapshot_id: &str,
+        checkpoint: Option<&str>,
+        checkpoint_error: Option<&str>,
+    ) -> Result<(), EngineError> {
+        let now = self.clock.now_timestamp_millis();
+        Ok(self.repository.record_node_checkpoint(
+            node_run_id,
+            snapshot_id,
+            checkpoint,
+            checkpoint_error,
+            now,
+        )?)
     }
 
     /// Resumes scheduling for a `Running` run left with no active node by a crash between a node
@@ -344,6 +332,11 @@ where
         let now = self.clock.now_timestamp_millis();
         loop {
             let context = self.execution_context(run_id)?;
+            // A Failed/Cancelled run must not dispatch dependents: a late sibling success
+            // otherwise re-enters scheduling after fail_node has already promoted the run.
+            if context.run.status != WorkflowRunStatus::Running {
+                return Ok(());
+            }
             let graph = WorkflowGraph::parse(&context.graph_json)?;
             let node_runs = self
                 .repository
@@ -388,8 +381,7 @@ where
                         let propagation = region_failure_propagation(&graph, &node_run.node_id);
                         let advanced = self.repository.fail_node(
                             &node_run.id,
-                            message,
-                            None,
+                            NodeFailure::from_runtime(node.node_type, message),
                             propagation,
                             now,
                         )?;
@@ -450,19 +442,26 @@ where
                 .start_ready_nodes(run_id, &ready_runs, now)?;
             self.run_events.publish_run_invalidated(run_id);
 
-            // Async runtimes dispatch now; swift runtimes complete on the next loop iteration.
+            // Async runtimes dispatch now; composite nodes record a pre-loop checkpoint;
+            // swift runtimes complete on the next loop iteration.
             for (node, node_run) in ready.iter().zip(ready_runs.iter()) {
-                if let Some(RegisteredNodeRuntime::Async(runtime)) =
-                    self.runtimes.runtime(node.node_type)
-                {
-                    runtime.dispatch(
-                        &node_run.id,
-                        node,
-                        &context,
-                        &graph,
-                        &context.root_scope_id,
-                        &pool,
-                    );
+                match self.runtimes.runtime(node.node_type) {
+                    Some(RegisteredNodeRuntime::Async(runtime)) => {
+                        runtime.dispatch(
+                            &node_run.id,
+                            node,
+                            &context,
+                            &graph,
+                            &context.root_scope_id,
+                            &pool,
+                        );
+                    }
+                    Some(RegisteredNodeRuntime::Composite(_)) => {
+                        self.node_executor
+                            .on_composite_node_started(&node_run.id, node, &context);
+                    }
+                    Some(RegisteredNodeRuntime::Swift(_) | RegisteredNodeRuntime::ScopedLoop)
+                    | None => {}
                 }
             }
         }
@@ -476,44 +475,6 @@ where
                 run_id: run_id.to_string(),
             })
     }
-}
-
-/// Enforces form-level Start constraints at the execution boundary, not only in the editor.
-fn validate_start_inputs(
-    start_node: &WorkflowGraphNode,
-    serialized_payload: Option<&str>,
-) -> Result<(), WorkflowValidationError> {
-    let variable_pool = serialized_payload
-        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
-        .map(|payload| payload.variable_pool)
-        .unwrap_or_default();
-    for variable in &start_node.input_variables {
-        let selector = format!("{}.{}", start_node.id, variable.name);
-        let value = variable_pool
-            .values
-            .get(&selector)
-            .or(variable.value.as_ref());
-        let missing = value.is_none_or(|value| {
-            value.is_null()
-                || value.as_str().is_some_and(str::is_empty)
-                || value.as_array().is_some_and(Vec::is_empty)
-        });
-        if variable.required && missing {
-            return Err(WorkflowValidationError::MissingRequiredStartVariable {
-                name: variable.name.clone(),
-            });
-        }
-        if !variable.options.is_empty()
-            && value
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|value| !variable.options.iter().any(|option| option == value))
-        {
-            return Err(WorkflowValidationError::InvalidStartVariableOption {
-                name: variable.name.clone(),
-            });
-        }
-    }
-    Ok(())
 }
 
 /// Validates the structural invariants that make a graph executable: a terminal output, no edges
@@ -599,19 +560,6 @@ fn execution_payload_from(serialized_payload: Option<&str>) -> WorkflowRunPayloa
     serialized_payload
         .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
         .unwrap_or_default()
-}
-
-/// Resolves how a failure of the node with the given id propagates, structurally: any failure
-/// inside a composite region resolves to the owning composite node with `Composite` semantics
-/// (the row fails, the run stays), and the owner's error strategy decides the node's fate at
-/// settlement — `fail` fails the node and the run there, `continue` records the round and
-/// advances (ADR "iteration composite runtime" D4, D6). This is a graph-structure judgment,
-/// not a node-type branch in the scheduling core.
-fn region_failure_propagation(graph: &WorkflowGraph, node_id: &str) -> FailurePropagation {
-    match graph.region_owner(node_id) {
-        Some(_) => FailurePropagation::Composite,
-        None => FailurePropagation::Run,
-    }
 }
 
 #[cfg(test)]

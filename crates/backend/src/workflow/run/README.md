@@ -36,6 +36,9 @@ This module adapts workflow-run application use cases to the production backend 
   an interactive node parking at awaiting input, a human turn beginning, and a turn ending —
   through one sink that publishes the run invalidation only when the guarded transition commits,
   sharing the engine's invalidation mechanism (ADR "node runtime orchestration" D7).
+- `checkpoint.rs`, `rollback.rs`, `last_failure.rs`, `snapshot_switch.rs`, and `diagnosis.rs`
+  own pre-node git checkpoints, resume-time worktree rollback, previous-failure prompt
+  injection, published-snapshot takeover, and on-demand AI diagnosis (provenance only).
 
 ## Boundaries
 

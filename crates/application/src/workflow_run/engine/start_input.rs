@@ -4,6 +4,9 @@
 //! saved graph always declares the pool type while the editor picks the form control that
 //! produces it. Legacy snapshots without an explicit control derive a compatible one.
 
+use crate::workflow_run::engine::engine::WorkflowValidationError;
+use crate::workflow_run::engine::graph::WorkflowGraphNode;
+use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::variable_value::{
     is_supported_variable_type, normalize_workflow_value,
 };
@@ -195,4 +198,42 @@ pub(crate) fn into_start_input_variables(
         });
     }
     Ok(variables)
+}
+
+/// Enforces form-level Start constraints at the execution boundary, not only in the editor.
+pub(super) fn validate_start_inputs(
+    start_node: &WorkflowGraphNode,
+    serialized_payload: Option<&str>,
+) -> Result<(), WorkflowValidationError> {
+    let variable_pool = serialized_payload
+        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
+        .map(|payload| payload.variable_pool)
+        .unwrap_or_default();
+    for variable in &start_node.input_variables {
+        let selector = format!("{}.{}", start_node.id, variable.name);
+        let value = variable_pool
+            .values
+            .get(&selector)
+            .or(variable.value.as_ref());
+        let missing = value.is_none_or(|value| {
+            value.is_null()
+                || value.as_str().is_some_and(str::is_empty)
+                || value.as_array().is_some_and(Vec::is_empty)
+        });
+        if variable.required && missing {
+            return Err(WorkflowValidationError::MissingRequiredStartVariable {
+                name: variable.name.clone(),
+            });
+        }
+        if !variable.options.is_empty()
+            && value
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| !variable.options.iter().any(|option| option == value))
+        {
+            return Err(WorkflowValidationError::InvalidStartVariableOption {
+                name: variable.name.clone(),
+            });
+        }
+    }
+    Ok(())
 }

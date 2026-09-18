@@ -59,7 +59,7 @@ enum SweepDecision {
 }
 
 /// Applies the crash sweep to one recoverable run.
-fn sweep_one_run(
+pub(super) fn sweep_one_run(
     repository: &SqliteWorkflowRunEngineRepository,
     run_id: &WorkflowRunId,
     now: i64,

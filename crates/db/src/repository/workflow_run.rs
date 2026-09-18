@@ -392,6 +392,70 @@ pub(super) fn list_node_runs(
     Ok(node_runs)
 }
 
+/// Returns the most recent soft-deleted failed attempt of one `(node_id, iteration)` pair.
+pub(super) fn find_last_failed_attempt(
+    connection: &rusqlite::Connection,
+    run_id: &WorkflowRunId,
+    node_id: &str,
+    iteration: Option<u32>,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND status = ?3 AND iteration IS ?4
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )?;
+    let mut rows = statement.query(params![
+        run_id.as_ref(),
+        node_id,
+        WorkflowNodeStatus::Failed.database_value(),
+        iteration
+    ])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Finds the live node run bound to a session, if any.
+pub(super) fn find_node_run_by_session_id(
+    connection: &rusqlite::Connection,
+    session_id: &SessionId,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE session_id = ?1 AND is_deleted = 0
+         LIMIT 1",
+    )?;
+    let mut rows = statement.query(params![session_id.as_ref()])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Finds one live node run by id.
+pub(super) fn find_node_run_by_id(
+    connection: &rusqlite::Connection,
+    node_run_id: &WorkflowNodeRunId,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE id = ?1 AND is_deleted = 0",
+    )?;
+    let mut rows = statement.query(params![node_run_id.as_ref()])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
 /// Lists node instances within one execution scope in stable creation order.
 pub(super) fn list_node_runs_in_scope(
     connection: &rusqlite::Connection,

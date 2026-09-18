@@ -10,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Button,
+  Checkbox,
   Input,
   Spinner,
 } from "@ora/ui";
@@ -38,6 +39,7 @@ export function RunWorkflowDialog({
     (state) => state.selectWorkflowRun,
   );
   const [name, setName] = useState("");
+  const [injectLastFailure, setInjectLastFailure] = useState(true);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resolvedRunName = name.trim() || (workflow?.name.trim() ?? "");
@@ -52,6 +54,7 @@ export function RunWorkflowDialog({
   if (nextSeedKey !== null && nextSeedKey !== seedKey && workflow !== null) {
     setSeedKey(nextSeedKey);
     setName(workflow.name);
+    setInjectLastFailure(true);
     setAttemptedSubmit(false);
     setError(null);
   }
@@ -72,6 +75,7 @@ export function RunWorkflowDialog({
         workspaceId: target.workspaceId,
         workflowId: workflow.id,
         name: resolvedRunName,
+        injectLastFailure,
       });
       useUiStore.getState().expandProject(target.projectId);
       selectWorkflowRun(result.run.id, target.projectId, target.taskId);
@@ -85,6 +89,7 @@ export function RunWorkflowDialog({
   /** Clears transient form state whenever the global dialog closes. */
   function resetLocalState(): void {
     setName("");
+    setInjectLastFailure(true);
     setAttemptedSubmit(false);
     setError(null);
   }
@@ -138,6 +143,16 @@ export function RunWorkflowDialog({
             </p>
           )}
         </div>
+
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={injectLastFailure}
+            onCheckedChange={(checked) =>
+              setInjectLastFailure(checked === true)
+            }
+          />
+          {t("workflowRun.injectLastFailure")}
+        </label>
 
         {error && (
           <p className="mt-2 text-xs text-destructive" role="alert">

@@ -54,6 +54,16 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "resumeWorkflowRunFromFailure",
+        handler: "commands::workflow_run::resume_workflow_run_from_failure",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "previewWorkflowRunResume",
+        handler: "commands::workflow_run::preview_workflow_run_resume",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "updateWorkflowRunInput",
         handler: "commands::workflow_run::update_workflow_run_input",
         permission: Permission::MainWebview,
@@ -61,6 +71,11 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding::Unary {
         operation: "completeWorkflowNode",
         handler: "commands::workflow_run::complete_workflow_node",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "diagnoseWorkflowNodeFailure",
+        handler: "commands::workflow_run::diagnose_workflow_node_failure",
         permission: Permission::MainWebview,
     },
 ];

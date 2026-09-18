@@ -120,6 +120,10 @@ pub enum ParseError {
     #[error("invalid status output")]
     InvalidStatus,
 
+    /// Returned when checkpoint `diff-tree` `-z` output cannot be decoded into path records.
+    #[error("invalid checkpoint diff output")]
+    InvalidCheckpoint,
+
     /// Returned when a parser slot exists but the typed parser is not implemented yet.
     #[error("parser for feature {feature} is not implemented yet")]
     Unimplemented { feature: &'static str },

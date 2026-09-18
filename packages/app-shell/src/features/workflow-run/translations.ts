@@ -12,10 +12,15 @@ export const workflowRunTranslations = {
     "errors.workflow_role_not_found": "未找到该工作流角色。",
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
     "errors.workflow_run_not_restartable": "该工作流运行无法重新启动。",
+    "errors.workflow_run_not_resumable": "该工作流运行当前无法从失败处继续。",
+    "errors.workflow_snapshot_incompatible_with_resume":
+      "新版本与本次运行不兼容，无法换版本续跑：{{reason}}",
     "errors.workflow_run_not_editable": "该工作流运行当前不可编辑。",
     "errors.workflow_node_not_found": "未找到该工作流节点。",
     "errors.workflow_node_not_awaiting_input":
       "该节点当前不在等待人工输入，无法完成。",
+    "errors.workflow_node_not_diagnosable":
+      "只有失败的智能体节点才能做 AI 分析。",
     "workflowRun.loading": "正在加载运行…",
     "workflowRun.placeholderTitle": "工作流运行台",
     "workflowRun.placeholderSubtitle": "运行工作区",
@@ -34,7 +39,42 @@ export const workflowRunTranslations = {
     "workflowRun.currentNodeCancelled": "已取消",
     "workflowRun.cancelAction": "取消运行",
     "workflowRun.startAction": "启动",
-    "workflowRun.runAgainAction": "再次运行",
+    "workflowRun.runAgainAction": "从头重新运行",
+    "workflowRun.resumeFromFailure": "从失败处继续",
+    "workflowRun.resume.title": "从失败处继续",
+    "workflowRun.resume.description":
+      "已成功的节点不会重跑。先决定失败节点改过的文件怎么处理：",
+    "workflowRun.resume.keep": "保留现状（默认）",
+    "workflowRun.resume.nodeFiles": "只回滚失败节点改过的文件",
+    "workflowRun.resume.checkpoint": "整体回滚到检查点",
+    "workflowRun.resume.nodeSummary":
+      "节点 {{nodeId}}：节点记录改动 {{nodeFiles}} 个文件；自检查点以来共 {{total}} 个变化，其中 {{extra}} 个不在节点记录里（可能是失败后手工改的）",
+    "workflowRun.resume.reason.no_checkpoint": "该节点没有记录检查点",
+    "workflowRun.resume.reason.siblings_ran_after_checkpoint":
+      "检查点之后有其他节点跑过，整体回滚会抹掉它们的成果",
+    "workflowRun.resume.reason.not_resumable": "当前运行不能续跑",
+    "workflowRun.resume.rollbackUnavailable.composite_region":
+      "失败发生在迭代节点内部，只能保留现状或整体回滚到迭代开始前的检查点",
+    "workflowRun.resume.rollbackUnavailable.no_file_changes":
+      "失败节点没有记录可回滚的文件改动",
+    "workflowRun.resume.compositeRestart":
+      "迭代节点「{{name}}」将从第一轮重新开始",
+    "workflowRun.resume.safetyNote": "回滚前会自动再存一个检查点，可以反悔。",
+    "workflowRun.resume.loadingPreview": "正在读取改动…",
+    "workflowRun.resume.previewFailed": "无法读取改动。",
+    "workflowRun.resume.confirm": "从失败处继续",
+    "workflowRun.resume.switchPublished":
+      "改用当前发布版本 {{version}} 续跑（当前运行用的是 {{current}}）",
+    "workflowRun.resume.snapshotReason.node_missing": "新版本删掉了节点 {{id}}",
+    "workflowRun.resume.snapshotReason.node_type_changed":
+      "节点 {{id}} 的类型变了",
+    "workflowRun.resume.snapshotReason.start_node_changed": "开始节点变了",
+    "workflowRun.resume.snapshotReason.start_variables_changed":
+      "开始节点的输入变量变了",
+    "workflowRun.resume.snapshotReason.variable_type_changed":
+      "变量 {{id}} 的类型变了",
+    "workflowRun.resume.snapshotReason.variable_missing":
+      "新版本没有变量 {{id}}",
     "workflowRun.stopAction": "终止",
     "workflowRun.stopTitle": "终止此次运行？",
     "workflowRun.stopDescription":
@@ -212,6 +252,8 @@ export const workflowRunTranslations = {
       "将在当前工作区中创建“{{name}}”的工作流运行。",
     "workflowRun.createRun": "创建运行",
     "workflowRun.runRequiredName": "请填写运行名称。",
+    "workflowRun.injectLastFailure":
+      "节点重跑时把上次失败原因告诉智能体",
     "workflowRun.kickoffInput": "启动输入（可选）",
     "workflowRun.kickoffPlaceholder": "例如：审查当前分支的未提交改动",
     "workflowRun.startConfirm": "启动",
@@ -226,6 +268,72 @@ export const workflowRunTranslations = {
     "workflowRun.selectPlaceholder": "请选择",
     "workflowRun.cancelFailed": "停止运行失败。",
     "workflowRun.rerunFailed": "重新运行失败。",
+    "workflowRun.resumeFailed": "从失败处继续失败。",
+    "workflowRun.errorKind.missing_agent_ref": "节点未指定智能体",
+    "workflowRun.errorHint.missing_agent_ref":
+      "在工作流里给该节点选择一个智能体后发布新版本",
+    "workflowRun.errorKind.workflow_model_not_found": "模型不可用",
+    "workflowRun.errorHint.workflow_model_not_found":
+      "智能体当前不提供该模型，检查智能体配置或稍后重试",
+    "workflowRun.errorKind.missing_agent_config": "智能体配置缺失",
+    "workflowRun.errorHint.missing_agent_config":
+      "检查该智能体是否仍然存在并已配置",
+    "workflowRun.errorKind.invalid_run_payload": "运行的冻结数据无效",
+    "workflowRun.errorHint.invalid_run_payload":
+      "该运行的快照已损坏，请从头重新运行",
+    "workflowRun.errorKind.prompt_template": "提示词模板无法渲染",
+    "workflowRun.errorHint.prompt_template":
+      "修正模板中引用的变量后发布新版本",
+    "workflowRun.errorKind.structured_output": "结构化输出不合格",
+    "workflowRun.errorHint.structured_output":
+      "智能体的回复不符合输出结构；可直接续跑让它带着失败信息重试，或调整提示词/输出结构后发布新版本",
+    "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
+    "workflowRun.errorHint.missing_skill_materialization":
+      "重新发布工作流以重新生成技能文件",
+    "workflowRun.errorKind.session_ended_without_stop_reason": "会话异常结束",
+    "workflowRun.errorHint.session_ended_without_stop_reason":
+      "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.session_binding_rejected": "会话未能建立",
+    "workflowRun.errorHint.session_binding_rejected":
+      "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.baseline_persist": "工作区基线保存失败",
+    "workflowRun.errorHint.baseline_persist":
+      "检查磁盘空间与权限后续跑",
+    "workflowRun.errorKind.repository": "数据库操作失败",
+    "workflowRun.errorHint.repository": "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.session": "智能体会话失败",
+    "workflowRun.errorHint.session": "检查智能体进程与网络后续跑",
+    "workflowRun.errorKind.agent_refusal": "智能体拒绝了请求",
+    "workflowRun.errorHint.agent_refusal":
+      "智能体拒绝了请求；可直接续跑让它带着失败信息重试，或调整提示词后发布新版本",
+    "workflowRun.errorKind.unknown_stop_reason": "未知的停止原因",
+    "workflowRun.errorHint.unknown_stop_reason":
+      "智能体以本版本 Ora 不认识的方式停止，请升级 Ora 或更换智能体",
+    "workflowRun.errorKind.interrupted_by_restart": "被应用重启打断",
+    "workflowRun.errorHint.interrupted_by_restart":
+      "应用重启时该节点仍在运行，可直接续跑",
+    "workflowRun.errorKind.multiple_outputs": "多个输出节点同时完成",
+    "workflowRun.errorHint.multiple_outputs":
+      "工作流结构有误，修正分支后发布新版本",
+    "workflowRun.errorKind.condition_evaluation": "条件无法判断",
+    "workflowRun.errorHint.condition_evaluation":
+      "条件引用的变量缺失或无效，修正后发布新版本",
+    "workflowRun.errorAttempt": "第 {{count}} 次尝试",
+    "workflowRun.errorNotResumableHint":
+      "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+    "workflowRun.errorInjectedResumeHint":
+      "同版本续跑时，Ora 会把这次失败的类型、原因和上次输出告诉智能体让它重试；若仍失败，再修改工作流并发布新版本。",
+    "workflowRun.injectedFailure.title": "本次尝试注入的上次失败信息",
+    "workflowRun.resumeFromTopHint":
+      "可在顶部点「从失败处继续」重跑这个节点",
+    "workflowRun.nodeFromOlderSnapshotHint":
+      "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
+    "workflowRun.aiDiagnosis.run": "让 AI 分析",
+    "workflowRun.aiDiagnosis.running": "AI 正在分析…",
+    "workflowRun.aiDiagnosis.rerun": "重新分析",
+    "workflowRun.aiDiagnosis.title": "AI 推测（{{model}}）",
+    "workflowRun.aiDiagnosis.disclaimer":
+      "这是模型的推测，不参与任何自动判断。",
   },
   "en-US": {
     "errors.workflow_no_published_snapshot":
@@ -242,11 +350,17 @@ export const workflowRunTranslations = {
     "errors.workflow_run_start_failed": "Failed to start the workflow run.",
     "errors.workflow_run_not_restartable":
       "The workflow run cannot be restarted.",
+    "errors.workflow_run_not_resumable":
+      "The workflow run cannot be resumed from failure right now.",
+    "errors.workflow_snapshot_incompatible_with_resume":
+      "The new version is incompatible with this run and cannot be used to resume: {{reason}}",
     "errors.workflow_run_not_editable":
       "The workflow run is not editable right now.",
     "errors.workflow_node_not_found": "Workflow node not found.",
     "errors.workflow_node_not_awaiting_input":
       "This node is not awaiting input and cannot be completed.",
+    "errors.workflow_node_not_diagnosable":
+      "AI analysis is only available for a failed agent node.",
     "workflowRun.loading": "Loading run…",
     "workflowRun.placeholderTitle": "Workflow run workspace",
     "workflowRun.placeholderSubtitle": "Run workspace",
@@ -265,7 +379,46 @@ export const workflowRunTranslations = {
     "workflowRun.currentNodeCancelled": "Cancelled",
     "workflowRun.cancelAction": "Cancel run",
     "workflowRun.startAction": "Start",
-    "workflowRun.runAgainAction": "Run again",
+    "workflowRun.runAgainAction": "Run again from start",
+    "workflowRun.resumeFromFailure": "Resume from failure",
+    "workflowRun.resume.title": "Resume from failure",
+    "workflowRun.resume.description":
+      "Succeeded nodes will not run again. First decide what to do with the files the failed nodes changed:",
+    "workflowRun.resume.keep": "Keep the worktree as it is (default)",
+    "workflowRun.resume.nodeFiles": "Roll back only the files the failed nodes changed",
+    "workflowRun.resume.checkpoint": "Roll back everything to the checkpoint",
+    "workflowRun.resume.nodeSummary":
+      "Node {{nodeId}}: the node recorded {{nodeFiles}} files; {{total}} changes since the checkpoint, {{extra}} of which are not in the node record (possibly edited by hand after the failure)",
+    "workflowRun.resume.reason.no_checkpoint":
+      "No checkpoint was recorded for this node",
+    "workflowRun.resume.reason.siblings_ran_after_checkpoint":
+      "Other nodes ran after the checkpoint; a full rollback would erase their work",
+    "workflowRun.resume.reason.not_resumable": "This run cannot be resumed",
+    "workflowRun.resume.rollbackUnavailable.composite_region":
+      "The failure is inside an iteration; keep the worktree or roll back to the checkpoint taken before the iteration started",
+    "workflowRun.resume.rollbackUnavailable.no_file_changes":
+      "The failed node did not record file changes that can be rolled back",
+    "workflowRun.resume.compositeRestart":
+      'Iteration node "{{name}}" will restart from its first round',
+    "workflowRun.resume.safetyNote":
+      "A checkpoint is saved automatically before rollback, so you can undo.",
+    "workflowRun.resume.loadingPreview": "Reading changes…",
+    "workflowRun.resume.previewFailed": "Could not read the changes.",
+    "workflowRun.resume.confirm": "Resume from failure",
+    "workflowRun.resume.switchPublished":
+      "Resume with the currently published version {{version}} (this run uses {{current}})",
+    "workflowRun.resume.snapshotReason.node_missing":
+      "The new version removed node {{id}}",
+    "workflowRun.resume.snapshotReason.node_type_changed":
+      "Node {{id}} changed type",
+    "workflowRun.resume.snapshotReason.start_node_changed":
+      "The start node changed",
+    "workflowRun.resume.snapshotReason.start_variables_changed":
+      "The start node's input variables changed",
+    "workflowRun.resume.snapshotReason.variable_type_changed":
+      "Variable {{id}} changed type",
+    "workflowRun.resume.snapshotReason.variable_missing":
+      "Variable {{id}} no longer exists",
     "workflowRun.stopAction": "Stop",
     "workflowRun.stopTitle": "Stop this run?",
     "workflowRun.stopDescription":
@@ -455,6 +608,8 @@ export const workflowRunTranslations = {
       "Creates a run of “{{name}}” in the current workspace.",
     "workflowRun.createRun": "Create run",
     "workflowRun.runRequiredName": "Enter a run name.",
+    "workflowRun.injectLastFailure":
+      "Tell the agent why the previous attempt failed when a step runs again",
     "workflowRun.kickoffInput": "Kickoff input (optional)",
     "workflowRun.kickoffPlaceholder":
       "e.g. Review uncommitted changes on this branch",
@@ -471,5 +626,80 @@ export const workflowRunTranslations = {
     "workflowRun.selectPlaceholder": "Select an option",
     "workflowRun.cancelFailed": "Failed to stop the run.",
     "workflowRun.rerunFailed": "Failed to run again.",
+    "workflowRun.resumeFailed": "Failed to resume from failure.",
+    "workflowRun.errorKind.missing_agent_ref": "Node names no agent",
+    "workflowRun.errorHint.missing_agent_ref":
+      "Pick an agent for this node and publish a new version",
+    "workflowRun.errorKind.workflow_model_not_found": "Model not available",
+    "workflowRun.errorHint.workflow_model_not_found":
+      "The agent does not advertise this model; check the agent config or retry later",
+    "workflowRun.errorKind.missing_agent_config": "Agent configuration missing",
+    "workflowRun.errorHint.missing_agent_config":
+      "Check that the agent still exists and is configured",
+    "workflowRun.errorKind.invalid_run_payload": "Frozen run data invalid",
+    "workflowRun.errorHint.invalid_run_payload":
+      "The run snapshot is corrupt; run again from start",
+    "workflowRun.errorKind.prompt_template": "Prompt template cannot render",
+    "workflowRun.errorHint.prompt_template":
+      "Fix the variables referenced by the template and publish a new version",
+    "workflowRun.errorKind.structured_output": "Structured output invalid",
+    "workflowRun.errorHint.structured_output":
+      "The agent's reply did not match the output schema; resume to let it retry with the failure context, or adjust the prompt/schema and publish a new version",
+    "workflowRun.errorKind.missing_skill_materialization":
+      "Skill not materialized",
+    "workflowRun.errorHint.missing_skill_materialization":
+      "Republish the workflow to regenerate the skill files",
+    "workflowRun.errorKind.session_ended_without_stop_reason":
+      "Session ended unexpectedly",
+    "workflowRun.errorHint.session_ended_without_stop_reason":
+      "Usually transient; resume directly",
+    "workflowRun.errorKind.session_binding_rejected":
+      "Session could not start",
+    "workflowRun.errorHint.session_binding_rejected":
+      "Usually transient; resume directly",
+    "workflowRun.errorKind.baseline_persist":
+      "Worktree baseline could not be saved",
+    "workflowRun.errorHint.baseline_persist":
+      "Check disk space and permissions, then resume",
+    "workflowRun.errorKind.repository": "Database operation failed",
+    "workflowRun.errorHint.repository": "Usually transient; resume directly",
+    "workflowRun.errorKind.session": "Agent session failed",
+    "workflowRun.errorHint.session":
+      "Check the agent process and network, then resume",
+    "workflowRun.errorKind.agent_refusal": "Agent refused the request",
+    "workflowRun.errorHint.agent_refusal":
+      "The agent refused; resume to let it retry with the failure context, or adjust the prompt and publish a new version",
+    "workflowRun.errorKind.unknown_stop_reason": "Unknown stop reason",
+    "workflowRun.errorHint.unknown_stop_reason":
+      "The agent stopped in a way this Ora version cannot interpret; upgrade Ora or change the agent",
+    "workflowRun.errorKind.interrupted_by_restart":
+      "Interrupted by app restart",
+    "workflowRun.errorHint.interrupted_by_restart":
+      "The node was running when the app restarted; resume directly",
+    "workflowRun.errorKind.multiple_outputs":
+      "Multiple output nodes completed",
+    "workflowRun.errorHint.multiple_outputs":
+      "The workflow graph is wrong; fix the branches and publish a new version",
+    "workflowRun.errorKind.condition_evaluation":
+      "Condition could not be evaluated",
+    "workflowRun.errorHint.condition_evaluation":
+      "A variable used by the condition is missing or invalid; fix it and publish a new version",
+    "workflowRun.errorAttempt": "Attempt {{count}}",
+    "workflowRun.errorNotResumableHint":
+      "This kind of failure usually comes from the workflow itself; resuming as-is will likely fail again. Edit the workflow and run it again.",
+    "workflowRun.errorInjectedResumeHint":
+      "Resuming on the same version tells the agent this failure's kind, reason and previous output so it can retry; if it still fails, revise the workflow and publish a new version.",
+    "workflowRun.injectedFailure.title":
+      "Previous-failure context injected into this attempt",
+    "workflowRun.resumeFromTopHint":
+      "Use “Resume from failure” at the top to rerun this node",
+    "workflowRun.nodeFromOlderSnapshotHint":
+      "This node's result comes from the version this run used before switching",
+    "workflowRun.aiDiagnosis.run": "Ask AI to analyze",
+    "workflowRun.aiDiagnosis.running": "AI is analyzing…",
+    "workflowRun.aiDiagnosis.rerun": "Analyze again",
+    "workflowRun.aiDiagnosis.title": "AI guess ({{model}})",
+    "workflowRun.aiDiagnosis.disclaimer":
+      "This is a model's guess and drives no automatic decision.",
   },
 } as const;

@@ -1,6 +1,8 @@
 //! Node completion and failure transactions shared by root and Loop scopes.
 
+use super::failure_detail::persist_failed_node_run;
 use super::iteration::write_pool_variable;
+use super::payload_json::merge_complete_payload;
 use super::*;
 
 /// Completes one node and writes its outputs to the owning execution scope.
@@ -17,10 +19,10 @@ pub(super) fn complete(
         .pool
         .with_connection_mut(|connection| {
             let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-            let Some((run_id, node_id, node_type, status, run_payload, scope_id, root_scope_id, scope_state, iteration)) = transaction
+            let Some((run_id, node_id, node_type, status, run_payload, scope_id, root_scope_id, scope_state, iteration, node_payload)) = transaction
                 .query_row(
                     "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, wr.payload,
-                            nr.scope_id, root.scope_id, scope.state, nr.iteration
+                            nr.scope_id, root.scope_id, scope.state, nr.iteration, nr.payload
                      FROM workflow_node_runs nr
                      JOIN workflow_runs wr ON wr.id = nr.run_id
                      JOIN workflow_run_root_scopes root ON root.run_id = nr.run_id
@@ -38,6 +40,7 @@ pub(super) fn complete(
                             row.get::<_, String>(6)?,
                             row.get::<_, Option<String>>(7)?,
                             row.get::<_, Option<u32>>(8)?,
+                            row.get::<_, Option<String>>(9)?,
                         ))
                     },
                 )
@@ -52,7 +55,8 @@ pub(super) fn complete(
             ) {
                 return Ok(AdvanceWorkflowRunResult::NotRunning);
             }
-            let payload = complete_payload(stop_reason, file_changes);
+            // Merge onto the existing payload so a success never drops the checkpoint keys.
+            let payload = merge_complete_payload(node_payload, stop_reason, file_changes)?;
             if scope_id == root_scope_id {
                 update_run_execution_state(
                     &transaction,
@@ -103,12 +107,15 @@ pub(super) fn complete(
         .map_err(engine_repository_error_from_database)
 }
 
-/// Fails one node, cancels its active siblings, and propagates failure through its Loop owner.
+/// Fails one node and propagates the failure to its owner.
+///
+/// Root-scope nodes follow design rule D2: only the failed row and the run change state, and
+/// in-flight siblings finish on their own merits. Inside a Loop round the round is isolated,
+/// so its active siblings are cancelled and the failure climbs to the parent Loop node.
 pub(super) fn fail(
     repository: &SqliteWorkflowRunEngineRepository,
     node_run_id: &WorkflowNodeRunId,
-    error: String,
-    output: Option<String>,
+    failure: NodeFailure,
     propagation: FailurePropagation,
     now: i64,
 ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
@@ -116,10 +123,10 @@ pub(super) fn fail(
         .pool
         .with_connection_mut(|connection| {
             let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-            let Some((run_id, node_id, status, scope_id, root_scope_id, parent_loop_id, parent_node_id)) = transaction
+            let Some((run_id, node_id, status, scope_id, root_scope_id, parent_loop_id, parent_node_id, node_payload)) = transaction
                 .query_row(
                     "SELECT node.run_id, node.node_id, node.status, node.scope_id, root.scope_id,
-                            scope.parent_loop_node_run_id, parent.node_id
+                            scope.parent_loop_node_run_id, parent.node_id, node.payload
                      FROM workflow_node_runs node
                      JOIN workflow_run_root_scopes root ON root.run_id = node.run_id
                      JOIN workflow_execution_scopes scope ON scope.id = node.scope_id
@@ -135,6 +142,7 @@ pub(super) fn fail(
                             row.get::<_, String>(4)?,
                             row.get::<_, Option<String>>(5)?,
                             row.get::<_, Option<String>>(6)?,
+                            row.get::<_, Option<String>>(7)?,
                         ))
                     },
                 )
@@ -145,17 +153,16 @@ pub(super) fn fail(
             if WorkflowNodeStatus::from_database_value(status)? != WorkflowNodeStatus::Running {
                 return Ok(AdvanceWorkflowRunResult::NotRunning);
             }
-            transaction.execute(
-                "UPDATE workflow_node_runs SET status = ?2, error = ?3, output = ?4, finished_at = ?5, updated_at = ?5
-                 WHERE id = ?1 AND is_deleted = 0",
-                params![
-                    node_run_id.as_ref(),
-                    WorkflowNodeStatus::Failed.database_value(),
-                    &error,
-                    output,
-                    now,
-                ],
+            persist_failed_node_run(
+                &transaction,
+                node_run_id.as_ref(),
+                &run_id,
+                &node_id,
+                &failure,
+                node_payload.as_deref(),
+                now,
             )?;
+            let error = failure.message;
             if propagation == FailurePropagation::Composite {
                 rewrite_current_nodes(&transaction, &WorkflowRunId::new(run_id), now, |nodes| {
                     nodes.retain(|id| id != &node_id);
@@ -163,19 +170,19 @@ pub(super) fn fail(
                 transaction.commit()?;
                 return Ok(AdvanceWorkflowRunResult::Advanced);
             }
-            transaction.execute(
-                "UPDATE workflow_node_runs SET status = ?2,
-                        error = COALESCE(error, '{\"reason\":\"sibling_failed\"}'),
-                        finished_at = COALESCE(finished_at, ?3), updated_at = ?3
-                 WHERE scope_id = ?1 AND id != ?4 AND status IN (0, 1) AND is_deleted = 0",
-                params![
-                    &scope_id,
-                    WorkflowNodeStatus::Cancelled.database_value(),
-                    now,
-                    node_run_id.as_ref(),
-                ],
-            )?;
             if scope_id != root_scope_id {
+                transaction.execute(
+                    "UPDATE workflow_node_runs SET status = ?2,
+                            error = COALESCE(error, '{\"reason\":\"sibling_failed\"}'),
+                            finished_at = COALESCE(finished_at, ?3), updated_at = ?3
+                     WHERE scope_id = ?1 AND id != ?4 AND status IN (0, 1) AND is_deleted = 0",
+                    params![
+                        &scope_id,
+                        WorkflowNodeStatus::Cancelled.database_value(),
+                        now,
+                        node_run_id.as_ref(),
+                    ],
+                )?;
                 transaction.execute(
                     "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
                      WHERE id = ?1 AND status IN (0, 1)",
@@ -205,14 +212,17 @@ pub(super) fn fail(
                 current_nodes.clear();
                 current_nodes.push(anchor.clone());
             })?;
+            // D2: only promote the run while it is still Running so a late sibling failure
+            // cannot overwrite an already-terminal run.
             transaction.execute(
                 "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
-                 WHERE id = ?1 AND is_deleted = 0",
+                 WHERE id = ?1 AND is_deleted = 0 AND run_status = ?5",
                 params![
                     run_id.as_ref(),
                     WorkflowRunStatus::Failed.database_value(),
                     error,
                     now,
+                    WorkflowRunStatus::Running.database_value(),
                 ],
             )?;
             transaction.commit()?;

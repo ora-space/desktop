@@ -4,14 +4,21 @@
 //! the run payload's ledger and variable pool, and the run state machine — the evidence
 //! obligations of `test-cases/desktop/core/workflow/iteration-node.md`.
 
-use super::test_fixture::{NoopExecutor, SeqGen, bootstrap, seeded_pending_run};
+use super::checkpoint::record_pre_node_checkpoint;
+use super::rollback::{apply_rollback, plan_rollback, preview};
+use super::test_fixture::{
+    NoopExecutor, SeqGen, bootstrap, init_git_workspace, seeded_pending_run,
+};
 use ora_application::{
+    ExecutionContext, NodeExecutor, NodeFailure, NodeFailureKind, WorkflowGraph, WorkflowGraphNode,
     WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowVariablePool,
 };
-use ora_contracts::WorkflowRunLocale;
+use ora_contracts::{ResumeRollbackMode, WorkflowRunLocale};
 use ora_db::SqliteWorkflowRunEngineRepository;
-use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
+use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 /// Builds an iteration graph over a Start `prs` array source.
 ///
@@ -368,7 +375,11 @@ fn fail_strategy_stops_at_the_first_failed_round() {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].iteration, Some(1));
         engine
-            .fail_node(&run_id, &rows[0].id, "agent exploded".to_string(), None)
+            .fail_node(
+                &run_id,
+                &rows[0].id,
+                NodeFailure::new(NodeFailureKind::Session, "agent exploded"),
+            )
             .unwrap();
 
         let context = repository
@@ -439,7 +450,11 @@ fn continue_strategy_absorbs_failed_rounds_into_the_ledger() {
         let rows = running_region_rows(&repository, &run_id, "fix");
         assert_eq!(rows[0].iteration, Some(1));
         engine
-            .fail_node(&run_id, &rows[0].id, "agent exploded".to_string(), None)
+            .fail_node(
+                &run_id,
+                &rows[0].id,
+                NodeFailure::new(NodeFailureKind::Session, "agent exploded"),
+            )
             .unwrap();
         complete_running_rounds(&engine, &repository, &run_id, "fix", |_| {
             "third".to_string()
@@ -732,4 +747,223 @@ fn iteration_fixture_payload_round_trips() {
         serde_json::from_str::<WorkflowRunPayload>(&encoded).unwrap(),
         payload
     );
+}
+
+/// Records a pre-loop git checkpoint when the iteration composite becomes `Running`.
+struct CompositeCheckpointExecutor {
+    repository: SqliteWorkflowRunEngineRepository,
+    workspace_root: PathBuf,
+}
+
+impl NodeExecutor for CompositeCheckpointExecutor {
+    fn dispatch(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _node: &WorkflowGraphNode,
+        _graph: &WorkflowGraph,
+        _context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &WorkflowVariablePool,
+    ) {
+    }
+
+    fn on_composite_node_started(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        node: &WorkflowGraphNode,
+        context: &ExecutionContext,
+    ) {
+        record_pre_node_checkpoint(
+            &self.repository,
+            &self.workspace_root,
+            &context.run.id,
+            &node.id,
+            node_run_id,
+            context.run.snapshot_id.as_ref(),
+            40,
+        )
+        .expect("composite pre-loop checkpoint");
+    }
+}
+
+/// Round 2 of a 3-element foreach fails with `fail`: resume treats the composite as the unit,
+/// `node_files` is unavailable, and a checkpoint rollback restores the pre-loop worktree
+/// before the loop reruns from round 1.
+#[test]
+fn resume_from_failure_restarts_the_iteration_from_round_one() {
+    crate::workflow::run::test_fixture::run_test(async {
+        let (temp, pool) = bootstrap();
+        let workspace_root = init_git_workspace(&temp);
+        let graph = iteration_graph("agent", "fail", 10);
+        let run_id = seeded_iteration_run(
+            &temp,
+            &pool,
+            &graph,
+            json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
+        );
+        let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+        let engine = WorkflowRunEngine::new(
+            repository.clone(),
+            CompositeCheckpointExecutor {
+                repository: repository.clone(),
+                workspace_root: workspace_root.clone(),
+            },
+            SeqGen::default(),
+            crate::workflow::run::test_fixture::ClockAt(40),
+        );
+        engine.start(&run_id).unwrap();
+
+        let rows = running_region_rows(&repository, &run_id, "fix");
+        assert_eq!(rows[0].iteration, Some(0));
+        std::fs::write(workspace_root.join("round-0.txt"), "first loop\n").unwrap();
+        engine
+            .complete_node(
+                &run_id,
+                &rows[0].id,
+                Some("old-0".to_string()),
+                None,
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+        let rows = running_region_rows(&repository, &run_id, "fix");
+        assert_eq!(rows[0].iteration, Some(1));
+        engine
+            .fail_node(
+                &run_id,
+                &rows[0].id,
+                NodeFailure::new(NodeFailureKind::Session, "round 2 exploded"),
+            )
+            .unwrap();
+        std::fs::write(workspace_root.join("after-fail.txt"), "manual\n").unwrap();
+
+        let context = repository
+            .find_execution_context(&run_id)
+            .unwrap()
+            .expect("run context");
+        assert_eq!(context.run.status, WorkflowRunStatus::Failed);
+
+        let response = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert_eq!(response.resumable, true);
+        assert_eq!(
+            response.node_files_unavailable_reason.as_deref(),
+            Some("composite_region")
+        );
+        assert_eq!(response.node_files_available, false);
+        assert!(response.failed_nodes.iter().any(
+            |node| node.node_id == "fix" && node.resume_unit_node_id.as_deref() == Some("iter")
+        ));
+
+        let plan = plan_rollback(&pool, &run_id).unwrap();
+        apply_rollback(
+            &workspace_root,
+            &plan,
+            ResumeRollbackMode::Checkpoint,
+            &run_id,
+            9_000,
+        )
+        .unwrap();
+        assert!(!workspace_root.join("round-0.txt").exists());
+        assert!(!workspace_root.join("after-fail.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("README.md")).unwrap(),
+            "seed\n"
+        );
+
+        engine.resume_from_failure(&run_id).unwrap();
+        complete_running_rounds(&engine, &repository, &run_id, "fix", |round| {
+            format!("new-{round}")
+        });
+
+        let context = repository
+            .find_execution_context(&run_id)
+            .unwrap()
+            .expect("run context");
+        assert_eq!(context.run.status, WorkflowRunStatus::Succeeded);
+        let payload = run_payload(&repository, &run_id);
+        assert_eq!(
+            payload.variable_pool.values.get("iter.output").unwrap(),
+            &json!(["new-0", "new-1", "new-2"])
+        );
+        let live_fix_rounds: Vec<_> = repository
+            .list_node_runs(&run_id)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.node_id == "fix")
+            .map(|row| (row.iteration, row.status, row.output.clone()))
+            .collect();
+        assert_eq!(
+            live_fix_rounds,
+            vec![
+                (
+                    Some(0),
+                    WorkflowNodeStatus::Succeeded,
+                    Some("new-0".to_string())
+                ),
+                (
+                    Some(1),
+                    WorkflowNodeStatus::Succeeded,
+                    Some("new-1".to_string())
+                ),
+                (
+                    Some(2),
+                    WorkflowNodeStatus::Succeeded,
+                    Some("new-2".to_string())
+                ),
+            ]
+        );
+    });
+}
+
+/// `continue` absorbs a failed round and the run succeeds, so resume is not applicable.
+#[test]
+fn continue_strategy_success_is_not_resumable() {
+    crate::workflow::run::test_fixture::run_test(async {
+        let (temp, pool) = bootstrap();
+        let workspace_root = init_git_workspace(&temp);
+        let graph = iteration_graph("agent", "continue", 10);
+        let run_id = seeded_iteration_run(
+            &temp,
+            &pool,
+            &graph,
+            json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
+        );
+        let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+        let engine = WorkflowRunEngine::new(
+            repository.clone(),
+            NoopExecutor,
+            SeqGen::default(),
+            crate::workflow::run::test_fixture::ClockAt(40),
+        );
+        engine.start(&run_id).unwrap();
+        let rows = running_region_rows(&repository, &run_id, "fix");
+        engine
+            .complete_node(
+                &run_id,
+                &rows[0].id,
+                Some("first".to_string()),
+                None,
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+        let rows = running_region_rows(&repository, &run_id, "fix");
+        engine
+            .fail_node(
+                &run_id,
+                &rows[0].id,
+                NodeFailure::new(NodeFailureKind::Session, "agent exploded"),
+            )
+            .unwrap();
+        complete_running_rounds(&engine, &repository, &run_id, "fix", |_| {
+            "third".to_string()
+        });
+        let context = repository
+            .find_execution_context(&run_id)
+            .unwrap()
+            .expect("run context");
+        assert_eq!(context.run.status, WorkflowRunStatus::Succeeded);
+        let response = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert_eq!(response.resumable, false);
+    });
 }

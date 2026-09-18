@@ -194,12 +194,15 @@ where
                     message: format!("failed to initialize run instruction variable: {error}"),
                 })?;
         }
-        let run_payload = serde_json::to_string(&WorkflowRunPayload::with_variable_pool(
-            request.locale,
-            skill_materialization,
-            start_node_id,
-            variable_pool,
-        ))
+        let run_payload = serde_json::to_string(
+            &WorkflowRunPayload::with_variable_pool(
+                request.locale,
+                skill_materialization,
+                start_node_id,
+                variable_pool,
+            )
+            .with_inject_last_failure(request.inject_last_failure.unwrap_or(true)),
+        )
         .map_err(|error| ApplicationError::WorkflowRunStartFailed {
             message: format!("failed to serialize workflow run payload: {error}"),
         })?;

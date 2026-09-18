@@ -380,6 +380,7 @@ fn start_interactive_workflow(
             snapshot_id: None,
             kickoff_input: None,
             name: None,
+            inject_last_failure: None,
         })?
         .run;
     runs.start(StartWorkflowRunRequest {

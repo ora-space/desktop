@@ -17,11 +17,13 @@ import {
   type GraphWorkflowRun,
   type WorkflowDefinition,
   type WorkflowNodeConversationItem,
+  type WorkflowNodeErrorDetail,
+  type WorkflowNodeAiDiagnosis,
   type WorkflowNodeFileChange,
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import type { WorkflowRunSummary } from "@ora/contracts";
+import type { ResumeRollbackMode, WorkflowRunSummary } from "@ora/contracts";
 import { activeLocale } from "../../i18n/i18n-instance";
 
 /** Persisted runs deliberately do not share the mock runtime detail tuple. */
@@ -121,12 +123,16 @@ export function useCreateWorkflowRun() {
       workflowId: string;
       name: string;
       projectId?: string;
+      injectLastFailure?: boolean;
     }) =>
       client.workflowRun.create({
         workspaceId: input.workspaceId,
         workflowId: input.workflowId,
         name: input.name,
         locale: activeLocale(),
+        ...(input.injectLastFailure !== undefined
+          ? { injectLastFailure: input.injectLastFailure }
+          : {}),
       }),
     onSuccess: (_result, variables) => {
       if (variables.projectId !== undefined) {
@@ -206,6 +212,48 @@ export function useRestartWorkflowRun() {
     mutationFn: (input: { runId: string }) => client.workflowRun.restart(input),
     onSuccess: (_result, variables) => {
       invalidateRunViews(queryClient, variables.runId);
+    },
+  });
+}
+
+/** Previews rollback options for a failed run. Runs git, so this is a mutation opened on demand. */
+export function usePreviewWorkflowRunResume() {
+  const client = useContractsClient();
+  return useMutation({
+    mutationFn: (input: { runId: string }) =>
+      client.workflowRun.previewResume(input),
+  });
+}
+
+/** Resumes one failed or cancelled workflow run from its failed nodes, keeping succeeded work. */
+export function useResumeWorkflowRun() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      runId: string;
+      rollback?: ResumeRollbackMode;
+      snapshotId?: string;
+    }) => client.workflowRun.resumeFromFailure(input),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowRunKeys.detail(variables.runId),
+      });
+    },
+  });
+}
+
+/** Asks the node's own agent to guess why a failed agent node failed. */
+export function useDiagnoseWorkflowNodeFailure() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; nodeId: string }) =>
+      client.workflowRun.diagnoseNodeFailure(input),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowRunKeys.detail(variables.runId),
+      });
     },
   });
 }
@@ -360,6 +408,7 @@ export function buildDisplayRun(
       status: string;
       state: string | null;
       input: string | null;
+      snapshotId?: string;
       startedAt: bigint | null;
       finishedAt: bigint | null;
       createdAt: bigint;
@@ -554,6 +603,9 @@ export function buildDisplayRun(
     ...(detail.run.finishedAt != null
       ? { finishedAt: toIso(detail.run.finishedAt) }
       : {}),
+    ...(typeof detail.run.snapshotId === "string" && detail.run.snapshotId !== ""
+      ? { snapshotId: detail.run.snapshotId }
+      : {}),
   };
 }
 
@@ -569,6 +621,8 @@ function projectPersistedNodeState(
 ): GraphWorkflowNodeState {
   const payload =
     nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+  const errorDetail = parseErrorDetail(payload?.error_detail);
+  const aiDiagnosis = parseAiDiagnosis(payload?.ai_diagnosis);
   const conversation =
     nodeKind === "agent" && nodeRun?.output != null
       ? conversationFromNodeOutput(
@@ -596,6 +650,12 @@ function projectPersistedNodeState(
       ? { finishedAt: toIso(nodeRun.finishedAt) }
       : {}),
     ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+    ...(errorDetail != null ? { errorDetail } : {}),
+    ...(aiDiagnosis != null ? { aiDiagnosis } : {}),
+    ...(payload?.snapshot_id != null ? { snapshotId: payload.snapshot_id } : {}),
+    ...(payload?.injected_failure_context != null
+      ? { injectedFailureContext: payload.injected_failure_context }
+      : {}),
     ...(payload?.stop_reason != null
       ? { stopReason: payload.stop_reason }
       : {}),
@@ -660,11 +720,15 @@ function conversationFromNodeOutput(
   }
 }
 
-/** Reads the ACP stop reason and file changes from a node run's `payload` JSON,
+/** Reads the ACP stop reason, file changes, and failure detail from a node run's `payload` JSON,
  * tolerating malformed payloads. */
 function parseNodePayload(payload: string): {
   stop_reason?: string;
   file_changes?: WorkflowNodeFileChange[];
+  error_detail?: unknown;
+  snapshot_id?: string;
+  injected_failure_context?: string;
+  ai_diagnosis?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -674,6 +738,10 @@ function parseNodePayload(payload: string): {
         additions?: unknown;
         deletions?: unknown;
       }>;
+      error_detail?: unknown;
+      snapshot_id?: unknown;
+      injected_failure_context?: unknown;
+      ai_diagnosis?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -696,10 +764,82 @@ function parseNodePayload(payload: string): {
             ),
           }
         : {}),
+      ...(value.error_detail !== undefined
+        ? { error_detail: value.error_detail }
+        : {}),
+      ...(typeof value.snapshot_id === "string" && value.snapshot_id !== ""
+        ? { snapshot_id: value.snapshot_id }
+        : {}),
+      ...(typeof value.injected_failure_context === "string"
+        ? { injected_failure_context: value.injected_failure_context }
+        : {}),
+      ...(value.ai_diagnosis !== undefined
+        ? { ai_diagnosis: value.ai_diagnosis }
+        : {}),
     };
   } catch {
     return null;
   }
+}
+
+/** Maps a persisted `error_detail` object onto camelCase node-state fields. */
+function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const detail = value as {
+    kind?: unknown;
+    message?: unknown;
+    source_chain?: unknown;
+    attempt?: unknown;
+    resumable?: unknown;
+    injects_previous_failure?: unknown;
+    recorded_at?: unknown;
+  };
+  if (typeof detail.kind !== "string") {
+    return undefined;
+  }
+  return {
+    kind: detail.kind,
+    message: typeof detail.message === "string" ? detail.message : "",
+    sourceChain: Array.isArray(detail.source_chain)
+      ? detail.source_chain.filter((item): item is string => typeof item === "string")
+      : [],
+    attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
+    resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,
+    injectsPreviousFailure:
+      typeof detail.injects_previous_failure === "boolean"
+        ? detail.injects_previous_failure
+        : false,
+    recordedAt: typeof detail.recorded_at === "number" ? detail.recorded_at : 0,
+  };
+}
+
+/** Maps a persisted `ai_diagnosis` object onto camelCase node-state fields. */
+function parseAiDiagnosis(value: unknown): WorkflowNodeAiDiagnosis | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const diagnosis = value as {
+    text?: unknown;
+    agent_cli?: unknown;
+    model?: unknown;
+    generated_at?: unknown;
+  };
+  if (
+    typeof diagnosis.text !== "string" ||
+    typeof diagnosis.agent_cli !== "string" ||
+    typeof diagnosis.model !== "string" ||
+    typeof diagnosis.generated_at !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    text: diagnosis.text,
+    agentCli: diagnosis.agent_cli,
+    model: diagnosis.model,
+    generatedAt: diagnosis.generated_at,
+  };
 }
 
 /** Parses the run's `{"current_nodes":[...]}` state blob into a node-id list. */

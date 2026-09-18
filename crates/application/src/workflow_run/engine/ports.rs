@@ -1,10 +1,11 @@
+use super::failure::NodeFailure;
 use super::iteration::RoundOutcome;
 use super::skill_delivery::SkillMaterializationReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
     SessionId, WorkflowExecutionScope, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
-    WorkflowRun, WorkflowRunId, WorkflowScopeId, Workspace,
+    WorkflowRun, WorkflowRunId, WorkflowScopeId, WorkflowSnapshotId, Workspace,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -204,6 +205,14 @@ pub enum RestartWorkflowRunResult {
     NotFound,
 }
 
+/// Outcome of resuming a failed or cancelled run from its failed nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeWorkflowRunResult {
+    Resumed,
+    NotResumable,
+    NotFound,
+}
+
 /// Outcome of publishing a prepared workflow node session to observers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindWorkflowNodeSessionResult {
@@ -244,6 +253,15 @@ pub trait WorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
     ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
 
+    /// Returns the most recent soft-deleted `Failed` run of `(node_id, iteration)` inside `run_id`
+    /// (the attempt that `resume_from_failure` cleared), or `None` when that pair never failed.
+    fn find_last_failed_attempt(
+        &self,
+        run_id: &WorkflowRunId,
+        node_id: &str,
+        iteration: Option<u32>,
+    ) -> Result<Option<WorkflowNodeRun>, RepositoryError>;
+
     /// Loads one Loop's active round, if it has already been created.
     fn find_active_loop_round(
         &self,
@@ -256,7 +274,12 @@ pub trait WorkflowRunEngineRepository {
         scope_id: &WorkflowScopeId,
     ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
 
-    /// Publishes a node's prepared Ora session only while both the node and run are still running.
+    /// Publishes a node's prepared Ora session while the node run is still `Running`.
+    ///
+    /// Design rule D2: a run that is already `Failed` still accepts bindings for its in-flight
+    /// nodes so they persist `Succeeded` or `Failed` on their own merits. Cancellation rejects
+    /// through the node-run status, because `cancel_run` marks every non-terminal node
+    /// `Cancelled` in the same transaction that cancels the run.
     ///
     /// The executor calls this after the initial prompt is accepted. Keeping `session_id` absent
     /// until then prevents a workflow transcript load from displacing that owning prompt, while
@@ -358,16 +381,17 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
-    /// Marks one node-run failed with a propagation policy.
+    /// Marks one node-run failed with a classified `NodeFailure` and a propagation policy.
     ///
-    /// `FailurePropagation::Run` keeps the existing behavior: the row and its run fail in the
-    /// same transaction. `FailurePropagation::Composite` fails only the row; the run stays
-    /// active so the owning composite runtime settles the failed round and advances.
+    /// Persists `failure.message` in `error`, `failure.output` in `output`, and the full
+    /// `NodeFailureDetail` under `payload.error_detail`. `FailurePropagation::Run` keeps the
+    /// existing behavior: the row and its run fail in the same transaction.
+    /// `FailurePropagation::Composite` fails only the row; the run stays active so the owning
+    /// composite runtime settles the failed round and advances.
     fn fail_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
         propagation: FailurePropagation,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
@@ -415,6 +439,37 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
+    /// Records the git checkpoint taken before a node started (or why none could be taken) under
+    /// `payload.checkpoint` / `payload.checkpoint_error`, and the run snapshot id under
+    /// `payload.snapshot_id`. Provenance only: never fails the node.
+    fn record_node_checkpoint(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        snapshot_id: &str,
+        checkpoint: Option<&str>,
+        checkpoint_error: Option<&str>,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Persists the previous-failure block that was injected into this node's prompt, under
+    /// `payload.injected_failure_context`. Provenance for the inspector: never fails the node.
+    fn record_node_injected_failure(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        text: &str,
+    ) -> Result<(), RepositoryError>;
+
+    /// Merges `payload.ai_diagnosis` onto one node-run row, overwriting a previous guess.
+    ///
+    /// Provenance only: nothing in scheduling, resume, or rollback reads this key. A missing row
+    /// is a no-op so a late write after resume cannot fail the request.
+    fn record_node_ai_diagnosis(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        diagnosis_json: &str,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
     /// Finishes a run as succeeded with the given output.
     fn finish_run(
         &self,
@@ -438,6 +493,25 @@ pub trait WorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
         now: i64,
     ) -> Result<RestartWorkflowRunResult, RepositoryError>;
+
+    /// Clears the given node runs (soft-delete) and their pool writes so the scheduler can
+    /// re-dispatch them, and moves a `Failed`/`Cancelled` run back to `Running`.
+    fn resume_from_failure(
+        &self,
+        run_id: &WorkflowRunId,
+        node_ids_to_clear: &[String],
+        now: i64,
+    ) -> Result<ResumeWorkflowRunResult, RepositoryError>;
+
+    /// Points a Failed/Cancelled run at another snapshot and stores the migrated payload in one
+    /// transaction. `false` when the run is missing or not in a resumable status.
+    fn switch_run_snapshot(
+        &self,
+        run_id: &WorkflowRunId,
+        snapshot_id: &WorkflowSnapshotId,
+        payload_json: &str,
+        now: i64,
+    ) -> Result<bool, RepositoryError>;
 
     /// Sets the kickoff input of a `Pending` run with empty `current_nodes`, so the start node
     /// receives it when the run starts.

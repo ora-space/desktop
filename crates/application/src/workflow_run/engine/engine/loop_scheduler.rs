@@ -2,6 +2,7 @@ use super::{EngineError, LoopScheduleOutcome, WorkflowRunEngine};
 use crate::project::Clock;
 use crate::workflow_run::engine::branch_projection::BranchProjection;
 use crate::workflow_run::engine::engine::WorkflowValidationError;
+use crate::workflow_run::engine::failure::{NodeFailure, NodeFailureKind};
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use crate::workflow_run::engine::node_runtime::{RegisteredNodeRuntime, SwiftCompletion};
 use crate::workflow_run::engine::ports::{
@@ -30,8 +31,10 @@ where
     let Some((config, body)) = graph.loop_body(&loop_node_run.node_id) else {
         engine.repository.fail_node(
             &loop_node_run.id,
-            format!("Loop {} has no executable body", loop_node_run.node_id),
-            None,
+            NodeFailure::new(
+                NodeFailureKind::InvalidRunPayload,
+                format!("Loop {} has no executable body", loop_node_run.node_id),
+            ),
             FailurePropagation::Run,
             now,
         )?;
@@ -46,8 +49,7 @@ where
             Err(error) => {
                 engine.repository.fail_node(
                     &loop_node_run.id,
-                    error.to_string(),
-                    None,
+                    NodeFailure::new(NodeFailureKind::InvalidRunPayload, error.to_string()),
                     FailurePropagation::Run,
                     now,
                 )?;
@@ -59,8 +61,7 @@ where
             Err(error) => {
                 engine.repository.fail_node(
                     &loop_node_run.id,
-                    error.to_string(),
-                    None,
+                    NodeFailure::new(NodeFailureKind::InvalidRunPayload, error.to_string()),
                     FailurePropagation::Run,
                     now,
                 )?;
@@ -254,8 +255,7 @@ where
                 Some(Err(error)) => {
                     self.repository.fail_node(
                         &node_run.id,
-                        error,
-                        None,
+                        NodeFailure::from_runtime(node.node_type, error),
                         FailurePropagation::Run,
                         now,
                     )?;

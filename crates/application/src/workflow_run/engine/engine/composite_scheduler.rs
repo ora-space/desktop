@@ -1,7 +1,9 @@
 //! Executes pure composite plans through atomic persistence operations.
 use super::*;
+use crate::workflow_run::engine::failure::{NodeFailure, NodeFailureKind};
 use crate::workflow_run::engine::node_runtime::{CompositeAdvancePlan, CompositeContinuation};
 use crate::workflow_run::engine::ports::IterationRoundContinuation;
+use crate::workflow_run::engine::region::region_rows_round;
 
 impl<R, G, C> WorkflowRunEngine<R, G, C>
 where
@@ -61,8 +63,7 @@ where
                 Err(error) => {
                     self.repository.fail_node(
                         &node_run.id,
-                        error,
-                        None,
+                        NodeFailure::from_runtime(node.node_type, error),
                         FailurePropagation::Run,
                         now,
                     )?;
@@ -212,8 +213,7 @@ where
             CompositeAdvancePlan::FailNode { error } => {
                 let result = self.repository.fail_node(
                     &node_run.id,
-                    error,
-                    None,
+                    NodeFailure::new(NodeFailureKind::InvalidRunPayload, error),
                     FailurePropagation::Run,
                     now,
                 )?;
@@ -243,19 +243,4 @@ where
         let graph = WorkflowGraph::parse(&context.graph_json)?;
         Ok(region_failure_propagation(&graph, &node_run.node_id))
     }
-}
-
-/// Derives the round a composite node's region is currently executing, from the region's
-/// persisted rows only (v1 serial execution; ADR "iteration composite runtime" D2).
-fn region_rows_round(
-    graph: &WorkflowGraph,
-    node_run: &WorkflowNodeRun,
-    node_runs: &[WorkflowNodeRun],
-) -> Option<u32> {
-    let region = graph.region(&node_run.node_id)?;
-    node_runs
-        .iter()
-        .filter(|row| row.iteration.is_some() && region.contains(&row.node_id))
-        .filter_map(|row| row.iteration)
-        .max()
 }

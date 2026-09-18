@@ -1,6 +1,7 @@
 //! Atomic persistence operations for isolated Loop rounds.
 
 use super::iteration::write_pool_variable;
+use super::payload_json::merge_complete_payload;
 use super::*;
 
 /// Creates a round scope and its Start node in one transaction.
@@ -81,7 +82,8 @@ pub(super) fn advance(
             let round = transaction
                 .query_row(
                     "SELECT scope.run_id, scope.parent_loop_node_run_id, parent.node_id,
-                            scope.status, run.payload, parent.status, run.run_status
+                            scope.status, run.payload, parent.status, run.run_status,
+                            parent.payload
                      FROM workflow_execution_scopes scope
                      JOIN workflow_node_runs parent ON parent.id = scope.parent_loop_node_run_id
                      JOIN workflow_runs run ON run.id = scope.run_id
@@ -96,6 +98,7 @@ pub(super) fn advance(
                             row.get::<_, Option<String>>(4)?,
                             row.get::<_, i64>(5)?,
                             row.get::<_, i64>(6)?,
+                            row.get::<_, Option<String>>(7)?,
                         ))
                     },
                 )
@@ -108,6 +111,7 @@ pub(super) fn advance(
                 run_payload,
                 parent_status,
                 run_status,
+                parent_payload,
             )) = round
             else {
                 return Ok(AdvanceWorkflowRunResult::NotFound);
@@ -184,7 +188,13 @@ pub(super) fn advance(
                             &parent_run_id,
                             WorkflowNodeStatus::Succeeded.database_value(),
                             &serialized_output,
-                            complete_payload(Some("loop_succeeded".into()), vec![]),
+                            // Merge onto the Loop row's own payload so the pre-loop checkpoint
+                            // recorded before the rounds ran survives the Loop's completion.
+                            merge_complete_payload(
+                                parent_payload,
+                                Some("loop_succeeded".into()),
+                                vec![],
+                            )?,
                             now,
                         ],
                     )?;

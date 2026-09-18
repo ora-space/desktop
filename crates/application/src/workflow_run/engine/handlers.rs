@@ -1,14 +1,15 @@
 use crate::workflow_run::mapper::map_run;
 use crate::workflow_run::{
-    CancelWorkflowRunResult, FileChange, RestartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunRepository,
+    CancelWorkflowRunResult, FileChange, RestartWorkflowRunResult, ResumeWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunRepository,
 };
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
     CancelWorkflowRunRequest, CancelWorkflowRunResponse, CompleteWorkflowNodeResponse,
-    RestartWorkflowRunRequest, RestartWorkflowRunResponse, StartWorkflowRunRequest,
-    StartWorkflowRunResponse, UpdateWorkflowRunInputRequest, UpdateWorkflowRunInputResponse,
+    RestartWorkflowRunRequest, RestartWorkflowRunResponse, ResumeWorkflowRunRequest,
+    ResumeWorkflowRunResponse, StartWorkflowRunRequest, StartWorkflowRunResponse,
+    UpdateWorkflowRunInputRequest, UpdateWorkflowRunInputResponse,
 };
 use ora_domain::{WorkflowNodeRunId, WorkflowRun, WorkflowRunId};
 use std::sync::Arc;
@@ -94,6 +95,34 @@ where
         }
         let run = self.find_run(&run_id)?;
         Ok(RestartWorkflowRunResponse { run: map_run(run) })
+    }
+
+    /// Resumes a failed or cancelled run from its failed nodes, returning the re-running run.
+    pub fn resume_from_failure(
+        &self,
+        request: ResumeWorkflowRunRequest,
+    ) -> Result<ResumeWorkflowRunResponse, ApplicationError> {
+        let run_id = WorkflowRunId::new(&request.run_id);
+        match self
+            .engine
+            .resume_from_failure(&run_id)
+            .map_err(ApplicationError::from_workflow_engine_error)?
+        {
+            ResumeWorkflowRunResult::Resumed => {}
+            ResumeWorkflowRunResult::NotResumable => {
+                return Err(ApplicationError::WorkflowRunNotResumable);
+            }
+            ResumeWorkflowRunResult::NotFound => {
+                return Err(ApplicationError::WorkflowRunNotFound {
+                    run_id: request.run_id,
+                });
+            }
+        }
+        let run = self.find_run(&run_id)?;
+        Ok(ResumeWorkflowRunResponse {
+            run: map_run(run),
+            pre_rollback_checkpoint: None,
+        })
     }
 
     /// Sets the kickoff input of a pending run.

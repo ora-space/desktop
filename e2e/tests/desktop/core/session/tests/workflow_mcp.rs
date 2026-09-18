@@ -130,7 +130,7 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         backend.workflows().publish(PublishWorkflowRequest { workflow_id: workflow.workflow.id.clone(), version: Some("v1".into()) })?;
         let run = backend.workflow_runs().create(CreateWorkflowRunRequest {
             workspace_id: workspace_id.clone(), workflow_id: workflow.workflow.id.clone(), locale: WorkflowRunLocale::EnUs,
-            snapshot_id: None, kickoff_input: None, name: None,
+            snapshot_id: None, kickoff_input: None, name: None, inject_last_failure: None,
         })?.run;
         backend.workflow_runs().start(StartWorkflowRunRequest { run_id: run.id.clone() })?;
         let nodes = parked_nodes(&backend, &run.id).await?;

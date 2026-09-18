@@ -144,6 +144,36 @@ export function workflowRunHandlers(
         throw new Error(`workflow run ${req.runId} not found`);
       return { run: mockWorkflowRun(record) };
     },
+    resumeWorkflowRunFromFailure: async (req) => {
+      const record = state.workflowRuns.find(
+        (candidate) => candidate.id === req.runId,
+      );
+      if (record === undefined)
+        throw new Error(`workflow run ${req.runId} not found`);
+      return { run: mockWorkflowRun(record), preRollbackCheckpoint: null };
+    },
+    previewWorkflowRunResume: async () => ({
+      resumable: true,
+      failedNodes: [],
+      nodeFilesAvailable: true,
+      nodeFilesUnavailableReason: null,
+      checkpointAvailable: true,
+      checkpointUnavailableReason: null,
+      currentSnapshotId: "snap-1",
+      currentSnapshotVersion: "v1",
+      publishedSnapshotId: null,
+      publishedSnapshotVersion: null,
+      publishedSnapshotSwitchable: false,
+      publishedSnapshotIncompatibleReason: null,
+    }),
+    diagnoseWorkflowNodeFailure: async () => ({
+      diagnosis: {
+        text: "guess",
+        agentCli: "open_code",
+        model: "m",
+        generatedAt: 1n,
+      },
+    }),
     updateWorkflowRunInput: async (req) => {
       const record = state.workflowRuns.find(
         (candidate) => candidate.id === req.runId,

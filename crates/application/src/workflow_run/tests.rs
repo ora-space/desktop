@@ -348,6 +348,7 @@ fn creates_run_directly_in_workspace() {
             snapshot_id: None,
             kickoff_input: Some("Inspect".to_string()),
             name: Some("Manual review".to_string()),
+            inject_last_failure: None,
         })
         .unwrap();
     let stored = repository.created.lock().unwrap().clone();

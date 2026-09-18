@@ -86,6 +86,22 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "resumeWorkflowRunFromFailure",
+        namespace: NAMESPACE,
+        member_name: "resumeFromFailure",
+        request_type: "ResumeWorkflowRunRequest",
+        response_type: "ResumeWorkflowRunResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "previewWorkflowRunResume",
+        namespace: NAMESPACE,
+        member_name: "previewResume",
+        request_type: "PreviewWorkflowRunResumeRequest",
+        response_type: "PreviewWorkflowRunResumeResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "updateWorkflowRunInput",
         namespace: NAMESPACE,
         member_name: "updateInput",
@@ -99,6 +115,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "completeNode",
         request_type: "CompleteWorkflowNodeRequest",
         response_type: "CompleteWorkflowNodeResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "diagnoseWorkflowNodeFailure",
+        namespace: NAMESPACE,
+        member_name: "diagnoseNodeFailure",
+        request_type: "DiagnoseWorkflowNodeFailureRequest",
+        response_type: "DiagnoseWorkflowNodeFailureResponse",
         response_mode: FrontendResponseMode::Unary,
     },
 ];

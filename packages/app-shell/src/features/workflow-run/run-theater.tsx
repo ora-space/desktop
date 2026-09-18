@@ -789,6 +789,8 @@ export function RunTheater({
                 state={primaryDisplayState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
+                runStatus={run.status}
+                runSnapshotId={run.snapshotId}
                 loopRounds={
                   primaryNode?.data.kind === "loop"
                     ? (run.rounds ?? []).filter(

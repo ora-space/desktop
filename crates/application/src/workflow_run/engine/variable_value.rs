@@ -86,19 +86,36 @@ fn normalize_file_reference(value: Value) -> Option<Value> {
 
 /// Returns whether a value is already a canonical safe Workspace-relative file reference.
 fn is_file_reference(value: &Value) -> bool {
+    file_reference_rejection(value).is_none() && value.is_object()
+}
+
+/// Explains why a JSON value is not a canonical workspace file reference.
+///
+/// `None` means either the value is not an object (the caller should keep a generic type error)
+/// or it is a valid file reference. Structured-output validation uses the `Some` reasons so a
+/// near-miss object such as `notes/nul.md` names the actual rejection instead of "expected file".
+pub(super) fn file_reference_rejection(value: &Value) -> Option<String> {
     let Value::Object(reference) = value else {
-        return false;
+        return None;
     };
-    if reference.len() != 2
-        || reference.get("kind").and_then(Value::as_str) != Some("workspace_file")
-    {
-        return false;
+    if reference.len() != 2 || !reference.contains_key("kind") || !reference.contains_key("path") {
+        return Some("file reference must have exactly the keys \"kind\" and \"path\"".to_string());
+    }
+    if reference.get("kind").and_then(Value::as_str) != Some("workspace_file") {
+        return Some("file reference kind must be \"workspace_file\"".to_string());
     }
     let Some(path) = reference.get("path").and_then(Value::as_str) else {
-        return false;
+        return Some("file reference path must be a string".to_string());
     };
-    PortableRelativePath::parse(path)
-        .is_ok_and(|parsed| !parsed.is_root() && parsed.as_str() == path)
+    match PortableRelativePath::parse(path) {
+        Err(error) => Some(format!("file path {path:?} rejected: {error}")),
+        Ok(parsed) if parsed.is_root() => Some("file path must not be empty".to_string()),
+        Ok(parsed) if parsed.as_str() != path => Some(format!(
+            "file path {path:?} must be written in canonical form {:?}",
+            parsed.as_str()
+        )),
+        Ok(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +185,68 @@ mod tests {
                 json!({ "kind": "workspace_file", "path": "C:\\secret" }),
                 "file"
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn file_reference_rejection_covers_each_object_branch() {
+        assert_eq!(file_reference_rejection(&json!("notes/a.md")), None);
+        assert_eq!(
+            file_reference_rejection(&json!({ "kind": "workspace_file" })),
+            Some("file reference must have exactly the keys \"kind\" and \"path\"".to_string())
+        );
+        assert_eq!(
+            file_reference_rejection(&json!({
+                "kind": "other",
+                "path": "notes/a.md"
+            })),
+            Some("file reference kind must be \"workspace_file\"".to_string())
+        );
+        assert_eq!(
+            file_reference_rejection(&json!({
+                "kind": "workspace_file",
+                "path": 1
+            })),
+            Some("file reference path must be a string".to_string())
+        );
+        let reserved = file_reference_rejection(&json!({
+            "kind": "workspace_file",
+            "path": "notes/nul.md"
+        }))
+        .expect("reserved device name should reject");
+        assert!(
+            reserved.contains("Windows reserved device name"),
+            "{reserved}"
+        );
+        let traversal = file_reference_rejection(&json!({
+            "kind": "workspace_file",
+            "path": "../x"
+        }))
+        .expect("parent traversal should reject");
+        assert!(traversal.contains("parent traversal"), "{traversal}");
+        assert_eq!(
+            file_reference_rejection(&json!({
+                "kind": "workspace_file",
+                "path": ""
+            })),
+            Some("file path must not be empty".to_string())
+        );
+        assert_eq!(
+            file_reference_rejection(&json!({
+                "kind": "workspace_file",
+                "path": "docs\\input.txt"
+            })),
+            Some(
+                "file path \"docs\\\\input.txt\" must be written in canonical form \"docs/input.txt\""
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            file_reference_rejection(&json!({
+                "kind": "workspace_file",
+                "path": "docs/input.txt"
+            })),
             None
         );
     }

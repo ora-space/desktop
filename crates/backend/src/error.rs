@@ -1,6 +1,7 @@
 use ora_application::{ApplicationError, SkillImportError};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
+    WorkflowSnapshotIncompatibleWithResumeParams,
 };
 use ora_plugin_lifecycle::PluginLifecycleError;
 use std::error::Error;
@@ -573,6 +574,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {}),
                 "workflow node is not awaiting input and cannot be completed",
             ),
+            ApplicationError::WorkflowNodeNotDiagnosable => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowNodeNotDiagnosable(EmptyErrorParams {}),
+                "AI analysis is only available for a failed agent node",
+            ),
             ApplicationError::WorkflowRunGraphParse(_) => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunGraphParse(EmptyErrorParams {}),
@@ -603,6 +609,20 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowRunNotRestartable(EmptyErrorParams {}),
                 "workflow run cannot be restarted while running",
             ),
+            ApplicationError::WorkflowRunNotResumable => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowRunNotResumable(EmptyErrorParams {}),
+                "workflow run cannot be resumed from failure",
+            ),
+            ApplicationError::WorkflowSnapshotIncompatibleWithResume { reason } => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowSnapshotIncompatibleWithResume(
+                    WorkflowSnapshotIncompatibleWithResumeParams {
+                        reason: reason.clone(),
+                    },
+                ),
+                "workflow snapshot is incompatible with resume",
+            ),
             ApplicationError::WorkflowRunNotEditable => (
                 ErrorClassification::Conflict,
                 PublicError::WorkflowRunNotEditable(EmptyErrorParams {}),
@@ -623,7 +643,10 @@ impl From<ApplicationError> for BackendError {
 mod tests {
     use super::{BackendError, ErrorClassification};
     use ora_application::{ApplicationError, RepositoryError, SkillImportError};
-    use ora_contracts::{EmptyErrorParams, PublicError, SkillFolderConflictParams};
+    use ora_contracts::{
+        EmptyErrorParams, PublicError, SkillFolderConflictParams,
+        WorkflowSnapshotIncompatibleWithResumeParams,
+    };
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
@@ -844,6 +867,22 @@ mod tests {
                 },
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNodeNotDiagnosable,
+                ErrorClassification::Conflict,
+                PublicError::WorkflowNodeNotDiagnosable(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowSnapshotIncompatibleWithResume {
+                    reason: "node_missing:b".to_string(),
+                },
+                ErrorClassification::Conflict,
+                PublicError::WorkflowSnapshotIncompatibleWithResume(
+                    WorkflowSnapshotIncompatibleWithResumeParams {
+                        reason: "node_missing:b".to_string(),
+                    },
+                ),
             ),
         ];
 

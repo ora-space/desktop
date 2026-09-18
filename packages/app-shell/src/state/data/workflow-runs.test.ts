@@ -532,6 +532,78 @@ describe("buildDisplayRun", () => {
     ]);
   });
 
+  it("projects camelCase errorDetail from payload.error_detail", () => {
+    const withError = {
+      ...detail,
+      nodes: [
+        {
+          nodeId: "explore",
+          status: "failed",
+          startedAt: 10n,
+          finishedAt: 30n,
+          error: "review failed",
+          output: null,
+          payload:
+            '{"error_detail":{"kind":"structured_output","message":"review failed","source_chain":["not json"],"attempt":2,"resumable":false,"injects_previous_failure":true,"recorded_at":50}}',
+        },
+      ],
+    };
+    const display = buildDisplayRun(withError, GRAPH);
+    expect(display.nodeStates.explore.errorDetail).toEqual({
+      kind: "structured_output",
+      message: "review failed",
+      sourceChain: ["not json"],
+      attempt: 2,
+      resumable: false,
+      injectsPreviousFailure: true,
+      recordedAt: 50,
+    });
+  });
+
+  it("defaults injectsPreviousFailure to false when the payload key is absent", () => {
+    const withError = {
+      ...detail,
+      nodes: [
+        {
+          nodeId: "explore",
+          status: "failed",
+          startedAt: 10n,
+          finishedAt: 30n,
+          error: "review failed",
+          output: null,
+          payload:
+            '{"error_detail":{"kind":"structured_output","message":"review failed","source_chain":["not json"],"attempt":2,"resumable":false,"recorded_at":50}}',
+        },
+      ],
+    };
+    const display = buildDisplayRun(withError, GRAPH);
+    expect(display.nodeStates.explore.errorDetail?.injectsPreviousFailure).toBe(
+      false,
+    );
+  });
+
+  it("projects injectedFailureContext from payload.injected_failure_context", () => {
+    const withInjected = {
+      ...detail,
+      nodes: [
+        {
+          nodeId: "explore",
+          status: "running",
+          startedAt: 10n,
+          finishedAt: null,
+          error: null,
+          output: null,
+          payload:
+            '{"injected_failure_context":"## 上一次尝试（第 1 次）失败信息"}',
+        },
+      ],
+    };
+    const display = buildDisplayRun(withInjected, GRAPH);
+    expect(display.nodeStates.explore.injectedFailureContext).toBe(
+      "## 上一次尝试（第 1 次）失败信息",
+    );
+  });
+
   it("projects the node conversation from its run output", () => {
     const withConversation = {
       ...detail,

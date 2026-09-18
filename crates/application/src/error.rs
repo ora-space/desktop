@@ -202,12 +202,18 @@ pub enum ApplicationError {
     WorkflowRunStartFailed { message: String },
     #[error("workflow run cannot be restarted while running")]
     WorkflowRunNotRestartable,
+    #[error("workflow run cannot be resumed from failure")]
+    WorkflowRunNotResumable,
+    #[error("workflow snapshot is incompatible with resume: {reason}")]
+    WorkflowSnapshotIncompatibleWithResume { reason: String },
     #[error("workflow run input can only be changed while the run is pending")]
     WorkflowRunNotEditable,
     #[error("workflow node not found: {node_id}")]
     WorkflowNodeNotFound { node_id: String },
     #[error("workflow node is not awaiting input and cannot be completed: {node_id}")]
     WorkflowNodeNotAwaitingInput { node_id: String },
+    #[error("workflow node is not diagnosable")]
+    WorkflowNodeNotDiagnosable,
     #[error("workflow run is active and cannot be deleted")]
     WorkflowRunActive,
     #[error("workflow repository operation failed")]
@@ -540,7 +546,13 @@ impl PartialEq for ApplicationError {
             (WorkflowRunGraphParse(_), WorkflowRunGraphParse(_))
             | (WorkflowRunValidation(_), WorkflowRunValidation(_))
             | (WorkflowRunNotRestartable, WorkflowRunNotRestartable)
-            | (WorkflowRunNotEditable, WorkflowRunNotEditable) => true,
+            | (WorkflowRunNotResumable, WorkflowRunNotResumable)
+            | (WorkflowRunNotEditable, WorkflowRunNotEditable)
+            | (WorkflowNodeNotDiagnosable, WorkflowNodeNotDiagnosable) => true,
+            (
+                WorkflowSnapshotIncompatibleWithResume { reason: left },
+                WorkflowSnapshotIncompatibleWithResume { reason: right },
+            ) => left == right,
             (WorkflowNodeNotFound { node_id: left }, WorkflowNodeNotFound { node_id: right }) => {
                 left == right
             }

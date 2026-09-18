@@ -73,6 +73,20 @@ backend_command!(
     "Restarts one workflow run through the shared Backend."
 );
 backend_command!(
+    resume_workflow_run_from_failure,
+    ResumeWorkflowRunRequest,
+    ResumeWorkflowRunResponse,
+    workflow_runs.resume_from_failure,
+    "Resumes one workflow run from its failed nodes through the shared Backend."
+);
+backend_command!(
+    preview_workflow_run_resume,
+    PreviewWorkflowRunResumeRequest,
+    PreviewWorkflowRunResumeResponse,
+    workflow_runs.preview_resume,
+    "Previews rollback options before resuming a failed workflow run through the shared Backend."
+);
+backend_command!(
     update_workflow_run_input,
     UpdateWorkflowRunInputRequest,
     UpdateWorkflowRunInputResponse,
@@ -85,4 +99,11 @@ async_backend_command!(
     CompleteWorkflowNodeResponse,
     workflow_runs.complete_node,
     "Completes one awaiting interactive workflow node through its owned interface."
+);
+async_backend_command!(
+    diagnose_workflow_node_failure,
+    DiagnoseWorkflowNodeFailureRequest,
+    DiagnoseWorkflowNodeFailureResponse,
+    workflow_runs.diagnose_node_failure,
+    "Asks the node's own agent to guess why a failed agent node failed."
 );

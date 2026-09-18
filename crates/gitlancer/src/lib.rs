@@ -15,5 +15,10 @@ pub use exec::env::GitEnv;
 pub use exec::output::GitOutput;
 pub use exec::runner::{CliGitRunner, GitRunner, RecordingGitRunner};
 pub use git::Git;
+pub use git::checkpoint::{
+    ChangeStatus, ChangedPath, ChangedSinceRequest, ChangedSinceResponse, RestoreAllRequest,
+    RestoreAllResponse, RestorePathsRequest, RestorePathsResponse, SnapshotWorktreeRequest,
+    SnapshotWorktreeResponse,
+};
 pub use git::config::GlobalIdentity;
 pub use logging::GitlancerLogger;

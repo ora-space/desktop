@@ -111,6 +111,7 @@ fn run_case(
             let run = backend
                 .workflow_runs()
                 .create(CreateWorkflowRunRequest {
+                    inject_last_failure: None,
                     workspace_id,
                     workflow_id: workflow.id,
                     locale: WorkflowRunLocale::EnUs,

@@ -58,6 +58,11 @@ runtime registered for its node type.
   The scheduling core (`run_schedule`) recomputes state from persistence, hands in-flight nodes to
   their registered runtimes, advances composite nodes each wave, and finishes drained runs; it
   contains no node-type branching.
+- **Resume, failure detail, and snapshot switch** (`failure.rs`, `region.rs`,
+  `snapshot_switch.rs`): classified `payload.error_detail`, the composite-as-resume-unit
+  clear set (partial in-loop resume is out of scope), and compatibility planning when a failed
+  run takes over a newer published snapshot. Checkpoint, rollback, previous-failure injection,
+  and AI diagnosis adapters live in the backend.
 
 ## Non-responsibilities
 

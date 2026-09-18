@@ -266,7 +266,9 @@ describe("WorkflowRunWorkspace", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /再次运行|Run again/ }),
+      screen.getByRole("button", {
+        name: /从头重新运行|Run again from start/,
+      }),
     );
     expect(
       await screen.findByRole("heading", { name: "审查流程 1" }),
@@ -361,7 +363,9 @@ describe("WorkflowRunWorkspace", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /再次运行|Run again/ }),
+      screen.getByRole("button", {
+        name: /从头重新运行|Run again from start/,
+      }),
     );
 
     // "Run again" reuses the Start dialog so start parameters can be edited first.
@@ -378,6 +382,167 @@ describe("WorkflowRunWorkspace", () => {
         "p1",
       );
     });
+
+    runtime.dispose();
+  });
+
+  it.each([
+    { status: "failed" as const, offered: true },
+    { status: "cancelled" as const, offered: true },
+    { status: "succeeded" as const, offered: false },
+    { status: "running" as const, offered: false },
+    { status: "awaitingInput" as const, offered: false },
+  ])(
+    "offers resume from failure only for failed and cancelled runs ($status)",
+    async ({ status, offered }) => {
+      const state = seedRun();
+      state.workflowRuns[0].status = status;
+      const clientHandlers: TestHandlers = createFixtureHandlers(state);
+      const client = createTestClient(clientHandlers);
+      const runtime = createMemoryWorkflowRuntime();
+      const Wrapper = createHookWrapper(
+        client,
+        createTestQueryClient(),
+        createChatStore(client.session),
+        runtime,
+      );
+
+      render(
+        <PlatformProvider adapter={createStubPlatform()}>
+          <Wrapper>
+            <WorkflowRunWorkspace runId="run-1" />
+          </Wrapper>
+        </PlatformProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+      });
+
+      const resumeButton = screen.queryByRole("button", {
+        name: /从失败处继续|Resume from failure/,
+      });
+      if (offered) {
+        expect(resumeButton).toBeInTheDocument();
+      } else {
+        expect(resumeButton).not.toBeInTheDocument();
+      }
+
+      runtime.dispose();
+    },
+  );
+
+  it("invokes resumeFromFailure once for a failed run and keeps the run selected", async () => {
+    const state = seedRun();
+    state.workflowRuns[0].status = "failed";
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const resumeFromFailure = vi.fn(
+      clientHandlers.resumeWorkflowRunFromFailure!,
+    );
+    clientHandlers.resumeWorkflowRunFromFailure = resumeFromFailure;
+    const client = createTestClient(clientHandlers);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /从失败处继续|Resume from failure/,
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog");
+    await waitFor(() => {
+      expect(
+        within(dialog).getByRole("button", {
+          name: /从失败处继续|Resume from failure/,
+        }),
+      ).toBeEnabled();
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: /从失败处继续|Resume from failure/,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(resumeFromFailure).toHaveBeenCalledTimes(1);
+    });
+    expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({
+      runId: "run-1",
+      rollback: "keep",
+    });
+    expect(useWorkspaceSelectionStore.getState().selection.workflowRunId).toBe(
+      "run-1",
+    );
+
+    runtime.dispose();
+  });
+
+  it("disables resume with an explanatory tooltip while preview.resumable is false", async () => {
+    const state = seedRun();
+    state.workflowRuns[0].status = "failed";
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    clientHandlers.previewWorkflowRunResume = vi.fn(async () => ({
+      resumable: false,
+      failedNodes: [],
+      nodeFilesAvailable: false,
+      nodeFilesUnavailableReason: "not_resumable",
+      checkpointAvailable: false,
+      checkpointUnavailableReason: "not_resumable",
+      currentSnapshotId: "snap-1",
+      currentSnapshotVersion: "v1",
+      publishedSnapshotId: null,
+      publishedSnapshotVersion: null,
+      publishedSnapshotSwitchable: false,
+      publishedSnapshotIncompatibleReason: null,
+    }));
+    const client = createTestClient(clientHandlers);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+    });
+    const resumeButton = await screen.findByRole("button", {
+      name: /从失败处继续|Resume from failure/,
+    });
+    await waitFor(() => {
+      expect(resumeButton).toBeDisabled();
+    });
+    await user.hover(resumeButton);
+    expect(await screen.findByText("当前运行不能续跑")).toBeInTheDocument();
 
     runtime.dispose();
   });
