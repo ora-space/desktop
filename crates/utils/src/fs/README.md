@@ -17,6 +17,17 @@ suggestions, URL path segments, or user input. Atomic whole-file replacement liv
   the caller-supplied `occupied` predicate. The predicate lets callers account for reservations
   that are not visible on disk yet (for example in-flight downloads).
 
+- `refuse_final_link(options)` adds the platform flag (`O_NOFOLLOW`, `FILE_FLAG_OPEN_REPARSE_POINT`)
+  that makes an open refuse to traverse a link at the final path component, so a hostile path is
+  opened under its own name and the handle's metadata can be inspected afterwards.
+- `ExclusiveFileLock::try_acquire(path)` takes a non-blocking exclusive advisory lock on a sidecar
+  lock file (creating it when absent, never through a link) and releases it on drop or process
+  exit. It serializes writers across processes; it locks a sidecar rather than the guarded data
+  file because Windows range locks would also block concurrent readers of that file.
+- `classify_line_tail(file)` reads only the final byte of a line-oriented file and reports whether
+  it is empty, newline-terminated, or ends mid-line, so an appender can avoid joining its first
+  record onto a fragment left by a crashed writer.
+
 ## Extension convention
 
 Both helpers treat the text after the last `.` of the basename as the extension. Multi-part

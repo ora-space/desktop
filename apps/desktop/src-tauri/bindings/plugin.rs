@@ -79,6 +79,16 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "getPluginLogLevel",
+        handler: "commands::plugin::get_plugin_log_level",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "setPluginLogLevel",
+        handler: "commands::plugin::set_plugin_log_level",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "installPlugin",
         handler: "commands::plugin::install_plugin",
         permission: Permission::MainWebview,

@@ -2,6 +2,7 @@ mod childprocess;
 mod connection;
 mod data_dir;
 mod launch;
+mod log_levels;
 mod permissions;
 mod ports;
 mod registration;
@@ -18,8 +19,14 @@ pub use childprocess::{
     PluginProcessHost,
 };
 pub use connection::{ConnectionError, PluginGenerationKey, PluginGenerationLease};
-pub use data_dir::PluginDataDirectories;
-pub use ora_plugin_runtime::{PluginNotification, PluginRegistration};
+pub use data_dir::{PluginDataDirectories, PluginLogDirectories};
+pub use log_levels::{
+    DEFAULT_PLUGIN_LOG_LEVEL, PluginLogLevelPersistError, PluginLogLevelState, PluginLogLevels,
+};
+pub use ora_plugin_runtime::{
+    ACTIVE_LOG_FILE_NAME, PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup, PluginLogSinkError,
+    PluginLogStats, PluginNotification, PluginRegistration,
+};
 pub use permissions::{
     DenoPermission, PermissionFlagError, ReadScope, agent_permissions, permissions_for,
 };
@@ -50,7 +57,7 @@ use ora_contracts::{
     UninstallPluginResponse,
 };
 use ora_domain::PluginId;
-use ora_logging::ora_warn;
+use ora_logging::{LogLevel, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_manager::{
     InstalledPlugin as DiscoveredPlugin, PluginConfigurationDeclarationValidity, PluginManager,
@@ -95,6 +102,21 @@ pub enum PluginLifecycleError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to persist the plugin log level of `{plugin_id}`")]
+    LogLevelPersistence {
+        plugin_id: String,
+        #[source]
+        source: PluginLogLevelPersistError,
+    },
+    /// A delete-data uninstall found the plugin's log still held by a writer — an earlier
+    /// generation that has not finished, or another host sharing the Ora home — and refused to
+    /// move a directory that might still be written to.
+    #[error("the plugin log of `{plugin_id}` is still held by a writer: {source}")]
+    LogWriterActive {
+        plugin_id: String,
+        #[source]
+        source: PluginLogSinkError,
+    },
 }
 
 /// Joins discovered identity and process-scoped runtime behind one seam.
@@ -118,7 +140,16 @@ where
     pub(crate) publisher: StatusPublisher,
     pub(crate) sink: NotificationSink,
     pub(crate) data_directories: PluginDataDirectories,
+    /// The host-managed `plugins/logs` tree, a sibling of plugin data that storage cannot reach.
+    pub(crate) log_directories: PluginLogDirectories,
     pub(crate) configuration: ConfigurationService,
+    /// Per-plugin persisted log levels, published live to every running generation.
+    pub(crate) log_levels: PluginLogLevels,
+    /// Identity of this host run, stamped on every plugin log record beside the generation.
+    ///
+    /// Generations restart from one whenever the host does; without a session id two records
+    /// from different host runs of the same plugin could carry the same generation.
+    pub(crate) host_session_id: String,
     surface_closer: SurfaceCloserSlot,
     pub(crate) config: PluginLifecycleConfig,
 }
@@ -162,7 +193,10 @@ where
                 publisher,
                 sink,
                 data_directories: PluginDataDirectories::new(&config.data_directory),
+                log_directories: PluginLogDirectories::new(&config.data_directory),
                 configuration: ConfigurationService::new(config.data_directory.clone()),
+                log_levels: PluginLogLevels::open(&config.data_directory),
+                host_session_id: uuid::Uuid::new_v4().to_string(),
                 surface_closer: SurfaceCloserSlot::default(),
                 config,
             }),
@@ -180,6 +214,55 @@ where
     /// Returns the per-plugin data directory manager shared with the surface layer.
     pub fn plugin_data_directories(&self) -> &PluginDataDirectories {
         &self.inner.data_directories
+    }
+
+    /// Returns the effective plugin log level of one plugin identity.
+    ///
+    /// The setting belongs to the identity, not to an installed package, so an unknown or
+    /// uninstalled id simply reports the default rather than failing.
+    pub fn plugin_log_level(
+        &self,
+        plugin_id: &str,
+    ) -> Result<PluginLogLevelState, PluginLifecycleError> {
+        Ok(self.inner.log_levels.state(&parse_request_id(plugin_id)?))
+    }
+
+    /// Returns the active plugin log file of one installed plugin without touching the disk.
+    ///
+    /// Only the host resolves this path: the plugin never learns it, and an export copies the
+    /// file rather than exposing the directory, so the file may not exist yet if the plugin
+    /// has never produced a record.
+    pub fn plugin_log_file(&self, plugin_id: &str) -> Result<PathBuf, PluginLifecycleError> {
+        let id = parse_request_id(plugin_id)?;
+        self.require_installed(&id)?;
+        Ok(self
+            .inner
+            .log_directories
+            .path_for(&id)
+            .join(ACTIVE_LOG_FILE_NAME))
+    }
+
+    /// Persists a new plugin log level and applies it to the plugin's running generation.
+    ///
+    /// Persistence comes first: if it fails nothing changes and the error is returned, so a
+    /// caller never reports a level the next start would not honor. The update runs under the
+    /// plugin's operation lock, which is what orders it against an uninstall: a delete-data
+    /// uninstall that has committed leaves the identity uninstalled, so a late update is refused
+    /// instead of recreating the setting it just cleared.
+    pub async fn set_plugin_log_level(
+        &self,
+        plugin_id: &str,
+        level: LogLevel,
+    ) -> Result<PluginLogLevelState, PluginLifecycleError> {
+        let id = parse_request_id(plugin_id)?;
+        let _operation = self.acquire_operation(&id).await;
+        self.require_installed(&id)?;
+        self.inner.log_levels.set(&id, level).map_err(|source| {
+            PluginLifecycleError::LogLevelPersistence {
+                plugin_id: plugin_id.to_string(),
+                source,
+            }
+        })
     }
 
     /// Returns the cached installed snapshot, reading current configuration summaries from disk.
@@ -361,6 +444,20 @@ where
             transition_to_stopped(Arc::clone(&self.inner), plugin_id.clone(), attempt);
         }
 
+        // The stop above returned only after the generation's log teardown, but a writer that
+        // missed its deadline is still running and still holds the file. Deleting data moves the
+        // log directory, so that writer must be proven gone first; otherwise the uninstall would
+        // report success while lines keep landing in a moved (soon deleted) directory.
+        if matches!(request.data_disposition, PluginDataDisposition::Delete) {
+            self.inner
+                .log_directories
+                .confirm_writer_released(&plugin_id)
+                .map_err(|source| PluginLifecycleError::LogWriterActive {
+                    plugin_id: request.plugin_id.clone(),
+                    source,
+                })?;
+        }
+
         let staged = match &plugin {
             Some(plugin) => Some(stage_uninstall(
                 &self.inner.config.data_directory,
@@ -369,12 +466,42 @@ where
             )?),
             None => None,
         };
+        // The log level follows the data disposition: deleting data means the identity starts
+        // over on reinstall. It is cleared while the trees are still only staged, so a failed
+        // clear rolls package, data, and logs back to their exact paths and the setting stays;
+        // nothing is then reported as cleaned up.
+        if matches!(request.data_disposition, PluginDataDisposition::Delete)
+            && let Err(source) = self.inner.log_levels.clear(&plugin_id)
+        {
+            if let Some(staged) = staged
+                && let Err(rollback_error) = staged.rollback()
+            {
+                ora_warn!(
+                    plugin_id = %request.plugin_id,
+                    %source,
+                    %rollback_error,
+                    "plugin log level clear failed and the staged uninstall could not be rolled back"
+                );
+                return Err(rollback_error);
+            }
+            return Err(PluginLifecycleError::LogLevelPersistence {
+                plugin_id: request.plugin_id,
+                source,
+            });
+        }
         if plugin.is_none() && matches!(request.data_disposition, PluginDataDisposition::Delete) {
             self.inner
                 .data_directories
                 .remove(&plugin_id)
                 .map_err(|source| PluginLifecycleError::PackageRemoval {
                     path: self.inner.data_directories.path_for(&plugin_id),
+                    source,
+                })?;
+            self.inner
+                .log_directories
+                .remove(&plugin_id)
+                .map_err(|source| PluginLifecycleError::PackageRemoval {
+                    path: self.inner.log_directories.path_for(&plugin_id),
                     source,
                 })?;
         }
@@ -401,6 +528,11 @@ where
         }
         if let Some(plugin) = &plugin
             && let Some(namespace_root) = plugin.package_root.parent().and_then(Path::parent)
+        {
+            remove_empty_namespace_directory(namespace_root);
+        }
+        if matches!(request.data_disposition, PluginDataDisposition::Delete)
+            && let Some(namespace_root) = self.inner.log_directories.path_for(&plugin_id).parent()
         {
             remove_empty_namespace_directory(namespace_root);
         }
@@ -506,6 +638,10 @@ fn parse_request_id(plugin_id: &str) -> Result<PluginId, PluginLifecycleError> {
 mod childprocess_tests;
 #[cfg(test)]
 mod data_plane_tests;
+#[cfg(test)]
+mod log_directory_tests;
+#[cfg(test)]
+mod log_level_tests;
 #[cfg(test)]
 mod storage_tests;
 #[cfg(test)]

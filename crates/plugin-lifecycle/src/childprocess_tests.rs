@@ -1,6 +1,7 @@
 //! Tests for `ora/childprocess/*`: request handling and tracking lifecycle against a fake spawned
 //! process, plus one end-to-end check that stdout, stderr, and exit reach the plugin as
-//! notifications once a real `PluginRuntime` is attached.
+//! notifications once a real `PluginRuntime` is attached — and reach the plugin *only*: the
+//! host never copies managed child output into the plugin log.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -786,11 +787,12 @@ impl ProcessSpawner for SinglePluginProcessSpawner {
 
 #[tokio::test]
 async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after_writing() {
+    ora_logging::initialize_test_clock();
     let entrypoint = tempfile::NamedTempFile::new().expect("create fake entrypoint file");
 
     let (host_stdin, mut plugin_reads_from_host) = tokio::io::duplex(8192);
     let (mut plugin_writes_to_host, host_stdout) = tokio::io::duplex(8192);
-    let (_plugin_stderr_peer, host_stderr) = tokio::io::duplex(8192);
+    let (mut plugin_stderr, host_stderr) = tokio::io::duplex(8192);
     let plugin_spawner = SinglePluginProcessSpawner(StdMutex::new(Some(FakePluginProcess {
         stdin: Some(host_stdin),
         stdout: Some(host_stdout),
@@ -812,6 +814,7 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
         }
     });
 
+    let log_dir = tempfile::tempdir().expect("log dir");
     let (runtime, _notifications) = ProcessPluginRuntime::launch(
         &plugin_spawner,
         PluginRuntimeConfig {
@@ -825,6 +828,13 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
             shutdown_timeout: Duration::from_secs(5),
         },
         NoHostRequests,
+        ora_plugin_runtime::PluginLogSetup {
+            root: log_dir.path().join("logs"),
+            directory: log_dir.path().join("logs").join("official").join("a"),
+            host_session_id: "session".to_string(),
+            generation: 1,
+            level: watch::channel(ora_logging::LogLevel::Info).1,
+        },
     )
     .await
     .expect("fake plugin runtime launches");
@@ -852,6 +862,11 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
         .write_all(b"chunk-one")
         .await
         .expect("write fake stdout chunk");
+    child_test_handle
+        .stderr_peer
+        .write_all(b"child-stderr-noise\n")
+        .await
+        .expect("write fake stderr chunk");
 
     // Fire the exit signal immediately after the write, without waiting for the stdout
     // notification to be observed first: this is the interleaving that let `watch_exit`
@@ -882,16 +897,64 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
         })
     );
 
+    let stderr_notification = timeout(Duration::from_secs(2), frames_rx.recv())
+        .await
+        .expect("stderr notification arrives before timeout")
+        .expect("frame channel stays open");
     let exit_notification = timeout(Duration::from_secs(2), frames_rx.recv())
         .await
         .expect("exit notification arrives before timeout")
         .expect("frame channel stays open");
     assert_eq!(
-        exit_notification,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "ora/childprocess/exit",
-            "params": { "processId": process_id, "code": 0, "signal": Value::Null },
-        })
+        (stderr_notification, exit_notification),
+        (
+            json!({
+                "jsonrpc": "2.0",
+                "method": "ora/childprocess/stderr",
+                "params": {
+                    "processId": process_id,
+                    "bytesBase64": BASE64.encode(b"child-stderr-noise\n"),
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "ora/childprocess/exit",
+                "params": { "processId": process_id, "code": 0, "signal": Value::Null },
+            })
+        )
     );
+
+    // The child's output reached the plugin above and nowhere else. Only what the plugin itself
+    // writes to its own stderr — here one forwarded line — becomes a plugin log record.
+    plugin_stderr
+        .write_all(b"forwarded by the plugin\n")
+        .await
+        .expect("write plugin stderr");
+    let log_file = log_dir
+        .path()
+        .join("logs")
+        .join("official")
+        .join("a")
+        .join("plugin.log");
+    let records = timeout(Duration::from_secs(5), async {
+        loop {
+            let content = std::fs::read_to_string(&log_file).unwrap_or_default();
+            if content.lines().count() >= 1 {
+                return content;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the plugin's own stderr line is persisted");
+    let messages = records
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line).expect("json line")["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(messages, vec!["forwarded by the plugin".to_string()]);
 }

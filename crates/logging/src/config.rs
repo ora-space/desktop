@@ -26,7 +26,10 @@ impl LoggingConfig {
 }
 
 /// Enumerates the supported event filtering levels for shared runtime logging.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// Variants are declared from least to most severe so the derived ordering doubles as the
+/// threshold comparison used by every level filter (`record >= threshold` keeps the record).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -45,6 +48,17 @@ impl LogLevel {
             Self::Info => "info",
             Self::Warn => "warn",
             Self::Error => "error",
+        }
+    }
+
+    /// Returns the uppercase name used inside persisted JSONL records, matching `tracing`.
+    pub const fn as_upper_str(self) -> &'static str {
+        match self {
+            Self::Trace => "TRACE",
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
         }
     }
 }

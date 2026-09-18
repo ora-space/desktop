@@ -14,7 +14,7 @@ use crate::state::ManagedPluginState;
 use crate::{PluginLifecycleInner, PluginNotificationSink};
 use ora_domain::PluginId;
 use ora_plugin_manager::{InstalledPlugin as DiscoveredPlugin, PluginContribution};
-use ora_plugin_runtime::PluginNotification;
+use ora_plugin_runtime::{PluginLogSetup, PluginNotification};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 use tokio::sync::{OwnedMutexGuard, mpsc};
@@ -66,17 +66,30 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
         );
         return;
     };
+    // The log directory is the plugin's slot in the host-managed logs tree and the generation
+    // is this attempt within this host session, so a restarted plugin keeps writing to the same
+    // file under a distinguishable identity; the level is the live per-plugin setting.
+    let log = PluginLogSetup {
+        root: inner.log_directories.root().to_path_buf(),
+        directory: inner.log_directories.path_for(&plugin_id),
+        host_session_id: inner.host_session_id.clone(),
+        generation: attempt,
+        level: inner.log_levels.subscribe(&plugin_id),
+    };
     let launch = inner
         .launcher
-        .launch(PluginLaunchRequest {
-            plugin_id: plugin_id.clone(),
-            deno_path: inner.config.deno_path.clone(),
-            entrypoint: plugin.package_root.join(entrypoint.to_path_buf()),
-            package_root: plugin.package_root.clone(),
-            permissions: permissions_for(&plugin.contributes),
-            allow_childprocess: matches!(plugin.contributes, PluginContribution::Agent(_)),
-            data_dir,
-        })
+        .launch(
+            PluginLaunchRequest {
+                plugin_id: plugin_id.clone(),
+                deno_path: inner.config.deno_path.clone(),
+                entrypoint: plugin.package_root.join(entrypoint.to_path_buf()),
+                package_root: plugin.package_root.clone(),
+                permissions: permissions_for(&plugin.contributes),
+                allow_childprocess: matches!(plugin.contributes, PluginContribution::Agent(_)),
+                data_dir,
+            },
+            log,
+        )
         .await;
 
     let LaunchedRuntime {

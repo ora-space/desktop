@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::host_requests::{HostRequestError, HostRequestHandler, NoHostRequests};
+use crate::plugin_log::PluginLogCounters;
 use crate::protocol::{PluginNotification, PluginRegistration, handle_message as handle};
 use crate::state::{PendingRequests, RuntimeInner, RuntimeStatus};
 use crate::tasks::{run_supervisor, run_writer};
@@ -51,6 +52,7 @@ fn test_inner_with_writer() -> (
         pending: Mutex::new(PendingRequests::default()),
         next_request_id: AtomicU64::new(1),
         call_timeout: Duration::from_secs(5),
+        plugin_log: Arc::new(PluginLogCounters::default()),
     };
     (inner, inbound_rx, writer_rx)
 }
@@ -411,6 +413,7 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
         pending: Mutex::new(PendingRequests::default()),
         next_request_id: AtomicU64::new(11),
         call_timeout: Duration::from_millis(1),
+        plugin_log: Arc::new(PluginLogCounters::default()),
     });
     let runtime = PluginRuntime {
         inner: Arc::clone(&inner),
@@ -498,6 +501,23 @@ impl ManagedProcess for ControllableProcess {
     }
 }
 
+/// Starts a plugin-log pipeline whose stderr is already at EOF, for supervisor tests that only
+/// care about process exit ordering.
+fn closed_stderr_pipeline(directory: &std::path::Path) -> crate::plugin_log::PluginLogPipeline {
+    let (_level_tx, level) = watch::channel(ora_logging::LogLevel::Info);
+    crate::plugin_log::start(
+        tokio::io::empty(),
+        "example".to_string(),
+        crate::PluginLogSetup {
+            root: directory.join("logs"),
+            directory: directory.join("logs").join("official").join("example"),
+            host_session_id: "session".to_string(),
+            generation: 1,
+            level,
+        },
+    )
+}
+
 /// Builds a successful platform exit status for the controllable process.
 fn successful_exit_status() -> ExitStatus {
     #[cfg(unix)]
@@ -531,6 +551,7 @@ async fn shutdown_and_wait_blocks_until_the_process_is_reaped() {
         pending: Mutex::new(PendingRequests::default()),
         next_request_id: AtomicU64::new(1),
         call_timeout: Duration::from_secs(5),
+        plugin_log: Arc::new(PluginLogCounters::default()),
     });
     let runtime = PluginRuntime {
         inner: Arc::clone(&inner),
@@ -546,12 +567,15 @@ async fn shutdown_and_wait_blocks_until_the_process_is_reaped() {
         killed: Arc::clone(&killed),
     };
     let (writer_close, _writer_close_rx) = oneshot::channel();
+    let log_dir = tempfile::tempdir().expect("log dir");
     let supervisor = tokio::spawn(run_supervisor(
         process,
         supervisor_rx,
         Arc::clone(&inner),
         Duration::from_secs(1),
         writer_close,
+        closed_stderr_pipeline(log_dir.path()),
+        Duration::from_secs(1),
     ));
 
     let shutdown = tokio::spawn(async move { runtime.shutdown_and_wait().await });
@@ -584,6 +608,7 @@ async fn process_exit_is_visible_to_the_connection_owner() {
         pending: Mutex::new(PendingRequests::default()),
         next_request_id: AtomicU64::new(1),
         call_timeout: Duration::from_secs(5),
+        plugin_log: Arc::new(PluginLogCounters::default()),
     });
     let (process_exited, _) = watch::channel(false);
     let killed = Arc::new(AtomicBool::new(false));
@@ -592,12 +617,15 @@ async fn process_exit_is_visible_to_the_connection_owner() {
         killed: Arc::clone(&killed),
     };
     let (writer_close, _writer_close_rx) = oneshot::channel();
+    let log_dir = tempfile::tempdir().expect("log dir");
     let supervisor = tokio::spawn(run_supervisor(
         process,
         supervisor_rx,
         Arc::clone(&inner),
         Duration::from_secs(1),
         writer_close,
+        closed_stderr_pipeline(log_dir.path()),
+        Duration::from_secs(1),
     ));
 
     process_exited.send_replace(true);
@@ -665,6 +693,7 @@ async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
         specs: std::sync::Mutex::new(Vec::new()),
     };
 
+    let (_level_tx, level) = watch::channel(ora_logging::LogLevel::Info);
     let error = PluginRuntime::launch(
         &spawner,
         crate::PluginRuntimeConfig {
@@ -678,6 +707,17 @@ async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
             shutdown_timeout: Duration::from_secs(1),
         },
         NoHostRequests,
+        crate::PluginLogSetup {
+            root: package_root.path().join("logs"),
+            directory: package_root
+                .path()
+                .join("logs")
+                .join("official")
+                .join("example"),
+            host_session_id: "session".to_string(),
+            generation: 1,
+            level,
+        },
     )
     .await
     .map(|_| ())

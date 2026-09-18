@@ -17,6 +17,16 @@ export {
 } from "./agent_process.ts";
 export type { EffectResourceDeclaration } from "./plugin.ts";
 export {
+  createLogger,
+  createStderrLogSink,
+  type PluginConsole,
+  type PluginLogFields,
+  type PluginLogger,
+  type PluginLoggerDefaults,
+  type PluginLogSink,
+  type SyncByteWriter,
+} from "./logger.ts";
+export {
   createHostProcesses,
   type HostChildProcess,
   type HostChildProcessExit,
@@ -24,16 +34,17 @@ export {
   type HostProcesses,
 } from "./process.ts";
 export {
+  CLAUDE_MCP_CONFIG_V1,
   createPlugin,
   DEFAULT_HOST_REQUEST_TIMEOUT_MS,
   HostRequestError,
   type HostRequestOptions,
   type MethodHandler,
   type NotificationHandler,
+  OPENCODE_MCP_CONFIG_V1,
   Plugin,
   PluginMethodError,
-  CLAUDE_MCP_CONFIG_V1,
-  OPENCODE_MCP_CONFIG_V1,
+  type PluginOptions,
   SKILL_DIRECTORY_V1,
 } from "./plugin.ts";
 export {
@@ -45,7 +56,10 @@ export {
   INVALID_PARAMS,
   type JsonValue,
   METHOD_NOT_FOUND,
+  PLUGIN_LOG_ENVELOPE_V1_PREFIX,
+  PLUGIN_LOG_LEVELS,
   PLUGIN_METHODS,
+  type PluginLogLevel,
   STORAGE_METHODS,
 } from "./protocol/index.ts";
 export {

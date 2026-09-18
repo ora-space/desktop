@@ -179,6 +179,8 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   readonly diagnosticLogs: DiagnosticLogsCapability = {
     downloadToday: () => this.downloadTodayLog(),
+    downloadPluginLog: (pluginId, fileStem) =>
+      this.downloadPluginLog(pluginId, fileStem),
   };
 
   readonly worktreeStorage = {
@@ -255,23 +257,44 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   }
 
   /** Saves the active daily diagnostic log while sharing the adapter's native-dialog lock. */
-  private async downloadTodayLog(): Promise<boolean> {
+  private downloadTodayLog(): Promise<boolean> {
+    return this.saveLogThroughDialog(
+      `ora-logs-${localDateStamp()}.log`,
+      (destination) =>
+        invoke("download_today_log", { request: { destination } }),
+    );
+  }
+
+  /** Saves one plugin's host-owned log while sharing the adapter's native-dialog lock. */
+  private downloadPluginLog(
+    pluginId: string,
+    fileStem: string,
+  ): Promise<boolean> {
+    const stem = fileStem.replace(/[^A-Za-z0-9._-]+/g, "-") || "plugin";
+    return this.saveLogThroughDialog(
+      `ora-plugin-${stem}-${localDateStamp()}.log`,
+      (destination) =>
+        invoke("download_plugin_log", { request: { pluginId, destination } }),
+    );
+  }
+
+  /** Runs one native save dialog and hands the chosen destination to the host copy command. */
+  private async saveLogThroughDialog(
+    defaultPath: string,
+    copy: (destination: string) => Promise<unknown>,
+  ): Promise<boolean> {
     if (this.selectionInProgress) {
       throw new PathSelectionInProgressError();
     }
 
     this.selectionInProgress = true;
     try {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      const day = String(now.getDate()).padStart(2, "0");
       const destination = await save({
-        defaultPath: `ora-logs-${year}-${month}-${day}.log`,
+        defaultPath,
         filters: [{ name: "Log", extensions: ["log"] }],
       });
       if (destination === null) return false;
-      await invoke("download_today_log", { request: { destination } });
+      await copy(destination);
       return true;
     } finally {
       this.selectionInProgress = false;
@@ -282,6 +305,15 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   async openExternalUrl(url: string): Promise<void> {
     await invoke("open_external_url", { request: { url } });
   }
+}
+
+/** Renders the local calendar date as `YYYY-MM-DD` for suggested log file names. */
+function localDateStamp(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /** Creates the Desktop host adapter without runtime platform auto-detection. */

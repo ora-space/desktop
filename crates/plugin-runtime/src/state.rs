@@ -7,6 +7,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 
 use crate::PluginRuntimeError;
+use crate::plugin_log::PluginLogCounters;
 use crate::protocol::{PluginNotification, PluginRegistration};
 
 pub(crate) type PendingResult = Result<Value, PluginRuntimeError>;
@@ -100,6 +101,8 @@ pub(crate) struct RuntimeInner {
     pub pending: Mutex<PendingRequests>,
     pub next_request_id: AtomicU64,
     pub call_timeout: Duration,
+    /// Loss accounting of this generation's plugin log, shared with its reader and writer.
+    pub plugin_log: Arc<PluginLogCounters>,
 }
 
 /// Marks a protocol connection unusable and wakes every waiting caller.

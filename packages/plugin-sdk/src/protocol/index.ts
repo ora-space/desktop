@@ -3,6 +3,7 @@ export * from "./child_process.ts";
 export * from "./constants.ts";
 export * from "./effect.ts";
 export * from "./json.ts";
+export * from "./log.ts";
 export * from "./registration.ts";
 export * from "./storage.ts";
 export * from "./transport.ts";

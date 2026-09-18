@@ -6,9 +6,9 @@ use crate::tests::{
 };
 use crate::{
     ConnectionError, InboundNotification, LaunchedRuntime, PluginCallError, PluginGenerationKey,
-    PluginLaunchRequest, PluginLifecycle, PluginLifecycleConfig, PluginNotification,
-    PluginNotificationSink, PluginRegistration, PluginRuntime, PluginRuntimeExit,
-    PluginRuntimeFailure, PluginRuntimeLauncher, SurfaceCloser,
+    PluginLaunchRequest, PluginLifecycle, PluginLifecycleConfig, PluginLogSetup,
+    PluginNotification, PluginNotificationSink, PluginRegistration, PluginRuntime,
+    PluginRuntimeExit, PluginRuntimeFailure, PluginRuntimeLauncher, SurfaceCloser,
 };
 use ora_contracts::{
     ActivatePluginRequest, PluginDataDisposition, PluginRuntimeStatus, StopPluginRequest,
@@ -85,6 +85,7 @@ impl PluginRuntimeLauncher for ScriptedLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let this = self.clone();

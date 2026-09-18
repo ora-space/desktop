@@ -1,9 +1,11 @@
-//! Owns the per-plugin writable data directory below the Ora data root.
+//! Owns the per-plugin writable data directory and the host-managed plugin log directory below
+//! the Ora data root.
 //!
-//! Installed packages are read-only; this is the only place a plugin may write, and it survives
-//! version upgrades because it is keyed by plugin identity, not by installed version. The
-//! directory levels are the id's namespace and name, which manifest validation already bounds
-//! to slug segments, so they are safe on every platform without further escaping.
+//! Installed packages are read-only; the data directory is the only place a plugin may write,
+//! and both trees survive version upgrades because they are keyed by plugin identity, not by
+//! installed version. The directory levels are the id's namespace and name, which manifest
+//! validation already bounds to slug segments, so they are safe on every platform without
+//! further escaping.
 
 use ora_domain::PluginId;
 use std::io;
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 const PLUGINS_DIRECTORY: &str = "plugins";
 const DATA_DIRECTORY: &str = "data";
 const DOWNLOADS_DIRECTORY: &str = "downloads";
+const LOGS_DIRECTORY: &str = "logs";
 
 /// Creates and locates `<data-dir>/plugins/data/<namespace>/<name>/` directories.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,9 +64,62 @@ impl PluginDataDirectories {
     }
 }
 
+/// Locates `<data-dir>/plugins/logs/<namespace>/<name>/` directories.
+///
+/// This is a third persistent tree beside installed packages and plugin data: `ora/storage/*`
+/// resolves against the data tree, so no logical storage path can reach it, and the log sink
+/// creates it level by level rather than eagerly so a foreign path under a plugin's name is
+/// refused instead of adopted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginLogDirectories {
+    root: PathBuf,
+}
+
+impl PluginLogDirectories {
+    /// Anchors plugin logs below the same data directory that holds packages and plugin data.
+    pub fn new(data_directory: impl Into<PathBuf>) -> Self {
+        Self {
+            root: data_directory
+                .into()
+                .join(PLUGINS_DIRECTORY)
+                .join(LOGS_DIRECTORY),
+        }
+    }
+
+    /// Returns the plugin's log directory without touching the filesystem.
+    pub fn path_for(&self, plugin_id: &PluginId) -> PathBuf {
+        self.root.join(plugin_id.namespace()).join(plugin_id.name())
+    }
+
+    /// Returns the `plugins/logs` root shared by every plugin.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Proves no writer — of any generation, in any host — currently holds the plugin's log.
+    ///
+    /// The caller must hold the plugin's operation lock so no new generation can start between
+    /// this probe and the directory move it guards.
+    pub fn confirm_writer_released(
+        &self,
+        plugin_id: &PluginId,
+    ) -> Result<(), ora_plugin_runtime::PluginLogSinkError> {
+        ora_plugin_runtime::confirm_plugin_log_writer_released(&self.path_for(plugin_id))
+    }
+
+    /// Removes the plugin's log directory if it exists; a missing directory is not an error.
+    pub fn remove(&self, plugin_id: &PluginId) -> io::Result<()> {
+        match std::fs::remove_dir_all(self.path_for(plugin_id)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PluginDataDirectories;
+    use super::{PluginDataDirectories, PluginLogDirectories};
     use ora_domain::PluginId;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -90,6 +146,40 @@ mod tests {
         assert_eq!(
             (first, second, expected.join("downloads").is_dir()),
             (expected.clone(), expected, true),
+        );
+    }
+
+    /// Log directories sit beside, never inside, the data tree and are removed as a whole.
+    #[test]
+    fn log_directories_are_a_sibling_tree_keyed_by_identity() {
+        let temp_dir = TempDir::new().expect("create data directory");
+        let logs = PluginLogDirectories::new(temp_dir.path());
+        let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
+        let directory = logs.path_for(&plugin_id);
+        std::fs::create_dir_all(&directory).expect("create log directory");
+        std::fs::write(directory.join("plugin.log"), "{}\n").expect("write log");
+
+        logs.remove(&plugin_id).expect("remove log directory");
+        logs.remove(&plugin_id).expect("remove missing directory");
+
+        assert_eq!(
+            (
+                directory.clone(),
+                directory.exists(),
+                PluginDataDirectories::new(temp_dir.path())
+                    .path_for(&plugin_id)
+                    .starts_with(logs.root()),
+            ),
+            (
+                temp_dir
+                    .path()
+                    .join("plugins")
+                    .join("logs")
+                    .join("official")
+                    .join("ora.example"),
+                false,
+                false,
+            )
         );
     }
 

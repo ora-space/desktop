@@ -2,8 +2,10 @@ use serde::Deserialize;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 use time::{Date, macros::format_description};
+
+use crate::state::DesktopState;
 
 const LOG_FILE_PREFIX: &str = "ora.log.";
 
@@ -29,6 +31,35 @@ pub async fn download_today_log(
     .await
     .map_err(|error| format!("diagnostic log download task failed: {error}"))?
     .map_err(|error| format!("diagnostic log download failed: {error}"))
+}
+
+/// Carries one installed plugin id and the destination its active log should be copied to.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadPluginLogRequest {
+    plugin_id: String,
+    destination: PathBuf,
+}
+
+/// Copies one plugin's host-owned active log to a user-selected destination.
+///
+/// The log stays private to the host: the frontend names only the plugin, and the file is
+/// copied rather than opened in place so the export cannot become a path into the data root.
+#[tauri::command]
+pub async fn download_plugin_log(
+    state: State<'_, DesktopState>,
+    request: DownloadPluginLogRequest,
+) -> Result<(), String> {
+    let source = state
+        .backend
+        .plugins()
+        .log_file_path(&request.plugin_id)
+        .map_err(|error| format!("failed to resolve the plugin log: {error}"))?;
+    tauri::async_runtime::spawn_blocking(move || fs::copy(source, &request.destination))
+        .await
+        .map_err(|error| format!("plugin log download task failed: {error}"))?
+        .map(|_| ())
+        .map_err(|error| format!("plugin log download failed: {error}"))
 }
 
 /// Copies the newest valid daily Ora log, which is the file used by the active rolling writer.

@@ -7,6 +7,7 @@ import {
   type PluginConfigurationDetails,
   type PluginSettingValue,
 } from "@ora/contracts";
+import type { RuntimeLogLevel } from "@ora/contracts";
 import type { TestHandlers } from "../contracts-transport";
 import { seededAgentPackages } from "./agent-packages";
 
@@ -14,6 +15,8 @@ import { seededAgentPackages } from "./agent-packages";
 export interface PluginMemoryState {
   installedPlugins: InstalledPlugin[];
   pluginConfigurations: Map<string, PluginConfigurationDetails>;
+  /** Host-owned per-plugin log levels; absence means the default `info` applies. */
+  pluginLogLevels: Map<string, RuntimeLogLevel>;
   availablePlugins: AvailablePlugin[];
   /** README text served for one marketplace listing keyed by plugin id. */
   pluginReadmes: Map<string, string>;
@@ -38,6 +41,7 @@ export function createPluginMemory(): PluginMemoryState {
   return {
     installedPlugins,
     pluginConfigurations: new Map(),
+    pluginLogLevels: new Map(),
     availablePlugins: [],
     pluginReadmes: new Map(),
     availablePluginsUpdatedAt: 0n,
@@ -283,9 +287,25 @@ export function pluginHandlers(state: PluginMemoryState) {
       if (idx < 0)
         throw new Error(`installed plugin ${req.pluginId} not found`);
       state.installedPlugins.splice(idx, 1);
-      if (req.dataDisposition === "delete")
+      if (req.dataDisposition === "delete") {
         state.pluginConfigurations.delete(req.pluginId);
+        state.pluginLogLevels.delete(req.pluginId);
+      }
       return { pluginId: req.pluginId };
+    },
+    getPluginLogLevel: async (req) => {
+      const level = state.pluginLogLevels.get(req.pluginId);
+      return {
+        pluginId: req.pluginId,
+        level: level ?? "info",
+        configured: level !== undefined,
+      };
+    },
+    setPluginLogLevel: async (req) => {
+      if (!state.installedPlugins.some((p) => p.id === req.pluginId))
+        throw new Error(`installed plugin ${req.pluginId} not found`);
+      state.pluginLogLevels.set(req.pluginId, req.level);
+      return { pluginId: req.pluginId, level: req.level, configured: true };
     },
     importPlugin: async (req) => {
       const target = state.importTarget;

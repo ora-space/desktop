@@ -166,6 +166,9 @@ user-chosen destination and is therefore refused in `auto` at manifest validatio
   web-profile/         persistent web profile (never exposed to any page)
 ```
 
+Plugin logs are not part of this tree: they live beside it under `<data-dir>/plugins/logs/`, see
+[Plugin Logging](plugin-logging.md).
+
 A download is attributed solely by the webview label. The disposition is selected against the
 initiating page URL frozen at request time, the file is reserved as a unique `.part` in the
 plugin's `webview/downloads/` directory (`ora-utils::fs` sanitization and collision handling),

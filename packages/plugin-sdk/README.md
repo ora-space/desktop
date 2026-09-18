@@ -23,10 +23,32 @@ four-byte big-endian length, followed by the one-byte JSON-RPC frame type and a
 UTF-8 JSON payload. Frames larger than 16 MiB and malformed host messages stop
 the plugin.
 
-When the default Deno transport starts, the SDK redirects all `console` methods
-to stderr so normal plugin diagnostics cannot corrupt stdout. Plugins receive no
-Deno permissions unless the Ora host grants them when launching the process; ui
-plugins receive none at all and reach their data through the storage client
+Plugin diagnostics go through `plugin.logger`, which writes structured records
+to stderr; the Ora host persists them into the plugin's own log file, filtered
+by the level the user chose for that plugin, and never into its own runtime log.
+When `run()` starts with the default Deno transport, the SDK — before it writes
+the first protocol frame — also routes five `console` methods through that
+logger (`console.debug` → `DEBUG`, `console.info`/`log` → `INFO`,
+`console.warn` → `WARN`, `console.error` → `ERROR`) so multi-line output stays
+one record and nothing ever reaches stdout, which carries the protocol. The
+takeover is never undone: it survives initialization failures, `ora/shutdown`,
+and the end of every handler, and dependencies calling the global methods later
+go through it too. Output before `run()` (module evaluation, `createPlugin`,
+`registerMethod` bodies), methods captured before the takeover, other workers,
+and other `console` methods are outside that guarantee. If the console cannot be
+taken over, `run()` throws before entering protocol operation.
+
+```ts
+plugin.logger.info("synced", { target: "sync", context: { items: 3 } });
+plugin.logger.error("sync failed", { error }); // Error objects render bounded
+const log = plugin.logger.child({ target: "db" }); // defaults for a component
+```
+
+Logging never throws: circular values, `BigInt`, throwing getters, and oversized
+payloads degrade to bounded descriptions. The logger exposes no file path,
+plugin id, or correlation field — the host stamps those itself. Plugins receive
+no Deno permissions unless the Ora host grants them when launching the process;
+ui plugins receive none at all and reach their data through the storage client
 below.
 
 `run()` sends a single `ora/register` notification, serves host traffic until it
@@ -55,10 +77,11 @@ and resolves with its result. Host methods need no declaration; Ora answers
 stopped first).
 
 `createStorage(plugin)` (also available as `ui.storage` from `defineUiPlugin`)
-wraps the `ora/storage/*` methods. Paths are logical, slash-separated, and
-relative to the plugin's private data directory; Ora resolves them by the
-calling plugin's identity and refuses absolute paths, `..`, symlinks, and the
-host-owned `web-profile/` directory.
+wraps the `ora/storage/*` methods. Paths are logical, slash-separated, and never
+reach the host-owned `web-profile/` directory or the plugin log, which lives
+outside the data directory entirely; they are relative to the plugin's private
+data directory; Ora resolves them by the calling plugin's identity and refuses
+absolute paths, `..`, symlinks, and the host-owned `web-profile/` directory.
 
 ```ts
 const entries = await storage.list("downloads"); // [{ name, kind, sizeBytes }]
@@ -202,8 +225,8 @@ attempt, so Ora reports it once and stops retrying that agent.
 
 ### Model discovery
 
-`listModels` is called on demand — when a user opens a chat surface or a workflow
-inspector — never as part of bringing the agent up, and it receives the
+`listModels` is called on demand — when a user opens a chat surface or a
+workflow inspector — never as part of bringing the agent up, and it receives the
 Workspace directory the models are being listed for. Ora keeps no copy of the
 answer: the plugin owns the catalog and decides when its own cache is stale.
 Returning an empty list is a valid answer for an agent that has no models to
@@ -215,13 +238,13 @@ means discovery has to run one. Do that on a **separate, one-shot agent
 process**, and ask the host to start it:
 
 ```ts
-listModels: async ({ cwd }) => {
+listModels: (async ({ cwd }) => {
   const probe = await spawnAgentProcess(processes, {
     packageCommand: "bin/opencode",
     command: "opencode",
   }, { args: ["acp", "--cwd", cwd], cwd });
   // initialize → session/new(cwd) → read config_options → end the process
-}
+});
 ```
 
 Two constraints, both load-bearing:

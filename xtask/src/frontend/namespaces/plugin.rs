@@ -126,6 +126,22 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "getPluginLogLevel",
+        namespace: NAMESPACE,
+        member_name: "getLogLevel",
+        request_type: "GetPluginLogLevelRequest",
+        response_type: "PluginLogLevelResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "setPluginLogLevel",
+        namespace: NAMESPACE,
+        member_name: "setLogLevel",
+        request_type: "SetPluginLogLevelRequest",
+        response_type: "PluginLogLevelResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "installPlugin",
         namespace: NAMESPACE,
         member_name: "install",

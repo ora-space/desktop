@@ -1,8 +1,8 @@
 use super::{
     DenoPermission, InboundNotification, LaunchedRuntime, PluginCallError, PluginLaunchRequest,
-    PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError, PluginNotificationSink,
-    PluginRegistration, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
-    PluginRuntimeLauncher, PluginStatusPublisher, ReadScope,
+    PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError, PluginLogSetup,
+    PluginNotificationSink, PluginRegistration, PluginRuntime, PluginRuntimeExit,
+    PluginRuntimeFailure, PluginRuntimeLauncher, PluginStatusPublisher, ReadScope,
 };
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, InstalledPlugin, InstalledPluginContribution,
@@ -29,7 +29,7 @@ pub(super) fn trace_logging_guard() -> tracing::subscriber::DefaultGuard {
 }
 
 /// Opens lifecycle state for tests that never cross the external runtime boundary.
-fn open_without_runtime(
+pub(super) fn open_without_runtime(
     data_directory: &Path,
 ) -> PluginLifecycle<UnusedRuntimeLauncher, NoopStatusPublisher, NoopNotificationSink> {
     PluginLifecycle::open(
@@ -46,7 +46,7 @@ fn open_without_runtime(
 
 /// Rejects accidental launches in lifecycle tests that do not exercise process behavior.
 #[derive(Clone)]
-struct UnusedRuntimeLauncher;
+pub(super) struct UnusedRuntimeLauncher;
 
 impl PluginRuntimeLauncher for UnusedRuntimeLauncher {
     type Runtime = FakeRuntime;
@@ -55,6 +55,7 @@ impl PluginRuntimeLauncher for UnusedRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         async { Err(PluginRuntimeFailure::new("runtime launch was not expected")) }
@@ -63,7 +64,7 @@ impl PluginRuntimeLauncher for UnusedRuntimeLauncher {
 
 /// Discards invalidations in tests that assert only returned lifecycle snapshots.
 #[derive(Clone)]
-struct NoopStatusPublisher;
+pub(super) struct NoopStatusPublisher;
 
 impl PluginStatusPublisher for NoopStatusPublisher {
     /// Intentionally ignores an invalidation outside event-focused tests.
@@ -83,7 +84,7 @@ impl PluginNotificationSink for NoopNotificationSink {
 ///
 /// The sender is leaked on purpose: dropping it would close the stream and make the lifecycle
 /// treat every fake launch as a dead reader.
-fn launched_runtime<Runtime>(runtime: Runtime) -> LaunchedRuntime<Runtime> {
+pub(super) fn launched_runtime<Runtime>(runtime: Runtime) -> LaunchedRuntime<Runtime> {
     let (sender, notifications) = mpsc::unbounded_channel();
     std::mem::forget(sender);
     LaunchedRuntime {
@@ -910,6 +911,7 @@ impl PluginRuntimeLauncher for ControllableRuntimeLauncher {
     fn launch(
         &self,
         request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let launched = self.launched.clone();
@@ -933,7 +935,7 @@ impl PluginRuntimeLauncher for ControllableRuntimeLauncher {
 
 /// Represents a running fake whose failure future remains pending for this test.
 #[derive(Clone)]
-struct FakeRuntime;
+pub(super) struct FakeRuntime;
 
 impl PluginRuntime for FakeRuntime {
     /// Stops immediately because this test exercises activation rather than shutdown timing.
@@ -974,6 +976,7 @@ impl PluginRuntimeLauncher for FailureRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let runtime = self.runtime.clone();
@@ -1045,6 +1048,7 @@ impl PluginRuntimeLauncher for ImmediateRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let runtime = self.runtime.clone();
@@ -1143,6 +1147,7 @@ impl PluginRuntimeLauncher for QueuedRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
+        _log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
     {
         let runtime = self.runtime.clone();

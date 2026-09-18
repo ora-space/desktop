@@ -3,7 +3,8 @@
 //! The plugin never names itself: a `PluginStorage` is built at launch for exactly one plugin
 //! and resolves every logical path below `<data-dir>/plugins/data/<namespace>/<name>/`. Logical
 //! paths are portable relative paths; anything absolute, parent-traversing, symlinked, or under
-//! the host-owned `web-profile/` directory is refused before the filesystem is touched.
+//! the host-owned `web-profile/` directory is refused before the filesystem is touched. Plugin
+//! logs live in a sibling tree outside this root, so no logical path can reach them.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
