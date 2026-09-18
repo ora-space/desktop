@@ -63,7 +63,7 @@ impl<R: GitRunner> Git<R> {
             request.repository.root().as_path().to_path_buf(),
             vec![
                 "for-each-ref".to_string(),
-                "--format=%(refname:short)".to_string(),
+                "--format=%(refname:lstrip=2)".to_string(),
                 "refs/heads".to_string(),
             ],
             GitEnv::default(),
@@ -254,7 +254,7 @@ mod tests {
                 repository.root().as_path().to_path_buf(),
                 vec![
                     "for-each-ref".to_string(),
-                    "--format=%(refname:short)".to_string(),
+                    "--format=%(refname:lstrip=2)".to_string(),
                     "refs/heads".to_string(),
                 ],
                 crate::GitEnv::default(),
@@ -289,7 +289,7 @@ mod tests {
                     repository.root().as_path().to_path_buf(),
                     vec![
                         "for-each-ref".to_string(),
-                        "--format=%(refname:short)".to_string(),
+                        "--format=%(refname:lstrip=2)".to_string(),
                         "refs/heads".to_string(),
                     ],
                     crate::GitEnv::default(),

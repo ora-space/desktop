@@ -240,6 +240,16 @@ impl WorktreeExecutionSpec {
 }
 
 impl WorktreeExecutionResult {
+    /// Supplies historical origin without exposing Worktree variants to generic status validation.
+    pub(crate) fn node(&self) -> &NodeRuntimeIdentity {
+        match self {
+            Self::Ready(result) => &result.node,
+            Self::Failed(result) => &result.node,
+            Self::Removed(result) => &result.node,
+            Self::RemovalFailed(result) => &result.node,
+        }
+    }
+
     /// Applies the invariants owned by the concrete terminal result variant.
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         match self {

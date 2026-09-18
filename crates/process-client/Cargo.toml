@@ -1,0 +1,15 @@
+[package]
+name = "ora-process-client"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-process-protocol = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "time"] }

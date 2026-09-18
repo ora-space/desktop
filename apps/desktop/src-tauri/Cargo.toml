@@ -64,7 +64,7 @@ uuid = { version = "1", features = ["v5"] }
 [dev-dependencies]
 ora-fs = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { workspace = true, features = ["bundled"] }
 tauri = { version = "2.11.5", features = ["test"] }
 tokio = { version = "1", features = ["rt", "test-util"] }
 tracing-subscriber = "0.3"

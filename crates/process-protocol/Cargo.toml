@@ -1,0 +1,16 @@
+[package]
+name = "ora-process-protocol"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-utils = { path = "../utils", default-features = false }
+uuid = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+rmp-serde = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

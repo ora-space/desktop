@@ -5,6 +5,46 @@ use serde_json::json;
 #[path = "session/fixtures.rs"]
 mod fixtures;
 
+/// A clone-only Node is valid without claiming an unimplemented Worktree capability.
+#[tokio::test]
+async fn accepts_independent_and_combined_execution_capabilities() -> Result<(), TestError> {
+    for (capabilities, wire) in [
+        (
+            vec![NodeCapability::RepositoryClone],
+            json!(["repository_clone"]),
+        ),
+        (
+            vec![
+                NodeCapability::RepositoryClone,
+                NodeCapability::WorktreeExecution,
+            ],
+            json!(["repository_clone", "worktree_execution"]),
+        ),
+    ] {
+        let mut case = fixtures::hello_accepted();
+        let Message::Node(NodeToControllerMessage::HelloAccepted(message)) = &mut case.message
+        else {
+            panic!("expected handshake")
+        };
+        message.payload.capabilities = capabilities;
+        case.wire["payload"]["capabilities"] = wire;
+        case.assert_wire().await?;
+        case.assert_round_trip().await?;
+    }
+    let mut wire = fixtures::hello_accepted().wire;
+    wire["payload"]["capabilities"] = json!(["repository_clone", "repository_clone"]);
+    reject_semantics(
+        Peer::Node,
+        &wire,
+        "duplicate clone capability",
+        MessageValidationError::DuplicateCapability,
+    )
+    .await?;
+    wire["payload"]["capabilities"] = json!(["unknown_execution"]);
+    reject_structure(Peer::Node, &wire, "unknown capability").await;
+    Ok(())
+}
+
 /// Returns the Node identity attached to every result fixture.
 pub(super) fn node() -> NodeRuntimeIdentity {
     NodeRuntimeIdentity {
@@ -48,7 +88,7 @@ async fn rejects_inconsistent_handshakes() -> Result<(), TestError> {
             fixtures::hello_accepted(),
             "/payload/capabilities",
             json!([]),
-            MessageValidationError::WorktreeCapabilityMissing,
+            MessageValidationError::NoExecutionCapabilities,
         ),
         (
             fixtures::hello_accepted(),

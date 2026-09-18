@@ -10,6 +10,7 @@ use std::collections::HashSet;
 #[serde(rename_all = "snake_case")]
 pub enum NodeCapability {
     WorktreeExecution,
+    RepositoryClone,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.
@@ -112,8 +113,8 @@ impl ValidateMessage for HelloAcceptedMessage {
                 return Err(MessageValidationError::DuplicateCapability);
             }
         }
-        if !capabilities.contains(&NodeCapability::WorktreeExecution) {
-            return Err(MessageValidationError::WorktreeCapabilityMissing);
+        if capabilities.is_empty() {
+            return Err(MessageValidationError::NoExecutionCapabilities);
         }
         Ok(())
     }

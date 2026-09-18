@@ -3,6 +3,9 @@ use super::support::*;
 use ora_node_protocol::*;
 use serde_json::json;
 
+#[path = "worktree/completed.rs"]
+mod completed;
+
 #[path = "worktree/fixtures.rs"]
 mod fixtures;
 #[path = "worktree/rejections.rs"]

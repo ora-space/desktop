@@ -1,13 +1,12 @@
-//! Execution evidence currently depends on Worktree terminal results; a second capability
-//! should drive any future result-set abstraction.
+//! Execution status checks business-independent state and historical result ownership.
 
 use super::validation::{
     MessageValidationError, ValidateMessage, validate_execution_ids, validate_identity,
     validate_protocol_version,
 };
 use crate::{
-    ExecutionId, NodeId, NodeRuntimeIdentity, OperationId, ProtocolVersion, Sequence,
-    WorktreeExecutionResult,
+    ExecutionId, ExecutionResult, NodeId, NodeRuntimeIdentity, OperationId, ProtocolVersion,
+    Sequence,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +31,7 @@ pub enum ExecutionState {
     Unknown,
     Accepted,
     Running,
-    Completed(WorktreeExecutionResult),
+    Completed(ExecutionResult),
 }
 
 /// Execution status associated with the Node incarnation reporting it.
@@ -122,15 +121,8 @@ impl ValidateMessage for ExecutionStatusMessage {
             .validate()
             .map_err(|field| MessageValidationError::EmptyField { field })?;
         if let ExecutionState::Completed(result) = &payload.state {
-            result
-                .validate()
-                .map_err(|field| MessageValidationError::EmptyField { field })?;
-            let result_node = match result {
-                WorktreeExecutionResult::Ready(result) => &result.node,
-                WorktreeExecutionResult::Failed(result) => &result.node,
-                WorktreeExecutionResult::Removed(result) => &result.node,
-                WorktreeExecutionResult::RemovalFailed(result) => &result.node,
-            };
+            result.validate()?;
+            let result_node = result.node();
             // Restarted Nodes may report retained results without rewriting their origin.
             if payload.node.node_id != result_node.node_id {
                 return Err(MessageValidationError::CompletedNodeMismatch {

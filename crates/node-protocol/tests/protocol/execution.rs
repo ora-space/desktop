@@ -1,6 +1,5 @@
 use super::session::node;
 use super::support::*;
-use super::worktree::{failed_result, ready_result, removal_failed_result, removed_result};
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -69,7 +68,7 @@ async fn rejects_versions_directions_and_payloads() -> Result<(), TestError> {
 /// Rejects illegal state tags and result combinations before semantic validation.
 #[tokio::test]
 async fn rejects_structural_state_contradictions() -> Result<(), TestError> {
-    let case = fixtures::execution_status();
+    let case = fixtures::execution_status_running();
     receive(case.peer(), &case.wire).await?;
     for state in [
         json!({"state":"completed"}),
@@ -77,50 +76,11 @@ async fn rejects_structural_state_contradictions() -> Result<(), TestError> {
         json!({"state":"accepted","result":{}}),
         json!({"state":"running","result":{}}),
         json!({"state":"invalid"}),
-        json!({"state":"completed","result":{"kind":"ready","result":{}}}),
+        json!({"state":"completed","result":{"kind":"invalid","result":{}}}),
     ] {
         let mut wire = case.wire.clone();
         replace(&mut wire, "/payload/state", state);
         reject_structure(case.peer(), &wire, "/payload/state").await;
-    }
-    Ok(())
-}
-
-/// Preserves historical incarnations and rejects cross-Node results in all four terminal shapes.
-#[tokio::test]
-async fn completed_results_preserve_incarnations_and_reject_other_nodes() -> Result<(), TestError> {
-    for mut case in [
-        fixtures::execution_status(),
-        fixtures::execution_status_failed(),
-        fixtures::execution_status_removed(),
-        fixtures::execution_status_removal_failed(),
-    ] {
-        let Message::Node(NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage {
-            payload,
-            ..
-        })) = &mut case.message
-        else {
-            panic!("expected status fixture")
-        };
-        payload.node.incarnation_id = NodeIncarnationId::new("incarnation-2");
-        replace(
-            &mut case.wire,
-            "/payload/node/incarnation_id",
-            json!("incarnation-2"),
-        );
-        case.assert_wire().await?;
-        case.assert_round_trip().await?;
-        replace(&mut case.wire, "/payload/node/node_id", json!("node-2"));
-        reject_semantics(
-            case.peer(),
-            &case.wire,
-            "/payload/node/node_id",
-            MessageValidationError::CompletedNodeMismatch {
-                reporter: NodeId::new("node-2"),
-                result: NodeId::new("node-1"),
-            },
-        )
-        .await?;
     }
     Ok(())
 }

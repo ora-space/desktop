@@ -9,7 +9,9 @@ mod identity;
 mod message;
 
 pub use domain::{
-    BranchName, CommitId, GitRef, MainWorkspaceBinding, NodePath, RepositoryRef,
+    BranchName, CloneExecutionResult, CloneExecutionSpec, CloneFailed, CloneFailureCode,
+    CloneReady, CloneRepositoryUrl, CloneResidual, CommitId, ExecutionResult, GitRef,
+    InvalidCloneRepositoryUrl, MainWorkspaceBinding, NodePath, RepositoryRef,
     WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed, WorktreeFailure,
     WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
     WorktreeRemovalOutcome, WorktreeRemoved,
@@ -20,14 +22,15 @@ pub use frame::{
 };
 pub use identity::{
     CURRENT_PROTOCOL_VERSION, ControllerId, ExecutionId, NodeId, NodeIncarnationId,
-    NodeRuntimeIdentity, OperationId, ProtocolVersion, RequestId, Sequence, WorkspaceId,
-    WorktreeId,
+    NodeRuntimeIdentity, OperationId, ProtocolVersion, RepositoryId, RequestId, Sequence,
+    WorkspaceId, WorktreeId,
 };
 pub use message::{
-    ControllerToNodeMessage, EnsureWorktree, EnsureWorktreeMessage, EventAck, EventAckMessage,
-    ExecutionState, ExecutionStatus, ExecutionStatusMessage, GetExecutionStatus,
-    GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello, HelloAccepted,
-    HelloAcceptedMessage, HelloMessage, MessageValidationError, NodeCapability,
-    NodeToControllerMessage, RemoveWorktree, RemoveWorktreeMessage, WorktreeFailedMessage,
-    WorktreeReadyMessage, WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
+    CloneRepository, CloneRepositoryMessage, CloneResultMessage, ControllerToNodeMessage,
+    EnsureWorktree, EnsureWorktreeMessage, EventAck, EventAckMessage, ExecutionState,
+    ExecutionStatus, ExecutionStatusMessage, GetExecutionStatus, GetExecutionStatusMessage,
+    Heartbeat, HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
+    MessageValidationError, NodeCapability, NodeToControllerMessage, RemoveWorktree,
+    RemoveWorktreeMessage, ValidateMessage, WorktreeFailedMessage, WorktreeReadyMessage,
+    WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
 };

@@ -29,7 +29,7 @@ proc-macro2 = { workspace = true, optional = true, features = ["span-locations"]
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true, optional = true }
 syn = { workspace = true, optional = true, features = ["full", "visit"] }
@@ -44,6 +44,9 @@ zip = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 flate2 = { workspace = true }

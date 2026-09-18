@@ -1,4 +1,5 @@
 mod execution;
+mod repository;
 mod session;
 mod validation;
 mod worktree;
@@ -7,13 +8,14 @@ pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
     GetExecutionStatus, GetExecutionStatusMessage,
 };
+pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage};
 use serde::{Deserialize, Serialize};
 pub use session::{
     Heartbeat, HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
     NodeCapability,
 };
 pub use validation::MessageValidationError;
-pub(crate) use validation::ValidateMessage;
+pub use validation::ValidateMessage;
 pub use worktree::{
     EnsureWorktree, EnsureWorktreeMessage, RemoveWorktree, RemoveWorktreeMessage,
     WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
@@ -25,6 +27,7 @@ pub use worktree::{
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum ControllerToNodeMessage {
     Hello(HelloMessage),
+    CloneRepository(CloneRepositoryMessage),
     EnsureWorktree(EnsureWorktreeMessage),
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
@@ -36,6 +39,7 @@ impl ValidateMessage for ControllerToNodeMessage {
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
             Self::Hello(message) => message.validate(),
+            Self::CloneRepository(message) => message.validate(),
             Self::EnsureWorktree(message) => message.validate(),
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),
@@ -48,6 +52,7 @@ impl ValidateMessage for ControllerToNodeMessage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum NodeToControllerMessage {
+    CloneResult(CloneResultMessage),
     HelloAccepted(HelloAcceptedMessage),
     Heartbeat(HeartbeatMessage),
     ExecutionStatus(ExecutionStatusMessage),
@@ -61,6 +66,7 @@ impl ValidateMessage for NodeToControllerMessage {
     /// Dispatches validation without introducing business rules into the codec.
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
+            Self::CloneResult(message) => message.validate(),
             Self::HelloAccepted(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),
             Self::ExecutionStatus(message) => message.validate(),

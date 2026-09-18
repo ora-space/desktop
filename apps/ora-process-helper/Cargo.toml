@@ -1,0 +1,14 @@
+[package]
+name = "ora-process-helper"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ora-process-runtime = { workspace = true }
+tokio = { workspace = true, features = ["rt", "signal", "macros", "net", "time"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

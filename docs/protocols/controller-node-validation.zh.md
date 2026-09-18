@@ -8,6 +8,18 @@
 的 `rejections.rs` 子模块。接收反例使用独立 JSON 和手工 framing，不经过公共 writer。
 语义反例还反序列化为无效 typed message 后调用 writer，检查相同的精确错误和空输出。
 
+## Clone 结果扩展（2026-09-18）
+
+当前共 36 项测试。`repository.rs` 拥有 clone 请求测试，`repository_results.rs` 拥有成功／失败
+样例及其 `clone_result` 事件、Completed 查询两种形态，包含保留残留和无自有目录的失败。
+覆盖精确 wire／分片 I/O、输入与结果 Node 冲突、历史实例、目标／commit 校验、原始诊断拒绝及
+与 Worktree 不重叠的标签。`session::accepts_independent_and_combined_execution_capabilities`
+覆盖 clone-only、组合声明以及重复／未知能力拒绝。
+
+Worktree Completed 样例和字段表移到 `worktree/completed/`；`execution/` 只保留通用命令及
+非终态结构测试，两种业务各自调用共享的历史报告者断言。Worktree 持久编码及数据库 schema 不变。
+这些测试不证明 clone 执行、会话派发能力检查或 Controller 接管。
+
 ## 证据及原 17 个测试的迁移
 
 | 保证／原覆盖                                                             | 当前证据                                                                                                                                    | 状态                  |
@@ -19,7 +31,7 @@
 | 全局版本和握手矩阵                                                       | 各业务的 `rejects_versions_directions_and_payloads`；`session::rejects_inconsistent_handshakes` 使用具名 Hello 和 HelloAccepted fixture     | 已保留                |
 | 错方向、不匹配 payload、缺失 type/version/payload/sequence               | 业务信封检查及必填字段表覆盖每种消息形状的双向限制                                                                                          | 已保留                |
 | 未知 state、Completed 缺失 result、非终态附带 result、不完整终态 payload | `execution::rejects_structural_state_contradictions`                                                                                        | 已保留                |
-| 四种 Completed 保留历史实例且拒绝其他 Node                               | `execution::completed_results_preserve_incarnations_and_reject_other_nodes`：独立 wire 与 typed fixture、分片往返、精确收发错误及零写入     | 已保留                |
+| 四种 Completed 保留历史实例且拒绝其他 Node                               | `worktree::completed::preserves_completed_worktree_contracts`：独立 wire 与 typed fixture、分片往返、精确收发错误及零写入                   | 已保留                |
 | 透明的 operation identity                                                | `execution::serializes_identity_consistently_across_messages`                                                                               | 已保留                |
 | 接受的 opaque 字符串及未知扩展字段                                       | 字段测试给所有 opaque 字符串加空白后比较完整 wire/typed message；wire 测试添加未知信封及 payload 字段后比较解码消息                         | 新增直接证据          |
 

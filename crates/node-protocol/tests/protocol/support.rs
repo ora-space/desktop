@@ -133,6 +133,37 @@ pub(super) struct Case {
 }
 
 impl Case {
+    /// Checks reporter identity independently of the business that owns a Completed payload.
+    pub async fn assert_historical_node(mut self) -> Result<(), TestError> {
+        let Message::Node(NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage {
+            payload,
+            ..
+        })) = &mut self.message
+        else {
+            panic!("expected status fixture")
+        };
+        payload.node.incarnation_id = NodeIncarnationId::new("incarnation-2");
+        replace(
+            &mut self.wire,
+            "/payload/node/incarnation_id",
+            json!("incarnation-2"),
+        );
+        self.assert_wire().await?;
+        self.assert_round_trip().await?;
+        replace(&mut self.wire, "/payload/node/node_id", json!("node-2"));
+        reject_semantics(
+            self.peer(),
+            &self.wire,
+            "/payload/node/node_id",
+            MessageValidationError::CompletedNodeMismatch {
+                reporter: NodeId::new("node-2"),
+                result: NodeId::new("node-1"),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Verifies both public codec paths against independently authored expectations.
     pub async fn assert_wire(&self) -> Result<(), TestError> {
         let bytes = framed(NODE_MESSAGE_FRAME_TYPE, &serde_json::to_vec(&self.wire)?)?;

@@ -10,20 +10,34 @@ Receive counterexamples start with independent JSON and manual framing, never th
 Semantic counterexamples also deserialize into invalid typed messages and exercise the writer,
 checking the exact same error and empty output.
 
+## Clone result extension (2026-09-18)
+
+The suite now has 36 tests. Clone requests live in `repository.rs`; `repository_results.rs` owns
+success/failure fixtures through both `clone_result` events and Completed queries, including retained
+and no-owned-directory failures. Tests cover exact wire/fragmented I/O, input/result Node mismatch,
+historical incarnations, destination/commit validation, forbidden raw diagnostics and disjoint Worktree tags.
+`session::accepts_independent_and_combined_execution_capabilities` covers clone-only and combined
+declarations plus duplicate/unknown rejection.
+
+Worktree Completed fixtures and field tables moved into `worktree/completed/`.
+`execution/` now tests only common commands and nonterminal state structure; the shared historical
+reporter assertion is invoked by both businesses. Worktree persisted encodings and database schema
+are unchanged. These tests do not prove clone execution, session capability enforcement or Controller takeover.
+
 ## Evidence and migration from the 17-test baseline
 
-| Guarantee / former coverage                                                                                 | Current evidence                                                                                                                                                                  | Status                        |
-| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Both global round-trip tests                                                                                | `session::round_trips_messages`, `worktree::round_trips_messages`, `execution::round_trips_messages`; whole-message equality through a three-byte duplex buffer                   | Covered                       |
-| Hello-only fixed envelope sample                                                                            | Each business's `preserves_wire_shapes`: independent JSON versus writer output, and manually framed JSON versus complete typed reader output                                      | Expanded                      |
-| Clean EOF, truncated header/payload, zero/oversized length, unknown type, malformed JSON and oversized send | All eight tests in `framing.rs`, including zero output on oversized send                                                                                                          | Retained                      |
-| Global missing/empty string scan                                                                            | Each business's `rejects_missing_and_empty_fields`, with separate explicit required-path and nonempty-string tables                                                               | Migrated, no schema inference |
-| Global versions and handshake matrix                                                                        | Each business's `rejects_versions_directions_and_payloads`; `session::rejects_inconsistent_handshakes` uses named Hello and HelloAccepted fixtures                                | Retained                      |
-| Opposite directions, mismatched payload, missing type/version/payload/sequence                              | Business envelope checks and required-field tables cover every message shape in both peer directions                                                                              | Retained                      |
-| Unknown state, missing Completed result, result on nonterminal state, incomplete terminal payload           | `execution::rejects_structural_state_contradictions`                                                                                                                              | Retained                      |
-| Four Completed variants retain history and reject another Node                                              | `execution::completed_results_preserve_incarnations_and_reject_other_nodes`: independent wire and typed fixtures, fragmented round-trip, exact receive/send error and zero writes | Retained                      |
-| Transparent operation identities                                                                            | `execution::serializes_identity_consistently_across_messages`                                                                                                                     | Retained                      |
-| Accepted opaque strings and unknown extension fields                                                        | Field tests pad every opaque string and compare complete wire/typed messages; wire tests add unknown envelope and payload fields and compare decoded messages                     | Added direct evidence         |
+| Guarantee / former coverage                                                                                 | Current evidence                                                                                                                                                    | Status                        |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Both global round-trip tests                                                                                | `session::round_trips_messages`, `worktree::round_trips_messages`, `execution::round_trips_messages`; whole-message equality through a three-byte duplex buffer     | Covered                       |
+| Hello-only fixed envelope sample                                                                            | Each business's `preserves_wire_shapes`: independent JSON versus writer output, and manually framed JSON versus complete typed reader output                        | Expanded                      |
+| Clean EOF, truncated header/payload, zero/oversized length, unknown type, malformed JSON and oversized send | All eight tests in `framing.rs`, including zero output on oversized send                                                                                            | Retained                      |
+| Global missing/empty string scan                                                                            | Each business's `rejects_missing_and_empty_fields`, with separate explicit required-path and nonempty-string tables                                                 | Migrated, no schema inference |
+| Global versions and handshake matrix                                                                        | Each business's `rejects_versions_directions_and_payloads`; `session::rejects_inconsistent_handshakes` uses named Hello and HelloAccepted fixtures                  | Retained                      |
+| Opposite directions, mismatched payload, missing type/version/payload/sequence                              | Business envelope checks and required-field tables cover every message shape in both peer directions                                                                | Retained                      |
+| Unknown state, missing Completed result, result on nonterminal state, incomplete terminal payload           | `execution::rejects_structural_state_contradictions`                                                                                                                | Retained                      |
+| Four Completed variants retain history and reject another Node                                              | `worktree::completed::preserves_completed_worktree_contracts`: independent wire and typed fixtures, fragmented round-trip, exact receive/send error and zero writes | Retained                      |
+| Transparent operation identities                                                                            | `execution::serializes_identity_consistently_across_messages`                                                                                                       | Retained                      |
+| Accepted opaque strings and unknown extension fields                                                        | Field tests pad every opaque string and compare complete wire/typed messages; wire tests add unknown envelope and payload fields and compare decoded messages       | Added direct evidence         |
 
 ### Field coverage inventory
 
@@ -46,7 +60,7 @@ must actually remove a field.
 | Execution Unknown / Accepted / Running                       | operation/execution IDs, reporter Node pair, state tag                                                                                                   | All four IDs; nonterminal states reject a result                                                            |
 | Execution Completed Ready / Failed / Removed / RemovalFailed | status fields plus result kind and the corresponding complete Worktree result fields above                                                               | All outer and nested opaque strings; reporter/result persistent NodeIds must agree, incarnations may differ |
 
-Fixed wire fixtures cover all 12 message variants, all six Worktree messages with and without
+The historical baseline fixed wire fixtures covered all 12 message variants, all six Worktree messages with and without
 `request_id`, Unknown/Accepted/Running, Completed with each of the four terminal variants, and
 Removed/AlreadyAbsent removal outcomes. Expected JSON uses literal objects, not serialization of
 spec or result types. JSON object order is not contractual. Adding messages or fields requires
@@ -57,7 +71,7 @@ the 25 legal fixtures against the former scanner’s coverage, including optiona
 ## Validation and limits
 
 Independent wire tests passed on the unchanged implementation alongside the original 17 tests
-(20 tests at that stage). After migration and production refactoring, all 24 integration tests pass.
+(20 tests at that stage). After the original migration and production refactoring, all 24 integration tests passed.
 `cargo test -p ora-node-protocol` and
 `cargo clippy -p ora-node-protocol --all-targets -- -D warnings` pass.
 

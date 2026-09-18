@@ -37,6 +37,10 @@ string_identity!(
 );
 string_identity!(NodeId, "Persistent identity of one execution Node.");
 string_identity!(
+    RepositoryId,
+    "Node-scoped identity of a separately acquired repository."
+);
+string_identity!(
     NodeIncarnationId,
     "Identity of one running incarnation of a Node."
 );

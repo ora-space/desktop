@@ -2,6 +2,9 @@
 
 [English](controller-node-protocol.md) | 中文
 
+> 最小闭环已调整为[clone 指定仓库与分支](../node/minimal-loop.zh.md)。请求、终态结果、状态校验和能力
+> 声明已实现；持久 clone 执行与会话编排尚未接通，clone 不依赖已有 Main Workspace。
+
 `ora-node-protocol` 定义 Controller–Node 会话消息和 Worktree 执行的 version 1 wire 契约，
 提供类型化消息和带校验的异步 frame codec。Transport、会话编排、Git 操作和持久执行由消费端负责。
 
@@ -21,10 +24,48 @@ payload 类型。`*Message` 结构明确声明各消息必需和可选的 metada
 信封，不增加业务 namespace 或包装层。Worktree `request_id` 缺省时省略，不输出 null。
 
 `identity.rs` 拥有 `NodeRuntimeIdentity` 及其校验；Worktree 输入、事实、失败和终态结果的
-不变量保留在 `domain/worktree.rs`。Execution 的 `Completed` 仍直接包含
-`WorktreeExecutionResult`，未来应由第二种执行能力的实际需求推动结果抽象。各消息继续显式
+不变量保留在 `domain/worktree.rs`。Execution 的 `Completed` 包含按 Worktree／Clone 分组的
+`ExecutionResult`，各业务拥有校验和来源身份。各消息继续显式
 声明 correlation 字段并共享身份校验，不提取 `ExecutionCorrelation` 包装结构，从而无需
 Serde flatten 就能直接看出适用字段。
+
+## 首个 clone 请求
+
+`CloneRepositoryMessage`（`clone_repository`）携带 `operation_id`、`execution_id`、可选
+`request_id`，以及只含 `node_id`、`repository`、`branch` 的 `payload.spec`。
+`domain/repository.rs` 拥有源地址政策，`message/repository.rs` 拥有信封校验。
+
+`CloneRepositoryUrl::parse` 和反序列化只接受小写显式 `https://` 或 `ssh://`、带主机和仓库路径的
+URL；拒绝空白、反斜杠、query／fragment、密码及 HTTPS userinfo，允许 SSH 用户名。
+保留地址原始拼写用于去重。Debug 隐去地址，解析错误不回显输入；序列化仍保留源地址供执行和
+持久化使用，不能将序列化消息直接记录到日志。凭据属于部署数据。
+
+Codec 收发均使用 `ora-utils::GitBranchName` 校验短分支名，另拒绝 `HEAD`；执行仍须验证远端
+分支存在，不能接受同名 tag 替代。clone payload／spec 拒绝未知字段，包括目标目录、凭据和
+任意 Git 选项；外层信封仍允许扩展字段。
+
+version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型。当前 Node 尚未声明或
+执行 clone；派发仍需具备能力的运行时及持久接受。这一步不改数据库布局、IPC listener
+或 Backend 写入入口。
+
+## Clone 结果与能力
+
+`CloneResultMessage`（`clone_result`）携带原 operation／execution ID、可选 request ID、
+事件序号和 `CloneExecutionResult`。其独立 `clone_ready`／`clone_failed` 标签也用于
+`ExecutionState::Completed(ExecutionResult::Clone(...))`；Worktree 旧标签和持久结果不变。
+通用结果 enum 将具体校验委派给所属业务。
+
+`CloneReady` 包含原 spec、原始 Node 运行实例、`RepositoryId`、Node 侧路径和完整的 40 或 64 位
+十六进制 commit。`CloneFailed` 包含同样的来源／spec、结构化错误码，以及 `no_directory` 或
+`retained { repository_id, path }` 残留描述。`no_directory` 表示没有自有目录，不表示冲突的
+用户路径不存在。不接受原始诊断；未知结果保持非终态，wire 合法不证明 Git 成功或清理完成。
+首版明确失败分类为来源不可用、分支不存在、目标冲突和操作失败。
+
+事件和 Completed 查询使用相同 clone 校验。结果 NodeId 必须匹配输入目标；状态报告者的持久
+NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事件序号，也不会确认原事件。
+
+`HelloAccepted` 接受 `repository_clone`、`worktree_execution` 或两者，无重复且非空。
+这只验证声明自洽；会话所有者仍须在派发前匹配所选 Node 的能力。现有运行时不会声明未实现能力。
 
 ## 使用 codec
 
@@ -85,7 +126,7 @@ Wire 字段名和 enum tag 使用 snake_case。例如 Hello frame 内的 JSON �
 
 Codec 的收发路径均要求 envelope version 为 1。`Hello` 的版本列表非空、无重复且包含 envelope
 version，也可以声明其他版本。`HelloAccepted` 选择的版本必须等于 envelope version，能力集
-无重复且包含 `worktree_execution`，这是当前唯一定义的能力。这些检查保证单条消息自洽；
+无重复且至少包含 `worktree_execution` 或 `repository_clone` 之一。这些检查保证单条消息自洽；
 将回复与先前的 Hello 匹配、约束握手顺序需要会话实现。心跳携带当前 Node 身份，不是执行证据。
 
 解码检查必需字段、已知 enum variant 和消息方向。Payload 匹配表示满足所选消息的结构要求：
@@ -131,7 +172,7 @@ Node 选择并授权 worktree 根目录。Codec 检查必需值非空白，不�
 `Unknown`、`Accepted`、`Running`，或带已保留终态结果的 `Completed`。
 `Unknown` 表示证据不足，不授权重复执行外部副作用。
 
-外层 `ExecutionStatus.node` 标识当前报告者。Completed 的四种终态 variant 均保留结果原始
+外层 `ExecutionStatus.node` 标识当前报告者。Completed 的 Worktree／Clone 终态均保留结果原始
 运行实例身份：
 
 | 报告者          | 保留的结果      | Codec 处理                      |

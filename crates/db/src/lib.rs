@@ -12,6 +12,8 @@ mod git_cleanup_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
+mod sqlite_engine_tests;
+#[cfg(test)]
 mod test_clock;
 #[cfg(test)]
 mod tests;

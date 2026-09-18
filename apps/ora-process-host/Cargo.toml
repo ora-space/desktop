@@ -1,0 +1,21 @@
+[package]
+name = "ora-process-host"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ora-process-runtime = { workspace = true }
+tokio = { workspace = true, features = ["rt", "signal", "net"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ora-process-client = { workspace = true }
+ora-process-protocol = { workspace = true }
+ora-utils = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+libc = { workspace = true }
+rusqlite = { workspace = true, features = ["bundled"] }
+

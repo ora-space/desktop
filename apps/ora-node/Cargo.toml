@@ -1,0 +1,33 @@
+[package]
+name = "ora-node"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gitlancer.workspace = true
+ora-utils.workspace = true
+ora-logging.workspace = true
+ora-node-db = { workspace = true }
+ora-node-protocol = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+shlex.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ora-process-client.workspace = true
+ora-process-protocol.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time", "signal", "macros"] }
+libc.workspace = true
+
+[dev-dependencies]
+rustls.workspace = true
+rcgen.workspace = true
+tracing-subscriber.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
