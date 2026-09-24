@@ -41,9 +41,10 @@ debug 构建跳过受信路径的 Unix 权限位检查，允许组可写的项�
 只主动调用 Cloud，因此不打开 SQLite 数据库、不开监听，也不启动 minicloud 前端。请求改由 Cloud 的带租户
 clone API 进入。
 
-Cloud 需另行启动。Cloud server（HTTP `:8080`、Controller gRPC `:8082`）及其 `devgateway`（`:8090`）必须来自
-提供 clone API 且不要求 Controller 认证的 Cloud 版本；PostgreSQL、`cloudctl migrate`、开发租户
-（`task bootstrap:dev`）及 devgateway 签名所需的 `auth.keys` 条目按 Cloud 仓库 `cmd/devgateway` 的 README 准备。
+Cloud 需另行启动，且必须来自提供 clone API、不要求 Controller 认证的版本。在 Cloud 仓库中把
+`config.toml.template` 复制为 `config.toml` 并执行一次 `task setup`（PostgreSQL DSN、Gateway 密钥、
+`.local/dev.env`、迁移），然后分别执行 `task run` 启动 Cloud server（HTTP `:8080`、Controller gRPC `:8082`）
+与 `task run:gateway` 启动认证 Gateway（`:8081`），两者见 Cloud 仓库的 `docs/gateway.md`。
 当前阶段 Controller 不出示凭据，只以 `controller_id` 声明自身，Cloud 把它记为租约持有者。
 
 状态位于 `~/.ora/cloud/<digest>/`，与本地模式的目录分开：Node 的持久记录只属于一个持久权威，因此 SQLite
@@ -54,13 +55,24 @@ Cloud 需另行启动。Cloud server（HTTP `:8080`、Controller gRPC `:8082`）
 
 Cloud 的 gRPC 地址不可达时，启动只提示一次并继续，因为 Controller 会持续重试 Cloud。Controller 没有可探测的端口，
 所以"就绪"只表示它启动两秒后仍在运行，不表示已取得 Cloud 租约；之后任何组件退出都会像本地模式一样停止全部组件。
-经 `devgateway` 提交与查询，它以开发身份转发到 `/api/v1/tenants/{tenant}/clones`：
+clone 与其他 Cloud 客户端的请求一样经 Gateway 提交：使用其开发登录得到的会话，以及该用户的租户；
+这一侧不持有任何密钥或 token。Gateway 在 `:8081`、默认公开来源为 `http://localhost:5173`，写请求须以
+`Origin` 声明该来源：
 
 ```bash
-curl -X POST http://127.0.0.1:8090/api/clones -H 'content-type: application/json' -d '{"requestId":"r1","repository":"https://github.com/octocat/Hello-World","branch":"master"}'
+G=http://localhost:8081 O=http://localhost:5173 JAR=$(mktemp)
+# 开发登录：发起登录、提交身份表单、跟随回调拿到会话 Cookie。
+AUTH=$(curl -s -c "$JAR" -H "Origin: $O" -H 'content-type: application/json' -d '{"provider":"dev"}' "$G/auth/login" | sed -E 's/.*"authorizationUrl":"([^"]*)".*/\1/; s/\\u0026/\&/g')
+CALLBACK=$(curl -s -o /dev/null -w '%{redirect_url}' -b "$JAR" -c "$JAR" -H "Origin: $O" -d "${AUTH#*\?}" -d source=dev -d subject=minicloud "$G/auth/dev/authorize")
+curl -s -o /dev/null -b "$JAR" -c "$JAR" "${CALLBACK/#$O/$G}"
+# 创建租户按用户与幂等键去重，重复执行返回同一个租户。
+TID=$(curl -s -b "$JAR" -H "Origin: $O" -H 'content-type: application/json' -H 'Idempotency-Key: minicloud' -d '{"name":"minicloud","slug":"minicloud"}' "$G/api/v1/tenants" | sed -E 's/.*"tenant":\{"id":"([^"]*)".*/\1/')
+curl -s -b "$JAR" -H "Origin: $O" -H 'content-type: application/json' -H 'Idempotency-Key: r1' -d '{"requestId":"r1","repository":"https://github.com/octocat/Hello-World","branch":"master"}' "$G/api/v1/tenants/$TID/clones"
 ```
 
-`GET http://127.0.0.1:8090/api/clones` 列出操作。Controller 停机期间被接受的工作保持 pending，直到被领取。
+`curl -s -b "$JAR" "$G/api/v1/tenants/$TID/clones"` 列出操作，`.../clones/{operationId}` 读取单个操作；
+`state` 从 `pending` 变为 `succeeded`（`path`、`commit`）或 `failed`（`reason`，可选 `retainedPath`）。
+以相同 `requestId` 重复提交会返回原操作，不会再次 clone。Controller 停机期间被接受的工作保持 pending，直到被领取。
 若上次运行的 Controller 是被强杀而非正常停止，旧租约没有释放，工作要等 Cloud 的 30 秒租约过期后才开始。
 
 ## 手动部署

@@ -658,8 +658,9 @@ async function run(): Promise<void> {
       if (stopping || controller.exited) {
         throw new Error("controller did not start.");
       }
-      // Cloud's devgateway on its default port is the sign-in-free entry to the tenant clone API.
-      const submit = `\nSubmit clones through Cloud's devgateway, for example:\n  curl -X POST http://127.0.0.1:8090/api/clones -H 'content-type: application/json' -d '{"requestId":"r1","repository":"https://github.com/octocat/Hello-World","branch":"master"}'`;
+      // Clones enter through Cloud's Gateway with a development-login session; the login and tenant
+      // steps do not fit a ready line, so point at the documented sequence instead.
+      const submit = `\nSubmit clones through Cloud's Gateway (http://localhost:8081) after its development login; see docs/minicloud/runtime.md#cloud-persistence-mode.`;
       console.log(
         `Cloud mode ready: the Controller coordinates through ${persistence.endpoint}\nData: ${root}${submit}\nAfter a killed run, work waits until Cloud's 30 s lease expires.\nCtrl+C stops all development components; data is preserved.`,
       );
