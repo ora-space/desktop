@@ -84,6 +84,21 @@ export function withoutExtentClampPositions<TNode extends Node = Node>(
   );
 }
 
+/**
+ * True while React Flow is mid-gesture on any node.
+ *
+ * Growing iteration frames during that window fights `extent: "parent"`: the
+ * clamp bounds move under the pointer and the member appears to jitter,
+ * especially near the frame edge. Drop handlers already refit frames once.
+ */
+export function isNodeDragGestureActive<TNode extends Node = Node>(
+  changes: readonly NodeChange<TNode>[],
+): boolean {
+  return changes.some(
+    (change) => change.type === "position" && change.dragging === true,
+  );
+}
+
 /** True when changes are only selection and/or plain size probes (no authored edit). */
 export function isNonAuthoringNodeChanges<TNode extends Node = Node>(
   changes: readonly NodeChange<TNode>[],
@@ -154,15 +169,35 @@ export function authoredWorkflowNodesEqual(
   return true;
 }
 
+/**
+ * Reuses the last projected Loop-child object while the authored node identity
+ * is unchanged so sibling drag frames do not invalidate memoized node views.
+ */
+const containedLoopChildCache = new WeakMap<
+  Node<WorkflowNodeData, "workflow">,
+  Node<WorkflowNodeData, "workflow">
+>();
+
 /** Projects Loop children into bounded, auto-expanding React Flow containers. */
 export function containWorkflowCanvasNodes(
   nodes: readonly Node<WorkflowNodeData, "workflow">[],
 ): Node<WorkflowNodeData, "workflow">[] {
-  return workflowContainerNodes(nodes).map((node) =>
-    node.data.containerId === undefined
-      ? node
-      : { ...node, extent: "parent", expandParent: true },
-  );
+  return workflowContainerNodes(nodes).map((node) => {
+    if (node.data.containerId === undefined) {
+      return node;
+    }
+    const cached = containedLoopChildCache.get(node);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const projected: Node<WorkflowNodeData, "workflow"> = {
+      ...node,
+      extent: "parent",
+      expandParent: true,
+    };
+    containedLoopChildCache.set(node, projected);
+    return projected;
+  });
 }
 
 const WORKFLOW_LAYOUT_COLUMN_GAP = 120;

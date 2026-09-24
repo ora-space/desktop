@@ -12,6 +12,7 @@ import {
 import {
   authoredWorkflowNodesEqual,
   containWorkflowCanvasNodes,
+  isNodeDragGestureActive,
   isNonAuthoringNodeChanges,
   isPlainMeasurementOnly,
   iterationFrameSizesEqual,
@@ -134,6 +135,62 @@ describe("workflow-flow layout", () => {
         },
       ]),
     ).toEqual([]);
+  });
+
+  it("detects an in-progress node drag so frames can skip mid-gesture expand", () => {
+    expect(
+      isNodeDragGestureActive([
+        {
+          id: "member",
+          type: "dimensions",
+          dimensions: { width: 230, height: 180 },
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      isNodeDragGestureActive([
+        {
+          id: "member",
+          type: "position",
+          position: { x: 140, y: 100 },
+          dragging: true,
+        },
+        {
+          id: "member",
+          type: "dimensions",
+          dimensions: { width: 230, height: 180 },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      isNodeDragGestureActive([
+        {
+          id: "member",
+          type: "position",
+          position: { x: 140, y: 100 },
+          dragging: false,
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  it("reuses Loop child object identity across contain projections", () => {
+    const child: Node<WorkflowNodeData, "workflow"> = {
+      id: "agent",
+      type: "workflow",
+      position: { x: 40, y: 40 },
+      data: {
+        kind: "agent",
+        title: "Agent",
+        description: "",
+        containerId: "loop",
+      },
+    };
+    const first = containWorkflowCanvasNodes([child])[0];
+    const second = containWorkflowCanvasNodes([child])[0];
+    expect(first).toBe(second);
+    expect(first?.extent).toBe("parent");
+    expect(first?.expandParent).toBe(true);
   });
 
   it("treats selection plus plain measurements as non-authoring", () => {

@@ -37,7 +37,7 @@ export function RunTheaterRegionContext({
 
   return (
     <nav
-      className="mb-2 flex min-w-0 items-center gap-1 overflow-hidden px-1 text-[10px] text-muted-foreground"
+      className="mb-2 flex min-w-0 items-center gap-1.5 overflow-hidden px-1 text-[11px] leading-snug text-muted-foreground"
       aria-label={t("workflowRun.theater.executionContext")}
     >
       <span className="truncate">{regionTitle}</span>

@@ -121,11 +121,11 @@ export function WorkflowPromptEditor({
       ref={panelRef}
       className={
         expanded
-          ? "relative flex min-h-[65vh] flex-col rounded-lg border border-input bg-background"
+          ? "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-input bg-background"
           : "relative rounded-lg border border-input bg-background"
       }
     >
-      <div className="flex h-9 items-center justify-end gap-0.5 border-b border-border bg-muted/35 px-1.5">
+      <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-border bg-muted/35 px-1.5">
         <span
           className="mr-auto px-1.5 text-[11px] tabular-nums text-muted-foreground"
           aria-label={t("settings.workflow.field.promptCharacterCount", {
@@ -174,17 +174,19 @@ export function WorkflowPromptEditor({
         >
           <IconCopy className="size-4" />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="size-7"
-          aria-label={t("settings.workflow.field.expandPrompt")}
-          title={t("settings.workflow.field.expandPrompt")}
-          onClick={() => setExpanded(true)}
-        >
-          <IconArrowsMaximize className="size-4" />
-        </Button>
+        {!expanded && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7"
+            aria-label={t("settings.workflow.field.expandPrompt")}
+            title={t("settings.workflow.field.expandPrompt")}
+            onClick={() => setExpanded(true)}
+          >
+            <IconArrowsMaximize className="size-4" />
+          </Button>
+        )}
       </div>
       <ComposerEditor
         ref={editorRef}
@@ -194,8 +196,9 @@ export function WorkflowPromptEditor({
         enterKey="newline"
         className={
           expanded
-            ? "min-h-0 flex-1 border-0 bg-transparent text-xs leading-5 [&_.tiptap]:h-full [&_.tiptap]:min-h-[55vh]"
-            : "min-h-32 border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-32 [&_.tiptap]:max-h-64"
+            ? // Shell scrolls; tip tap must not keep overflow:auto or it swallows the wheel.
+              "min-h-0 flex-1 overflow-y-auto border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-full [&_.tiptap]:!max-h-none [&_.tiptap]:!overflow-y-visible"
+            : "min-h-32 border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-32 [&_.tiptap]:!max-h-64"
         }
         ariaLabel={ariaLabel}
         ariaAutoComplete="list"
@@ -256,8 +259,8 @@ export function WorkflowPromptEditor({
     <>
       {!expanded && panel}
       <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent className="max-w-5xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] w-full max-w-5xl flex-col overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{ariaLabel}</DialogTitle>
           </DialogHeader>
           {expanded && panel}

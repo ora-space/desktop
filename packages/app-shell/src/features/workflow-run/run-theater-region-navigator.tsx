@@ -68,17 +68,17 @@ export function RunTheaterRegionNavigator({
 
   return (
     <section
-      className="rounded-xl border border-violet-500/20 bg-violet-500/[0.035] p-2.5"
+      className="rounded-xl border border-violet-500/20 bg-violet-500/[0.035] px-3 py-2.5"
       role="region"
       aria-label={regionLabel}
       data-iteration-region={region.nodeId}
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2.5 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold text-foreground">
+          <p className="truncate text-[13px] font-semibold leading-snug text-foreground">
             {regionTitle}
           </p>
-          <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-snug text-muted-foreground">
             <span>
               {rounds.length > 0
                 ? t("workflowRun.theater.iterationSummary", {
@@ -101,13 +101,13 @@ export function RunTheaterRegionNavigator({
         </div>
         {effectiveRound !== null && rounds.length > 1 && (
           <div
-            className="flex shrink-0 items-center gap-1"
+            className="flex shrink-0 items-center gap-0.5"
             role="group"
             aria-label={t("workflowRun.inspector.rounds")}
           >
             <button
               type="button"
-              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
               aria-label={t("workflowRun.theater.previousRound")}
               disabled={roundPosition <= 0}
               onClick={() => {
@@ -115,14 +115,14 @@ export function RunTheaterRegionNavigator({
                 if (previous !== undefined) onRoundChange?.(previous);
               }}
             >
-              <IconChevronLeft className="size-3.5" />
+              <IconChevronLeft className="size-4" />
             </button>
             <Popover open={roundMenuOpen} onOpenChange={setRoundMenuOpen}>
               <PopoverTrigger
                 render={
                   <button
                     type="button"
-                    className="min-w-16 rounded-md px-1.5 py-1 text-center text-[10px] font-medium tabular-nums text-violet-700 hover:bg-background dark:text-violet-300"
+                    className="min-w-[4.5rem] rounded-md px-2 py-1 text-center text-xs font-semibold tabular-nums text-violet-700 hover:bg-background dark:text-violet-300"
                     aria-label={t("workflowRun.theater.selectRound")}
                   />
                 }
@@ -132,7 +132,7 @@ export function RunTheaterRegionNavigator({
                   total: rounds.length,
                 })}
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-36 p-1.5">
+              <PopoverContent align="end" className="w-40 p-1.5">
                 <div
                   className="flex max-h-56 flex-col gap-0.5 overflow-y-auto"
                   role="listbox"
@@ -145,9 +145,9 @@ export function RunTheaterRegionNavigator({
                       role="option"
                       aria-selected={round === effectiveRound}
                       className={cn(
-                        "rounded-md px-2 py-1.5 text-left text-[10px] tabular-nums hover:bg-muted",
+                        "rounded-md px-2.5 py-1.5 text-left text-xs tabular-nums hover:bg-muted",
                         round === effectiveRound &&
-                          "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+                          "bg-violet-500/10 font-medium text-violet-700 dark:text-violet-300",
                       )}
                       onClick={() => {
                         onRoundChange?.(round);
@@ -164,7 +164,7 @@ export function RunTheaterRegionNavigator({
             </Popover>
             <button
               type="button"
-              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
               aria-label={t("workflowRun.theater.nextRound")}
               disabled={roundPosition >= rounds.length - 1}
               onClick={() => {
@@ -172,7 +172,7 @@ export function RunTheaterRegionNavigator({
                 if (next !== undefined) onRoundChange?.(next);
               }}
             >
-              <IconChevronRight className="size-3.5" />
+              <IconChevronRight className="size-4" />
             </button>
           </div>
         )}
@@ -183,7 +183,7 @@ export function RunTheaterRegionNavigator({
           {region.phases.map((phase, phaseIndex) => (
             <li key={phase.id} className="flex items-center gap-2">
               {phaseIndex > 0 && (
-                <span className="text-xs text-muted-foreground/55" aria-hidden>
+                <span className="text-sm text-muted-foreground/55" aria-hidden>
                   →
                 </span>
               )}
@@ -201,7 +201,7 @@ export function RunTheaterRegionNavigator({
                 data-region-phase-kind={phase.kind}
               >
                 {phase.kind !== "single" && (
-                  <span className="absolute left-2 top-1 text-[9px] font-medium text-muted-foreground">
+                  <span className="absolute left-2 top-1 text-[10px] font-medium text-muted-foreground">
                     {phaseLabel(t, phase.kind, phase.nodeIds.length)}
                   </span>
                 )}
@@ -228,7 +228,7 @@ export function RunTheaterRegionNavigator({
                       aria-label={`${node.data.title}: ${stateLabel}`}
                       onClick={() => onFocusNode(nodeId)}
                       className={cn(
-                        "flex min-w-32 max-w-44 items-center gap-2 rounded-md border bg-background/80 px-2 py-1.5 text-left transition-colors",
+                        "flex min-w-36 max-w-48 items-center gap-2 rounded-lg border bg-background/80 px-2.5 py-2 text-left transition-colors",
                         selected
                           ? "border-violet-500/45 shadow-sm"
                           : "border-border/65 hover:border-violet-500/30",
@@ -240,17 +240,17 @@ export function RunTheaterRegionNavigator({
                         quiet
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[10px] font-medium">
+                        <span className="block truncate text-xs font-medium leading-snug">
                           {node.data.title}
                         </span>
                         {duration !== null && (
-                          <span className="block text-[9px] tabular-nums text-muted-foreground">
+                          <span className="mt-0.5 block text-[11px] tabular-nums text-muted-foreground">
                             {duration}
                           </span>
                         )}
                       </span>
                       {artifactCount > 0 && (
-                        <span className="text-[9px] tabular-nums text-muted-foreground">
+                        <span className="text-[11px] tabular-nums text-muted-foreground">
                           {artifactCount}
                         </span>
                       )}

@@ -84,6 +84,7 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
 import {
   authoredWorkflowNodesEqual,
+  isNodeDragGestureActive,
   isNonAuthoringNodeChanges,
   iterationFrameSizesEqual,
   organizeWorkflowNodes,
@@ -522,9 +523,14 @@ function WorkflowEditorContent({
   }
 
   // Autosave flush reads these after render; keep them current without render-time writes.
+  // During an open node-drag gesture, authored geometry lives on the ref ahead of React
+  // state — clobbering it here would snap the drop commit (and undo/autosave) back.
   useEffect(() => {
-    workflowRef.current = workflow;
     previewedVersionRef.current = previewedVersion;
+    if (dragStartWorkflowRef.current !== null) {
+      return;
+    }
+    workflowRef.current = workflow;
   });
 
   // Render-phase adjustments (the documented "adjust state when props change"
@@ -1965,24 +1971,30 @@ function WorkflowEditorContent({
       (candidate): candidate is Node<WorkflowNodeData, "workflow"> =>
         !isWorkflowAnnotationNode(candidate),
     );
+    const beforeDrag = dragStartWorkflowRef.current ?? current;
     const result = applyIterationDragRules(
       current,
-      dragStartWorkflowRef.current ?? current,
+      beforeDrag,
       draggedWorkflowNodes.map((node) => node.id),
     );
     dragStartWorkflowRef.current = null;
-    if (result.workflow !== current) {
-      updateWorkflow(() => result.workflow as typeof current, {
-        persist: true,
-      });
-      workflowHistory.commitTransaction(
-        captureWorkflowHistorySnapshot(result.workflow as typeof current),
-      );
-    } else {
-      workflowHistory.commitTransaction(
-        captureWorkflowHistorySnapshot(current),
-      );
+    // Mid-drag ticks only wrote workflowRef. Force one React publish even when
+    // iteration rules leave the graph object-identical, or the canvas snaps back.
+    const committed = result.workflow as typeof current;
+    workflowRef.current = committed;
+    setWorkflow(committed);
+    const geometryChanged =
+      result.rejectedNodeIds.length > 0 ||
+      !authoredWorkflowNodesEqual(beforeDrag.nodes, committed.nodes) ||
+      JSON.stringify(beforeDrag.annotations ?? []) !==
+        JSON.stringify(committed.annotations ?? []);
+    if (geometryChanged) {
+      editGenerationRef.current += 1;
+      autosave.markDirty();
     }
+    workflowHistory.commitTransaction(
+      captureWorkflowHistorySnapshot(committed),
+    );
     if (result.rejectedNodeIds.length > 0) {
       toast.message(t("settings.workflow.iteration.useInternalAdd"));
     }
@@ -2086,6 +2098,29 @@ function WorkflowEditorContent({
     if (appliedChanges.length === 0) {
       return;
     }
+    // While the pointer is down, React Flow already moves nodes in its store.
+    // Pushing every tick through setWorkflow rebuilds controlled `nodes` and the
+    // whole editor — the main source of top-level drag jitter. Keep authored
+    // geometry on workflowRef only; commit React state on drop / other edits.
+    if (isNodeDragGestureActive(appliedChanges)) {
+      const current = workflowRef.current ?? workflow;
+      if (current === null || previewedVersion !== null) {
+        return;
+      }
+      const nextNodes = applyNodeChanges<WorkflowCanvasNode>(appliedChanges, [
+        ...current.nodes,
+        ...(current.annotations ?? []),
+      ]);
+      workflowRef.current = {
+        ...current,
+        nodes: nextNodes.filter(
+          (node): node is Node<WorkflowNodeData, "workflow"> =>
+            !isWorkflowAnnotationNode(node),
+        ),
+        annotations: nextNodes.filter(isWorkflowAnnotationNode),
+      };
+      return;
+    }
     const persistable = shouldPersistWorkflowNodeChanges(appliedChanges);
     const removedNodeIds = new Set(
       appliedChanges
@@ -2097,6 +2132,10 @@ function WorkflowEditorContent({
     // undershoot a tall member and React Flow's parent extent then clamps that member
     // up over the region's internal affordances. Re-fitting frames whenever plain
     // measurements arrive releases the clamp without persisting a no-edit workflow.
+    // Never expand mid-drag: growing the parent under `extent: "parent"` moves the
+    // clamp bounds while the pointer is still down and members jitter, especially
+    // inside iteration regions. Drag-stop already expands the affected frames.
+    const dragActive = dragStartWorkflowRef.current !== null;
     const measured = appliedChanges.some(
       (change) => change.type === "dimensions" && change.resizing !== true,
     );
@@ -2119,7 +2158,7 @@ function WorkflowEditorContent({
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
-        if (measured) {
+        if (measured && !dragActive) {
           nextWorkflow = expandIterationFrames(nextWorkflow);
         }
         // Plain size probes (often batched with select bookkeeping) rewrite React

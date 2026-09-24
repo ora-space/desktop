@@ -554,7 +554,9 @@ export function applyIterationFrameResize(
     }
   }
   if (resizedSizes.size === 0) {
-    return [...nodes];
+    // Keep the caller's array identity so measurement-only change paths can
+    // bail out with `===` instead of allocating a fresh nodes list every tick.
+    return nodes as Node<WorkflowNodeData, "workflow">[];
   }
   let changed = false;
   const resized = nodes.map((node) => {
@@ -572,7 +574,7 @@ export function applyIterationFrameResize(
     changed = true;
     return { ...node, initialWidth: width, initialHeight: height };
   });
-  return changed ? resized : [...nodes];
+  return changed ? resized : (nodes as Node<WorkflowNodeData, "workflow">[]);
 }
 
 /** Returns the visual width used for fitting and insertion. */

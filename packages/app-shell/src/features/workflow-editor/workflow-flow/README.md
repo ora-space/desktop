@@ -69,6 +69,13 @@ React Flow–based canvas for the workspace workflow editor.
   with `applyNodeChanges` and `applyEdgeChanges`.
 - Pointer mode box-selects from a blank-canvas left drag; hand mode pans from
   that same gesture. In both modes, a drag that starts on a node moves the node.
+- Node drag does not auto-pan the viewport. Growing iteration frames is deferred
+  until drag-stop so `extent: "parent"` clamp bounds stay still under the pointer.
+  Mid-drag position ticks update `workflowRef` only (no `setWorkflow` / autosave);
+  the post-render workflowRef sync skips while a drag transaction is open.
+  React state and draft persistence commit once on drop. Undragged canvas node
+  objects keep identity so memoized card views stay cheap if a controlled update
+  does run.
 - An annotation behaves like a regular draggable node in its reading state,
   including the grab cursor. A click enters text editing, while a pointer drag
   continues to move the annotation; blur or Escape returns it to dragging.

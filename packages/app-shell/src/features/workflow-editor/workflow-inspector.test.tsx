@@ -517,7 +517,15 @@ describe("WorkflowInspector kind-specific layouts", () => {
     writeText.mockRestore();
 
     await user.click(screen.getByLabelText("放大文本框"));
-    expect(screen.getByRole("dialog")).toHaveTextContent("自定义 Prompt");
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("自定义 Prompt");
+    // Expanded dialog lifts the shared 200px cap and scrolls on the editor shell
+    // once content exceeds the filled dialog height.
+    const expandedEditor = dialog.querySelector(
+      '[data-slot="composer-editor"]',
+    );
+    expect(expandedEditor?.className ?? "").toMatch(/max-h-none/);
+    expect(expandedEditor?.className ?? "").toMatch(/overflow-y-auto/);
   });
 
   it("restores persisted prompt variables with their rich node and type display", async () => {

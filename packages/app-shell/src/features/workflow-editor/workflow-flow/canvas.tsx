@@ -25,6 +25,7 @@ import {
 import {
   WORKFLOW_ITERATION_COLLAPSED_HEIGHT,
   WORKFLOW_ITERATION_COLLAPSED_WIDTH,
+  type WorkflowNodeData,
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import { toast } from "@ora/ui";
@@ -112,6 +113,36 @@ const CONNECTION_LINE_STYLE = {
 } satisfies CSSProperties;
 const WORKFLOW_ANNOTATION_WIDTH = 240;
 const WORKFLOW_ANNOTATION_HEIGHT = 140;
+
+/**
+ * Caches iteration presentation `data` across canvas projections. Module-scoped
+ * (not a render ref) so `useMemo` can reuse entries without `react-hooks/refs`.
+ */
+const iterationPresentationDataCache = new Map<
+  string,
+  {
+    source: WorkflowNodeData;
+    count: number;
+    data: WorkflowNodeData;
+  }
+>();
+
+/**
+ * Reuses projected RF node objects for undragged cards. Remapping `{...node}`
+ * every pointer move breaks `memo` on Agent/Start views.
+ */
+const projectedCanvasNodeCache = new Map<
+  string,
+  {
+    source: WorkflowCanvasNode;
+    data: WorkflowNodeData | WorkflowCanvasNode["data"];
+    extent: "parent" | undefined;
+    expandParent: boolean | undefined;
+    zIndex: number;
+    hidden: boolean;
+    projected: WorkflowCanvasNode;
+  }
+>();
 
 /** Finds the workflow card under a pointer so the whole card remains a forgiving drop zone. */
 function workflowNodeAtClientPoint(
@@ -239,42 +270,120 @@ function WorkflowCanvasInner({
         .filter((node) => node.data.kind === "iteration")
         .map((node) => node.id),
     );
-    const executableNodes = containWorkflowCanvasNodes(nodes).map((node) => ({
-      ...node,
+    const presentationCache = iterationPresentationDataCache;
+    const projectionCache = projectedCanvasNodeCache;
+    const liveIds = new Set<string>();
+    const executableNodes = containWorkflowCanvasNodes(nodes).map((node) => {
+      liveIds.add(node.id);
+      let data = node.data;
+      if (node.data.kind === "iteration") {
+        const count = memberCountByIteration.get(node.id) ?? 0;
+        const cachedData = presentationCache.get(node.id);
+        if (
+          cachedData !== undefined &&
+          cachedData.source === node.data &&
+          cachedData.count === count
+        ) {
+          data = cachedData.data;
+        } else {
+          data = { ...node.data, regionMemberCount: count };
+          presentationCache.set(node.id, {
+            source: node.data,
+            count,
+            data,
+          });
+        }
+      }
       // parentId is persisted graph structure; React Flow constraints are presentation only.
       // Loop bodies still use expandParent. Iteration members must not: frames already
       // grow through expandIterationFrames, and stacking both on nested regions fights
       // over parent size on every measurement and makes the canvas thrash.
-      ...(node.data.containerId !== undefined
-        ? { extent: "parent" as const, expandParent: true }
-        : node.parentId !== undefined && iterationIds.has(node.parentId)
-          ? { extent: "parent" as const, expandParent: undefined }
-          : { extent: undefined, expandParent: undefined }),
+      const extent =
+        node.data.containerId !== undefined ||
+        (node.parentId !== undefined && iterationIds.has(node.parentId))
+          ? ("parent" as const)
+          : undefined;
+      const expandParent =
+        node.data.containerId !== undefined ? true : undefined;
       // Notes reserve the bottom layer, while selected executable nodes keep
       // React Flow's usual elevation over their executable peers.
-      zIndex:
+      const zIndex =
         node.data.kind === "loop"
           ? 0
           : node.selected
             ? WORKFLOW_SELECTED_NODE_Z_INDEX
-            : WORKFLOW_NODE_Z_INDEX,
-      ...(node.parentId !== undefined && collapsedIterations.has(node.parentId)
-        ? { hidden: true }
-        : {}),
-      ...(node.data.kind === "iteration"
-        ? {
-            data: {
-              ...node.data,
-              regionMemberCount: memberCountByIteration.get(node.id) ?? 0,
-            },
-          }
-        : {}),
-    }));
-    return [
-      ...annotations.map((annotation) => ({
+            : WORKFLOW_NODE_Z_INDEX;
+      const hidden =
+        node.parentId !== undefined && collapsedIterations.has(node.parentId);
+      const cached = projectionCache.get(node.id);
+      if (
+        cached !== undefined &&
+        cached.source === node &&
+        cached.data === data &&
+        cached.extent === extent &&
+        cached.expandParent === expandParent &&
+        cached.zIndex === zIndex &&
+        cached.hidden === hidden
+      ) {
+        return cached.projected;
+      }
+      const projected: WorkflowCanvasNode = {
+        ...node,
+        data,
+        extent,
+        expandParent,
+        zIndex,
+        ...(hidden ? { hidden: true } : { hidden: undefined }),
+      };
+      projectionCache.set(node.id, {
+        source: node,
+        data,
+        extent,
+        expandParent,
+        zIndex,
+        hidden,
+        projected,
+      });
+      return projected;
+    });
+    for (const cachedId of presentationCache.keys()) {
+      if (!liveIds.has(cachedId)) {
+        presentationCache.delete(cachedId);
+      }
+    }
+    const projectedAnnotations = annotations.map((annotation) => {
+      liveIds.add(annotation.id);
+      const cached = projectionCache.get(annotation.id);
+      if (
+        cached !== undefined &&
+        cached.source === annotation &&
+        cached.zIndex === WORKFLOW_ANNOTATION_Z_INDEX &&
+        cached.hidden === false
+      ) {
+        return cached.projected;
+      }
+      const projected: WorkflowCanvasNode = {
         ...annotation,
         zIndex: WORKFLOW_ANNOTATION_Z_INDEX,
-      })),
+      };
+      projectionCache.set(annotation.id, {
+        source: annotation,
+        data: annotation.data,
+        extent: undefined,
+        expandParent: undefined,
+        zIndex: WORKFLOW_ANNOTATION_Z_INDEX,
+        hidden: false,
+        projected,
+      });
+      return projected;
+    });
+    for (const cachedId of projectionCache.keys()) {
+      if (!liveIds.has(cachedId)) {
+        projectionCache.delete(cachedId);
+      }
+    }
+    return [
+      ...projectedAnnotations,
       ...executableNodes.filter((node) => node.parentId === undefined),
       ...executableNodes.filter((node) => node.parentId !== undefined),
     ];
@@ -602,6 +711,10 @@ function WorkflowCanvasInner({
               multiSelectionKeyCode={null}
               snapGrid={WORKFLOW_SNAP_GRID}
               snapToGrid
+              // Auto-pan under a clamped iteration member moves the viewport while
+              // the node sticks to the frame edge, so the card jitters relative to
+              // the pointer. Users can still pan with the hand tool / middle drag.
+              autoPanOnNodeDrag={false}
               panOnScroll={false}
               zoomOnScroll
               zoomOnPinch

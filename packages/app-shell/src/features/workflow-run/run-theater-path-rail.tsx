@@ -173,7 +173,10 @@ export function RunTheaterPathRail({
                       onFocusNode(stage.nodeId);
                     }}
                     className={cn(
-                      "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                      "inline-flex cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                      stage.type === "region"
+                        ? "max-w-[18rem]"
+                        : "max-w-[12rem]",
                       selected && waiting
                         ? "theater-chip-pop border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
                         : selected
@@ -188,11 +191,11 @@ export function RunTheaterPathRail({
                     aria-label={`${node.data.title}: ${t(tone.labelKey)}`}
                   >
                     <RunStatusMark status={state.status} quiet />
-                    <span className="truncate font-sans text-[11px] font-medium">
+                    <span className="truncate font-sans text-xs font-medium leading-snug">
                       {node.data.title}
                     </span>
                     {stage.type === "region" && (
-                      <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground">
+                      <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
                         {roundCount > 0
                           ? t("workflowRun.theater.iterationChipSummary", {
                               members: stage.memberCount,
@@ -205,7 +208,7 @@ export function RunTheaterPathRail({
                     )}
                     {nodeArtifactCount > 0 && (
                       <span
-                        className="shrink-0 tabular-nums text-[9px] text-muted-foreground"
+                        className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
                         aria-label={t("workflowRun.artifacts.countBadge", {
                           count: nodeArtifactCount,
                         })}
@@ -224,7 +227,7 @@ export function RunTheaterPathRail({
                   data-path-result=""
                   onClick={onShowResultAct}
                   className={cn(
-                    "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                    "inline-flex max-w-[12rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
                     showResultAct
                       ? cn(
                           "theater-chip-pop bg-background shadow-sm",
@@ -246,7 +249,7 @@ export function RunTheaterPathRail({
                   aria-label={`${t("workflowRun.result.pathChip")}: ${t(runStatusTone(run.status).labelKey)}`}
                 >
                   <RunStatusMark status={run.status} quiet />
-                  <span className="truncate font-sans text-[11px] font-medium">
+                  <span className="truncate font-sans text-xs font-medium leading-snug">
                     {t("workflowRun.result.pathChip")}
                   </span>
                 </button>
