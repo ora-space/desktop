@@ -5,7 +5,11 @@ import {
   serializeWorkflowGraph,
   workflowTimestampToIso,
 } from "./graph-codec";
-import type { WorkflowDefinitionEdge, WorkflowDefinitionNode } from "./types";
+import type {
+  WorkflowAgentRetryPolicy,
+  WorkflowDefinitionEdge,
+  WorkflowDefinitionNode,
+} from "./types";
 
 const node: WorkflowDefinitionNode = {
   id: "start",
@@ -289,4 +293,46 @@ it("preserves canonical MCP IDs and disabled bindings across graph round trips",
     globalVariables: [],
   };
   expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
+});
+
+// Absent retry means "default policy" to the engine, so the codec must neither add nor drop it.
+it("preserves agent retry settings and their absence across graph round trips", () => {
+  const agent = (
+    id: string,
+    retry?: WorkflowAgentRetryPolicy,
+  ): WorkflowDefinitionNode => ({
+    id,
+    type: "workflow",
+    position: { x: 0, y: 0 },
+    data: {
+      kind: "agent",
+      title: id,
+      description: "",
+      agentConfig: {
+        schemaVersion: 3,
+        executor: { agentCli: "official/agent", modelId: "model" },
+        roleId: "",
+        skills: [],
+        mcps: [],
+        prompt: "",
+        ...(retry === undefined ? {} : { retry }),
+      },
+    },
+  });
+  const input = {
+    nodes: [
+      agent("default"),
+      agent("tuned", { enabled: true, maxRetries: 5, initialDelaySeconds: 0 }),
+      agent("off", { enabled: false, maxRetries: 2, initialDelaySeconds: 10 }),
+    ],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    annotations: [],
+    globalVariables: [],
+  };
+
+  const parsed = parseWorkflowGraph(serializeWorkflowGraph(input));
+
+  expect(parsed).toEqual(input);
+  expect(parsed.nodes[0]?.data.agentConfig).not.toHaveProperty("retry");
 });

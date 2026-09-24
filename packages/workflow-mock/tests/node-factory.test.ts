@@ -61,6 +61,48 @@ describe("createMockWorkflowNode", () => {
     ]);
   });
 
+  it("creates Agent nodes without a retry field so they use the default policy", () => {
+    const capabilities = createMockWorkflowCapabilities("en-US");
+    expect(capabilities.defaultAgentConfig).not.toHaveProperty("retry");
+    for (const locale of ["zh-CN", "en-US"] as const) {
+      const agent = createMockWorkflowNode({
+        kind: "agent",
+        sequence: 1,
+        position: { x: 0, y: 0 },
+        locale,
+      });
+      expect(agent.data.agentConfig).toBeDefined();
+      expect(agent.data.agentConfig).not.toHaveProperty("retry");
+    }
+    const loopAgent = createMockWorkflowLoopGroup({
+      sequence: 1,
+      position: { x: 0, y: 0 },
+      locale: "en-US",
+    }).nodes.find((node) => node.data.kind === "agent");
+    expect(loopAgent?.data.agentConfig).toBeDefined();
+    expect(loopAgent?.data.agentConfig).not.toHaveProperty("retry");
+  });
+
+  it("copies a caller-supplied retry policy instead of sharing it", () => {
+    const agentConfig = {
+      ...createMockWorkflowCapabilities("en-US").defaultAgentConfig,
+      retry: { enabled: false, maxRetries: 1, initialDelaySeconds: 5 },
+    };
+    const agent = createMockWorkflowNode({
+      kind: "agent",
+      sequence: 1,
+      position: { x: 0, y: 0 },
+      locale: "en-US",
+      agentConfig,
+    });
+    expect(agent.data.agentConfig?.retry).toEqual({
+      enabled: false,
+      maxRetries: 1,
+      initialDelaySeconds: 5,
+    });
+    expect(agent.data.agentConfig?.retry).not.toBe(agentConfig.retry);
+  });
+
   it("creates Output nodes without an execution instruction", () => {
     expect(
       createMockWorkflowNode({

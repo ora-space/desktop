@@ -177,6 +177,17 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.mcpOpen": "查看 MCP「{{name}}」简介",
     "workflowRun.inspector.textOpen": "查看完整{{field}}",
     "workflowRun.inspector.catalogNoDescription": "暂无简介",
+    "workflowRun.inspector.retryDefault_one":
+      "默认：最多重试 {{count}} 次，首次等待 {{seconds}} 秒",
+    "workflowRun.inspector.retryDefault_other":
+      "默认：最多重试 {{count}} 次，首次等待 {{seconds}} 秒",
+    "workflowRun.inspector.retryConfigured_one":
+      "最多重试 {{count}} 次，首次等待 {{seconds}} 秒",
+    "workflowRun.inspector.retryConfigured_other":
+      "最多重试 {{count}} 次，首次等待 {{seconds}} 秒",
+    "workflowRun.inspector.retryDisabled": "已关闭",
+    "workflowRun.inspector.retryNone": "不重试（最多重试次数为 0）",
+    "workflowRun.inspector.retryInteractive": "不重试（交互模式节点）",
     "workflowRun.inspector.saveDraft": "保存",
     "workflowRun.inspector.savingDraft": "保存中…",
     "workflowRun.inspector.discardDraft": "放弃",
@@ -205,6 +216,7 @@ export const workflowRunTranslations = {
     "workflowRun.status.pending": "未运行",
     "workflowRun.status.running": "运行中",
     "workflowRun.status.awaiting_input": "等待参与",
+    "workflowRun.status.retry_waiting": "等待重试",
     "workflowRun.completeNode.action": "完成当前节点",
     "workflowRun.completeNode.disabledHint":
       "请等待节点回复完成后再完成当前节点。",
@@ -285,6 +297,8 @@ export const workflowRunTranslations = {
     "workflowRun.errorKind.structured_output": "结构化输出不合格",
     "workflowRun.errorHint.structured_output":
       "智能体的回复不符合输出结构；可直接续跑让它带着失败信息重试，或调整提示词/输出结构后发布新版本",
+    "workflowRun.errorHintWithoutInjection.structured_output":
+      "智能体的回复不符合输出结构；可直接续跑让它按原提示词重试，或调整提示词/输出结构后发布新版本",
     "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
     "workflowRun.errorHint.missing_skill_materialization":
       "重新发布工作流以重新生成技能文件",
@@ -303,6 +317,8 @@ export const workflowRunTranslations = {
     "workflowRun.errorKind.agent_refusal": "智能体拒绝了请求",
     "workflowRun.errorHint.agent_refusal":
       "智能体拒绝了请求；可直接续跑让它带着失败信息重试，或调整提示词后发布新版本",
+    "workflowRun.errorHintWithoutInjection.agent_refusal":
+      "智能体拒绝了请求；可直接续跑让它按原提示词重试，或调整提示词后发布新版本",
     "workflowRun.errorKind.unknown_stop_reason": "未知的停止原因",
     "workflowRun.errorHint.unknown_stop_reason":
       "智能体以本版本 Ora 不认识的方式停止，请升级 Ora 或更换智能体",
@@ -320,6 +336,8 @@ export const workflowRunTranslations = {
       "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
     "workflowRun.errorInjectedResumeHint":
       "同版本续跑时，Ora 会把这次失败的类型、原因和上次输出告诉智能体让它重试；若仍失败，再修改工作流并发布新版本。",
+    "workflowRun.errorResumeWithoutInjectionHint":
+      "本次运行关闭了失败信息注入：同版本续跑时，智能体不会得知这次失败的原因；若仍失败，再修改工作流并发布新版本。",
     "workflowRun.injectedFailure.title": "本次尝试注入的上次失败信息",
     "workflowRun.resumeFromTopHint": "可在顶部点「从失败处继续」重跑这个节点",
     "workflowRun.nodeFromOlderSnapshotHint":
@@ -330,6 +348,28 @@ export const workflowRunTranslations = {
     "workflowRun.aiDiagnosis.title": "AI 推测（{{model}}）",
     "workflowRun.aiDiagnosis.disclaimer":
       "这是模型的推测，不参与任何自动判断。",
+    "workflowRun.retryWait.label":
+      "等待重试（第 {{attempt}}/{{max}} 次），{{seconds}} 秒后开始",
+    "workflowRun.retryWait.labelStarting":
+      "等待重试（第 {{attempt}}/{{max}} 次），即将开始",
+    "workflowRun.retryWait.attempt": "等待重试（第 {{attempt}}/{{max}} 次）",
+    "workflowRun.retryWait.countdown": "{{seconds}} 秒后开始",
+    "workflowRun.retryWait.starting": "即将开始",
+    "workflowRun.retryWait.sessionPending":
+      "上一次尝试失败，Ora 会自动重新运行这个节点；新一次尝试开始后，这里会显示它的会话。",
+    "workflowRun.failedAttempts.title": "之前失败的尝试",
+    "workflowRun.failedAttempts.replacedByRetry": "已自动重试",
+    "workflowRun.failedAttempts.replacedByScheduledRetry":
+      "已安排自动重试（未开始）",
+    "workflowRun.failedAttempts.replacedByResume": "已手动续跑",
+    "workflowRun.failedAttempts.beforeRestart": "从头重新运行前",
+    "workflowRun.failedAttempts.rootCause": "底层原因",
+    "workflowRun.failedAttempts.chain": "完整错误链（{{levels}} 层）",
+    "workflowRun.retry.exhausted_one": "已自动重试 {{count}} 次，仍然失败",
+    "workflowRun.retry.exhausted_other": "已自动重试 {{count}} 次，仍然失败",
+    "workflowRun.retry.abandoned": "运行在等待自动重试时结束，这次重试没有开始",
+    "workflowRun.retry.notStarted": "这次自动重试已安排，但没有开始",
+    "workflowRun.retry.kindNotRetried": "这类失败不会自动重试",
   },
   "en-US": {
     "errors.workflow_no_published_snapshot":
@@ -524,6 +564,17 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.mcpOpen": "View brief for MCP “{{name}}”",
     "workflowRun.inspector.textOpen": "View full {{field}}",
     "workflowRun.inspector.catalogNoDescription": "No description available",
+    "workflowRun.inspector.retryDefault_one":
+      "Default: up to {{count}} retry, first wait {{seconds}} s",
+    "workflowRun.inspector.retryDefault_other":
+      "Default: up to {{count}} retries, first wait {{seconds}} s",
+    "workflowRun.inspector.retryConfigured_one":
+      "Up to {{count}} retry, first wait {{seconds}} s",
+    "workflowRun.inspector.retryConfigured_other":
+      "Up to {{count}} retries, first wait {{seconds}} s",
+    "workflowRun.inspector.retryDisabled": "Off",
+    "workflowRun.inspector.retryNone": "Not retried (max retries is 0)",
+    "workflowRun.inspector.retryInteractive": "Not retried (interactive node)",
     "workflowRun.inspector.saveDraft": "Save",
     "workflowRun.inspector.savingDraft": "Saving…",
     "workflowRun.inspector.discardDraft": "Discard",
@@ -555,6 +606,7 @@ export const workflowRunTranslations = {
     "workflowRun.status.pending": "Pending",
     "workflowRun.status.running": "Running",
     "workflowRun.status.awaiting_input": "Awaiting input",
+    "workflowRun.status.retry_waiting": "Waiting to retry",
     "workflowRun.completeNode.action": "Complete current node",
     "workflowRun.completeNode.disabledHint":
       "Wait for the node to finish replying before completing it.",
@@ -642,6 +694,8 @@ export const workflowRunTranslations = {
     "workflowRun.errorKind.structured_output": "Structured output invalid",
     "workflowRun.errorHint.structured_output":
       "The agent's reply did not match the output schema; resume to let it retry with the failure context, or adjust the prompt/schema and publish a new version",
+    "workflowRun.errorHintWithoutInjection.structured_output":
+      "The agent's reply did not match the output schema; resume to let it retry with the same prompt, or adjust the prompt/schema and publish a new version",
     "workflowRun.errorKind.missing_skill_materialization":
       "Skill not materialized",
     "workflowRun.errorHint.missing_skill_materialization":
@@ -665,6 +719,8 @@ export const workflowRunTranslations = {
     "workflowRun.errorKind.agent_refusal": "Agent refused the request",
     "workflowRun.errorHint.agent_refusal":
       "The agent refused; resume to let it retry with the failure context, or adjust the prompt and publish a new version",
+    "workflowRun.errorHintWithoutInjection.agent_refusal":
+      "The agent refused; resume to let it retry with the same prompt, or adjust the prompt and publish a new version",
     "workflowRun.errorKind.unknown_stop_reason": "Unknown stop reason",
     "workflowRun.errorHint.unknown_stop_reason":
       "The agent stopped in a way this Ora version cannot interpret; upgrade Ora or change the agent",
@@ -684,6 +740,8 @@ export const workflowRunTranslations = {
       "This kind of failure usually comes from the workflow itself; resuming as-is will likely fail again. Edit the workflow and run it again.",
     "workflowRun.errorInjectedResumeHint":
       "Resuming on the same version tells the agent this failure's kind, reason and previous output so it can retry; if it still fails, revise the workflow and publish a new version.",
+    "workflowRun.errorResumeWithoutInjectionHint":
+      "This run does not pass failures to the agent: resuming on the same version will not tell it why this attempt failed; if it still fails, revise the workflow and publish a new version.",
     "workflowRun.injectedFailure.title":
       "Previous-failure context injected into this attempt",
     "workflowRun.resumeFromTopHint":
@@ -696,5 +754,33 @@ export const workflowRunTranslations = {
     "workflowRun.aiDiagnosis.title": "AI guess ({{model}})",
     "workflowRun.aiDiagnosis.disclaimer":
       "This is a model's guess and drives no automatic decision.",
+    "workflowRun.retryWait.label":
+      "Waiting to retry (attempt {{attempt}}/{{max}}), starts in {{seconds}}s",
+    "workflowRun.retryWait.labelStarting":
+      "Waiting to retry (attempt {{attempt}}/{{max}}), starting…",
+    "workflowRun.retryWait.attempt":
+      "Waiting to retry (attempt {{attempt}}/{{max}})",
+    "workflowRun.retryWait.countdown": "starts in {{seconds}}s",
+    "workflowRun.retryWait.starting": "Starting…",
+    "workflowRun.retryWait.sessionPending":
+      "The last attempt failed and Ora will run this node again by itself; the new attempt's session appears here once it starts.",
+    "workflowRun.failedAttempts.title": "Earlier failed attempts",
+    "workflowRun.failedAttempts.replacedByRetry": "Retried automatically",
+    "workflowRun.failedAttempts.replacedByScheduledRetry":
+      "Automatic retry scheduled (not started)",
+    "workflowRun.failedAttempts.replacedByResume": "Resumed manually",
+    "workflowRun.failedAttempts.beforeRestart": "Before “Run again from start”",
+    "workflowRun.failedAttempts.rootCause": "Underlying error",
+    "workflowRun.failedAttempts.chain": "Full error chain ({{levels}} levels)",
+    "workflowRun.retry.exhausted_one":
+      "Retried automatically {{count}} time, still failed",
+    "workflowRun.retry.exhausted_other":
+      "Retried automatically {{count}} times, still failed",
+    "workflowRun.retry.abandoned":
+      "The run ended while this node was waiting to retry, so the retry never started",
+    "workflowRun.retry.notStarted":
+      "This automatic retry was scheduled but never started",
+    "workflowRun.retry.kindNotRetried":
+      "This kind of failure is not retried automatically",
   },
 } as const;

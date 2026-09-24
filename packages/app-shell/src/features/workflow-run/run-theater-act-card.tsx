@@ -25,6 +25,7 @@ import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { RunNodeSessionChat } from "./run-node-session-chat";
+import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
@@ -133,8 +134,12 @@ export function RunTheaterActCard({
       ? { runId, nodeId }
       : undefined;
   const hasHitl = interaction !== undefined;
+  const retryWait =
+    state.status === "retry_waiting" ? state.retryWait : undefined;
+  // A waiting retry has not started, so its countdown replaces the time range.
   const timingRange =
-    state.startedAt !== undefined || state.finishedAt !== undefined
+    state.status !== "retry_waiting" &&
+    (state.startedAt !== undefined || state.finishedAt !== undefined)
       ? [
           state.startedAt !== undefined
             ? formatRunClock(state.startedAt, locale)
@@ -147,6 +152,11 @@ export function RunTheaterActCard({
 
   const metrics = (
     <div className="space-y-2.5">
+      {retryWait !== undefined && (
+        <p className="text-[11px] font-medium tabular-nums text-orange-700 dark:text-orange-300">
+          <RunRetryWaitLabel wait={retryWait} />
+        </p>
+      )}
       {timingRange !== null && (
         <p className="text-[10px] tabular-nums text-muted-foreground/65">
           {timingRange}
@@ -380,11 +390,13 @@ export function RunTheaterActCard({
                 }
               />
             ) : (
-              <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+              <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">
                 {t(
-                  isNodeWorking(state.status)
-                    ? "workflowRun.conversation.waiting"
-                    : "workflowRun.conversation.idle",
+                  state.status === "retry_waiting"
+                    ? "workflowRun.retryWait.sessionPending"
+                    : isNodeWorking(state.status)
+                      ? "workflowRun.conversation.waiting"
+                      : "workflowRun.conversation.idle",
                 )}
               </div>
             )}

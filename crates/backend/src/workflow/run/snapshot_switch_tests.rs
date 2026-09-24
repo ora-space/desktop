@@ -1,3 +1,6 @@
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
+
 use super::checkpoint::record_pre_node_checkpoint;
 use super::rollback::{apply_rollback, fill_snapshot_preview, plan_rollback, preview};
 use super::snapshot_switch::{check_switch, load_context, switch_if_requested};
@@ -31,9 +34,9 @@ use tempfile::TempDir;
 
 const V1_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"old-c",
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"b","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"old-c",
         "outputContract":{"type":"structured","textExposure":"includeFinalText",
             "schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}}},
     {"id":"output","data":{"kind":"output"}}
@@ -46,9 +49,9 @@ const V1_GRAPH: &str = r#"{"nodes":[
 
 const V2_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fixed-c",
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"b","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"fixed-c",
         "outputContract":{"type":"structured","textExposure":"includeFinalText",
             "schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}}}},
     {"id":"output","data":{"kind":"output"}}
@@ -61,8 +64,8 @@ const V2_GRAPH: &str = r#"{"nodes":[
 
 const V3_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},

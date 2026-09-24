@@ -72,6 +72,27 @@ struct RecordingRepository {
     cleared: Arc<Mutex<Option<Vec<String>>>>,
 }
 
+/// These tests fail nodes only with kinds that never retry automatically.
+impl crate::workflow_run::engine::WorkflowRetryRepository for RecordingRepository {
+    fn schedule_node_retry(
+        &self,
+        _failed_node_run_id: &WorkflowNodeRunId,
+        _failure: &crate::workflow_run::engine::NodeFailure,
+        _retry: &crate::workflow_run::engine::NodeRetryToSchedule,
+        _now: i64,
+    ) -> Result<crate::workflow_run::engine::ScheduleNodeRetryResult, RepositoryError> {
+        unreachable!("no automatic retry is scheduled in these tests")
+    }
+
+    fn begin_node_retry(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _now: i64,
+    ) -> Result<crate::workflow_run::engine::BeginNodeRetryResult, RepositoryError> {
+        unreachable!("no automatic retry is scheduled in these tests")
+    }
+}
+
 impl WorkflowRunEngineRepository for RecordingRepository {
     fn find_active_loop_round(
         &self,

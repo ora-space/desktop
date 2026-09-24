@@ -388,6 +388,13 @@ fn fail_owner_row(
         current_nodes.clear();
         current_nodes.push(owner_node_id.to_string());
     })?;
+    super::retry::settle_retry_waits(
+        transaction,
+        run_id.as_ref(),
+        WorkflowNodeStatus::Cancelled,
+        Some(super::retry::RETRY_ABANDONED),
+        now,
+    )?;
     transaction.execute(
         "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
          WHERE id = ?1 AND is_deleted = 0",

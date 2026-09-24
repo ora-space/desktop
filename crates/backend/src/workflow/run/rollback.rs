@@ -11,23 +11,34 @@ use gitlancer::{
 };
 use ora_application::{
     ApplicationError, FileChange, NodeType, WorkflowGraph, WorkflowRepository,
-    WorkflowRunEngineRepository, resume_unit_owner_id, running_row_blocks_resume,
+    WorkflowRunEngineRepository, WorkflowRunRepository, resume_unit_member_ids,
+    resume_unit_owner_id, running_row_blocks_resume,
 };
 use ora_contracts::{
     EmptyErrorParams, PreviewWorkflowRunResumeRequest, PreviewWorkflowRunResumeResponse,
     PublicError, ResumeFailedNodePreview, ResumeRollbackMode, ResumeWorkflowRunRequest,
     ResumeWorkflowRunResponse, WorkflowFileChange,
 };
-use ora_db::{RepositoryPool, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository};
+use ora_db::{
+    RepositoryPool, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository,
+    SqliteWorkflowRunRepository,
+};
 use ora_domain::{
     WorkflowNodeRun, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId,
     WorkspaceId,
 };
 use ora_logging::ora_info;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::Path;
 
+mod chain;
+
 /// One failed or cancelled node together with the checkpoint recorded on its payload.
+///
+/// For a row an automatic retry started, the start, checkpoint, and file changes are those of
+/// its whole retry chain (see `chain`), so every availability check and restore uses the
+/// worktree as it was before the chain's first attempt.
 pub(super) struct FailedNodeCheckpoint {
     pub node_id: String,
     pub node_run_id: String,
@@ -35,6 +46,8 @@ pub(super) struct FailedNodeCheckpoint {
     pub checkpoint: Option<String>,
     pub checkpoint_error: Option<String>,
     pub node_file_changes: Vec<FileChange>,
+    /// `node_file_changes` covers everything the node (every attempt of its chain) changed.
+    pub node_file_changes_complete: bool,
     pub resume_unit_node_id: Option<String>,
 }
 
@@ -65,7 +78,10 @@ impl RollbackPlan {
     pub(super) fn node_files_available(&self) -> bool {
         self.resumable()
             && self.node_files_unavailable_reason.is_none()
-            && self.failed.iter().all(|node| node.checkpoint.is_some())
+            && self
+                .failed
+                .iter()
+                .all(|node| node.node_file_changes_complete)
     }
 }
 
@@ -91,7 +107,7 @@ pub(super) fn plan_rollback(
             && running_row_blocks_resume(&node_run.node_type)
     });
     let graph = WorkflowGraph::parse(context.graph_json.as_str()).ok();
-    let mut failed: Vec<FailedNodeCheckpoint> = node_runs
+    let failed_rows: Vec<&WorkflowNodeRun> = node_runs
         .iter()
         .filter(|node_run| {
             matches!(
@@ -99,15 +115,20 @@ pub(super) fn plan_rollback(
                 WorkflowNodeStatus::Failed | WorkflowNodeStatus::Cancelled
             )
         })
+        .collect();
+    let earlier_attempts = load_earlier_attempts(pool, run_id, &failed_rows)?;
+    let mut failed: Vec<FailedNodeCheckpoint> = failed_rows
+        .into_iter()
         .map(|node_run| {
-            let payload = parse_node_payload(node_run.payload.as_deref());
+            let baseline = chain::chain_baseline(node_run, &earlier_attempts);
             FailedNodeCheckpoint {
                 node_id: node_run.node_id.clone(),
                 node_run_id: node_run.id.to_string(),
-                started_at: node_run.started_at,
-                checkpoint: payload.checkpoint,
-                checkpoint_error: payload.checkpoint_error,
-                node_file_changes: payload.file_changes,
+                started_at: baseline.started_at,
+                checkpoint: baseline.checkpoint,
+                checkpoint_error: baseline.checkpoint_error,
+                node_file_changes: baseline.file_changes,
+                node_file_changes_complete: baseline.file_changes_complete,
                 resume_unit_node_id: graph
                     .as_ref()
                     .and_then(|graph| resume_unit_owner_id(graph, &node_run.node_id)),
@@ -130,23 +151,26 @@ pub(super) fn plan_rollback(
     for node in &failed {
         if let Some(owner) = node.resume_unit_node_id.as_deref() {
             unit_ids.insert(owner.to_string());
-            if let Some(graph) = graph.as_ref()
-                && let Some(region) = graph.region(owner)
-            {
-                unit_ids.extend(region.member_ids.iter().cloned());
+            if let Some(graph) = graph.as_ref() {
+                unit_ids.extend(resume_unit_member_ids(graph, owner));
             }
         } else {
             unit_ids.insert(node.node_id.clone());
         }
     }
-    let unit_started_at = failed.iter().find_map(|node| {
-        let owner = node.resume_unit_node_id.as_deref().unwrap_or(&node.node_id);
-        node_runs
+    // A composite unit starts with its own row; an ordinary node starts with the first attempt
+    // of its retry chain (its own row when it has no chain).
+    let unit_started_at =
+        failed
             .iter()
-            .find(|row| row.node_id == owner && row.iteration.is_none())
-            .and_then(|row| row.started_at)
-            .or(node.started_at)
-    });
+            .find_map(|node| match node.resume_unit_node_id.as_deref() {
+                Some(owner) => node_runs
+                    .iter()
+                    .find(|row| row.node_id == owner && row.iteration.is_none())
+                    .and_then(|row| row.started_at)
+                    .or(node.started_at),
+                None => node.started_at,
+            });
     // Checkpoint restore rewinds the whole worktree, so a sibling that was still running (or
     // that finished after this unit started) would lose files it wrote after the checkpoint.
     // Re-plan on every apply so a stale preview cannot bypass this check.
@@ -155,19 +179,22 @@ pub(super) fn plan_rollback(
             !unit_ids.contains(&node_run.node_id) && sibling_was_active_after(node_run, earliest)
         })
     });
-    let unit_checkpoint = failed.iter().find_map(|node| {
-        let owner = node.resume_unit_node_id.as_deref().unwrap_or(&node.node_id);
-        node_runs
+    let unit_checkpoint =
+        failed
             .iter()
-            .find(|row| row.node_id == owner && row.iteration.is_none())
-            .and_then(|row| parse_node_payload(row.payload.as_deref()).checkpoint)
-            .or_else(|| node.checkpoint.clone())
-    });
+            .find_map(|node| match node.resume_unit_node_id.as_deref() {
+                Some(owner) => node_runs
+                    .iter()
+                    .find(|row| row.node_id == owner && row.iteration.is_none())
+                    .and_then(|row| parse_node_payload(row.payload.as_deref()).checkpoint)
+                    .or_else(|| node.checkpoint.clone()),
+                None => node.checkpoint.clone(),
+            });
     let node_files_unavailable_reason = if !resumable {
         None
     } else if composite_unit {
         Some("composite_region")
-    } else if failed.iter().any(|node| node.checkpoint.is_none()) {
+    } else if failed.iter().any(|node| !node.node_file_changes_complete) {
         Some("no_file_changes")
     } else {
         None
@@ -190,6 +217,31 @@ pub(super) fn plan_rollback(
         node_files_unavailable_reason,
         checkpoint_oid: unit_checkpoint,
     })
+}
+
+/// Reads the earlier attempts the failed rows' retry chains refer to, keyed by node-run id.
+///
+/// Every attempt an automatic retry replaced stays as a soft-deleted `Failed` row, so the run's
+/// failed-attempt history holds all of them.
+fn load_earlier_attempts(
+    pool: &RepositoryPool,
+    run_id: &WorkflowRunId,
+    failed_rows: &[&WorkflowNodeRun],
+) -> Result<HashMap<String, WorkflowNodeRun>, BackendError> {
+    if chain::chain_ids(failed_rows.iter().copied()).is_empty() {
+        return Ok(HashMap::new());
+    }
+    let detail = SqliteWorkflowRunRepository::new(pool.clone())
+        .get_run_detail(run_id)
+        .map_err(|error| {
+            BackendError::internal("failed to load earlier attempts for rollback", error)
+        })?;
+    Ok(detail
+        .map(|detail| detail.failed_attempts)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| (row.id.to_string(), row))
+        .collect())
 }
 
 /// Builds the public resume preview, including a live diff against each failed node's checkpoint.

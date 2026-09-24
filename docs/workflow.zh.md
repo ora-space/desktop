@@ -190,7 +190,8 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 失败节点保持可见。某个节点失败时，运行立即失败（D2），仍在执行的兄弟节点会跑完且仍可绑定；
 调度器随后不会再向 `Failed` / `Cancelled` 运行派发新节点。失败节点的
 `payload.error_detail` 记录 `kind`、`message`、`source_chain`、`attempt`、`resumable`、
-`injects_previous_failure`、`recorded_at`。`kind` 是机械分类，从不由模型推断。
+`injects_previous_failure`、`auto_retryable`（这类失败是否会自动重试，见下文；该字段出现之前
+写入的行没有它）、`recorded_at`。`kind` 是机械分类，从不由模型推断。
 
 `resumable` 只表示「同一快照再跑一次是否像环境/瞬时问题」，不决定界面是否允许续跑——失败或
 已取消且空闲的运行始终可以续跑：
@@ -201,21 +202,30 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 | `structured_output`、`agent_refusal`、`prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`unknown_stop_reason`、`multiple_outputs`、`condition_evaluation` | false       |
 
 只有智能体自身行为导致的失败会注入后续提示词（`injects_previous_failure`）：
-`structured_output`、`agent_refusal`、`unknown_stop_reason`、`multiple_outputs`。
+`structured_output`、`agent_refusal`、`unknown_stop_reason`、`multiple_outputs`。以
+`injectLastFailure: false` 创建的运行不注入任何失败，所以它的失败无论哪种都记录
+`injects_previous_failure: false`，运行视图也不会承诺注入。
 
 续跑会软删除失败/取消的节点运行及其全部后继（`is_deleted = 1`），再从幸存状态重新调度。
-尝试次数按 `(run_id, node_id, iteration)` 统计软删除前驱（外层行为 `iteration IS NULL`）。
-`find_last_failed_attempt` 使用同一作用域。
+尝试次数按 `(run_id, node_id, iteration)` 统计软删除前驱（外层行为 `iteration IS NULL`）；
+Loop 循环体的行只统计它所在那一轮的行，所以每一轮（包括 Loop 续跑后重跑的轮次）都从第 1 次
+开始编号。`find_last_failed_attempt` 按 `(run_id, node_id, iteration)` 查找，不限于当前轮，
+所以 Loop 续跑后的第一次尝试仍会拿到导致 Loop 失败的那次失败。
 
 每个节点开始前会在 `refs/ora/checkpoints/<node_run_id>` 记录 git 检查点。回滚前先把工作树
 存成 `pre-rollback-<run>-<ts>`，方便反悔。节点 payload 保存 `checkpoint`、
 `checkpoint_error`、`file_changes`。三种回滚模式：`keep`（保留现状）、`node_files`
 （只还原失败节点记录过的路径）、`checkpoint`（把整棵工作树还原到续跑单元的检查点）。
 `node_files` 在失败节点没有检查点或文件改动时不可用（`nodeFilesUnavailableReason` 为
-`"no_file_changes"`），续跑单元是迭代复合节点时也不可用（`"composite_region"`）。
+`"no_file_changes"`），续跑单元是复合节点（迭代或 Loop）时也不可用（`"composite_region"`）。
 `checkpoint` 不可用的原因是 `"no_checkpoint"`、`"siblings_ran_after_checkpoint"`（续跑单元
 最早开始之后，单元外仍有活着的节点在跑：`finished_at` 为空或更晚，或 `started_at` 更晚；
 在该时刻之前已结束的 Start/Condition/Output 行不算），或 `"not_resumable"`。
+
+被自动重试替换过的节点与其重试链作为一个单元回滚。重试链记在等待行的 `payload.retry_chain`，
+是自上次启动、重启或续跑以来同一节点同一轮的更早尝试，按时间从早到晚排列。`checkpoint` 还原到
+链上第一次尝试之前的工作树；`node_files` 覆盖任一尝试改过的文件，且只有链上每次实际运行的
+尝试都有检查点时才可用。只有一次尝试的链与以前的行为相同。
 
 运行级开关 `inject_last_failure`（默认开启）会在同一 `(node_id, iteration)` 的上次失败属于
 上述四种可注入 kind 时，把失败信息写入提示词，并保存在
@@ -240,10 +250,130 @@ completed`）；本身就是续跑单元的复合节点可以任意改，因为�
 记 `interrupted_by_restart`，复合行与运行存活，该轮按失败结算；非区域行仍走整次运行的
 `InterruptedByRestart` 处理。
 
-Loop 容器（`kind: "loop"`，见「Loop 容器」）按同样方式续跑：Loop 节点本身是续跑单元，清除它时
+Loop 容器（`kind: "loop"`，见「Loop 容器」）按同样方式续跑：Loop 循环体里任何失败/取消的行
+（包括运行放弃的重试等待）以及 Loop 自身失败/取消的行，都以 Loop 节点为续跑单元；清除它时
 会一并关闭其各轮作用域并软删除这些轮次创建的全部节点记录，因此重跑从第 1 轮开始、没有遗留的
-活跃轮次。轮次内部沿用 Loop 自己的失败语义（同一轮的兄弟节点被取消，失败上抬到 Loop 节点）；
+活跃轮次。Loop 从不在未结束的轮次内续跑。该单元不能使用 `node_files` 回滚（`composite_region`）。轮次内部沿用 Loop 自己的失败语义（同一轮的兄弟节点被取消，失败上抬到 Loop 节点）；
 D2 的「兄弟节点继续跑完」只适用于根作用域。
+
+### 智能体节点失败自动重试
+
+智能体节点可以在失败传到运行之前自行重试。策略写在 `agentConfig.retry = {enabled,
+maxRetries, initialDelaySeconds}`（图中用驼峰命名）：`maxRetries` 为 0 到 5 的整数，
+`initialDelaySeconds` 为 0 到 300 的整数。缺少 `retry`（或为 `null`）等于
+`{enabled: true, maxRetries: 2, initialDelaySeconds: 10}`；写了对象就必须三个字段齐全，缺字段
+或越界在解析图时直接拒绝（`node <id> has an invalid retry config: …`）。该字段可选且有默认值，
+所以 `schemaVersion` 不变，旧图照常解析。`enabled: false` 或 `maxRetries: 0` 表示不重试。
+
+只有智能体节点会重试，包括迭代区域和 Loop 循环体里的智能体（各自单独重试）；Start、
+Condition、Output 和复合节点从不重试，`interactive: true` 的智能体也不重试。只有以下 kind
+会重试：`session`、`session_ended_without_stop_reason`、`session_binding_rejected`、
+`structured_output`、`agent_refusal`、`unknown_stop_reason`。其余 kind（`missing_agent_ref`、
+`workflow_model_not_found`、`missing_agent_config`、`invalid_run_payload`、
+`prompt_template`、`missing_skill_materialization`、`baseline_persist`、`repository`、
+`interrupted_by_restart`、`multiple_outputs`、`condition_evaluation`）立即失败。
+
+第 `n` 次重试（从 1 数）前等待 `initialDelaySeconds × 2^(n-1)` 秒，上限 600 秒：默认策略下
+两次等待是 10 秒和 20 秒，一个节点最多跑三次。
+
+收到可重试的失败时，同一个事务里：记录失败尝试完整的 `payload.error_detail`，按续跑清除
+尝试的同一方式把它软删除，再在同一运行、作用域和 iteration 下插入下一次尝试，作为「等待中」
+的行：状态 `Running`、`started_at` 为空、`payload.retry_wait = {attempt, max_attempt,
+retry, max_retries, delay_ms, scheduled_at, due_at, previous_node_run_id}`。因为这一行是
+`Running`，运行保持 `Running`，互不依赖的分支继续执行，后继节点继续等待，运行不会被判定为
+已执行完。到了 `due_at`，后端计时器（每个等待一个 tokio sleep，自身不保存状态）在运行锁下
+唤醒引擎：删除等待标记、写入 `started_at`，并在失败时所在的作用域里派发这次尝试（外层图与
+运行变量池、迭代当轮的绑定，或 Loop 循环体与当轮的变量池）。每次唤醒都重新读取持久化的标记，
+所以提前到达的唤醒会重新定时；取消、运行失败、重启之后或已被唤醒过的唤醒都不做任何事；多个
+等待各自有自己的截止时间。
+
+重试的尝试在运行级开关 `inject_last_failure` 开启、且失败 kind 属于可注入 kind（见上文）时
+得到上一次失败的提示词块；会话类失败不注入。重试前不回滚文件；新尝试照常记录自己的节点前
+检查点。`find_last_failed_attempt` 会忽略同一 `(node_id, iteration)` 之后已有成功尝试的失败，
+即使该成功尝试已被续跑或重启清除，所以 Loop 的下一轮（或从第 1 轮重跑的 Loop）不会继承已经靠
+重试解决的失败。它也忽略从未开始的行（重启时被判失败的等待行），因此注入的是真正失败的那次
+尝试。单个会话内的提示词卡住重发是另一套机制，
+保持不变。
+
+一行已经用掉的重试次数记在 `payload.auto_retry = {retry, max_retries}`。没有该字段的行——
+第一次尝试、手动续跑的尝试、重启后的尝试——都从完整的次数重新开始，而
+`error_detail.attempt` 在它们之间持续累加（三次尝试都失败后续跑，接下来是第 4、5、6 次）。在 Loop 内，重试次数额度和尝试编号每一轮都重新
+开始。
+
+以下情况会提前结束等待：
+
+- **取消**：立即把所有等待中的行结算为 `Cancelled`，之后不会再启动。
+- **运行失败**（根作用域节点最终失败、Loop 失败、`fail` 策略的迭代失败）：把该运行所有等待中
+  的行结算为 `Cancelled`，错误为 `{"reason":"retry_abandoned"}`，重试不再触发，续跑会重跑该
+  节点。D2 下仍在运行的复合行保持当前轮次打开；续跑时，该 Loop 或迭代按上文复合节点续跑规则
+  从第一轮重来。
+- **重启**：开机清扫把等待中的行当作运行中的行处理。外层行记 `interrupted_by_restart` 并使运行
+  失败；运行中迭代里的行被吸收，该轮按失败结算。重试不会继续。
+
+在迭代或 Loop 内，重试留在同一轮；复合节点的错误策略只看到次数用尽后的失败。同一轮里另一个
+区域行最终失败时不放弃等待中的重试：和其他在执行中的行一样，该轮等全部行结束后再结算。
+
+`get_workflow_run` 同时给出这两种状态。节点的在用行为 `running` 且带有 `payload.retry_wait`
+时即为等待中；倒计时为 `due_at - now`，次数显示用 `attempt / max_attempt`。
+`GetWorkflowRunResponse.failedAttempts` 按时间从早到晚列出之前失败的尝试（软删除的 `Failed`
+行及其 `error_detail`），每项含 `nodeRunId`、`nodeId`、`scopeId`、`iteration`、`sessionId`、
+`attempt`、`kind`、`message`、`sourceChain`（即 `error_detail.source_chain`，由外到内；会话类
+失败的 `message` 是通用文字，智能体自己给出的原因在这里）、`recordedAt`、`startedAt`、
+`finishedAt`。尝试编号统计该节点（及 iteration）在本运行中所有软删除的行（Loop 循环体的行只统计所在那一轮），
+不论状态；
+`failedAttempts` 只列出带有 `error_detail` 的软删除 `Failed` 行。两者在续跑和重启后都继续
+累加（Loop 循环体的编号每一轮重新开始，Loop 续跑后重跑的轮次也一样），而重试次数额度在两者之后都重新开始（见上文 `auto_retry`）。因此列表里的编号可能不连续：
+取消或放弃的尝试、被复合节点续跑清除的成功尝试、没有失败记录的失败行都会占用编号，但不会列出。
+
+#### 应用内的重试界面
+
+**设置。** 工作流编辑器里，智能体节点设置的最后一节是「失败自动重试」，位于结构化输出之后：
+一个开关，加上「最多重试次数」（0–5）和「首次等待（秒）」（0–300）两个输入框。开关关闭时两个
+输入框保留原值但不可编辑。标题下的简短列表说明哪些失败会重试、因回复问题重试时会告诉智能体上次
+失败的原因、每次等待翻倍且最长 600 秒、重试前不回滚文件改动、交互模式的节点不会自动重试。
+没有 `retry` 时这一节显示默认值且不写入任何内容；第一次修改会写入完整的
+`{enabled, maxRetries, initialDelaySeconds}` 对象。不合法的数字留在输入框里并显示提示，不会
+写入图。节点处于交互模式时这一节隐藏（已保存的 `retry` 保留）。运行中，节点详情以只读的
+「失败自动重试」一行显示实际生效的策略：「默认：最多重试 2 次，首次等待 10 秒」「最多重试 4 次，
+首次等待 30 秒」「已关闭」「不重试（最多重试次数为 0）」或「不重试（交互模式节点）」。
+
+**等待状态。** 运行视图把等待中的行（在用行为 `running`、`started_at` 为空、带有
+`payload.retry_wait`）显示为单独的橙色状态「等待重试」，而不是运行中。它没有转圈图标、没有
+呼吸动画，也不显示开始时间或耗时，因为此时没有任何东西在执行，这一行也还没有会话。舞台卡片、
+全图节点和节点详情标题下显示「等待重试（第 {attempt}/{max_attempt} 次），{n} 秒后开始」，
+`n` 每秒按 `due_at - now` 重新计算；归零后显示「…，即将开始」，直到下一次刷新运行数据（运行
+详情每 1.5 秒轮询一次）显示已开始的尝试。路径标签、迭代成员标签、并行标签和 Loop 轮次行使用同样
+的橙色状态，只显示「{n} 秒后开始」；标签的读屏名称和 Loop 轮次行里仅供读屏的文字会补上
+「等待重试（第 {attempt}/{max_attempt} 次）」，不含秒数。等待中节点的会话面板说明新一次尝试
+开始后会显示它的会话。没有固定聚焦节点时，舞台可以像跟随运行中节点一样跟随等待中的节点，但
+等待输入或运行中的同级节点优先：舞台在活跃节点中优先选最近开始的，而等待中的节点没有开始时间。
+进度计数（「已完成 / 总数」、迭代当轮的「x/y 完成」）不把等待中的节点算作已完成。
+
+**尝试历史。** 节点详情在当前尝试的错误信息下方列出「之前失败的尝试」，数据来自
+`failedAttempts`，按时间从早到晚，范围是正在查看的这次节点执行（外层行或迭代行对应节点加轮次，
+包括「从头重新运行」之前的尝试；Loop 循环体行对应所在的 Loop 轮次）。每一项显示「第 {n} 次尝试」、
+翻译后的失败类型、错误信息、`sourceChain` 的最后一项（标为「底层原因」；链多于一项时可展开查看
+完整错误链）、这次尝试的开始和结束时间（从未开始的尝试显示失败记录时间），以及迭代行和 Loop 行
+所在的轮次。只有运行数据能证明是什么替换了某次尝试时才标注：在用行的 `auto_retry.retry`
+表示紧挨在它之前有几次自动重试；一个新起的行如果尝试编号正好接在某次失败尝试之后，就是通过续跑
+替换了那次尝试（「已手动续跑」）。被自动重试替换的尝试，若这次重试创建的行已经开始，标「已自动
+重试」；若那一行从未开始（仍在等待，或等待被取消、被放弃、因应用重启结束），标「已安排自动重试
+（未开始）」。编号中间有空缺时停止标注，更早的尝试都不标；空缺的编号属于列表不包含的行（取消或
+放弃的尝试、被复合节点续跑清除的成功尝试、没有失败记录的失败行）。「从头重新运行」之前的尝试
+改标「从头重新运行前」。当前尝试保持原有显示，包括注入的
+上次失败信息。被 Loop 续跑关闭的 Loop 轮次里的失败尝试不显示，因为这些轮次已经没有在用行。
+
+**重试用尽与没有开始的重试。** 在用行带有 `auto_retry.retry = n` 的失败节点，会在续跑提示旁
+显示「已自动重试 {k} 次，仍然失败」，`k` 只统计实际开始过的重试：这一行开始过时为 `n`，从未
+开始时（应用重启时被判失败的等待行）为 `n - 1`；`k` 为 0 时不显示。带有 `auto_retry` 但从未
+开始的失败或取消行显示「这次自动重试已安排，但没有开始」。以 `{"reason":"retry_abandoned"}`
+取消的行显示「运行在等待自动重试时结束，这次重试没有开始」，不再显示原始错误文本，也不再显示
+第二条说明。
+
+**不会自动重试的失败。** 重试策略开启（已启用、最多重试次数至少为 1、不是交互模式）的智能体
+节点，如果因为自动重试不覆盖的失败类型而失败（`error_detail.auto_retryable` 为 false），失败
+信息里会多一行「这类失败不会自动重试」，免得立即失败看起来像重试设置没有生效。没有
+`auto_retryable` 字段的行不显示这一行。
 
 ### 实体与状态
 

@@ -52,7 +52,19 @@ Keep these stacks separate — shared chrome only where noted.
     User input and formal Agent messages stay visible; thoughts and tool calls
     remain available behind one collapsed activity disclosure. The inspector
     therefore does not duplicate runtime input/output; it remains the
-    configuration, error, and artifact surface.
+    configuration, error, and artifact surface. Below the current attempt's
+    error it lists the node execution's **earlier failed attempts** (oldest
+    first, from `failedAttempts` of the run detail): attempt number, failure
+    kind, message, the innermost `sourceChain` entry with the full chain in a
+    disclosure, time, round, and — only where the detail proves it — whether an
+    automatic retry or a manual resume replaced the attempt, or whether it ran
+    before a "Run again from start". A retry only counts once the row it
+    created started: before that the replaced attempt reads "automatic retry
+    scheduled (not started)". A failed row adds "retried automatically n
+    times" next to the resume hint, where n counts only the retries that
+    started (nothing when it is 0); a failed or cancelled row whose retry never
+    started says so, and a wait the run abandoned shows a plain note instead of
+    the raw `retry_abandoned` error.
   - **Result act**: when the run is terminal and Theater focus is not pinned
     to a path node (`focusNodeId === null`), the stage shows an end-of-run
     result surface (status, changed-file count, Overview CTA). Finishing
@@ -69,6 +81,19 @@ Keep these stacks separate — shared chrome only where noted.
       in the focused card (see HITL below). Stage content uses safe vertical
       centering (`my-auto`) so tall HITL stacks scroll from the top and never
       cover the path rail.
+    - **Waiting to retry (`retry_waiting`)**: orange mark / badge / ring / path
+      chip. The adapter derives it from a `running` row with no start time and a
+      `payload.retry_wait` marker. No spinner, no breathe and no time range: the
+      card, Overview node and inspector header show "Waiting to retry (attempt
+      n/max), starts in Ns" counting down from `due_at` each second ("starting…"
+      at zero until the next poll replaces the row); path, region and parallel
+      chips and Loop round rows show only the short countdown, and the chips'
+      accessible names (a screen-reader-only text in Loop rows) add the attempt
+      without the seconds. The row has no session yet, so the session dock
+      shows a placeholder. It still counts as an active act, so the stage can
+      follow it, but an awaiting-input or running peer takes precedence (the
+      stage prefers the most recently started active act and a waiting act has
+      no start time); it never counts as done in progress totals.
     - **Terminal**: result act by default; one check / x / triangle on card
       badges when reviewing a history act. Quiet path/header marks stay dots
       (partial_failed uses a small triangle so it is not identical to failed).

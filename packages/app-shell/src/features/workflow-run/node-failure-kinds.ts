@@ -18,3 +18,24 @@ export const NODE_FAILURE_KINDS = [
   "multiple_outputs",
   "condition_evaluation",
 ] as const;
+
+/**
+ * Kinds a same-version rerun describes to the agent when the run injects previous failures;
+ * mirrors `NodeFailureKind::inject_into_prompt`. A row of one of these kinds recorded with
+ * `injects_previous_failure: false` belongs to a run created with that injection off.
+ */
+export const PROMPT_INJECTED_FAILURE_KINDS: ReadonlySet<string> = new Set([
+  "structured_output",
+  "agent_refusal",
+  "unknown_stop_reason",
+  "multiple_outputs",
+]);
+
+/**
+ * Kinds whose `workflowRun.errorHint` text promises the retry will carry the failure; they also
+ * have a `workflowRun.errorHintWithoutInjection` text for runs that inject nothing.
+ */
+export const HINT_PROMISES_INJECTION_KINDS: ReadonlySet<string> = new Set([
+  "structured_output",
+  "agent_refusal",
+]);

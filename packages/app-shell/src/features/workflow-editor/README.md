@@ -30,6 +30,10 @@ category.
   offers retry without claiming that installed plugins disappeared. Installation only populates
   the global catalog; enabled bindings are the node Session's allowlist. Agent-node Skill switches
   instead express mandatory invocation and do not provide node-level Skill isolation.
+- The Agent "Retry on failure" section shows the default policy while `agentConfig.retry` is
+  absent and writes the complete policy on the first edit. Invalid numbers stay in the input with
+  a message and are never written, so autosave only persists values the engine accepts. The
+  section is hidden for interactive nodes, which never retry; their stored policy is kept.
 
 ## Key invariants
 

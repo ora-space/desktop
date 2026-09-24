@@ -1,4 +1,5 @@
 import { WorkflowMcpFields } from "./workflow-mcp-fields";
+import { WorkflowAgentRetryFields } from "./workflow-agent-retry-fields";
 import type { WorkflowMcpCatalogStatus } from "./mcp-catalog";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,6 +41,7 @@ import {
   type WorkflowVariableCatalogEntry,
   type WorkflowGlobalVariable,
   normalizeWorkflowAgentConfig,
+  workflowAgentRetryApplies,
 } from "@ora/workflow-mock";
 import type { Node } from "@xyflow/react";
 import {
@@ -1020,6 +1022,10 @@ function AgentConfigurationFields({
           </div>
         )}
       </div>
+      {/* Interactive nodes wait for a person instead of rerunning, so the setting would be inert. */}
+      {workflowAgentRetryApplies(config) && (
+        <WorkflowAgentRetryFields config={config} onChange={onChange} />
+      )}
     </>
   );
 }

@@ -12,6 +12,7 @@ use crate::workflow_run::engine::graph::{WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::iteration::RoundOutcome;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::ExecutionContext;
+use crate::workflow_run::engine::retry::AgentRetryPolicy;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
 use control::{ConditionRuntime, OutputRuntime, StartRuntime};
 use iteration::IterationRuntime;
@@ -75,6 +76,11 @@ pub trait AsyncNodeRuntime: NodeRuntime {
         scope_id: &ora_domain::WorkflowScopeId,
         pool: &WorkflowVariablePool,
     );
+
+    /// The automatic retry policy of one node of this runtime, or `None` when its failed
+    /// attempts never retry automatically. Declared by the runtime so the scheduling core stays
+    /// free of node-type policy (ADR "node runtime orchestration" D1).
+    fn retry_policy(&self, node: &WorkflowGraphNode) -> Option<AgentRetryPolicy>;
 }
 
 /// The next transition one Running composite node-run needs, computed purely from persisted
@@ -349,6 +355,14 @@ where
     ) {
         self.executor
             .dispatch(node_run_id, node, graph, context, scope_id, pool);
+    }
+
+    /// Interactive nodes are driven by a human turn, so only automatic nodes retry.
+    fn retry_policy(&self, node: &WorkflowGraphNode) -> Option<AgentRetryPolicy> {
+        node.agent_config
+            .as_ref()
+            .filter(|config| !config.interactive)
+            .map(|config| config.retry)
     }
 }
 

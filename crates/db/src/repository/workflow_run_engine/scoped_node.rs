@@ -3,6 +3,7 @@
 use super::failure_detail::persist_failed_node_run;
 use super::iteration::write_pool_variable;
 use super::payload_json::merge_complete_payload;
+use super::retry::{RETRY_ABANDONED, settle_retry_waits};
 use super::*;
 
 /// Completes one node and writes its outputs to the owning execution scope.
@@ -170,6 +171,14 @@ pub(super) fn fail(
                 transaction.commit()?;
                 return Ok(AdvanceWorkflowRunResult::Advanced);
             }
+            // The run fails now, so no pending retry of any node may fire into it.
+            settle_retry_waits(
+                &transaction,
+                &run_id,
+                WorkflowNodeStatus::Cancelled,
+                Some(RETRY_ABANDONED),
+                now,
+            )?;
             if scope_id != root_scope_id {
                 transaction.execute(
                     "UPDATE workflow_node_runs SET status = ?2,

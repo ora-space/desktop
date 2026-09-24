@@ -3,6 +3,9 @@
 //! Every test drives the production engine over a frozen graph and asserts on persisted rows,
 //! the run payload's ledger and variable pool, and the run state machine — the evidence
 //! obligations of `test-cases/desktop/core/workflow/iteration-node.md`.
+//!
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
 
 use super::checkpoint::record_pre_node_checkpoint;
 use super::rollback::{apply_rollback, plan_rollback, preview};
@@ -32,14 +35,14 @@ fn iteration_graph(body: &str, error_strategy: &str, max_iterations: u32) -> Str
                     {"variableSelector":["iter","item","id"],"operator":"equals","value":2}
                 ]}
             ]}},
-            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{
+            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
                 "executor":{"agentCli":"open_code","modelId":"m"},"prompt":"fix {{#iter.item#}}"
             }}}]"#,
             r#"[{"source":"iter","target":"gate"},
                 {"source":"gate","sourceHandle":"fix-it","target":"fix"}]"#,
         ),
         _ => (
-            r#"[{"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{
+            r#"[{"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
                 "executor":{"agentCli":"open_code","modelId":"m"},"prompt":"fix {{#iter.item#}}"
             }}}]"#,
             r#"[{"source":"iter","target":"fix"}]"#,

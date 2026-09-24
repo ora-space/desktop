@@ -461,3 +461,175 @@ describe("shouldStealFocusForArtifactReveal", () => {
     ).toBe(true);
   });
 });
+
+describe("retry_waiting focus", () => {
+  // A waiting row has no startedAt: the backend inserts it with `started_at` null.
+  const WAITING = {
+    status: "retry_waiting" as const,
+    retryWait: {
+      attempt: 2,
+      maxAttempt: 4,
+      retry: 1,
+      maxRetries: 3,
+      delayMs: 30_000,
+      scheduledAt: 1_000,
+      dueAt: 31_000,
+    },
+    autoRetry: { retry: 1, maxRetries: 3 },
+  };
+
+  it("keeps a waiting node among the active acts in path order", () => {
+    const run = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "2026-08-01T12:00:01+08:00" },
+        understand: {
+          status: "succeeded",
+          finishedAt: "2026-08-01T12:00:05+08:00",
+        },
+        quality: { status: "running", startedAt: "2026-08-01T12:00:06+08:00" },
+        tests: WAITING,
+        review: { status: "running", startedAt: "2026-08-01T12:00:07+08:00" },
+        output: { status: "idle" },
+      },
+    });
+
+    expect(resolveTheaterFocus(run, null)).toEqual({
+      primaryId: "review",
+      activeIds: ["quality", "tests", "review"],
+    });
+    // An explicit pin on the waiting node is kept and the active list is unchanged.
+    expect(resolveTheaterFocus(run, "tests")).toEqual({
+      primaryId: "tests",
+      activeIds: ["quality", "tests", "review"],
+    });
+  });
+
+  it("follows a lone waiting node instead of the last succeeded one", () => {
+    const run = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "2026-08-01T12:00:01+08:00" },
+        understand: {
+          status: "succeeded",
+          finishedAt: "2026-08-01T12:00:05+08:00",
+        },
+        quality: WAITING,
+        tests: { status: "idle" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+
+    expect(resolveTheaterFocus(run, null)).toEqual({
+      primaryId: "quality",
+      activeIds: ["quality"],
+    });
+    expect(resolveOverviewFocusedId(run, null)).toBe("quality");
+    expect(resolveFocusNodeId(run, null)).toBe("quality");
+  });
+
+  it("prefers a started running node over a waiting node in either path position", () => {
+    const waitingFirst = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "a" },
+        understand: { status: "succeeded", finishedAt: "b" },
+        quality: WAITING,
+        tests: { status: "running", startedAt: "2026-08-01T12:00:10+08:00" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+    expect(resolveTheaterFocus(waitingFirst, null)).toEqual({
+      primaryId: "tests",
+      activeIds: ["quality", "tests"],
+    });
+
+    const runningFirst = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "a" },
+        understand: { status: "succeeded", finishedAt: "b" },
+        quality: { status: "running", startedAt: "2026-08-01T12:00:10+08:00" },
+        tests: WAITING,
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+    expect(resolveTheaterFocus(runningFirst, null)).toEqual({
+      primaryId: "quality",
+      activeIds: ["quality", "tests"],
+    });
+  });
+
+  it("keeps a live pin through retry waits and releases it once the node ends", () => {
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "tests", status: "running" },
+        "tests",
+        "retry_waiting",
+      ),
+    ).toBe(false);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "tests", status: "retry_waiting" },
+        "tests",
+        "running",
+      ),
+    ).toBe(false);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "tests", status: "retry_waiting" },
+        "tests",
+        "failed",
+      ),
+    ).toBe(true);
+    // A wait abandoned because the run ended leaves the row cancelled.
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "tests", status: "retry_waiting" },
+        "tests",
+        "cancelled",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReleaseLivePinToFollow(
+        null,
+        { nodeId: "tests", status: "running" },
+        "tests",
+        "retry_waiting",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not advance an open automatic session when its node starts waiting to retry", () => {
+    expect(
+      shouldAdvanceAutomaticConversation(
+        { nodeId: "tests", status: "running" },
+        "tests",
+        "retry_waiting",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      shouldAdvanceAutomaticConversation(
+        { nodeId: "tests", status: "retry_waiting" },
+        "tests",
+        "failed",
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("advances a finished node's session to a waiting successor", () => {
+    const run = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "a" },
+        understand: { status: "succeeded", finishedAt: "b" },
+        quality: WAITING,
+        tests: { status: "idle" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+
+    expect(resolveCompletionAdvanceNodeId(run, "understand")).toBe("quality");
+  });
+});

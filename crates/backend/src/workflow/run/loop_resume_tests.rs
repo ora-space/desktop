@@ -1,5 +1,8 @@
 //! Resume, cancel, and checkpoint behaviour of Loop containers through the production
 //! scheduler and repository: a Loop node is one resume unit, and a rerun starts from round 1.
+//!
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
 
 use super::test_fixture::{ClockAt, RecordingExecutor, SeqGen, bootstrap, started_run_with};
 use ora_application::{
@@ -27,7 +30,7 @@ const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
         "outputs":[{"name":"result","variableSelector":["writer","output"]}]
     }}},
     {"id":"entry","parentId":"loop","data":{"kind":"start","containerId":"loop"}},
-    {"id":"writer","parentId":"loop","data":{"kind":"agent","containerId":"loop","agentConfig":{
+    {"id":"writer","parentId":"loop","data":{"kind":"agent","containerId":"loop","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
         "executor":{"agentCli":"c","modelId":"m"},"prompt":"revise"
     }}},
     {"id":"out","data":{"kind":"output","outputs":[{"name":"draft","variableSelector":["loop","result"]}]}}
@@ -40,7 +43,7 @@ const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
 /// The same Loop next to an ordinary agent sibling `a`; both feed the output node.
 const LOOP_WITH_SIBLING_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
     {"id":"loop","data":{"kind":"loop","loopConfig":{
         "maxIterations":3,
         "variables":[{"name":"draft","valueType":"string","initial":{"kind":"constant","value":"seed"},"feedback":["writer","output"]}],
@@ -48,7 +51,7 @@ const LOOP_WITH_SIBLING_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
         "outputs":[{"name":"result","variableSelector":["writer","output"]}]
     }}},
     {"id":"entry","parentId":"loop","data":{"kind":"start","containerId":"loop"}},
-    {"id":"writer","parentId":"loop","data":{"kind":"agent","containerId":"loop","agentConfig":{
+    {"id":"writer","parentId":"loop","data":{"kind":"agent","containerId":"loop","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
         "executor":{"agentCli":"c","modelId":"m"},"prompt":"revise"
     }}},
     {"id":"out","data":{"kind":"output","outputs":[{"name":"draft","variableSelector":["loop","result"]}]}}

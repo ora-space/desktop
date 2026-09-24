@@ -437,6 +437,22 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.interactiveDescription":
       "开启后节点首轮结束会停在等待人工输入，可在节点内持续对话。",
     "settings.workflow.field.structuredOutput": "结构化输出",
+    "settings.workflow.field.retry": "失败自动重试",
+    "settings.workflow.field.retryMaxRetries": "最多重试次数",
+    "settings.workflow.field.retryInitialDelay": "首次等待（秒）",
+    "settings.workflow.retry.hintFailures":
+      "Agent 会话出错，或 Agent 的回复不符合结构化输出 Schema、拒绝执行、因未知原因停止时，自动重新运行本节点。",
+    "settings.workflow.retry.hintFeedback":
+      "因回复问题重试时，会告诉 Agent 上一次失败的原因。",
+    "settings.workflow.retry.hintBackoff":
+      "首次等待之后，每次等待时间翻倍，最长 {{max}} 秒；重试前不会回滚文件改动。",
+    "settings.workflow.retry.hintInteractive": "交互模式的节点不会自动重试。",
+    "settings.workflow.retry.issue.malformed":
+      "已保存的重试设置格式无效，重新设置开关或数值即可修复。",
+    "settings.workflow.retry.issue.missing": "请填写{{field}}。",
+    "settings.workflow.retry.issue.notInteger": "{{field}}必须是整数。",
+    "settings.workflow.retry.issue.outOfRange":
+      "{{field}}必须在 {{min}} 到 {{max}} 之间。",
     "settings.workflow.structuredOutput.schemaTitle": "结构化输出 Schema",
     "settings.workflow.structuredOutput.editorMode": "Schema 编辑方式",
     "settings.workflow.structuredOutput.configure": "配置",
@@ -974,6 +990,24 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.interactiveDescription":
       "When enabled the node pauses for human input after its first turn, so you can keep conversing inside the node.",
     "settings.workflow.field.structuredOutput": "Structured output",
+    "settings.workflow.field.retry": "Retry on failure",
+    "settings.workflow.field.retryMaxRetries": "Max retries",
+    "settings.workflow.field.retryInitialDelay": "First wait (seconds)",
+    "settings.workflow.retry.hintFailures":
+      "Reruns this node when the agent session fails, or when the agent's reply doesn't match the structured output schema, is a refusal, or stops for an unknown reason.",
+    "settings.workflow.retry.hintFeedback":
+      "When retrying after a reply problem, the agent is told why the previous attempt failed.",
+    "settings.workflow.retry.hintBackoff":
+      "After the first wait, each wait doubles, up to {{max}} seconds. File changes are not rolled back before a retry.",
+    "settings.workflow.retry.hintInteractive":
+      "Nodes in interactive mode are never retried.",
+    "settings.workflow.retry.issue.malformed":
+      "The saved retry settings are malformed. Set the switch or a value again to fix them.",
+    "settings.workflow.retry.issue.missing": "{{field}} is required.",
+    "settings.workflow.retry.issue.notInteger":
+      "{{field}} must be a whole number.",
+    "settings.workflow.retry.issue.outOfRange":
+      "{{field}} must be between {{min}} and {{max}}.",
     "settings.workflow.structuredOutput.schemaTitle":
       "Structured output Schema",
     "settings.workflow.structuredOutput.editorMode": "Schema editor mode",

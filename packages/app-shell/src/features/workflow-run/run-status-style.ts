@@ -3,7 +3,10 @@ import type {
   GraphWorkflowRunStatus,
 } from "@ora/workflow-runtime";
 
-/** Node is actively executing or blocked on HITL—the only spinner-worthy states. */
+/**
+ * Node is actively executing or blocked on HITL—the only spinner-worthy states. A node waiting to
+ * retry is deliberately excluded: it has no session and nothing is executing until the wait ends.
+ */
 export function isNodeWorking(
   status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus,
 ): boolean {
@@ -35,6 +38,16 @@ export function runStatusTone(
         badge:
           "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-200",
         labelKey: "workflowRun.status.awaiting_input",
+      };
+    case "retry_waiting":
+      // Orange sits between amber (“needs you”) and rose (failed): an attempt failed and the
+      // engine will run the node again by itself, so no action is expected from the user.
+      return {
+        dot: "bg-orange-500",
+        ring: "border-orange-500/45 ring-orange-500/15",
+        badge:
+          "border-orange-500/30 bg-orange-500/10 text-orange-800 dark:text-orange-300",
+        labelKey: "workflowRun.status.retry_waiting",
       };
     case "succeeded":
       return {

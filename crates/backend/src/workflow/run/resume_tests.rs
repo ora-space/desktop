@@ -1,3 +1,6 @@
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
+
 use super::test_fixture::{ClockAt, RecordingExecutor, SeqGen, bootstrap, started_run_with};
 use ora_application::{
     NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, WorkflowRunEngine,
@@ -15,10 +18,10 @@ use tempfile::TempDir;
 
 const U1_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
-    {"id":"d","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"b","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"d","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},
@@ -31,10 +34,10 @@ const U1_GRAPH: &str = r#"{"nodes":[
 
 const U2_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
-    {"id":"d","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"b","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"d","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
     {"id":"out_c","data":{"kind":"output"}},
     {"id":"out_d","data":{"kind":"output"}}
 ],"edges":[

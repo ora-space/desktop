@@ -309,4 +309,7 @@ pub struct WorkflowRunDetail {
     pub project_id: ProjectId,
     pub nodes: Vec<WorkflowNodeRun>,
     pub scopes: Vec<WorkflowExecutionScope>,
+    /// Earlier attempts that failed and were replaced by an automatic retry, a resume, or a
+    /// restart: the soft-deleted `Failed` node runs of the run, oldest first.
+    pub failed_attempts: Vec<WorkflowNodeRun>,
 }

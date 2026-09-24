@@ -10,6 +10,8 @@ use rusqlite::{OptionalExtension, Row, ToSql, Transaction, TransactionBehavior, 
 
 use crate::repository::RepositoryPool;
 
+mod failed_attempts;
+
 /// Persists workflow runs directly under workspaces and keeps node history under each run.
 #[derive(Clone, Debug)]
 pub struct SqliteWorkflowRunRepository {
@@ -104,6 +106,7 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                     project_id: ProjectId::new(project_id),
                     nodes: list_node_runs(connection, run_id)?,
                     scopes: super::workflow_scope::list_rounds(connection, run_id)?,
+                    failed_attempts: failed_attempts::list_failed_attempts(connection, run_id)?,
                     run,
                 }))
             })
@@ -393,6 +396,14 @@ pub(super) fn list_node_runs(
 }
 
 /// Returns the most recent soft-deleted failed attempt of one `(node_id, iteration)` pair.
+///
+/// A failure that a later attempt of the same pair already recovered from (an automatic retry
+/// that succeeded) is history, not the previous attempt: a Loop round that follows it must not
+/// inherit it. The recovering attempt counts even after a resume or restart soft-deleted it,
+/// because its success still fixed that failure.
+///
+/// Only attempts that started count: a waiting retry that a restart failed before it ran
+/// (`started_at` NULL) must not hide the attempt that really failed.
 pub(super) fn find_last_failed_attempt(
     connection: &rusqlite::Connection,
     run_id: &WorkflowRunId,
@@ -402,8 +413,14 @@ pub(super) fn find_last_failed_attempt(
     let mut statement = connection.prepare(
         "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
-         FROM workflow_node_runs
+         FROM workflow_node_runs failed
          WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND status = ?3 AND iteration IS ?4
+           AND started_at IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM workflow_node_runs later
+               WHERE later.run_id = failed.run_id AND later.node_id = failed.node_id
+                 AND later.iteration IS failed.iteration AND later.status = ?5
+                 AND later.created_at >= failed.created_at)
          ORDER BY created_at DESC, id DESC
          LIMIT 1",
     )?;
@@ -411,7 +428,8 @@ pub(super) fn find_last_failed_attempt(
         run_id.as_ref(),
         node_id,
         WorkflowNodeStatus::Failed.database_value(),
-        iteration
+        iteration,
+        WorkflowNodeStatus::Succeeded.database_value(),
     ])?;
     match rows.next()? {
         Some(row) => Ok(Some(map_node_run_row(row)?)),

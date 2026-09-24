@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::workflow::WorkflowRepository;
 use crate::workflow_run::mapper::{
-    map_execution_scope, map_node_run, map_run, map_run_awaiting, map_run_summary,
+    map_execution_scope, map_failed_attempt, map_node_run, map_run, map_run_awaiting,
+    map_run_summary,
 };
 use crate::workflow_run::{
     DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator, WorkflowRunPayload,
@@ -324,6 +325,13 @@ where
             scopes: Some(detail.scopes.into_iter().map(map_execution_scope).collect()),
             variables,
             condition_decisions,
+            failed_attempts: Some(
+                detail
+                    .failed_attempts
+                    .into_iter()
+                    .filter_map(map_failed_attempt)
+                    .collect(),
+            ),
         })
     }
 }

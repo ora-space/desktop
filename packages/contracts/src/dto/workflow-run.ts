@@ -96,6 +96,11 @@ export type GetWorkflowRunResponse = {
    * Condition decisions keyed by node id for branch-aware rendering.
    */
   conditionDecisions: { [key in string]: string };
+  /**
+   * Earlier attempts that failed and were run again (automatic retry, resume) or whose run
+   * was restarted, oldest first. `nodes` holds only the latest attempt of each node.
+   */
+  failedAttempts?: Array<WorkflowNodeFailedAttempt>;
 };
 
 /**
@@ -152,12 +157,12 @@ export type PreviewWorkflowRunResumeResponse = {
   resumable: boolean;
   failedNodes: Array<ResumeFailedNodePreview>;
   /**
-   * Every failed node has a checkpoint.
+   * Every failed node has a checkpoint, and so did every attempt of its retry chain that ran.
    */
   nodeFilesAvailable: boolean;
   /**
    * `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
-   * `"composite_region"` when the resume unit is an iteration composite.
+   * `"composite_region"` when the resume unit is a composite (Iteration or Loop).
    */
   nodeFilesUnavailableReason: string | null;
   /**
@@ -201,6 +206,11 @@ export type RestartWorkflowRunResponse = { run: WorkflowRun };
 
 /**
  * Preview of one failed or cancelled node that would be re-run.
+ *
+ * When automatic retries replaced earlier attempts of the node since the last start, restart,
+ * or resume, the whole chain is one rollback unit: `started_at` and `checkpoint` are those of
+ * its first attempt, `node_file_changes` lists the files every attempt changed (line counts
+ * summed), and `checkpoint_error` is the first one any attempt recorded.
  */
 export type ResumeFailedNodePreview = {
   nodeId: string;
@@ -209,7 +219,7 @@ export type ResumeFailedNodePreview = {
   checkpoint: string | null;
   checkpointError: string | null;
   /**
-   * What the node itself recorded (`payload.file_changes` of the failed run).
+   * What the node itself recorded (`payload.file_changes` of the failed attempts).
    */
   nodeFileChanges: Array<WorkflowFileChange>;
   /**
@@ -217,7 +227,8 @@ export type ResumeFailedNodePreview = {
    */
   changedSinceCheckpoint: Array<WorkflowFileChange>;
   /**
-   * Owning composite node id when this row belongs to an iteration resume unit.
+   * Owning composite node id (Iteration or Loop) when this row belongs to a composite resume
+   * unit: a region member, a Loop body node, or the composite itself.
    */
   resumeUnitNodeId?: string;
 };
@@ -317,6 +328,50 @@ export type WorkflowNodeAiDiagnosis = {
   agentCli: string;
   model: string;
   generatedAt: bigint;
+};
+
+/**
+ * One earlier failed attempt of a node, taken from its persisted `payload.error_detail`.
+ */
+export type WorkflowNodeFailedAttempt = {
+  /**
+   * Id of the attempt's (soft-deleted) node run.
+   */
+  nodeRunId: string;
+  nodeId: string;
+  scopeId: string;
+  /**
+   * Composite-region round of the attempt; `null` for outer and Loop rows.
+   */
+  iteration: number | null;
+  /**
+   * The attempt's session, whose transcript remains readable.
+   */
+  sessionId: string | null;
+  /**
+   * Same numbering as `error_detail.attempt`: 1 for the node's first attempt in the run.
+   */
+  attempt: number;
+  /**
+   * Failure kind (snake_case, as in `error_detail.kind`).
+   */
+  kind: string;
+  /**
+   * Top-level failure message; for session failures this is generic, and the agent's own
+   * reason is in `source_chain`.
+   */
+  message: string;
+  /**
+   * Source chain of the originating error, outermost first (as in
+   * `error_detail.source_chain`); empty when the engine raised the failure itself.
+   */
+  sourceChain: Array<string>;
+  /**
+   * Unix millis the failure was recorded.
+   */
+  recordedAt: bigint;
+  startedAt: bigint | null;
+  finishedAt: bigint | null;
 };
 
 /**

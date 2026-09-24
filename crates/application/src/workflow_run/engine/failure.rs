@@ -77,6 +77,33 @@ impl NodeFailureKind {
         }
     }
 
+    /// `true` = the attempt ended in a way a fresh attempt of the same node can plausibly clear
+    /// on its own: the session broke, or the agent's answer was unusable. An agent node's
+    /// policy then retries it automatically (see `AgentRetryPolicy`). Definition, environment
+    /// setup, and engine failures are `false`: repeating them unchanged cannot help, and an
+    /// interrupted attempt belongs to the boot sweep.
+    pub const fn auto_retry(self) -> bool {
+        match self {
+            Self::Session
+            | Self::SessionEndedWithoutStopReason
+            | Self::SessionBindingRejected
+            | Self::StructuredOutput
+            | Self::AgentRefusal
+            | Self::UnknownStopReason => true,
+            Self::PromptTemplate
+            | Self::MissingAgentRef
+            | Self::InvalidRunPayload
+            | Self::MissingSkillMaterialization
+            | Self::ConditionEvaluation
+            | Self::MultipleOutputs
+            | Self::WorkflowModelNotFound
+            | Self::MissingAgentConfig
+            | Self::Repository
+            | Self::BaselinePersist
+            | Self::InterruptedByRestart => false,
+        }
+    }
+
     /// The serialized snake_case name (same string serde produces); used as a translation key.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -113,9 +140,15 @@ pub struct NodeFailureDetail {
     /// row (same `run_id` + `node_id`, `is_deleted = 1`). Filled in by the repository.
     pub attempt: u32,
     pub resumable: bool,
-    /// Whether a same-version rerun of this node injects this failure into the agent prompt;
-    /// mirrors `NodeFailureKind::inject_into_prompt`.
+    /// Whether a same-version rerun of this node injects this failure into the agent prompt:
+    /// `NodeFailureKind::inject_into_prompt` and the run's `inject_last_failure` switch. Rows
+    /// written before the switch was taken into account mirror the kind alone.
     pub injects_previous_failure: bool,
+    /// Whether this kind of failure is retried automatically when the node's retry policy is on;
+    /// mirrors `NodeFailureKind::auto_retry`. The run view uses it to say why an agent with retry
+    /// on failed at once. Absent on rows written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retryable: Option<bool>,
     /// Unix millis, the repository's `now`.
     pub recorded_at: i64,
 }
@@ -266,6 +299,38 @@ mod tests {
         );
     }
 
+    /// Exactly the six session-class and agent-answer kinds retry automatically; the other
+    /// eleven fail the attempt for good. Listing every kind keeps a new kind from slipping in
+    /// without a decision.
+    #[test]
+    fn auto_retry_covers_exactly_the_session_and_agent_answer_kinds() {
+        let table = [
+            (NodeFailureKind::Session, true),
+            (NodeFailureKind::SessionEndedWithoutStopReason, true),
+            (NodeFailureKind::SessionBindingRejected, true),
+            (NodeFailureKind::StructuredOutput, true),
+            (NodeFailureKind::AgentRefusal, true),
+            (NodeFailureKind::UnknownStopReason, true),
+            (NodeFailureKind::PromptTemplate, false),
+            (NodeFailureKind::MissingAgentRef, false),
+            (NodeFailureKind::InvalidRunPayload, false),
+            (NodeFailureKind::MissingSkillMaterialization, false),
+            (NodeFailureKind::ConditionEvaluation, false),
+            (NodeFailureKind::MultipleOutputs, false),
+            (NodeFailureKind::WorkflowModelNotFound, false),
+            (NodeFailureKind::MissingAgentConfig, false),
+            (NodeFailureKind::Repository, false),
+            (NodeFailureKind::BaselinePersist, false),
+            (NodeFailureKind::InterruptedByRestart, false),
+        ];
+        let actual: Vec<(NodeFailureKind, bool)> = table
+            .iter()
+            .map(|(kind, _)| (*kind, kind.auto_retry()))
+            .collect();
+        assert_eq!(actual, table.to_vec());
+        assert_eq!(table.iter().filter(|(_, retries)| *retries).count(), 6);
+    }
+
     #[test]
     fn as_str_matches_serde_snake_case_for_every_kind() {
         assert_eq!(
@@ -305,13 +370,29 @@ mod tests {
             attempt: 2,
             resumable: true,
             injects_previous_failure: false,
+            auto_retryable: Some(false),
             recorded_at: 1_700_000_000_000,
         };
         let json = serde_json::to_string(&detail).unwrap();
         let parsed: NodeFailureDetail = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, detail);
         assert!(json.contains(
-            "\"resumable\":true,\"injects_previous_failure\":false,\"recorded_at\":1700000000000"
+            "\"resumable\":true,\"injects_previous_failure\":false,\"auto_retryable\":false,\"recorded_at\":1700000000000"
         ));
+    }
+
+    /// Rows written before `auto_retryable` existed still parse, and say nothing about retry.
+    #[test]
+    fn node_failure_detail_without_auto_retryable_parses_as_unknown() {
+        let parsed: NodeFailureDetail = serde_json::from_str(
+            r#"{"kind":"session","message":"m","source_chain":[],"attempt":1,"resumable":true,"injects_previous_failure":false,"recorded_at":5}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.auto_retryable, None);
+        assert!(
+            !serde_json::to_string(&parsed)
+                .unwrap()
+                .contains("auto_retryable")
+        );
     }
 }

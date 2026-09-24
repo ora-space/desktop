@@ -5,21 +5,31 @@ use ora_domain::{
 use rusqlite::{Transaction, params};
 
 use super::payload_json::{file_changes_json, merge_payload_keys};
+use super::retry::RETRY_WAIT_PATH;
 
 /// Error written to node runs and runs interrupted by a backend restart.
 pub(super) const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
 
 /// Counts prior soft-deleted attempts of this `(node_id, iteration)` pair in the same run.
-fn deleted_attempt_count(
+///
+/// Inside a Loop round (`scope_id` is a round scope) only that round's rows count: Loop body rows
+/// carry no iteration, and like the retry budget each round numbers its attempts from 1. Rows in
+/// the root scope keep counting across the whole run, including earlier executions a restart
+/// replaced.
+pub(super) fn deleted_attempt_count(
     transaction: &Transaction<'_>,
     run_id: &str,
     node_id: &str,
     iteration: Option<u32>,
+    scope_id: &str,
 ) -> Result<u32, crate::DatabaseError> {
     let count: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM workflow_node_runs
-         WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND iteration IS ?3",
-        params![run_id, node_id, iteration],
+         WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND iteration IS ?3
+           AND (scope_id = ?4 OR NOT EXISTS (
+               SELECT 1 FROM workflow_execution_scopes loop_round
+               WHERE loop_round.id = ?4 AND loop_round.parent_loop_node_run_id IS NOT NULL))",
+        params![run_id, node_id, iteration, scope_id],
         |row| row.get(0),
     )?;
     Ok(u32::try_from(count).unwrap_or(u32::MAX))
@@ -40,8 +50,9 @@ fn merge_error_detail(
 
 /// Marks one node-run `Failed` and writes `payload.error_detail` in the same UPDATE.
 ///
-/// Attempt numbering is scoped by `(run_id, node_id, iteration)` (R2). The round is read from
-/// the live row so this helper stays within the clippy argument limit.
+/// Attempt numbering is scoped by `(run_id, node_id, iteration)` (R2), and to the round inside a
+/// Loop (see [`deleted_attempt_count`]). The round is read from the live row so this helper stays
+/// within the clippy argument limit.
 pub(super) fn persist_failed_node_run(
     transaction: &Transaction<'_>,
     node_run_id: &str,
@@ -51,24 +62,36 @@ pub(super) fn persist_failed_node_run(
     current_payload: Option<&str>,
     now: i64,
 ) -> Result<(), crate::DatabaseError> {
-    let iteration: Option<u32> = transaction.query_row(
-        "SELECT iteration FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
-        params![node_run_id],
-        |row| row.get(0),
-    )?;
-    let attempt = deleted_attempt_count(transaction, run_id, node_id, iteration)?.saturating_add(1);
+    // `injects_previous_failure` must say what a later attempt will actually be told, and a run
+    // created with `injectLastFailure` off tells it nothing. Payloads without the key (older
+    // runs) inject, matching `WorkflowRunPayload`'s default.
+    let (iteration, scope_id, run_injects_failures): (Option<u32>, String, bool) = transaction
+        .query_row(
+            "SELECT node.iteration, node.scope_id,
+                    json_type(CASE WHEN json_valid(run.payload) THEN run.payload END,
+                              '$.injectLastFailure') IS NOT 'false'
+             FROM workflow_node_runs node
+             LEFT JOIN workflow_runs run ON run.id = node.run_id
+             WHERE node.id = ?1 AND node.is_deleted = 0",
+            params![node_run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    let attempt = deleted_attempt_count(transaction, run_id, node_id, iteration, &scope_id)?
+        .saturating_add(1);
     let detail = NodeFailureDetail {
         kind: failure.kind,
         message: failure.message.clone(),
         source_chain: failure.source_chain.clone(),
         attempt,
         resumable: failure.kind.resumable(),
-        injects_previous_failure: failure.kind.inject_into_prompt(),
+        injects_previous_failure: failure.kind.inject_into_prompt() && run_injects_failures,
+        auto_retryable: Some(failure.kind.auto_retry()),
         recorded_at: now,
     };
     let payload = merge_error_detail(current_payload, &detail, &failure.file_changes)?;
+    // A waiting attempt failed by the boot sweep is no longer waiting.
     transaction.execute(
-        "UPDATE workflow_node_runs SET status = ?2, error = ?3, output = ?4, payload = ?5, finished_at = ?6, updated_at = ?6
+        "UPDATE workflow_node_runs SET status = ?2, error = ?3, output = ?4, payload = json_remove(?5, ?7), finished_at = ?6, updated_at = ?6
          WHERE id = ?1 AND is_deleted = 0",
         params![
             node_run_id,
@@ -77,6 +100,7 @@ pub(super) fn persist_failed_node_run(
             &failure.output,
             payload,
             now,
+            RETRY_WAIT_PATH,
         ],
     )?;
     Ok(())

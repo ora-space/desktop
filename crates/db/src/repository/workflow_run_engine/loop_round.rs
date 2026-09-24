@@ -210,6 +210,14 @@ pub(super) fn advance(
                     )?;
                 }
                 LoopRoundAdvance::Fail { error } => {
+                    // The run fails with the round, so pending retries elsewhere never fire.
+                    super::retry::settle_retry_waits(
+                        &transaction,
+                        &run_id,
+                        WorkflowNodeStatus::Cancelled,
+                        Some(super::retry::RETRY_ABANDONED),
+                        now,
+                    )?;
                     transaction.execute(
                         "UPDATE workflow_node_runs SET status = ?2, error = ?3,
                                 finished_at = ?4, updated_at = ?4

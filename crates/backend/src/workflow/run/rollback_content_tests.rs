@@ -1,4 +1,7 @@
 //! Checkpoint failure and worktree-content rollback coverage against a real git temp repo.
+//!
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
 
 use super::checkpoint::{record_pre_node_checkpoint, take_checkpoint};
 use super::rollback::{apply_rollback, plan_rollback, preview};
@@ -19,8 +22,8 @@ use std::process::Command;
 
 const LINEAR_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},

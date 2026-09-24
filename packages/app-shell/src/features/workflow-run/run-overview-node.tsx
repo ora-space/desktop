@@ -23,6 +23,7 @@ import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { resolveRunOverviewSourceHandleIds } from "./run-overview-handles";
 import { RunOverviewIterationNode } from "./run-overview-iteration-node";
+import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
@@ -87,6 +88,8 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   const focused = focusedNodeId === id || selected;
   const peerActive = !focused && activeNodeIds.includes(id);
   const artifactCount = artifactCountByNode[id] ?? 0;
+  const retryWait =
+    state.status === "retry_waiting" ? state.retryWait : undefined;
   const startedLabel =
     state.startedAt !== undefined
       ? formatRunClock(state.startedAt, locale)
@@ -149,9 +152,11 @@ export const RunOverviewNode = memo(function RunOverviewNode({
         state.status === "running" && "ring-sky-500/35 theater-live-breathe",
         state.status === "awaiting_input" &&
           "ring-amber-500/35 theater-live-breathe-amber",
+        // A waiting retry keeps its own orange ring instead of the sky peer cue.
         peerActive &&
           state.status !== "running" &&
           state.status !== "awaiting_input" &&
+          state.status !== "retry_waiting" &&
           "ring-sky-500/20",
       )}
       headerAccessory={
@@ -189,7 +194,11 @@ export const RunOverviewNode = memo(function RunOverviewNode({
         </div>
       }
       footer={
-        hasTiming ? (
+        retryWait !== undefined ? (
+          <p className="text-[9px] font-medium tabular-nums text-orange-700 dark:text-orange-300">
+            <RunRetryWaitLabel wait={retryWait} />
+          </p>
+        ) : hasTiming ? (
           <p className="font-mono text-[9px] tabular-nums text-muted-foreground">
             {startedLabel ?? "—"}
             {" — "}

@@ -29,6 +29,14 @@ impl WorkflowGraph {
         self.loops.get(id).map(|(config, graph)| (config, graph))
     }
 
+    /// Returns the id of the Loop whose body declares `node_id`, if any.
+    pub fn loop_owner(&self, node_id: &str) -> Option<&str> {
+        self.loops
+            .iter()
+            .find(|(_, (_, body))| body.node(node_id).is_some())
+            .map(|(owner, _)| owner.as_str())
+    }
+
     /// Returns this graph followed by each container body in deterministic outer-node order.
     pub fn execution_scopes(&self) -> Vec<&Self> {
         let mut scopes = vec![self];

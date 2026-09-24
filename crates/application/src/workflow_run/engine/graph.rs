@@ -1,7 +1,7 @@
+use super::agent_config::WireAgentConfig;
 pub use super::agent_config::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, StructuredTextExposure,
 };
-use super::agent_config::{AgentMcp, deserialize_bindings};
 use super::condition::{ConditionConfig, WireConditionCase};
 use super::iteration::{CompositeRegion, IterationConfig, derive_regions, parse_iteration_config};
 use super::start_input::{StartInputVariable, WireStartInputVariable, into_start_input_variables};
@@ -112,6 +112,8 @@ pub enum GraphError {
     InvalidCondition { node_id: String, reason: String },
     #[error("node {node_id} has an invalid iteration config: {reason}")]
     InvalidIteration { node_id: String, reason: String },
+    #[error("node {node_id} has an invalid retry config: {reason}")]
+    InvalidRetry { node_id: String, reason: String },
     #[error("node {node_id} violates a composite region boundary: {reason}")]
     InvalidRegion { node_id: String, reason: String },
     #[error("node {node_id} has invalid Start variables: {reason}")]
@@ -205,53 +207,6 @@ struct WireOutputBinding {
     variable_selector: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireAgentConfig {
-    #[serde(default)]
-    executor: Option<WireAgentExecutor>,
-    #[serde(default)]
-    role_id: Option<String>,
-    #[serde(default)]
-    skills: Vec<WireAgentSkill>,
-    #[serde(default, deserialize_with = "deserialize_bindings")]
-    mcps: Vec<AgentMcp>,
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    interactive: Option<bool>,
-    output_contract: Option<WireOutputContract>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireOutputContract {
-    #[serde(default, rename = "type")]
-    kind: Option<String>,
-    #[serde(default)]
-    text_exposure: Option<String>,
-    #[serde(default)]
-    schema: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireAgentExecutor {
-    #[serde(default)]
-    agent_cli: Option<String>,
-    #[serde(default)]
-    model_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireAgentSkill {
-    #[serde(default)]
-    skill_id: Option<String>,
-    #[serde(default)]
-    enabled: Option<bool>,
-}
-
 /// Wire shape of one React Flow edge; the edge `id` is metadata and is ignored by serde.
 ///
 /// `sourceHandle` names the source port feeding this edge: the implicit `source` port of a plain
@@ -265,59 +220,6 @@ struct WireEdge {
     target: Option<String>,
     #[serde(default)]
     source_handle: Option<String>,
-}
-
-impl WireAgentConfig {
-    fn into_model(self) -> AgentConfig {
-        AgentConfig {
-            executor: AgentExecutor {
-                agent_cli: self
-                    .executor
-                    .as_ref()
-                    .and_then(|executor| executor.agent_cli.clone())
-                    .unwrap_or_default(),
-                model_id: self
-                    .executor
-                    .as_ref()
-                    .and_then(|executor| executor.model_id.clone())
-                    .unwrap_or_default(),
-            },
-            role_id: self.role_id,
-            mcps: self.mcps,
-            skills: self
-                .skills
-                .into_iter()
-                .map(WireAgentSkill::into_model)
-                .collect(),
-            prompt: self.prompt.unwrap_or_default(),
-            // Missing `interactive` defaults to false so existing graphs stay fully automatic.
-            interactive: self.interactive.unwrap_or(false),
-            output_contract: self
-                .output_contract
-                .and_then(WireOutputContract::into_model),
-        }
-    }
-}
-
-impl WireOutputContract {
-    /// Maps the wire contract to the domain model; unknown kinds are ignored so future contract
-    /// values parse as no contract on older Ora versions.
-    fn into_model(self) -> Option<AgentOutputContract> {
-        match self.kind.as_deref() {
-            Some("none") => Some(AgentOutputContract::None),
-            Some("text") => Some(AgentOutputContract::Text),
-            Some("structured") => Some(AgentOutputContract::Structured {
-                schema: self.schema.unwrap_or_default(),
-                // Missing `textExposure` defaults to structured-only so the parsed object is the
-                // authoritative variable unless the author opts the raw text back in.
-                text_exposure: match self.text_exposure.as_deref() {
-                    Some("includeFinalText") => StructuredTextExposure::IncludeFinalText,
-                    _ => StructuredTextExposure::StructuredOnly,
-                },
-            }),
-            _ => None,
-        }
-    }
 }
 
 /// Compiles `data.outputs` into an output config, skipping bindings with a missing name or an
@@ -384,16 +286,6 @@ fn into_global_variables(
     Ok(variables)
 }
 
-impl WireAgentSkill {
-    fn into_model(self) -> AgentSkill {
-        AgentSkill {
-            skill_id: self.skill_id.unwrap_or_default(),
-            // Missing `enabled` defaults to false so skills are never materialized by surprise.
-            enabled: self.enabled.unwrap_or(false),
-        }
-    }
-}
-
 impl WorkflowGraph {
     /// Parses one scope after container membership and cross-scope edges have been validated.
     pub(super) fn parse_flat(source: &str) -> Result<Self, GraphError> {
@@ -449,7 +341,10 @@ impl WorkflowGraph {
                             })?,
                         _ => Vec::new(),
                     },
-                    agent_config: data.agent_config.map(WireAgentConfig::into_model),
+                    agent_config: data
+                        .agent_config
+                        .map(|wire| wire.into_model(&id))
+                        .transpose()?,
                     condition_config: match node_type {
                         NodeType::Condition => {
                             Some(ConditionConfig::from_wire(data.cases).map_err(|error| {

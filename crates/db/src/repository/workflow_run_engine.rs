@@ -23,6 +23,7 @@ mod payload;
 mod payload_json;
 mod restart;
 mod resume;
+mod retry;
 mod scoped_node;
 mod snapshot_switch;
 
@@ -574,9 +575,11 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     Transaction::new(connection, TransactionBehavior::Immediate)?;
                 for node_run_id in node_run_ids {
                     // Only a `Running` row can be an interrupted round row; anything else is a
-                    // late sweep over already-terminal state and stays untouched.
+                    // late sweep over already-terminal state and stays untouched. An interrupted
+                    // waiting attempt stops waiting: the retry does not survive a restart.
                     transaction.execute(
-                        "UPDATE workflow_node_runs SET status = ?3, error = ?4, finished_at = ?5, updated_at = ?5
+                        "UPDATE workflow_node_runs SET status = ?3, error = ?4, finished_at = ?5, updated_at = ?5,
+                                payload = CASE WHEN json_valid(payload) THEN json_remove(payload, ?7) ELSE payload END
                          WHERE id = ?1 AND run_id = ?2 AND status = ?6 AND is_deleted = 0",
                         params![
                             node_run_id.as_ref(),
@@ -585,6 +588,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                             INTERRUPTED_BY_RESTART,
                             now,
                             WorkflowNodeStatus::Running.database_value(),
+                            retry::RETRY_WAIT_PATH,
                         ],
                     )?;
                 }

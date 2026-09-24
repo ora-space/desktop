@@ -29,15 +29,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+/// Fixture agents disable automatic retry (`agentConfig.retry`) so tests that fail a node see the
+/// failure stand at once; retry behaviour has its own fixtures in `retry_tests`.
 pub(crate) const AGENT_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"agent","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do"}}}
+    {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do"}}}
 ],"edges":[{"source":"start","target":"agent"}]}"#;
 
 pub(crate) const TWO_AGENT_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"l","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"l"}}},
-    {"id":"r","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"r"}}}
+    {"id":"l","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"l"}}},
+    {"id":"r","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"r"}}}
 ],"edges":[{"source":"start","target":"l"},{"source":"start","target":"r"}]}"#;
 
 /// A purely swift chain: the whole run completes inside scheduling waves, with no dispatch.

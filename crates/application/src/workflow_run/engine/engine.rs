@@ -15,6 +15,7 @@ use crate::workflow_run::engine::ports::{
     WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
 };
 use crate::workflow_run::engine::region::region_failure_propagation;
+use crate::workflow_run::engine::retry::{NoRetryTimer, WorkflowRetryTimer};
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::start_input::validate_start_inputs;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
@@ -30,6 +31,7 @@ pub use super::node_executor::{
 
 mod composite_scheduler;
 mod loop_scheduler;
+mod retry_scheduler;
 
 /// Result of one scheduling pass inside a running Loop container.
 enum LoopScheduleOutcome {
@@ -52,6 +54,7 @@ pub struct WorkflowRunEngine<R, G, C> {
     node_run_id_generator: G,
     clock: C,
     run_events: Arc<dyn WorkflowRunInvalidationPublisher>,
+    retry_timer: Arc<dyn WorkflowRetryTimer>,
 }
 
 impl<R, G, C> WorkflowRunEngine<R, G, C> {
@@ -90,6 +93,7 @@ impl<R, G, C> WorkflowRunEngine<R, G, C> {
             node_run_id_generator,
             clock,
             run_events,
+            retry_timer: Arc::new(NoRetryTimer),
         }
     }
 }
@@ -266,15 +270,23 @@ where
     ///
     /// A failure inside a `continue`-strategy iteration region is absorbed instead: the row
     /// fails, the run stays active, and the composite runtime settles the failed round on its
-    /// next advance (ADR "iteration composite runtime" D6).
+    /// next advance (ADR "iteration composite runtime" D6). A failure the node's automatic retry
+    /// policy covers is replaced by a waiting attempt instead (see `retry_scheduler`). A callback
+    /// for an attempt that a retry or resume already cleared is a no-op.
     pub fn fail_node(
         &self,
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         failure: NodeFailure,
     ) -> Result<(), EngineError> {
+        let Some(node_run) = self.repository.find_node_run_by_id(node_run_id)? else {
+            return Ok(());
+        };
         let now = self.clock.now_timestamp_millis();
-        let propagation = self.failure_propagation(run_id, node_run_id)?;
+        if self.schedule_retry(run_id, &node_run, &failure, now) {
+            return Ok(());
+        }
+        let propagation = self.failure_propagation(run_id, &node_run)?;
         match self
             .repository
             .fail_node(node_run_id, failure, propagation, now)?

@@ -6,6 +6,8 @@ import type {
   GraphWorkflowNodeState,
   GraphWorkflowRun,
 } from "@ora/workflow-runtime";
+import { RunRetryWaitLabel } from "./run-retry-wait-label";
+import { retryWaitAttemptText } from "./retry-countdown";
 import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { RunPathRegionStage } from "./run-path-structure";
@@ -216,9 +218,15 @@ export function RunTheaterRegionNavigator({
                   const selected = primaryId === nodeId;
                   const artifactCount = artifactCountByNode[nodeId] ?? 0;
                   const duration = stateDuration(state);
+                  const retryWait =
+                    state?.status === "retry_waiting"
+                      ? state.retryWait
+                      : undefined;
                   const stateLabel = notRun
                     ? t("workflowRun.theater.notRunThisRound")
-                    : t(tone.labelKey);
+                    : retryWait !== undefined
+                      ? retryWaitAttemptText(t, retryWait)
+                      : t(tone.labelKey);
                   return (
                     <button
                       key={nodeId}
@@ -231,7 +239,9 @@ export function RunTheaterRegionNavigator({
                         "flex min-w-32 max-w-44 items-center gap-2 rounded-md border bg-background/80 px-2 py-1.5 text-left transition-colors",
                         selected
                           ? "border-violet-500/45 shadow-sm"
-                          : "border-border/65 hover:border-violet-500/30",
+                          : retryWait !== undefined
+                            ? "border-orange-500/40 hover:border-orange-500/55"
+                            : "border-border/65 hover:border-violet-500/30",
                         notRun && "opacity-60",
                       )}
                     >
@@ -243,10 +253,18 @@ export function RunTheaterRegionNavigator({
                         <span className="block truncate text-[10px] font-medium">
                           {node.data.title}
                         </span>
-                        {duration !== null && (
-                          <span className="block text-[9px] tabular-nums text-muted-foreground">
-                            {duration}
-                          </span>
+                        {retryWait !== undefined ? (
+                          <RunRetryWaitLabel
+                            wait={retryWait}
+                            variant="compact"
+                            className="block text-[9px] tabular-nums text-orange-700 dark:text-orange-300"
+                          />
+                        ) : (
+                          duration !== null && (
+                            <span className="block text-[9px] tabular-nums text-muted-foreground">
+                              {duration}
+                            </span>
+                          )
                         )}
                       </span>
                       {artifactCount > 0 && (

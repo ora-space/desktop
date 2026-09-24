@@ -1,5 +1,6 @@
 use super::current_nodes::current_nodes_to_state;
 use super::engine_repository_error_from_database;
+use super::retry::settle_retry_waits;
 use crate::repository::RepositoryPool;
 use ora_application::{CancelWorkflowRunResult, RepositoryError};
 use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowScopeStatus};
@@ -26,6 +27,15 @@ pub(super) fn cancel_run(
         if WorkflowRunStatus::from_database_value(status)? != WorkflowRunStatus::Running {
             return Ok(CancelWorkflowRunResult::NotActive);
         }
+        // Waiting attempts are cancelled like running ones; dropping their marker keeps the
+        // cancelled row from reading as still waiting.
+        settle_retry_waits(
+            &transaction,
+            run_id.as_ref(),
+            WorkflowNodeStatus::Cancelled,
+            /*error*/ None,
+            now,
+        )?;
         transaction.execute(
             "UPDATE workflow_node_runs SET status = ?2, finished_at = ?3, updated_at = ?3
              WHERE run_id = ?1 AND status IN (0, 1) AND is_deleted = 0",

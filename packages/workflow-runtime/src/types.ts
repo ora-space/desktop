@@ -174,6 +174,19 @@ export interface WorkflowAgentOutputContract {
   schema: Record<string, unknown>;
 }
 
+/**
+ * Automatic rerun of an Agent node after a retryable failure. Absent on a node means the default
+ * policy (`DEFAULT_WORKFLOW_AGENT_RETRY` in `@ora/workflow-mock`); when present every field is
+ * required and bounded as that package's `WORKFLOW_AGENT_RETRY_BOUNDS` describes.
+ */
+export interface WorkflowAgentRetryPolicy {
+  enabled: boolean;
+  /** Reruns after the first failed attempt. */
+  maxRetries: number;
+  /** Wait before the first rerun; each later wait doubles, capped by the engine. */
+  initialDelaySeconds: number;
+}
+
 /** Transport-neutral execution contract for an Agent node. */
 export interface WorkflowAgentConfig {
   schemaVersion: 3;
@@ -194,6 +207,8 @@ export interface WorkflowAgentConfig {
    */
   /** Optional structured parsing performed in addition to the stable raw output. */
   outputContract?: WorkflowAgentOutputContract;
+  /** Automatic retry after retryable failures; absent means the default policy. */
+  retry?: WorkflowAgentRetryPolicy;
 }
 
 /** Serializable workflow node data shared by memory and future Rust adapters. */
@@ -296,11 +311,18 @@ export type GraphWorkflowRunStatus =
   | "failed"
   | "cancelled";
 
-/** Per-node execution status overlaid on a frozen definition snapshot. */
+/**
+ * Per-node execution status overlaid on a frozen definition snapshot.
+ *
+ * `inactive` and `retry_waiting` are display states derived by the adapter: the backend stores a
+ * waiting retry as a `running` row with no start time, but that row has no session yet, so the
+ * run view must not treat it as live work.
+ */
 export type GraphWorkflowNodeStatus =
   | "idle"
   | "inactive"
   | "running"
+  | "retry_waiting"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -332,7 +354,17 @@ export interface WorkflowNodeErrorDetail {
   sourceChain: string[];
   attempt: number;
   resumable: boolean;
-  injectsPreviousFailure: boolean;
+  /**
+   * Whether a same-version resume tells the agent about this failure: the kind is injectable and
+   * the run was created with failure injection on. Absent on rows written before the backend
+   * recorded the field.
+   */
+  injectsPreviousFailure?: boolean;
+  /**
+   * Whether this kind of failure is retried automatically when the node's retry policy is on.
+   * Absent on rows the backend wrote before it recorded the field.
+   */
+  autoRetryable?: boolean;
   recordedAt: number;
 }
 
@@ -342,6 +374,60 @@ export interface WorkflowNodeAiDiagnosis {
   agentCli: string;
   model: string;
   generatedAt: number;
+}
+
+/** Pending automatic retry persisted on a waiting node run as `payload.retry_wait`. */
+export interface WorkflowNodeRetryWait {
+  /** Attempt number the waiting row will run as (same numbering as `errorDetail.attempt`). */
+  attempt: number;
+  /** Last attempt number the current retry budget allows. */
+  maxAttempt: number;
+  /** Retry number within the current budget, 1-based. */
+  retry: number;
+  maxRetries: number;
+  delayMs: number;
+  /** Unix millis when the failed attempt was replaced by the waiting row. */
+  scheduledAt: number;
+  /** Unix millis at which the waiting attempt starts. */
+  dueAt: number;
+}
+
+/** Automatic retry that started a node run, persisted as `payload.auto_retry`. */
+export interface WorkflowNodeAutoRetry {
+  /** Retry number within the budget; the run was preceded by this many automatic retries. */
+  retry: number;
+  maxRetries: number;
+}
+
+/**
+ * What replaced an earlier failed attempt, when the run detail allows telling it.
+ * `automatic_retry_scheduled`: an automatic retry was scheduled but never started (it is still
+ * waiting, or the wait was cancelled, abandoned, or ended by an app restart).
+ */
+export type WorkflowNodeAttemptReplacement =
+  "automatic_retry" | "automatic_retry_scheduled" | "manual_resume";
+
+/** One earlier failed attempt of a node execution (same node, scope, and round). */
+export interface WorkflowNodeAttemptFailure {
+  nodeRunId: string;
+  attempt: number;
+  kind: string;
+  errorMessage: string;
+  /** `std::error::Error::source()` chain, outermost first; the last entry is the most specific. */
+  sourceChain: string[];
+  recordedAt: number;
+  startedAt?: string;
+  finishedAt?: string;
+  /** Session of that attempt; its transcript stays readable. */
+  sessionId?: string;
+  /** Composite-region round (0-based) for iteration rows. */
+  iteration?: number;
+  /** Loop round (0-based) for rows inside a Loop body. */
+  loopRoundIndex?: number;
+  /** Absent when the run detail cannot tell what replaced the attempt. */
+  replacedBy?: WorkflowNodeAttemptReplacement;
+  /** The attempt ran before the run was restarted from its start node. */
+  beforeRestart?: boolean;
 }
 
 export interface GraphWorkflowNodeState {
@@ -364,6 +450,17 @@ export interface GraphWorkflowNodeState {
   injectedFailureContext?: string;
   /** On-demand AI guess stored as `payload.ai_diagnosis`; never used for scheduling or resume. */
   aiDiagnosis?: WorkflowNodeAiDiagnosis;
+  /** Present only while the status is `retry_waiting`. */
+  retryWait?: WorkflowNodeRetryWait;
+  /**
+   * Present when an automatic retry scheduled this attempt (kept after it fails). The attempt
+   * itself only ran when `startedAt` is set; a wait that ended early leaves it unset.
+   */
+  autoRetry?: WorkflowNodeAutoRetry;
+  /** A waiting retry the run gave up on when it ended (`{"reason":"retry_abandoned"}`). */
+  retryAbandoned?: boolean;
+  /** Earlier failed attempts of this node execution, oldest first. */
+  failedAttempts?: WorkflowNodeAttemptFailure[];
   /** ACP stop reason recorded in `payload.stop_reason` when the node succeeded. */
   stopReason?: string;
   /** What this step received when it started (kickoff, upstream, schema…). */

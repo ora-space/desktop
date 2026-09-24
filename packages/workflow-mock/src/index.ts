@@ -1,4 +1,5 @@
 export * from "./agent-identity";
+export * from "./agent-retry";
 export * from "./capabilities";
 export * from "./annotation-data";
 export * from "./demo";

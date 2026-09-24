@@ -5,9 +5,14 @@ import {
   type GraphWorkflowRun,
 } from "@ora/workflow-runtime";
 
+/**
+ * A node waiting to retry is still part of the live run: the engine will start it again without
+ * user action, so the stage keeps following it instead of falling back to the last finished node.
+ */
 const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
   "running",
   "awaiting_input",
+  "retry_waiting",
 ]);
 
 const TERMINAL_NODE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
@@ -20,7 +25,7 @@ export interface TheaterFocus {
   /** Primary act shown large on stage. */
   primaryId: string | null;
   /**
-   * All currently active acts (running + awaiting_input), path order
+   * All currently active acts (running, awaiting_input, retry_waiting), path order
    * (topo + canvas position). Length > 1 means genuine parallelism from
    * the UI's point of view.
    */
@@ -85,7 +90,8 @@ export function resolveCompletionAdvanceNodeId(
 }
 
 /**
- * Among active acts, prefer awaiting_input, then latest startedAt, then path order.
+ * Among active acts, prefer awaiting_input, then latest startedAt, then path order. A waiting retry
+ * has no startedAt, so a running peer wins over it.
  */
 function pickPrimaryAmongActive(
   run: GraphWorkflowRun,
@@ -134,7 +140,7 @@ function pickFallbackPrimary(run: GraphWorkflowRun): string | null {
 /**
  * Resolves Theater spotlight under sequential or parallel execution.
  *
- * - `activeIds`: every running / awaiting_input node (may be many).
+ * - `activeIds`: every running / awaiting_input / retry_waiting node (may be many).
  * - `primaryId`: user preference if still valid; else policy among actives;
  *   else last succeeded / first node.
  * Live pins are released by the workspace when the focused act just finishes

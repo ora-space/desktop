@@ -1,3 +1,7 @@
+import {
+  resolveWorkflowAgentRetryPolicy,
+  workflowAgentRetryApplies,
+} from "@ora/workflow-mock";
 import type {
   WorkflowAgentConfig,
   WorkflowNodeData,
@@ -54,4 +58,43 @@ export function resolveTheaterActInstruction(data: WorkflowNodeData): string {
       ? (data.input ?? "")
       : (data.instruction ?? data.agentConfig?.prompt ?? "");
   return text.trim();
+}
+
+/**
+ * What the run inspector reports about a node's automatic retry: interactive nodes are never
+ * retried, a turned-off policy is shown as such, an enabled policy with zero retries never
+ * reruns either, and any other enabled one says whether it is the default (field absent in the
+ * snapshot) or the author's own values.
+ */
+export type AgentRetryDisplay =
+  | { kind: "interactive" }
+  | { kind: "disabled" }
+  | { kind: "noRetries" }
+  | {
+      kind: "enabled";
+      source: "default" | "configured";
+      maxRetries: number;
+      initialDelaySeconds: number;
+    };
+
+/** Resolves the retry policy the engine applies to this node's snapshot configuration. */
+export function resolveAgentRetryDisplay(
+  config: WorkflowAgentConfig,
+): AgentRetryDisplay {
+  if (!workflowAgentRetryApplies(config)) {
+    return { kind: "interactive" };
+  }
+  const policy = resolveWorkflowAgentRetryPolicy(config);
+  if (!policy.enabled) {
+    return { kind: "disabled" };
+  }
+  if (policy.maxRetries === 0) {
+    return { kind: "noRetries" };
+  }
+  return {
+    kind: "enabled",
+    source: config.retry == null ? "default" : "configured",
+    maxRetries: policy.maxRetries,
+    initialDelaySeconds: policy.initialDelaySeconds,
+  };
 }

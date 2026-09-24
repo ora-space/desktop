@@ -194,6 +194,40 @@ pub struct GetWorkflowRunResponse {
     pub variables: Vec<WorkflowRunVariable>,
     /// Condition decisions keyed by node id for branch-aware rendering.
     pub condition_decisions: BTreeMap<String, String>,
+    /// Earlier attempts that failed and were run again (automatic retry, resume) or whose run
+    /// was restarted, oldest first. `nodes` holds only the latest attempt of each node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub failed_attempts: Option<Vec<WorkflowNodeFailedAttempt>>,
+}
+
+/// One earlier failed attempt of a node, taken from its persisted `payload.error_detail`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowNodeFailedAttempt {
+    /// Id of the attempt's (soft-deleted) node run.
+    pub node_run_id: String,
+    pub node_id: String,
+    pub scope_id: String,
+    /// Composite-region round of the attempt; `null` for outer and Loop rows.
+    pub iteration: Option<u32>,
+    /// The attempt's session, whose transcript remains readable.
+    pub session_id: Option<String>,
+    /// Same numbering as `error_detail.attempt`: 1 for the node's first attempt in the run.
+    pub attempt: u32,
+    /// Failure kind (snake_case, as in `error_detail.kind`).
+    pub kind: String,
+    /// Top-level failure message; for session failures this is generic, and the agent's own
+    /// reason is in `source_chain`.
+    pub message: String,
+    /// Source chain of the originating error, outermost first (as in
+    /// `error_detail.source_chain`); empty when the engine raised the failure itself.
+    pub source_chain: Vec<String>,
+    /// Unix millis the failure was recorded.
+    pub recorded_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
 }
 
 /// One declared run variable and its optional current value.
@@ -402,6 +436,11 @@ pub struct WorkflowFileChange {
 }
 
 /// Preview of one failed or cancelled node that would be re-run.
+///
+/// When automatic retries replaced earlier attempts of the node since the last start, restart,
+/// or resume, the whole chain is one rollback unit: `started_at` and `checkpoint` are those of
+/// its first attempt, `node_file_changes` lists the files every attempt changed (line counts
+/// summed), and `checkpoint_error` is the first one any attempt recorded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
@@ -411,11 +450,12 @@ pub struct ResumeFailedNodePreview {
     pub started_at: Option<i64>,
     pub checkpoint: Option<String>,
     pub checkpoint_error: Option<String>,
-    /// What the node itself recorded (`payload.file_changes` of the failed run).
+    /// What the node itself recorded (`payload.file_changes` of the failed attempts).
     pub node_file_changes: Vec<WorkflowFileChange>,
     /// Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
     pub changed_since_checkpoint: Vec<WorkflowFileChange>,
-    /// Owning composite node id when this row belongs to an iteration resume unit.
+    /// Owning composite node id (Iteration or Loop) when this row belongs to a composite resume
+    /// unit: a region member, a Loop body node, or the composite itself.
     #[ts(optional)]
     pub resume_unit_node_id: Option<String>,
 }
@@ -428,10 +468,10 @@ pub struct PreviewWorkflowRunResumeResponse {
     /// Run is failed/cancelled, no running node, and at least one failed/cancelled node.
     pub resumable: bool,
     pub failed_nodes: Vec<ResumeFailedNodePreview>,
-    /// Every failed node has a checkpoint.
+    /// Every failed node has a checkpoint, and so did every attempt of its retry chain that ran.
     pub node_files_available: bool,
     /// `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
-    /// `"composite_region"` when the resume unit is an iteration composite.
+    /// `"composite_region"` when the resume unit is a composite (Iteration or Loop).
     pub node_files_unavailable_reason: Option<String>,
     /// Available when the run is resumable, the resume unit has a checkpoint, and no live node
     /// run outside that unit was still active after the unit's earliest start (`finished_at` is
@@ -544,6 +584,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CreateWorkflowRunResponse::export(config)?;
     GetWorkflowRunRequest::export(config)?;
     GetWorkflowRunResponse::export(config)?;
+    WorkflowNodeFailedAttempt::export(config)?;
     ListWorkflowRunsRequest::export(config)?;
     ListWorkflowRunsResponse::export(config)?;
     ListWorkflowRunsByWorkflowRequest::export(config)?;
@@ -742,6 +783,7 @@ mod tests {
                     "condition-1".to_string(),
                     "case-1".to_string(),
                 )]),
+                failed_attempts: None,
             },
             json!({
                 "run": {

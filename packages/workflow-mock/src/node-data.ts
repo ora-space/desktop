@@ -41,6 +41,21 @@ export const DEFAULT_WORKFLOW_STRUCTURED_OUTPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * Automatic rerun of an Agent node after a retryable failure (session problems, and output that
+ * misses the structured-output schema, refuses, or stops for an unknown reason).
+ *
+ * Absent on a node means `DEFAULT_WORKFLOW_AGENT_RETRY`; when present every field is required.
+ * Bounds live in `WORKFLOW_AGENT_RETRY_BOUNDS` and are enforced by `validateWorkflowAgentRetry`.
+ */
+export interface WorkflowAgentRetryPolicy {
+  enabled: boolean;
+  /** Reruns after the first failed attempt; an integer within the published bounds. */
+  maxRetries: number;
+  /** Wait before the first rerun; each later wait doubles, capped by the engine. */
+  initialDelaySeconds: number;
+}
+
 /** Stores the execution contract for an Agent node without relying on display labels. */
 export interface WorkflowAgentConfig {
   schemaVersion: 3;
@@ -57,6 +72,11 @@ export interface WorkflowAgentConfig {
   interactive?: boolean;
   /** Additional typed variables exposed beside the node's stable raw `output`. */
   outputContract?: WorkflowAgentOutputContract;
+  /**
+   * Automatic retry after retryable failures. Absent means the default policy, so graphs saved
+   * before this field existed keep retrying without being rewritten. Interactive nodes never retry.
+   */
+  retry?: WorkflowAgentRetryPolicy;
 }
 
 /** Value types accepted by the workflow variable pool. */

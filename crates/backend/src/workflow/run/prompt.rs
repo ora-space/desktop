@@ -676,6 +676,7 @@ mod tests {
                 role_id: Some("Reviewer".to_string()),
                 skills: Vec::new(),
                 prompt: "produce the decision".to_string(),
+                retry: ora_application::AgentRetryPolicy::default(),
                 interactive: false,
                 output_contract: None,
             }),
@@ -772,6 +773,7 @@ mod tests {
                 role_id: None,
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
+                retry: ora_application::AgentRetryPolicy::default(),
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -834,6 +836,7 @@ mod tests {
                 role_id: None,
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
+                retry: ora_application::AgentRetryPolicy::default(),
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -911,6 +914,7 @@ mod tests {
                 role_id: None,
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
+                retry: ora_application::AgentRetryPolicy::default(),
                 interactive: false,
                 output_contract: None,
             }),

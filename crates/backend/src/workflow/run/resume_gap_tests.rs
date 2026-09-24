@@ -1,4 +1,7 @@
 //! Resume behaviours that the original engine/backend suites did not cover end to end.
+//!
+//! Agents in these graphs disable automatic retry (`agentConfig.retry`), so a failed attempt
+//! fails its node at once as these tests expect; retry behaviour is covered by `retry_tests`.
 
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{WorkflowPromptRequest, assemble_workflow_prompt, render_previous_failure};
@@ -24,8 +27,8 @@ use tempfile::TempDir;
 
 const LINEAR_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},
@@ -35,10 +38,10 @@ const LINEAR_GRAPH: &str = r#"{"nodes":[
 
 const THREE_SIBLING_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
-    {"id":"d","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"b","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"c"}}},
+    {"id":"d","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"d"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},
@@ -52,8 +55,8 @@ const THREE_SIBLING_GRAPH: &str = r#"{"nodes":[
 
 const V1_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"old-c"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"old-c"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},
@@ -63,8 +66,8 @@ const V1_GRAPH: &str = r#"{"nodes":[
 
 const V2_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
-    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-    {"id":"c","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fixed-c"}}},
+    {"id":"a","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+    {"id":"c","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"c","modelId":"m"},"prompt":"fixed-c"}}},
     {"id":"output","data":{"kind":"output"}}
 ],"edges":[
     {"source":"start","target":"a"},

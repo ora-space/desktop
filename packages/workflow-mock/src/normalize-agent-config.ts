@@ -16,6 +16,8 @@ export function normalizeWorkflowAgentConfig(
           schema: config.outputContract.schema,
         }
       : undefined;
+  // `retry` passes through untouched: absent already means the default policy, and filling it in
+  // here would rewrite every saved graph the first time it is opened.
   return {
     ...config,
     skills,

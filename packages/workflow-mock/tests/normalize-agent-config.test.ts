@@ -54,4 +54,85 @@ describe("normalizeWorkflowAgentConfig", () => {
       { skillId: "s1", enabled: true },
     ]);
   });
+
+  it("leaves an absent retry absent so saved graphs are not rewritten", () => {
+    const config: WorkflowAgentConfig = {
+      schemaVersion: 3,
+      executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
+      roleId: "",
+      skills: [],
+      mcps: [],
+      prompt: "p",
+      interactive: false,
+    };
+
+    const normalized = normalizeWorkflowAgentConfig(config);
+
+    expect(normalized).not.toHaveProperty("retry");
+    // Retry adds nothing: an already-normalized graph serializes byte-for-byte the same after
+    // another pass. (Legacy graphs still gain `interactive: false`; that predates retry.)
+    expect(JSON.stringify(normalized)).toBe(JSON.stringify(config));
+  });
+
+  it("keeps present retry values untouched, including a turned-off policy", () => {
+    const retry = { enabled: false, maxRetries: 4, initialDelaySeconds: 45 };
+    const normalized = normalizeWorkflowAgentConfig({
+      schemaVersion: 3,
+      executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
+      roleId: "",
+      skills: [],
+      mcps: [],
+      prompt: "p",
+      retry,
+    });
+
+    expect(normalized.retry).toEqual({
+      enabled: false,
+      maxRetries: 4,
+      initialDelaySeconds: 45,
+    });
+  });
+
+  it("does not add or drop retry on agent nodes inside a graph envelope", () => {
+    const agentConfig = (
+      retry?: WorkflowAgentConfig["retry"],
+    ): WorkflowAgentConfig => ({
+      schemaVersion: 3,
+      executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
+      roleId: "",
+      skills: [],
+      mcps: [],
+      prompt: "p",
+      ...(retry === undefined ? {} : { retry }),
+    });
+    const node = (
+      id: string,
+      config: WorkflowAgentConfig,
+    ): Node<WorkflowNodeData, "workflow"> => ({
+      id,
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "agent",
+        title: id,
+        description: "",
+        agentConfig: config,
+      },
+    });
+
+    const [withoutRetry, withRetry] = normalizeWorkflowNodeAgentConfigs([
+      node("plain", agentConfig()),
+      node(
+        "tuned",
+        agentConfig({ enabled: true, maxRetries: 5, initialDelaySeconds: 0 }),
+      ),
+    ]);
+
+    expect(withoutRetry?.data.agentConfig).not.toHaveProperty("retry");
+    expect(withRetry?.data.agentConfig?.retry).toEqual({
+      enabled: true,
+      maxRetries: 5,
+      initialDelaySeconds: 0,
+    });
+  });
 });

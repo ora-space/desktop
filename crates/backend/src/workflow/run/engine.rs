@@ -1,4 +1,5 @@
 use super::executor::WorkflowRunNodeExecutor;
+use super::retry_timer::WorkflowRetryTimers;
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::app_event::AppEventPublisher;
@@ -179,14 +180,19 @@ pub(crate) fn build_workflow_run_engine(
         baselines_root,
         transitions.clone(),
     );
-    let engine = Arc::new(WorkflowRunEngine::with_run_events(
-        SqliteWorkflowRunEngineRepository::new(pool.clone()),
-        executor,
-        UuidWorkflowNodeRunIdGenerator::new(),
-        clock,
-        invalidations,
-    ));
+    let retry_timers = Arc::new(WorkflowRetryTimers::new(run_locks.clone(), clock));
+    let engine = Arc::new(
+        WorkflowRunEngine::with_run_events(
+            SqliteWorkflowRunEngineRepository::new(pool.clone()),
+            executor,
+            UuidWorkflowNodeRunIdGenerator::new(),
+            clock,
+            invalidations,
+        )
+        .with_retry_timer(retry_timers.clone()),
+    );
     callback.set_engine(engine.clone());
+    retry_timers.set_engine(&engine);
     let control = Arc::new(WorkflowRunControlHandler::new(
         (*engine).clone(),
         Arc::new(SqliteWorkflowRunRepository::new(pool)),

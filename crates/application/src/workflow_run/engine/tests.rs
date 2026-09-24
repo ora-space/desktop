@@ -221,6 +221,8 @@ fn parses_agent_config_into_the_model() {
             interactive: false,
             // The linear_chain fixture omits `outputContract`, so the default must be `None`.
             output_contract: None,
+            // The linear_chain fixture omits `retry`, so the default policy applies.
+            retry: crate::workflow_run::engine::AgentRetryPolicy::default(),
         }),
         condition_config: None,
         output_config: None,

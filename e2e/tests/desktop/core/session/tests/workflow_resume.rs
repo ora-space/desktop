@@ -1,4 +1,7 @@
 //! One full resume-from-failure flow through the public Tauri workflow commands.
+//!
+//! The failing agents disable automatic retry (`agentConfig.retry`) so their first failure fails
+//! the run for the resume to recover; automatic retry has its own flows in `workflow_retry`.
 
 use super::{
     agent_ref, current_thread_runtime, install_fake_opencode_plugin, main_workspace_id,
@@ -16,7 +19,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Keeps setup, the fake ACP agent, and the public commands under one TRACE-scoped runtime.
-fn run_case(test: impl std::future::Future<Output = TestResult>) -> TestResult {
+pub(super) fn run_case(test: impl std::future::Future<Output = TestResult>) -> TestResult {
     ora_logging::with_trace_logging(|| {
         current_thread_runtime()?
             .block_on(async { tokio::time::timeout(Duration::from_secs(15), test).await? })
@@ -24,7 +27,7 @@ fn run_case(test: impl std::future::Future<Output = TestResult>) -> TestResult {
 }
 
 /// Polls run status without blocking the current-thread runtime that drives agent dispatch.
-async fn wait_run_status(
+pub(super) async fn wait_run_status(
     runs: &ora_backend::WorkflowRuns,
     run_id: &str,
     expected: WorkflowRunStatus,
@@ -60,6 +63,7 @@ fn structured_second_node_graph() -> String {
             {"id": "second", "data": {"kind": "agent", "agentConfig": {
                 "executor": {"agentCli": agent_ref(), "modelId": "anthropic/claude-sonnet-4"},
                 "prompt": "second",
+                "retry": {"enabled": false, "maxRetries": 0, "initialDelaySeconds": 0},
                 "outputContract": {
                     "type": "structured",
                     "textExposure": "includeFinalText",
@@ -197,6 +201,7 @@ fn loop_with_structured_writer_graph() -> String {
                 "agentConfig": {
                     "executor": {"agentCli": agent_ref(), "modelId": "anthropic/claude-sonnet-4"},
                     "prompt": "revise the draft",
+                    "retry": {"enabled": false, "maxRetries": 0, "initialDelaySeconds": 0},
                     "outputContract": {
                         "type": "structured",
                         "textExposure": "includeFinalText",

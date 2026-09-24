@@ -20,9 +20,20 @@ import {
   type WorkflowNodeErrorDetail,
   type WorkflowNodeAiDiagnosis,
   type WorkflowNodeFileChange,
+  type WorkflowNodeRetryWait,
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
+import {
+  attemptHistoryKey,
+  groupFailedAttempts,
+  isRetryAbandoned,
+  parseAutoRetry,
+  parseRetryWait,
+  projectFailedAttempts,
+  recordedAttemptNumber,
+  type PersistedFailedAttempt,
+} from "./workflow-run-retry";
 import type { ResumeRollbackMode, WorkflowRunSummary } from "@ora/contracts";
 import { activeLocale } from "../../i18n/i18n-instance";
 
@@ -440,10 +451,17 @@ export function buildDisplayRun(
       /** Composite-region round; null for outer rows. */
       iteration?: number | null;
     }>;
+    /** Earlier failed attempts, oldest first; absent from backends that predate the field. */
+    failedAttempts?: PersistedFailedAttempt[];
   },
   graph: string,
 ): GraphWorkflowRun {
   const envelope = parseWorkflowGraph(graph);
+  const loopScopeIds = new Set((detail.scopes ?? []).map((scope) => scope.id));
+  const attemptGroups = groupFailedAttempts(
+    detail.failedAttempts ?? [],
+    loopScopeIds,
+  );
   const currentNodes = parseCurrentNodes(detail.run.state);
   // The start node's input is the run's kickoff input. Editing it on a pending run stores
   // the value on the run, not on the frozen snapshot, so overlay the committed run input on the
@@ -524,7 +542,12 @@ export function buildDisplayRun(
       continue;
     }
     const states = rows.map((row) =>
-      projectPersistedNodeState(node.data.kind, row, detail.run.id),
+      projectPersistedNodeState(node.data.kind, row, detail.run.id, {
+        attempts:
+          attemptGroups.get(
+            attemptHistoryKey(row.nodeId, row.iteration, null),
+          ) ?? [],
+      }),
     );
     if (states.length > 1 || states[0]?.iteration != null) {
       roundStates[node.id] = states;
@@ -588,6 +611,17 @@ export function buildDisplayRun(
                 definitionNode?.data.kind,
                 nodeRun,
                 detail.run.id,
+                {
+                  attempts:
+                    attemptGroups.get(
+                      attemptHistoryKey(
+                        nodeRun.nodeId,
+                        nodeRun.iteration,
+                        scope.id,
+                      ),
+                    ) ?? [],
+                  loopRoundIndex: scope.roundIndex,
+                },
               ),
             ];
           }),
@@ -614,18 +648,61 @@ type PersistedNodeRunProjection = Parameters<
   typeof buildDisplayRun
 >[0]["nodes"][number];
 
+/**
+ * Projects a row's backend status. A waiting retry is a `running` row with no start time and a
+ * `payload.retry_wait` marker; it has no session yet, so it gets its own display status.
+ */
+function projectPersistedNodeStatus(
+  nodeRun: PersistedNodeRunProjection,
+  retryWait: WorkflowNodeRetryWait | undefined,
+): GraphWorkflowNodeStatus {
+  if (
+    nodeRun.status === "running" &&
+    nodeRun.startedAt == null &&
+    retryWait !== undefined
+  ) {
+    return "retry_waiting";
+  }
+  return projectNodeStatus(
+    nodeRun as {
+      status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+    },
+  );
+}
+
 /** Maps one execution instance without mixing it with another Loop round sharing the node id. */
 function projectPersistedNodeState(
   nodeKind: string | undefined,
-  nodeRun: PersistedNodeRunProjection | null,
+  nodeRun: PersistedNodeRunProjection,
   runId: string,
+  history: {
+    /** Earlier failed attempts of this row's node execution, oldest first. */
+    attempts: PersistedFailedAttempt[];
+    /** Loop round of a Loop body row, so each attempt can name its round. */
+    loopRoundIndex?: number;
+  },
 ): GraphWorkflowNodeState {
   const payload =
-    nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+    nodeRun.payload != null ? parseNodePayload(nodeRun.payload) : null;
   const errorDetail = parseErrorDetail(payload?.error_detail);
   const aiDiagnosis = parseAiDiagnosis(payload?.ai_diagnosis);
+  const parsedRetryWait = parseRetryWait(payload?.retry_wait);
+  const status = projectPersistedNodeStatus(nodeRun, parsedRetryWait);
+  const retryWait = status === "retry_waiting" ? parsedRetryWait : undefined;
+  const autoRetry = parseAutoRetry(payload?.auto_retry);
+  const failedAttempts = projectFailedAttempts(
+    history.attempts,
+    {
+      scopeId: nodeRun.scopeId,
+      autoRetry,
+      attempt:
+        retryWait?.attempt ?? recordedAttemptNumber(payload?.error_detail),
+      started: nodeRun.startedAt != null,
+    },
+    history.loopRoundIndex,
+  );
   const conversation =
-    nodeKind === "agent" && nodeRun?.output != null
+    nodeKind === "agent" && nodeRun.output != null
       ? conversationFromNodeOutput(
           nodeRun.output,
           runId,
@@ -635,24 +712,26 @@ function projectPersistedNodeState(
         )
       : undefined;
   return {
-    ...(nodeRun?.iteration != null ? { iteration: nodeRun.iteration } : {}),
-    status: projectNodeStatus(
-      nodeRun as {
-        status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-      } | null,
-    ),
-    ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+    ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
+    status,
+    ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""
       ? { sessionId: nodeRun.sessionId }
       : {}),
-    ...(nodeRun?.startedAt != null
+    ...(nodeRun.startedAt != null
       ? { startedAt: toIso(nodeRun.startedAt) }
       : {}),
-    ...(nodeRun?.finishedAt != null
+    ...(nodeRun.finishedAt != null
       ? { finishedAt: toIso(nodeRun.finishedAt) }
       : {}),
-    ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+    ...(nodeRun.error != null ? { errorMessage: nodeRun.error } : {}),
     ...(errorDetail != null ? { errorDetail } : {}),
     ...(aiDiagnosis != null ? { aiDiagnosis } : {}),
+    ...(retryWait !== undefined ? { retryWait } : {}),
+    ...(autoRetry !== undefined ? { autoRetry } : {}),
+    ...(isRetryAbandoned(nodeRun.status, nodeRun.error)
+      ? { retryAbandoned: true }
+      : {}),
+    ...(failedAttempts.length > 0 ? { failedAttempts } : {}),
     ...(payload?.snapshot_id != null
       ? { snapshotId: payload.snapshot_id }
       : {}),
@@ -665,7 +744,7 @@ function projectPersistedNodeState(
     ...(payload?.file_changes != null && payload.file_changes.length > 0
       ? { fileChanges: payload.file_changes }
       : {}),
-    ...(nodeRun?.output != null ? { output: { summary: nodeRun.output } } : {}),
+    ...(nodeRun.output != null ? { output: { summary: nodeRun.output } } : {}),
     ...(conversation != null && conversation.length > 0
       ? { conversation }
       : {}),
@@ -723,8 +802,8 @@ function conversationFromNodeOutput(
   }
 }
 
-/** Reads the ACP stop reason, file changes, and failure detail from a node run's `payload` JSON,
- * tolerating malformed payloads. */
+/** Reads the ACP stop reason, file changes, failure detail, and retry markers from a node run's
+ * `payload` JSON, tolerating malformed payloads. */
 function parseNodePayload(payload: string): {
   stop_reason?: string;
   file_changes?: WorkflowNodeFileChange[];
@@ -732,6 +811,8 @@ function parseNodePayload(payload: string): {
   snapshot_id?: string;
   injected_failure_context?: string;
   ai_diagnosis?: unknown;
+  retry_wait?: unknown;
+  auto_retry?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -745,6 +826,8 @@ function parseNodePayload(payload: string): {
       snapshot_id?: unknown;
       injected_failure_context?: unknown;
       ai_diagnosis?: unknown;
+      retry_wait?: unknown;
+      auto_retry?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -779,6 +862,12 @@ function parseNodePayload(payload: string): {
       ...(value.ai_diagnosis !== undefined
         ? { ai_diagnosis: value.ai_diagnosis }
         : {}),
+      ...(value.retry_wait !== undefined
+        ? { retry_wait: value.retry_wait }
+        : {}),
+      ...(value.auto_retry !== undefined
+        ? { auto_retry: value.auto_retry }
+        : {}),
     };
   } catch {
     return null;
@@ -797,6 +886,7 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
     attempt?: unknown;
     resumable?: unknown;
     injects_previous_failure?: unknown;
+    auto_retryable?: unknown;
     recorded_at?: unknown;
   };
   if (typeof detail.kind !== "string") {
@@ -812,10 +902,14 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
       : [],
     attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
     resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,
-    injectsPreviousFailure:
-      typeof detail.injects_previous_failure === "boolean"
-        ? detail.injects_previous_failure
-        : false,
+    // Rows written before 2026-09-17 lack it; absent must not read as "the run injects nothing".
+    ...(typeof detail.injects_previous_failure === "boolean"
+      ? { injectsPreviousFailure: detail.injects_previous_failure }
+      : {}),
+    // Older rows lack the field; leaving it absent keeps the view from guessing.
+    ...(typeof detail.auto_retryable === "boolean"
+      ? { autoRetryable: detail.auto_retryable }
+      : {}),
     recordedAt: typeof detail.recorded_at === "number" ? detail.recorded_at : 0,
   };
 }

@@ -116,4 +116,22 @@ describe("computeInactiveNodes", () => {
     expect(inactive.has("ok")).toBe(false);
     expect(inactive.has("no")).toBe(true);
   });
+
+  it.each(["running", "retry_waiting"] as const)(
+    "never marks a node with a live %s row inactive, whatever the branch decision says",
+    (status) => {
+      // A waiting retry is a live `running` row on the backend: the node did run, so its
+      // persisted row wins over a projection from the condition decision.
+      const def = branchDefinition([
+        { id: "e1", source: "c", sourceHandle: "approved", target: "ok" },
+        { id: "e2", source: "c", sourceHandle: "else", target: "no" },
+      ]);
+      const inactive = computeInactiveNodes(
+        def,
+        statuses({ c: "succeeded", no: status }),
+        { c: "approved" },
+      );
+      expect([...inactive]).toEqual([]);
+    },
+  );
 });

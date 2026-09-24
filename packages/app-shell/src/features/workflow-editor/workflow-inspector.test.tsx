@@ -180,6 +180,7 @@ describe("WorkflowInspector layout", () => {
       screen.getByText("允许的 MCP"),
       screen.getByText("交互模式"),
       screen.getByText("结构化输出"),
+      screen.getByText("失败自动重试"),
     ];
     for (let index = 1; index < orderedSections.length; index += 1) {
       expect(

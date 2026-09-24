@@ -3,6 +3,7 @@ import {
   WORKFLOW_ANNOTATION_THEMES,
   type WorkflowAnnotationNode,
 } from "./annotation-data";
+import { validateWorkflowAgentRetry } from "./agent-retry";
 import { WORKFLOW_NODE_KINDS, type WorkflowAgentConfig } from "./node-data";
 import type { DemoWorkflow } from "./fixtures";
 
@@ -143,6 +144,7 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
         typeof mcp.enabled === "boolean",
     ) &&
     new Set(config.mcps.map((mcp) => mcp.mcpId)).size === config.mcps.length &&
-    typeof config.prompt === "string"
+    typeof config.prompt === "string" &&
+    validateWorkflowAgentRetry(config.retry).length === 0
   );
 }

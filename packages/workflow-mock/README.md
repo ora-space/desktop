@@ -28,6 +28,11 @@ explicit enabled state, and custom prompt. The app supplies the
 model catalog from the backend's agent-model endpoint; Role and Skill choices
 remain a stable local mock catalog until their backend APIs are available.
 
+The optional `agentConfig.retry` policy (`enabled`, `maxRetries`, `initialDelaySeconds`) is
+absent unless an author changes it; absent means `DEFAULT_WORKFLOW_AGENT_RETRY`. `agent-retry.ts`
+is the only source of the default, the bounds, `resolveWorkflowAgentRetryPolicy`, and
+`validateWorkflowAgentRetry`; normalization and node creation never write the field.
+
 The UI captures graphs with React Flow's `toObject()` at commit boundaries.
 Workflow metadata is added beside that native snapshot without translating its
 nodes, edges, or viewport.

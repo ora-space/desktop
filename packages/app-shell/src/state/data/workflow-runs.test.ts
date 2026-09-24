@@ -560,7 +560,8 @@ describe("buildDisplayRun", () => {
     });
   });
 
-  it("defaults injectsPreviousFailure to false when the payload key is absent", () => {
+  // Rows written before the backend recorded the flag must not read as "injection switched off".
+  it("leaves injectsPreviousFailure absent when the payload key is absent", () => {
     const withError = {
       ...detail,
       nodes: [
@@ -577,8 +578,58 @@ describe("buildDisplayRun", () => {
       ],
     };
     const display = buildDisplayRun(withError, GRAPH);
-    expect(display.nodeStates.explore.errorDetail?.injectsPreviousFailure).toBe(
-      false,
+    expect(display.nodeStates.explore.errorDetail).toBeDefined();
+    expect(
+      display.nodeStates.explore.errorDetail?.injectsPreviousFailure,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { recorded: "true", expected: true },
+    { recorded: "false", expected: false },
+  ])(
+    "projects autoRetryable $expected when the row recorded it",
+    ({ recorded, expected }) => {
+      const withError = {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "failed",
+            startedAt: 10n,
+            finishedAt: 30n,
+            error: "bad prompt",
+            output: null,
+            payload: `{"error_detail":{"kind":"prompt_template","message":"bad prompt","source_chain":[],"attempt":1,"resumable":false,"injects_previous_failure":false,"auto_retryable":${recorded},"recorded_at":50}}`,
+          },
+        ],
+      };
+      const display = buildDisplayRun(withError, GRAPH);
+      expect(display.nodeStates.explore.errorDetail?.autoRetryable).toBe(
+        expected,
+      );
+    },
+  );
+
+  it("leaves autoRetryable absent on rows written before the backend recorded it", () => {
+    const withError = {
+      ...detail,
+      nodes: [
+        {
+          nodeId: "explore",
+          status: "failed",
+          startedAt: 10n,
+          finishedAt: 30n,
+          error: "bad prompt",
+          output: null,
+          payload:
+            '{"error_detail":{"kind":"prompt_template","message":"bad prompt","source_chain":[],"attempt":1,"resumable":false,"injects_previous_failure":false,"recorded_at":50}}',
+        },
+      ],
+    };
+    const display = buildDisplayRun(withError, GRAPH);
+    expect(display.nodeStates.explore.errorDetail).not.toHaveProperty(
+      "autoRetryable",
     );
   });
 

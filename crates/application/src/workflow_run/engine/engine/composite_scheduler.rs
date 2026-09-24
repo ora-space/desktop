@@ -229,13 +229,8 @@ where
     pub(super) fn failure_propagation(
         &self,
         run_id: &WorkflowRunId,
-        node_run_id: &WorkflowNodeRunId,
+        node_run: &WorkflowNodeRun,
     ) -> Result<FailurePropagation, EngineError> {
-        let node_run = self.repository.find_node_run_by_id(node_run_id)?.ok_or(
-            EngineError::WorkflowRunNotFound {
-                run_id: run_id.to_string(),
-            },
-        )?;
         if node_run.iteration.is_none() {
             return Ok(FailurePropagation::Run);
         }

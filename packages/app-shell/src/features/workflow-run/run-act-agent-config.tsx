@@ -7,7 +7,10 @@ import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { useSkills } from "../../state/hooks/use-skills";
-import { formatAgentExecutorLabel } from "./agent-config-display";
+import {
+  formatAgentExecutorLabel,
+  resolveAgentRetryDisplay,
+} from "./agent-config-display";
 import { RunBriefPopover } from "./run-brief-popover";
 import { shouldPreviewBrief } from "./should-preview-brief";
 
@@ -20,6 +23,7 @@ interface RunActAgentConfigProps {
  * editable controls. Role, enabled skills, and enabled MCP bindings each open a
  * brief popover (catalog label/description, or a quiet “no description” tip when
  * empty). Long prompt text also opens a preview when it would otherwise truncate.
+ * Retry always shows the policy the engine applies, including the implicit default.
  */
 export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const { t } = useTranslation();
@@ -49,6 +53,23 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
     (agent) => agent.agentRef === config.executor.agentCli,
   )?.logo;
   const prompt = config.prompt.trim();
+  const retry = resolveAgentRetryDisplay(config);
+  const retryText =
+    retry.kind === "interactive"
+      ? t("workflowRun.inspector.retryInteractive")
+      : retry.kind === "disabled"
+        ? t("workflowRun.inspector.retryDisabled")
+        : retry.kind === "noRetries"
+          ? t("workflowRun.inspector.retryNone")
+          : t(
+              retry.source === "default"
+                ? "workflowRun.inspector.retryDefault"
+                : "workflowRun.inspector.retryConfigured",
+              {
+                count: retry.maxRetries,
+                seconds: retry.initialDelaySeconds,
+              },
+            );
 
   return (
     <>
@@ -177,6 +198,13 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
           </ul>
         </div>
       )}
+
+      <div className="space-y-1">
+        <p className="text-[11px] text-muted-foreground">
+          {t("settings.workflow.field.retry")}
+        </p>
+        <StaticValue value={retryText} />
+      </div>
     </>
   );
 }

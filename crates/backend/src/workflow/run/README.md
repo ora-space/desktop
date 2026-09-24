@@ -32,6 +32,12 @@ This module adapts workflow-run application use cases to the production backend 
 - `iteration_tests.rs` verifies the composite runtime end to end: serial foreach, the empty
   source, the startup safety ceiling, both error strategies, per-round Condition decisions, the
   outer `current_nodes` anchor, and restart resets.
+- `retry_timer.rs` is the production `WorkflowRetryTimer`: one tokio sleep per armed deadline
+  that then calls the engine's `wake_retry` on the blocking pool under the run lock. It keeps no
+  state per wait; the persisted `payload.retry_wait` decides whether a wake starts anything, so
+  timers are never disarmed on cancel, run failure, or restart. `retry_tests.rs`,
+  `retry_composite_tests.rs`, and `retry_timer_tests.rs` cover automatic retry over real SQLite,
+  inside Iteration and Loop rounds, across the boot sweep, and with the real timer.
 - `transitions.rs` commits the node-run transitions that happen outside the scheduling engine —
   an interactive node parking at awaiting input, a human turn beginning, and a turn ending —
   through one sink that publishes the run invalidation only when the guarded transition commits,

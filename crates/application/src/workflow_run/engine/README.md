@@ -63,6 +63,15 @@ runtime registered for its node type.
   The scheduling core (`run_schedule`) recomputes state from persistence, hands in-flight nodes to
   their registered runtimes, advances composite nodes each wave, and finishes drained runs; it
   contains no node-type branching.
+- **Automatic retry** (`retry.rs`, `engine/retry_scheduler.rs`): the `agentConfig.retry` policy
+  (parse rules, default, backoff capped at ten minutes), the exhaustive table of retryable
+  failure kinds (`NodeFailureKind::auto_retry`), and the waiting-attempt payload markers. The
+  policy is Async-runtime metadata (`AsyncNodeRuntime::retry_policy`), so `fail_node` asks the
+  failed row's runtime instead of branching on node types. A covered failure is replaced by a
+  waiting `Running` row through `WorkflowRetryRepository::schedule_node_retry` and the
+  `WorkflowRetryTimer` port is armed; `wake_retry` starts the attempt once its persisted
+  deadline passes and dispatches it against the scope it failed in, and is a no-op for any
+  attempt that stopped waiting.
 - **Resume, failure detail, and snapshot switch** (`failure.rs`, `region.rs`,
   `snapshot_switch.rs`): classified `payload.error_detail`, the composite-as-resume-unit
   clear set (partial in-loop resume is out of scope), and compatibility planning when a failed
@@ -89,8 +98,9 @@ Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHa
 `WorkflowRunInvalidationPublisher`, `NoRunInvalidations`, `WorkflowGraph`,
 `WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `AgentMcp`, `NodeType`,
 `GraphError`, `UnknownNodeType`, `AgentSkillDeliveryProvider`, `SkillMaterializationReceipt`,
-`WorkflowRunPayload`, and the repository outcome enums including
-`BindWorkflowNodeSessionResult`. The node runtime traits and registry are internal to the engine
+`WorkflowRunPayload`, the automatic-retry types (`AgentRetryPolicy`, `WorkflowRetryRepository`,
+`WorkflowRetryTimer`, `NoRetryTimer`, `NodeRetryWait`, `NodeAutoRetry`), and the repository
+outcome enums including `BindWorkflowNodeSessionResult`. The node runtime traits and registry are internal to the engine
 module; runtimes are registered by the engine's constructors.
 
 ## Module interactions

@@ -1,5 +1,11 @@
 import { useTranslation } from "react-i18next";
-import { IconBan, IconCheck, IconLoader2, IconX } from "@tabler/icons-react";
+import {
+  IconBan,
+  IconCheck,
+  IconLoader2,
+  IconRefresh,
+  IconX,
+} from "@tabler/icons-react";
 import { Badge, cn } from "@ora/ui";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import type {
@@ -25,6 +31,7 @@ const ICON_GLYPH = "size-2.5";
  * Status mark—pick exactly one language per surface:
  * - `live`: spinner (working cue on the focused card only)
  * - terminal + not quiet: check / x glyph
+ * - waiting to retry + not quiet: a still retry glyph, never a spinner (nothing runs yet)
  * - otherwise: pure color dot (path, header, inspector, idle/pending)
  */
 export function RunStatusMark({
@@ -71,6 +78,22 @@ export function RunStatusMark({
         aria-hidden
       >
         <TerminalGlyph status={status} className={ICON_GLYPH} />
+      </span>
+    );
+  }
+
+  if (!quiet && status === "retry_waiting") {
+    return (
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center rounded-full bg-orange-500 text-white",
+          ICON_BOX,
+          className,
+        )}
+        aria-hidden
+        data-status-mark="retry_waiting"
+      >
+        <IconRefresh className={ICON_GLYPH} stroke={2.5} />
       </span>
     );
   }

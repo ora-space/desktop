@@ -10,6 +10,8 @@ import { useTranslation } from "react-i18next";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import { resolveParallelDragSwitch } from "./parallel-drag";
+import { retryWaitAttemptText } from "./retry-countdown";
+import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { RunTheaterActCard } from "./run-theater-act-card";
 import { isNodeWorking } from "./run-status-style";
 import type {
@@ -420,27 +422,51 @@ export function RunTheaterParallelStage({
           {acts.map((act, actIndex) => {
             const selected = act.nodeId === primaryId;
             const waiting = act.state.status === "awaiting_input";
+            const retryWait =
+              act.state.status === "retry_waiting"
+                ? act.state.retryWait
+                : undefined;
+            const retryWaiting = act.state.status === "retry_waiting";
+            const focusLabel = t("workflowRun.theater.focusAct", {
+              name: act.data.title,
+            });
             return (
               <button
                 key={act.nodeId}
                 type="button"
                 onClick={() => slideTo(actIndex)}
                 className={cn(
-                  "max-w-[9rem] cursor-pointer truncate rounded-full border px-2.5 py-1 font-sans text-[11px] font-medium transition-[colors,box-shadow] duration-200",
+                  "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 font-sans text-[11px] font-medium transition-[colors,box-shadow] duration-200",
+                  retryWait !== undefined ? "max-w-[13rem]" : "max-w-[9rem]",
                   selected && waiting
                     ? "border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
-                    : selected
-                      ? "border-foreground/35 bg-background shadow-sm"
-                      : waiting
-                        ? "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
-                        : "border-border/70 bg-muted/40 text-muted-foreground hover:border-border hover:bg-background hover:text-foreground",
+                    : selected && retryWaiting
+                      ? "border-orange-500/55 bg-orange-500/15 text-orange-950 shadow-sm dark:text-orange-50"
+                      : selected
+                        ? "border-foreground/35 bg-background shadow-sm"
+                        : waiting
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+                          : retryWaiting
+                            ? "border-orange-500/40 bg-orange-500/10 text-orange-950 dark:text-orange-100"
+                            : "border-border/70 bg-muted/40 text-muted-foreground hover:border-border hover:bg-background hover:text-foreground",
                 )}
                 aria-pressed={selected}
-                aria-label={t("workflowRun.theater.focusAct", {
-                  name: act.data.title,
-                })}
+                data-retry-waiting={retryWaiting ? "" : undefined}
+                // The countdown is not part of the name: it would change every second.
+                aria-label={
+                  retryWait !== undefined
+                    ? `${focusLabel}: ${retryWaitAttemptText(t, retryWait)}`
+                    : focusLabel
+                }
               >
-                {act.data.title}
+                <span className="truncate">{act.data.title}</span>
+                {retryWait !== undefined && (
+                  <RunRetryWaitLabel
+                    wait={retryWait}
+                    variant="compact"
+                    className="shrink-0 text-[9px] tabular-nums text-orange-800 dark:text-orange-200"
+                  />
+                )}
               </button>
             );
           })}

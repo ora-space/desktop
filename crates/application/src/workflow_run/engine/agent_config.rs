@@ -1,5 +1,10 @@
 //! Agent execution contracts retain author intent independently of installed catalogs.
+//!
+//! The `agentConfig` wire shape is decoded here as well, so the graph parser only hands each
+//! agent node's payload to [`WireAgentConfig::into_model`].
 
+use super::graph::GraphError;
+use super::retry::{AgentRetryPolicy, parse_retry_policy};
 use ora_domain::PluginId;
 use serde::{Deserialize, Deserializer, de::Error};
 use std::collections::HashSet;
@@ -44,6 +49,9 @@ pub struct AgentConfig {
     pub interactive: bool,
     /// Optional structured parsing performed in addition to persisting the raw output.
     pub output_contract: Option<AgentOutputContract>,
+    /// Automatic retry of failed attempts; graphs without `agentConfig.retry` get the default
+    /// policy. The Agent runtime ignores it for interactive nodes.
+    pub retry: AgentRetryPolicy,
 }
 
 /// The agent CLI and model an `agent` node must run with.
@@ -72,7 +80,7 @@ pub struct AgentMcp {
 }
 
 /// Rejects ambiguous bindings before a frozen graph can reach the session runtime.
-pub(super) fn deserialize_bindings<'de, D>(deserializer: D) -> Result<Vec<AgentMcp>, D::Error>
+fn deserialize_bindings<'de, D>(deserializer: D) -> Result<Vec<AgentMcp>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -88,6 +96,122 @@ where
     Ok(bindings)
 }
 
+/// Wire shape of a node's `data.agentConfig`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct WireAgentConfig {
+    #[serde(default)]
+    executor: Option<WireAgentExecutor>,
+    #[serde(default)]
+    role_id: Option<String>,
+    #[serde(default)]
+    skills: Vec<WireAgentSkill>,
+    #[serde(default, deserialize_with = "deserialize_bindings")]
+    mcps: Vec<AgentMcp>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    interactive: Option<bool>,
+    output_contract: Option<WireOutputContract>,
+    /// Kept as raw JSON so a malformed policy is rejected with a field-level reason instead of
+    /// the generic "not valid JSON" a typed serde failure would produce.
+    #[serde(default)]
+    retry: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireOutputContract {
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    text_exposure: Option<String>,
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireAgentExecutor {
+    #[serde(default)]
+    agent_cli: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireAgentSkill {
+    #[serde(default)]
+    skill_id: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+impl WireAgentConfig {
+    /// Decodes the agent contract of node `node_id`; only an invalid retry policy fails.
+    pub(super) fn into_model(self, node_id: &str) -> Result<AgentConfig, GraphError> {
+        Ok(AgentConfig {
+            executor: AgentExecutor {
+                agent_cli: self
+                    .executor
+                    .as_ref()
+                    .and_then(|executor| executor.agent_cli.clone())
+                    .unwrap_or_default(),
+                model_id: self
+                    .executor
+                    .as_ref()
+                    .and_then(|executor| executor.model_id.clone())
+                    .unwrap_or_default(),
+            },
+            role_id: self.role_id,
+            mcps: self.mcps,
+            skills: self
+                .skills
+                .into_iter()
+                .map(WireAgentSkill::into_model)
+                .collect(),
+            prompt: self.prompt.unwrap_or_default(),
+            // Missing `interactive` defaults to false so existing graphs stay fully automatic.
+            interactive: self.interactive.unwrap_or(false),
+            output_contract: self
+                .output_contract
+                .and_then(WireOutputContract::into_model),
+            retry: parse_retry_policy(node_id, self.retry.as_ref())?,
+        })
+    }
+}
+
+impl WireOutputContract {
+    /// Maps the wire contract to the domain model; unknown kinds are ignored so future contract
+    /// values parse as no contract on older Ora versions.
+    fn into_model(self) -> Option<AgentOutputContract> {
+        match self.kind.as_deref() {
+            Some("none") => Some(AgentOutputContract::None),
+            Some("text") => Some(AgentOutputContract::Text),
+            Some("structured") => Some(AgentOutputContract::Structured {
+                schema: self.schema.unwrap_or_default(),
+                // Missing `textExposure` defaults to structured-only so the parsed object is the
+                // authoritative variable unless the author opts the raw text back in.
+                text_exposure: match self.text_exposure.as_deref() {
+                    Some("includeFinalText") => StructuredTextExposure::IncludeFinalText,
+                    _ => StructuredTextExposure::StructuredOnly,
+                },
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl WireAgentSkill {
+    fn into_model(self) -> AgentSkill {
+        AgentSkill {
+            skill_id: self.skill_id.unwrap_or_default(),
+            // Missing `enabled` defaults to false so skills are never materialized by surprise.
+            enabled: self.enabled.unwrap_or(false),
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::AgentMcp;
