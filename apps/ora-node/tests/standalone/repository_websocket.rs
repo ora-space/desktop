@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-const PATH: &str = "/ora-node/v1";
+pub(super) const PATH: &str = "/ora-node/v1";
 
 /// Opens a raw Controller-side WebSocket and completes the owner's handshake, retrying while the
 /// Node still holds admission for a peer that has just disconnected.
@@ -78,7 +78,7 @@ async fn clone_result(receiver: &mut ClientReceiver) -> CloneResultMessage {
 }
 
 /// Starts the production service listening for WebSocket upgrades instead of a local socket.
-fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -> ChildGuard {
+pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -> ChildGuard {
     let config = fixture.path().join("websocket-config.json");
     fs::write(
         &config,

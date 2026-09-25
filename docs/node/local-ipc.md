@@ -57,7 +57,15 @@ of unacknowledged clone events. Status replies do not acknowledge events.
 Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
 that guard; Git runs afterwards. Disconnect or session revocation discards unaccepted queued work,
 but cannot cancel already accepted clones. Reads, writes and command admission replies use the finite
-`frame_timeout_ms` deadline. A busy worker can therefore cause a query/command session to close even
+`frame_timeout_ms` deadline; an admission reply's deadline starts when its frame arrives.
+
+Reading never waits for the worker. The session reads the next frame while earlier requests wait for
+their answers, so a peer's end of stream, a WebSocket close or ping, and a truncated frame are seen
+even while Git occupies the worker: a router that restarts mid-clone gets its close honored and the
+control slot released at once, instead of the reconnect being refused with `4409`. Answers leave in
+request order. At most 15 requests may be unanswered (one worker queue slot stays free for replay).
+Beyond that, status queries are dropped, because the Controller polls on a timer and asks again, and
+any other message closes the session so the Controller reconciles it by query after reconnecting. A busy worker can therefore cause a query/command session to close even
 while heartbeats are arriving; reconnect queries the original execution, not a new attempt. An idle
 Controller should periodically query its executions. Slow readers may be disconnected and reconnect
 for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
@@ -73,6 +81,9 @@ result replay and exact acknowledgement. [Controller acceptance](../controller/l
 an independent-process durable-takeover and lost-Ack recovery test.
 
 Additional real-socket tests pause HTTPS during an accepted clone, observe live heartbeats, expire a
-queued command and verify it remains Unknown while the accepted clone completes. Partial-frame tests
+queued command and verify it remains Unknown while the accepted clone completes. With Git paused in the
+worker, further tests show that an IPC peer's end of stream and a WebSocket close release the control
+slot at once, that WebSocket pings are answered, and that polling past the unanswered bound keeps the
+session and is answered once Git finishes. Partial-frame tests
 verify timeout and fresh admission; a non-reading peer is flooded with status replies until disconnect,
 then reconnects to the identical unacknowledged result. No production test-only wire messages are used.

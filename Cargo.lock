@@ -3637,6 +3637,7 @@ dependencies = [
 name = "ora-node"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
  "gitlancer",
  "libc",
  "ora-contracts",
@@ -3659,6 +3660,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "uuid",

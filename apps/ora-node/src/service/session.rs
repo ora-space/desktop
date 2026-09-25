@@ -4,9 +4,16 @@ use ora_node_transport::{
 };
 use tokio::{
     net::TcpListener,
-    sync::mpsc as async_queue,
-    time::{interval, timeout},
+    sync::{Semaphore, mpsc as async_queue},
+    time::{Instant, interval, timeout, timeout_at},
 };
+
+/// Controller messages one session may leave unanswered. One admission slot stays free for the
+/// replay pass, so a full pipeline never makes the worker queue itself refuse a request.
+const UNANSWERED_REQUEST_LIMIT: usize = ADMISSION_QUEUE_BOUND - 1;
+
+/// The worker's eventual answer to one queued request.
+type Response = oneshot::Receiver<Result<Vec<NodeToControllerMessage>, String>>;
 
 /// Binds the single configured entry and serves it; the match only picks the monomorphized
 /// acceptor, so admission and session handling are the same code for every transport.
@@ -129,12 +136,13 @@ async fn transmit<W: FrameSender>(
     writer.send(frame).await.map_err(io::Error::other)
 }
 
-/// Queues bounded requests with a revocable admission identity; closing a connection does not cancel accepted work.
-async fn request(
+/// Queues bounded requests with a revocable admission identity without waiting for the worker;
+/// closing a connection does not cancel accepted work.
+fn enqueue(
     sender: &mpsc::SyncSender<Work>,
     active: &Arc<Mutex<bool>>,
     request: Request,
-) -> io::Result<Vec<NodeToControllerMessage>> {
+) -> io::Result<Response> {
     let (reply, response) = oneshot::channel();
     sender
         .try_send(Work {
@@ -143,13 +151,19 @@ async fn request(
             reply,
         })
         .map_err(|_| io::Error::other("Node admission queue unavailable"))?;
+    Ok(response)
+}
+
+/// Waits for the worker's answer; a dropped reply means the worker has stopped.
+async fn settle(response: Response) -> io::Result<Vec<NodeToControllerMessage>> {
     response
         .await
         .map_err(io::Error::other)?
         .map_err(io::Error::other)
 }
 
-/// Keeps one reader future alive per frame and gives heartbeat/output independent execution from Git.
+/// Runs reading, answering, replay and writing as independent futures so neither Git in the worker
+/// nor a slow peer stops the others; the first to fail ends the whole session.
 async fn connected<R: FrameReceiver, W: FrameSender>(
     mut receiver: R,
     mut writer: W,
@@ -180,6 +194,13 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         .await
         .map_err(io::Error::other)??;
     let (outgoing, mut messages) = async_queue::channel(/*buffer*/ 16);
+    // Permits travel with each request until it is answered, so the bound covers the request the
+    // answering future is waiting on as well as the ones queued behind it.
+    let unanswered = Arc::new(Semaphore::new(UNANSWERED_REQUEST_LIMIT));
+    let (answer_later, mut answering) = async_queue::unbounded_channel();
+    // Reading never waits for the worker: a peer's close, a router's ping and a truncated frame
+    // must be observed while Git occupies the worker, or the control slot stays held for a peer
+    // that is already gone and its reconnection is refused as busy.
     let read = async {
         loop {
             let message = timeout(deadline, receive(&mut receiver))
@@ -188,24 +209,44 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             let Some(message) = message else {
                 return Ok::<(), io::Error>(());
             };
-            // Git may occupy the worker. Bound admission waiting independently of heartbeats so
-            // revocation invalidates queued work; already durable executions are not canceled.
-            let replies = timeout(
-                deadline,
-                request(sender, &active, Request::Message(message)),
-            )
-            .await
-            .map_err(io::Error::other)??;
+            let Ok(permit) = unanswered.clone().try_acquire_owned() else {
+                // The Controller polls status on a timer without waiting for replies, so a long
+                // Git pass fills the pipeline with queries. Shedding the excess is safe because
+                // a query changes nothing and the Controller asks again; a command must not be
+                // lost silently, and closing makes the Controller reconcile it by query.
+                if matches!(message, ControllerToNodeMessage::GetExecutionStatus(_)) {
+                    continue;
+                }
+                return Err(io::Error::other(
+                    "Controller exceeded unanswered request limit",
+                ));
+            };
+            // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
+            let response = enqueue(sender, &active, Request::Message(message))?;
+            answer_later
+                .send((Instant::now() + deadline, response, permit))
+                .map_err(io::Error::other)?;
+        }
+    };
+    // Git may occupy the worker. Each admission wait is bounded from the moment its frame arrived,
+    // independently of heartbeats, so revocation invalidates queued work; already durable
+    // executions are not canceled. Answers leave in request order because the worker is FIFO.
+    let answer = async {
+        while let Some((expiry, response, _permit)) = answering.recv().await {
+            let replies = timeout_at(expiry, settle(response))
+                .await
+                .map_err(io::Error::other)??;
             for reply in replies {
                 outgoing.send(reply).await.map_err(io::Error::other)?;
             }
         }
+        Ok::<(), io::Error>(())
     };
     let replay = async {
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
             tick.tick().await;
-            for event in request(sender, &active, Request::Replay).await? {
+            for event in settle(enqueue(sender, &active, Request::Replay)?).await? {
                 outgoing.send(event).await.map_err(io::Error::other)?;
             }
         }
@@ -224,5 +265,10 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 .map_err(io::Error::other)??;
         }
     };
-    tokio::select! { result = read => result, result = write => result, result = replay => result }
+    tokio::select! {
+        result = read => result,
+        result = answer => result,
+        result = write => result,
+        result = replay => result,
+    }
 }
