@@ -18,11 +18,11 @@ Cloud 已授权的 opaque 身份，没有 tenant、user 或 membership 字段。
 
 ## 服务与语义要点
 
-| 服务 | 方法 | 要点 |
-|---|---|---|
-| `ControllerLeaseService` | `AcquireLease`／`RenewLease`／`ReleaseLease` | 全局协调租约；`epoch` 是所有写操作的 fencing token |
-| `ExecutionService` | `ClaimWork`、`RecordDispatch`、`TakeOverNodeEvent`、`RecordQueriedResult`、`GetDispatch`、`ListPendingDispatches` | 写操作携带 `submission_id`：同身份同内容返回原结果，不同内容 `ABORTED`+`CONFLICT`；`RecordDispatch` 成功后才可派发，`TakeOverNodeEvent` 成功后才可 Ack，`RecordQueriedResult` 不产生 Ack 依据 |
-| `ControlSignalService` | `Watch`（服务端流） | `WorkAvailable`／`Drain`／`NodeAssignment`；至多一次、不持久化、不改变归属；断流退回周期 `ClaimWork` |
+| 服务                     | 方法                                                                                                              | 要点                                                                                                                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ControllerLeaseService` | `AcquireLease`／`RenewLease`／`ReleaseLease`                                                                      | 全局协调租约；`epoch` 是所有写操作的 fencing token                                                                                                                                            |
+| `ExecutionService`       | `ClaimWork`、`RecordDispatch`、`TakeOverNodeEvent`、`RecordQueriedResult`、`GetDispatch`、`ListPendingDispatches` | 写操作携带 `submission_id`：同身份同内容返回原结果，不同内容 `ABORTED`+`CONFLICT`；`RecordDispatch` 成功后才可派发，`TakeOverNodeEvent` 成功后才可 Ack，`RecordQueriedResult` 不产生 Ack 依据 |
+| `ControlSignalService`   | `Watch`（服务端流）                                                                                               | `WorkAvailable`／`Drain`／`NodeAssignment`；至多一次、不持久化、不改变归属；断流退回周期 `ClaimWork`                                                                                          |
 
 失败以 gRPC 状态码为主分类并附 `ErrorDetail{ErrorCode}`；Rust 侧在 Cloud RPC 适配器内把它们映射
 一次为持久协调接口的分类（冲突、缺失、不可用、未知、资格失效），协调逻辑不感知 gRPC。
@@ -34,6 +34,9 @@ clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
 
 - `task proto:init`（Linux／macOS；生成物已提交，Windows 构建不需要 submodule 与 buf）：首次以 `--no-checkout --filter=blob:none --sparse` clone，`sparse-checkout set proto`，
   再 `git submodule update --init` 到锁定 commit；已初始化时只移动到锁定 commit。CI 的 crates job 执行同一任务。
+  优先复用 `PATH` 或 `~/.local/bin` 中的 `buf`；缺失时用 `curl` 从
+  [官方 GitHub Release](https://buf.build/docs/cli/installation/) 下载 Buf 1.73.0 到 `~/.local/bin`，
+  无需 sudo，下载需要网络。协议任务会把此目录加入 `PATH`；如需在终端直接运行 `buf`，请将其加入 shell 的 `PATH`。
 - 普通 `git clone` 或 `actions/checkout` 不会初始化它；依赖初始化是显式动作。
 - `/specs` 仍是被忽略的独立 checkout，不作为契约依赖。
 

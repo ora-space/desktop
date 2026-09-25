@@ -24,11 +24,11 @@ loop are consumed; the `Watch` stream is not yet. Its persistence semantics foll
 
 ## Services and key semantics
 
-| Service | Methods | Key points |
-|---|---|---|
-| `ControllerLeaseService` | `AcquireLease` / `RenewLease` / `ReleaseLease` | Global coordination lease; `epoch` fences every write |
-| `ExecutionService` | `ClaimWork`, `RecordDispatch`, `TakeOverNodeEvent`, `RecordQueriedResult`, `GetDispatch`, `ListPendingDispatches` | Writes carry `submission_id`: same identity with identical content returns the original result, different content fails with `ABORTED`+`CONFLICT`; dispatch only after `RecordDispatch` succeeds, acknowledge only after `TakeOverNodeEvent` succeeds, `RecordQueriedResult` never authorizes an acknowledgement |
-| `ControlSignalService` | `Watch` (server stream) | `WorkAvailable` / `Drain` / `NodeAssignment`; at-most-once, not persisted, changes no ownership; after a stream loss fall back to periodic `ClaimWork` |
+| Service                  | Methods                                                                                                           | Key points                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ControllerLeaseService` | `AcquireLease` / `RenewLease` / `ReleaseLease`                                                                    | Global coordination lease; `epoch` fences every write                                                                                                                                                                                                                                                            |
+| `ExecutionService`       | `ClaimWork`, `RecordDispatch`, `TakeOverNodeEvent`, `RecordQueriedResult`, `GetDispatch`, `ListPendingDispatches` | Writes carry `submission_id`: same identity with identical content returns the original result, different content fails with `ABORTED`+`CONFLICT`; dispatch only after `RecordDispatch` succeeds, acknowledge only after `TakeOverNodeEvent` succeeds, `RecordQueriedResult` never authorizes an acknowledgement |
+| `ControlSignalService`   | `Watch` (server stream)                                                                                           | `WorkAvailable` / `Drain` / `NodeAssignment`; at-most-once, not persisted, changes no ownership; after a stream loss fall back to periodic `ClaimWork`                                                                                                                                                           |
 
 Failures use the gRPC status code as the primary classification with `ErrorDetail{ErrorCode}`
 attached; the Rust side maps them once, inside the Cloud RPC adapter, to the persistence
@@ -44,6 +44,10 @@ to `proto/`.
 - `task proto:init` (Linux / macOS; the generated client is committed, so Windows builds need neither the submodule nor buf): a first run clones with `--no-checkout --filter=blob:none --sparse`, runs
   `sparse-checkout set proto`, then `git submodule update --init` to the pinned commit; an already
   initialized submodule is only moved to the pinned commit. The crates CI job runs the same task.
+  It reuses `buf` from `PATH` or `~/.local/bin`; if absent, it uses `curl` to install Buf 1.73.0
+  from the [official GitHub release](https://buf.build/docs/cli/installation/) into `~/.local/bin`
+  without sudo. Downloads require network access. Protocol tasks include this directory in their
+  `PATH`; add it to your shell's `PATH` if you want to invoke `buf` directly.
 - A plain `git clone` or `actions/checkout` does not initialize it; dependency initialization is an
   explicit action.
 - `/specs` remains an ignored, independent checkout and is not a contract dependency.

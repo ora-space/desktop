@@ -60,30 +60,21 @@ tasks:
       - cargo xtask check-rust-size
 
   proto:init:
-    desc: Initialize the Cloud contract submodule at its pinned commit (partial clone, sparse-checkout of proto/); idempotent
+    desc: Ensure buf is installed and initialize the Cloud contract submodule at its pinned commit; idempotent
     # The generated client is committed, so Windows builds never need the submodule or buf; the
     # contract checks are platform-independent and run where Task can drive git: Linux and macOS.
     platforms: [linux, darwin]
+    env:
+      PATH: "{{.PATH}}:{{.HOME}}/.local/bin"
     cmds:
-      # A fresh clone is partial so blobs outside the contract are never fetched; a submodule whose
-      # git directory already exists (deinitialized, or checked out in full by a generic tool) is
-      # reused and only moved to the pinned commit. Either way the working tree ends sparse.
-      - |
-        set -e
-        path=third_party/cloud
-        if ! git rev-parse --resolve-git-dir "$path/.git" >/dev/null 2>&1 \
-          && [ ! -d "$(git rev-parse --git-dir)/modules/$path" ]; then
-          url=$(git config -f .gitmodules "submodule.$path.url")
-          git clone --no-checkout --filter=blob:none --sparse "$url" "$path"
-          git -C "$path" sparse-checkout set proto
-          git submodule absorbgitdirs -- "$path"
-        fi
-        git submodule update --init -- "$path"
-        git -C "$path" sparse-checkout set proto
+      - bash scripts/bash/ensure-buf.sh
+      - bash scripts/bash/init-cloud-proto.sh
 
   proto:generate:
     desc: Regenerate crates/controller-proto/src/gen from the pinned Cloud contract (remote buf plugins need network)
     dir: crates/controller-proto
+    env:
+      PATH: "{{.PATH}}:{{.HOME}}/.local/bin"
     cmds:
       - buf generate
 
@@ -91,18 +82,7 @@ tasks:
     desc: Fail when the Cloud contract submodule is off its pinned commit or edited, or the committed client drifts from it
     platforms: [linux, darwin]
     cmds:
-      # The contract must be exactly the pinned commit: lint and breaking checks belong to the Cloud
-      # repository, this side only proves it consumes what it declares.
-      - |
-        set -e
-        status=$(git submodule status -- third_party/cloud)
-        case "$status" in
-          " "*) ;;
-          *) echo "third_party/cloud is not at its pinned commit (run task proto:init): $status"; exit 1;;
-        esac
-        if [ -n "$(git -C third_party/cloud status --porcelain -- proto)" ]; then
-          echo "third_party/cloud/proto has local changes; the contract only comes from the pinned commit"; exit 1
-        fi
+      - bash scripts/bash/check-cloud-proto.sh
       - task: proto:generate
       - git diff --exit-code -- crates/controller-proto/src/gen
 
@@ -330,18 +310,7 @@ tasks:
       - sh: ls .data/logs/ora.log.* >/dev/null 2>&1
         msg: "No Ora daily log files found in .data/logs (expected ora.log.YYYY-MM-DD). Start the Desktop app first."
     cmds:
-      - |
-        {{if eq OS "windows"}}
-        # Logdy 0.17.1 can miss NTFS append notifications, so let PowerShell own the file watch.
-        pwsh -NoProfile -Command '
-          $logs = @(Get-ChildItem -Path ".data/logs/ora.log.*" -File | Sort-Object Name)
-          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-          Get-Content -LiteralPath $logs[-1].FullName -Encoding UTF8 -Wait | ForEach-Object {
-            [Console]::Out.WriteLine($_)
-            [Console]::Out.Flush()
-          }
-        ' | logdy --ui-ip 127.0.0.1 --port {{.PORT | default "8090"}} --no-analytics --no-updates --config logdy.config.json
-        {{else}}
-        set -- .data/logs/ora.log.*
-        logdy follow --full-read "$@" --ui-ip 127.0.0.1 --port {{.PORT | default "8090"}} --no-analytics --no-updates --config logdy.config.json
-        {{end}}
+      - cmd: pwsh -NoProfile -File scripts/logdy.ps1 -Port "{{.PORT | default "8090"}}"
+        platforms: [windows]
+      - cmd: bash scripts/bash/logdy.sh "{{.PORT | default "8090"}}"
+        platforms: [linux, darwin]
