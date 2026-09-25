@@ -12,8 +12,10 @@ pub enum Persistence {
     /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
     Sqlite,
     /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
-    /// at `endpoint` (a gRPC URI); no database is opened locally. Work accepted by Cloud is claimed
-    /// every `claim_interval_ms` and dispatched to the single configured Node.
+    /// at `endpoint` (a gRPC URI); no database is opened locally. Work accepted by Cloud is
+    /// dispatched to the single configured Node. While a `Watch` stream is live, claims follow its
+    /// signals and every lease renewal; `claim_interval_ms` is the claim cadence while no stream
+    /// is live.
     Cloud {
         endpoint: String,
         claim_interval_ms: u64,

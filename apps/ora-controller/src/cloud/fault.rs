@@ -119,6 +119,39 @@ pub(super) async fn read<T>(call: impl Future<Output = Attempt<T>>) -> Result<T,
     }
 }
 
+/// Why a `Watch` did not open. Opening commits nothing, so like a read it is never unknown; unlike a
+/// read it must tell `UNAVAILABLE` apart from other refusals: a draining or stopped Cloud refuses
+/// with exactly that code, while any other verdict comes from a serving Cloud that declines the
+/// stream, which the signal loop must not mistake for a drain that never ends.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    /// `UNAVAILABLE` or no response headers before the deadline: no Cloud is serving yet.
+    Unavailable(Detail),
+    /// Any other status, classified as for any call (a stale epoch included).
+    Verdict(Verdict),
+}
+
+/// Waits for a stream to open: the response headers, which Cloud sends only after the
+/// subscription exists, or the status it refused with.
+pub(super) async fn open<T>(call: impl Future<Output = Attempt<T>>) -> Result<T, Refusal> {
+    match tokio::time::timeout(RPC_TIMEOUT, call).await {
+        Ok(Ok(response)) => Ok(response.into_inner()),
+        Ok(Err(status)) if status.code() == Code::Unavailable => {
+            Err(Refusal::Unavailable(Detail {
+                code: Code::Unavailable,
+                refined: None,
+                message: status.message().to_owned(),
+            }))
+        }
+        Ok(Err(status)) => Err(Refusal::Verdict(classify(&status))),
+        Err(_elapsed) => Err(Refusal::Unavailable(Detail {
+            code: Code::DeadlineExceeded,
+            refined: None,
+            message: "no response headers before the open deadline".into(),
+        })),
+    }
+}
+
 /// Runs one write under a stable submission identity. Only an unknown outcome is retransmitted,
 /// and only with the same identity, so Cloud replays the recorded response instead of applying
 /// the effect twice; every other verdict is final for this identity.
@@ -234,6 +267,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Only `UNAVAILABLE` and a missing reply mean no Cloud serves the stream yet; every other
+    /// status is a verdict from a serving Cloud, a stale epoch included.
+    #[tokio::test]
+    async fn opening_separates_unavailable_from_refusals() {
+        let unavailable = open::<()>(async { Err(Status::unavailable("draining")) }).await;
+        assert_eq!(
+            unavailable,
+            Err(Refusal::Unavailable(Detail {
+                code: Code::Unavailable,
+                refined: None,
+                message: "draining".into(),
+            }))
+        );
+        let unimplemented = open::<()>(async { Err(Status::unimplemented("no signals")) }).await;
+        assert!(matches!(
+            unimplemented,
+            Err(Refusal::Verdict(Verdict::Unavailable(_)))
+        ));
+        let stale = open::<()>(async {
+            Err(cloud_status(
+                Code::FailedPrecondition,
+                "stale_controller",
+                ErrorCode::StaleController,
+            ))
+        })
+        .await;
+        assert!(matches!(stale, Err(Refusal::Verdict(Verdict::Stale(_)))));
+        assert_eq!(open(async { Ok(tonic::Response::new(7)) }).await, Ok(7));
+    }
+
+    /// A stream that never answers is unavailable once the deadline passes, never unknown.
+    #[tokio::test(start_paused = true)]
+    async fn opening_without_headers_times_out_as_unavailable() {
+        let pending = open::<()>(std::future::pending()).await;
+        assert!(matches!(
+            pending,
+            Err(Refusal::Unavailable(Detail {
+                code: Code::DeadlineExceeded,
+                ..
+            }))
+        ));
     }
 
     /// Unknown outcomes are retried with the same submission identity; final verdicts are not.
