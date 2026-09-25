@@ -116,6 +116,7 @@ fn reason(failure: CloneFailureCode) -> proto::CloneFailureReason {
         CloneFailureCode::BranchNotFound => proto::CloneFailureReason::BranchNotFound,
         CloneFailureCode::DestinationConflict => proto::CloneFailureReason::DestinationConflict,
         CloneFailureCode::OperationFailed => proto::CloneFailureReason::OperationFailed,
+        CloneFailureCode::Interrupted => proto::CloneFailureReason::Interrupted,
     }
 }
 
@@ -125,6 +126,7 @@ fn failure(reason: i32) -> Result<CloneFailureCode, Error> {
         proto::CloneFailureReason::BranchNotFound => Ok(CloneFailureCode::BranchNotFound),
         proto::CloneFailureReason::DestinationConflict => Ok(CloneFailureCode::DestinationConflict),
         proto::CloneFailureReason::OperationFailed => Ok(CloneFailureCode::OperationFailed),
+        proto::CloneFailureReason::Interrupted => Ok(CloneFailureCode::Interrupted),
         proto::CloneFailureReason::Unspecified => Err(Error::Conflict),
     }
 }
@@ -221,6 +223,17 @@ mod tests {
             outcome(result(&failed)).unwrap(),
             ExecutionOutcome::from(&failed)
         );
+        // Every failure category survives the contract round trip, so no reason Cloud stores
+        // decays into another category or a conflict when read back.
+        for code in [
+            CloneFailureCode::SourceUnavailable,
+            CloneFailureCode::BranchNotFound,
+            CloneFailureCode::DestinationConflict,
+            CloneFailureCode::OperationFailed,
+            CloneFailureCode::Interrupted,
+        ] {
+            assert_eq!(failure(reason(code) as i32).unwrap(), code);
+        }
         let mut unspecified = result(&failed);
         unspecified.outcome = Some(proto::execution_result::Outcome::CloneFailed(
             proto::CloneFailed {

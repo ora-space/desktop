@@ -256,6 +256,9 @@ pub enum CloneFailureReason {
     BranchNotFound = 2,
     DestinationConflict = 3,
     OperationFailed = 4,
+    /// The attempt was terminated before Git reached its own verdict (Node stop, command deadline,
+    /// or an external signal) and its cleanup was confirmed; a new execution may simply retry.
+    Interrupted = 5,
 }
 impl CloneFailureReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -269,6 +272,7 @@ impl CloneFailureReason {
             Self::BranchNotFound => "CLONE_FAILURE_REASON_BRANCH_NOT_FOUND",
             Self::DestinationConflict => "CLONE_FAILURE_REASON_DESTINATION_CONFLICT",
             Self::OperationFailed => "CLONE_FAILURE_REASON_OPERATION_FAILED",
+            Self::Interrupted => "CLONE_FAILURE_REASON_INTERRUPTED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -279,6 +283,7 @@ impl CloneFailureReason {
             "CLONE_FAILURE_REASON_BRANCH_NOT_FOUND" => Some(Self::BranchNotFound),
             "CLONE_FAILURE_REASON_DESTINATION_CONFLICT" => Some(Self::DestinationConflict),
             "CLONE_FAILURE_REASON_OPERATION_FAILED" => Some(Self::OperationFailed),
+            "CLONE_FAILURE_REASON_INTERRUPTED" => Some(Self::Interrupted),
             _ => None,
         }
     }

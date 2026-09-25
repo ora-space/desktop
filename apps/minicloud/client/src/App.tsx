@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { MiniCloneOperation, MiniCloneRequest } from "@ora/contracts";
+import type {
+  MiniCloneFailure,
+  MiniCloneOperation,
+  MiniCloneRequest,
+} from "@ora/contracts";
 import { Button } from "@ora/ui/components/button";
 import { Input } from "@ora/ui/components/input";
 import type { CloneClient } from "./client";
 import { HttpError } from "./client";
 import { readPending, writePending } from "./pending";
 
-const reasons = {
+const reasons: Record<MiniCloneFailure, string> = {
   sourceUnavailable: "仓库暂不可用",
   branchNotFound: "找不到指定分支",
   destinationConflict: "目标目录冲突",
   operationFailed: "Git 操作失败",
+  interrupted: "执行被中断，可重新提交",
 };
 
 /** Renders only Controller facts; pending is intentionally not a fabricated running/progress state. */

@@ -95,6 +95,21 @@ describe("clone application", () => {
     expect(screen.getByText("残留已保留：/node/retained")).toBeTruthy();
     expect(submit).not.toHaveBeenCalled();
   });
+  it("tells an interrupted attempt apart from a Git failure", async () => {
+    const interrupted: MiniCloneOperation = {
+      ...operation,
+      state: {
+        kind: "failed",
+        reason: "interrupted",
+        retainedPath: "/node/cut",
+      },
+    };
+    render(
+      <App client={{ list: async () => [interrupted], submit: vi.fn() }} />,
+    );
+    await screen.findByText("执行被中断，可重新提交");
+    expect(screen.getByText("残留已保留：/node/cut")).toBeTruthy();
+  });
   it("retains the same submission across response loss and reload", async () => {
     const requests: MiniCloneRequest[] = [];
     const client: CloneClient = {

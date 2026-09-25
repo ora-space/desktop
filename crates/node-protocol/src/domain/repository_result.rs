@@ -23,6 +23,9 @@ pub enum CloneFailureCode {
     BranchNotFound,
     DestinationConflict,
     OperationFailed,
+    /// Terminated before Git reached its own verdict, with cleanup confirmed; a new execution may
+    /// simply retry, unlike `OperationFailed`, which usually needs investigation first.
+    Interrupted,
 }
 
 /// Describes retained responsibility, never permission to delete or reuse a directory.

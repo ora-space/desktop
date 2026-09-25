@@ -140,6 +140,7 @@ fn present(operation: CloneOperation) -> MiniCloneOperation {
                 CloneFailureCode::BranchNotFound => MiniCloneFailure::BranchNotFound,
                 CloneFailureCode::DestinationConflict => MiniCloneFailure::DestinationConflict,
                 CloneFailureCode::OperationFailed => MiniCloneFailure::OperationFailed,
+                CloneFailureCode::Interrupted => MiniCloneFailure::Interrupted,
             },
             retained_path: match result.residual {
                 CloneResidual::NoDirectory {} => None,
@@ -155,5 +156,54 @@ fn present(operation: CloneOperation) -> MiniCloneOperation {
         repository: command.payload.spec.repository.as_str().into(),
         branch: command.payload.spec.branch.as_str().into(),
         state,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// An interrupted attempt keeps its own browser reason and retained path instead of reading
+    /// as a Git failure, so the caller knows a plain retry is appropriate.
+    #[test]
+    fn interrupted_failure_presents_its_own_reason() {
+        let spec = CloneExecutionSpec {
+            node_id: NodeId::new("node"),
+            repository: CloneRepositoryUrl::parse("https://example.test/repo.git").unwrap(),
+            branch: BranchName::new("main"),
+        };
+        let operation = CloneOperation {
+            command: CloneRepositoryMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                request_id: None,
+                operation_id: OperationId::new("operation"),
+                execution_id: ExecutionId::new("execution"),
+                payload: CloneRepository { spec: spec.clone() },
+            },
+            result: Some(CloneExecutionResult::CloneFailed(CloneFailed {
+                node: NodeRuntimeIdentity {
+                    node_id: NodeId::new("node"),
+                    incarnation_id: NodeIncarnationId::new("incarnation"),
+                },
+                spec,
+                failure: CloneFailureCode::Interrupted,
+                residual: CloneResidual::Retained {
+                    repository_id: RepositoryId::new("repository"),
+                    path: NodePath::new("/node/cut"),
+                },
+            })),
+        };
+        assert_eq!(
+            serde_json::to_value(present(operation)).unwrap(),
+            serde_json::json!({
+                "operationId": "operation",
+                "executionId": "execution",
+                "nodeId": "node",
+                "repository": "https://example.test/repo.git",
+                "branch": "main",
+                "state": { "kind": "failed", "reason": "interrupted", "retainedPath": "/node/cut" },
+            })
+        );
     }
 }

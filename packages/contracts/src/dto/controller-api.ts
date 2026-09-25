@@ -16,7 +16,8 @@ export type MiniCloneFailure =
   | "sourceUnavailable"
   | "branchNotFound"
   | "destinationConflict"
-  | "operationFailed";
+  | "operationFailed"
+  | "interrupted";
 
 /**
  * One durable operation for list and detail views; paths remain Node-local facts.

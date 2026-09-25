@@ -50,6 +50,7 @@ pub enum MiniCloneFailure {
     BranchNotFound,
     DestinationConflict,
     OperationFailed,
+    Interrupted,
 }
 
 /// One durable operation for list and detail views; paths remain Node-local facts.
