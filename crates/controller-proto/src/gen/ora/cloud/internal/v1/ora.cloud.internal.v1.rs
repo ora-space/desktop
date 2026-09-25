@@ -285,7 +285,7 @@ impl CloneFailureReason {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Lease {
-    /// Service principal of the current holder, as verified from the caller's credential.
+    /// ControllerId of the current holder, as the caller named itself in x-ora-controller-id metadata.
     #[prost(string, tag="1")]
     pub holder_id: ::prost::alloc::string::String,
     /// Monotonic fencing token; increases every time the lease changes hands.
@@ -353,8 +353,9 @@ pub struct WorkAvailable {
     #[prost(string, optional, tag="1")]
     pub operation_id: ::core::option::Option<::prost::alloc::string::String>,
 }
-/// Asks the holder to stop claiming and drain in-flight coordination, then release its lease. It
-/// never cancels user work or destroys sandboxes.
+/// The instance that sends it is about to stop. The holder stops claiming from it until a new Watch
+/// is established; Drain does not ask the holder to release its lease, and it never cancels user work
+/// or destroys sandboxes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Drain {
 }

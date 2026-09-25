@@ -6,14 +6,15 @@ Controller 在云端部署中通过 gRPC 调用 Cloud（Ora Cloud，Go API Serve
 接管 Node 事件、保存查询结果、恢复读取，以及一条由 Controller 发起的服务端流接收 Cloud 的信号。
 契约的唯一来源是 **Cloud 仓库** 的 `proto/ora/cloud/internal/v1/`（package `ora.cloud.internal.v1`）；
 Cloud 是全部服务的服务端并拥有权威持久化，Controller 只拨出，不向 Cloud 暴露任何 gRPC 服务。
-本仓库不复制 `.proto`，只持有由锁定 commit 生成的 tonic **客户端**代码。租户留在 Cloud：契约只携带
+本仓库不复制 `.proto`，只持有由锁定 commit 生成的 tonic 代码，生产代码只使用其中的**客户端**。租户留在 Cloud：契约只携带
 Cloud 已授权的 opaque 身份，没有 tenant、user 或 membership 字段。
 
 语义由 specs 的 `decisions/cloud/controller-integration/0-cloud-owned-internal-grpc-contract.md`
 拥有，本仓库的消费方式由 `decisions/controller/api-boundary/20260922-cloud-owned-contract-and-controller-dial-out.md`
 固定；本页只讲本仓库如何取得契约、如何生成、如何升级。运行时接入是
 [Controller 运行时](../controller/local-runtime.zh.md) 描述的 `CloudStore` 适配器：租约、`ExecutionService`
-与周期领取循环已接入，`Watch` 流尚未；其持久语义遵循
+与 `Watch` 流均已接入，由流决定何时领取，规则见
+`decisions/controller/api-boundary/20260924-controller-consumes-watch-signals.md`；其持久语义遵循
 `decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`。
 
 ## 服务与语义要点
@@ -43,8 +44,9 @@ clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
 ## 生成与检查
 
 `crates/controller-proto`（`ora-controller-proto`）只放 `src/gen/` 下的生成物，由 `buf` 用固定版本的
-远程插件（`neoeinstein-prost`、`neoeinstein-tonic`，`no_server`）从 `third_party/cloud/proto` 生成；
-需要网络，不需要本机 `protoc`。
+远程插件（`neoeinstein-prost`、`neoeinstein-tonic`）从 `third_party/cloud/proto` 生成；需要网络，不需要
+本机 `protoc`。服务端模块生成在 `#[cfg(feature = "test-server")]` 之后：生产构建从不编译它们，Controller
+的测试启用该 feature，以真实契约托管内存假 Cloud。
 
 - `task proto:generate`：重新生成。
 - `task proto:check`：先验证 submodule 位于锁定 commit 且 `proto/` 无本地修改，再重新生成并在有 diff
@@ -59,4 +61,5 @@ clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
 3. `task proto:generate`，修改适配器，把 gitlink、生成物与代码一起提交；PR 描述链接 Cloud 侧变更以便展开
    子模块 diff 评审。
 
-生成证明的是结构一致；与真实 Cloud gRPC 服务端的行为一致经 minicloud 云端形态端到端验证，尚未自动化。
+生成证明的是结构一致。Controller 的测试以生成的服务端桩构建内存假 Cloud 验证适配器行为；与真实 Cloud gRPC
+服务端的行为一致经 minicloud 云端形态端到端验证，尚未自动化。

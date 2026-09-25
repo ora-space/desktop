@@ -3417,6 +3417,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "clap",
+ "futures",
  "libc",
  "ora-contracts",
  "ora-controller-proto",

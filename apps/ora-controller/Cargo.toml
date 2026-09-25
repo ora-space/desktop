@@ -33,7 +33,11 @@ tonic.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 pretty_assertions.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ora-node-transport = { workspace = true, features = ["websocket"] }
 reqwest = { workspace = true, features = ["json"] }
+# The test-only server stubs host an in-memory Cloud over the real contract.
+ora-controller-proto = { workspace = true, features = ["test-server"] }
+futures.workspace = true

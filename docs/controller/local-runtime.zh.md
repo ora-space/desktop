@@ -74,13 +74,28 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 `endpoint` 是 Cloud 的 gRPC 地址；连接惰性建立，Cloud 不可达是调用时的"权威不可用"，不是启动失败。
 当前阶段不认证 Controller：每次调用以 `x-ora-controller-id` metadata 携带 `controller_id`（须为可打印
-ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好一个 Node：适配器的 `serve` 任务获取 Cloud 的全局租约、每十秒续期、每
-`claim_interval_ms` 领取已接受的工作、按 Node 命令校验后用 `RecordDispatch` 登记派发，再由现有 Node 会话
-经周期状态查询交付。每个写操作携带租约 epoch 与稳定的提交身份；只有回复丢失时才重传，且用同一身份，
+ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好一个 Node：适配器的 `serve` 任务获取 Cloud 的全局租约、每十秒续期、
+领取已接受的工作、按 Node 命令校验后用 `RecordDispatch` 登记派发，再由现有 Node 会话经周期状态查询交付。
+一次领取连续登记直到 Cloud 没有工作或某一步失败，单批最多 16 项，长队列不会推迟租约续期。每个写操作携带租约 epoch 与稳定的提交身份；只有回复丢失时才重传，且用同一身份，
 让 Cloud 回放已记录的响应而不是重复施加效果。Cloud 的裁决在适配器内一次映射为接口的错误分类：冲突
 （不按原样重试）、不可用（未提交，稍后重试）、未知（回复丢失，只能同身份重传）、资格失效（忘记租约，
-由下一次续期重新获取）。未持有租约时不领取、不派发、不确认，Controller 从不退回本机写入。`Watch`
-信号流尚未接入，领取是周期性的。
+由下一次续期重新获取）。未持有租约时不领取、不派发、不确认，Controller 从不退回本机写入。
+
+持有租约期间，Controller 维持一条 `Watch` 流，由流的状态决定何时领取：
+
+| 流状态 | 进入条件                                  | 领取                                                                  |
+| ------ | ----------------------------------------- | --------------------------------------------------------------------- |
+| 无流   | 启动；流以错误状态结束；租约 epoch 被丢弃 | 每个节拍先尝试重开流，并每 `claim_interval_ms` 领取一次               |
+| 在线   | 流建立（Cloud 已发送响应头）              | 建立时领取一次，每个 `WorkAvailable` 领取一次，每次续约后兜底领取一次 |
+| 排空   | Cloud 发送 `Drain` 或正常结束流           | 不领取；保留租约，Node 会话照常                                       |
+
+因此 `claim_interval_ms` 只是无流时的领取间隔；流在线时，空闲 Controller 每次续约查询 Cloud 一次，而不是
+每个间隔一次。信号只加速领取：归属仍由 `RecordDispatch` 提交决定，续约后的兜底领取会补上 Cloud 因订阅者
+缓冲满而丢弃信号的工作。排空表示该 Cloud 实例即将停止；Controller 在两个节拍上持续重开流，新流建立即结束
+排空；若仍在服务的 Cloud 以 `UNAVAILABLE` 以外的状态拒绝流，则转入无流、按周期领取，而不是一直暂停。
+Cloud 通道每 30 秒发送 HTTP/2 保活 PING（空闲时也发送），10 秒无回应即关闭连接，使被静默丢弃的连接让流以
+错误结束，而不是看似在线。Cloud 从 `ora-space/cloud` `34d8067`（cloud#29）起才接受这一间隔；更早的 Cloud
+会在空闲约两分钟后以 `GOAWAY` 断开连接。
 
 ```json
 {
@@ -152,8 +167,10 @@ proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约
 ## 验证与保留范围
 
 真实 SQLite 测试经 `CoordinationStore` 与 `CloneIntake` 接口覆盖接受、独占、事务失败、查询／事件乱序、
-重复接管、冲突事实，以及已完成执行退出周期查询。Cloud 适配器的裁决映射、同身份重传与消息翻译有单元测试；
-运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
+重复接管、冲突事实，以及已完成执行退出周期查询。Cloud 适配器的裁决映射、同身份重传、消息翻译与流状态迁移
+有单元测试；`apps/ora-controller/tests/cloud.rs` 以内存假 Cloud 驱动运行时，假 Cloud 经 `ora-controller-proto`
+测试专用的服务端桩（`test-server` feature）提供真实契约，覆盖信号触发领取、流建立前已接受的工作、断流回退与
+重开、排空、排空后流被拒绝、打开时 epoch 陈旧、批量登记，以及关停时关闭流并释放租约。运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
 不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 [minicloud 云端
 形态](../minicloud/runtime.zh.md#云端持久模式)端到端验证，尚未自动化；
 framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。

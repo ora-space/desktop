@@ -8,7 +8,8 @@ recovery, and opens one server stream on which Cloud sends signals. The single s
 contract is the **Cloud repository**'s `proto/ora/cloud/internal/v1/` (package
 `ora.cloud.internal.v1`); Cloud is the server of every service and owns authoritative persistence,
 the Controller only dials out and exposes no gRPC service to Cloud. This repository never copies
-the `.proto` files; it only holds tonic **client** code generated from a pinned commit. Tenancy
+the `.proto` files; it only holds tonic code generated from a pinned commit, of which production uses
+only the **client**. Tenancy
 stays in Cloud: the contract carries only opaque identities Cloud has already authorized, with no
 tenant, user or membership fields.
 
@@ -18,8 +19,9 @@ repository consumes them is fixed by
 `decisions/controller/api-boundary/20260922-cloud-owned-contract-and-controller-dial-out.md`.
 This page only covers how the contract is obtained, generated and upgraded here. The runtime
 integration is the `CloudStore` adapter described in the
-[Controller runtime](../controller/local-runtime.md): lease, `ExecutionService` and the periodic claim
-loop are consumed; the `Watch` stream is not yet. Its persistence semantics follow
+[Controller runtime](../controller/local-runtime.md): lease, `ExecutionService` and the `Watch` stream
+are consumed, the stream deciding when to claim as fixed by
+`decisions/controller/api-boundary/20260924-controller-consumes-watch-signals.md`. Its persistence semantics follow
 `decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`.
 
 ## Services and key semantics
@@ -55,8 +57,10 @@ to `proto/`.
 ## Generation and checks
 
 `crates/controller-proto` (`ora-controller-proto`) holds only the generated output under `src/gen/`,
-produced by `buf` with pinned remote plugins (`neoeinstein-prost`, `neoeinstein-tonic` with
-`no_server`) from `third_party/cloud/proto`; this needs network access, not a local `protoc`.
+produced by `buf` with pinned remote plugins (`neoeinstein-prost`, `neoeinstein-tonic`) from
+`third_party/cloud/proto`; this needs network access, not a local `protoc`. The server modules are
+generated behind `#[cfg(feature = "test-server")]`: production never compiles them, and the
+Controller's tests enable the feature to host an in-memory Cloud over the real contract.
 
 - `task proto:generate`: regenerate.
 - `task proto:check`: verify the submodule is at its pinned commit with no local changes under
@@ -72,5 +76,6 @@ produced by `buf` with pinned remote plugins (`neoeinstein-prost`, `neoeinstein-
 3. `task proto:generate`, adapt the adapter, and commit the gitlink, the generated code and the
    change together; link the Cloud change from the PR so reviewers can expand the submodule diff.
 
-Generation proves structural agreement; behavioral agreement against a real Cloud gRPC server is
-verified end to end through the minicloud cloud form and is not yet an automated test.
+Generation proves structural agreement. The Controller's tests exercise the adapter against an
+in-memory Cloud built on the generated server stubs; behavioral agreement with the real Cloud gRPC
+server is verified end to end through the minicloud cloud form and is not yet an automated test.

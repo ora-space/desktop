@@ -2,14 +2,18 @@
 //! internal control contract, committed by Cloud in PostgreSQL. The adapter holds no authoritative
 //! state. Its channel and lease epoch are runtime state a replacement instance rebuilds from Cloud,
 //! and it never opens a local database or takes a file lease.
+mod claim;
+mod coordinate;
 mod fault;
 mod lease;
 mod mapping;
+mod signals;
 
 use crate::*;
 use fault::Verdict;
 use ora_controller_proto::v1::{
-    self as proto, controller_lease_service_client::ControllerLeaseServiceClient,
+    self as proto, control_signal_service_client::ControlSignalServiceClient,
+    controller_lease_service_client::ControllerLeaseServiceClient,
     execution_service_client::ExecutionServiceClient,
 };
 use std::{
@@ -25,8 +29,18 @@ use tonic::{
 /// The metadata key carrying `controller_id`; the contract names no other identity for Controllers.
 const HOLDER_METADATA: &str = "x-ora-controller-id";
 
+/// HTTP/2 PING cadence on the Cloud connection. `Watch` can stay silent for long stretches, and a
+/// connection dropped silently by NAT or a middlebox would otherwise leave the stream looking live
+/// and every call waiting out its deadline until the kernel gives up on TCP. PINGs are answered by
+/// the gRPC peer itself, so they prove Cloud is serving even through a TCP-terminating proxy. Cloud
+/// accepts PINGs every 5 seconds or more, also without active streams; its default policy would
+/// answer this cadence with GOAWAY.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(/*secs*/ 30);
+/// How long a PING may go unanswered before the connection is closed and the stream breaks.
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
+
 /// Coordination through Cloud's contract. Cheap to clone: every clone shares the channel and the
-/// lease epoch, so the runtime, the Node session and the claim loop all
+/// lease epoch, so the runtime, the Node session and the coordination loop all
 /// write under the same fencing token.
 pub struct CloudStore {
     inner: Arc<Inner>,
@@ -49,6 +63,7 @@ struct Inner {
     holder: AsciiMetadataValue,
     /// The epoch of the lease currently held, or `None` while ineligible to write.
     lease: Mutex<Option<i64>>,
+    /// How often to claim while no `Watch` stream is live.
     claim_interval: Duration,
 }
 
@@ -91,6 +106,10 @@ impl CloudStore {
         let channel = tonic::transport::Endpoint::from_shared(endpoint.clone())
             .map_err(|error| Error::Configuration(format!("invalid cloud endpoint: {error}")))?
             .connect_timeout(fault::RPC_TIMEOUT)
+            .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+            .keep_alive_timeout(KEEPALIVE_TIMEOUT)
+            // Also while no call is active: the fallback without a stream needs a live connection.
+            .keep_alive_while_idle(true)
             .connect_lazy();
         Ok(Self {
             inner: Arc::new(Inner {
@@ -120,6 +139,10 @@ impl CloudStore {
 
     fn leases(&self) -> ControllerLeaseServiceClient<Channel> {
         ControllerLeaseServiceClient::new(self.inner.channel.clone())
+    }
+
+    fn signals(&self) -> ControlSignalServiceClient<Channel> {
+        ControlSignalServiceClient::new(self.inner.channel.clone())
     }
 
     /// The fencing token every write carries; without a held lease nothing may be written.
@@ -326,7 +349,7 @@ impl CoordinationStore for CloudStore {
         &self,
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        lease::coordinate(self.clone(), shutdown)
+        coordinate::coordinate(self.clone(), shutdown)
     }
 }
 

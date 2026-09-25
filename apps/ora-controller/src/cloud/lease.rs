@@ -1,46 +1,16 @@
-//! The adapter's own coordination with Cloud: hold the global lease so writes are fenced, and
-//! turn work Cloud accepted into registered dispatches the Node sessions then deliver. Cloud stays
-//! the authority throughout; this loop only decides when to ask.
-use super::{CloudStore, fault, mapping};
+//! The global lease that fences every write: acquire it, keep it renewed, and give it back on
+//! shutdown. Cloud records the holder and epoch; this module only asks.
+use super::{CloudStore, fault};
 use crate::*;
 use ora_controller_proto::v1 as proto;
-use std::{io, time::Duration};
-use tokio::time::{MissedTickBehavior, interval};
+use std::time::Duration;
 
 /// Cloud grants thirty seconds per lease; renewing every ten leaves two missed renewals of slack.
-const RENEW_INTERVAL: Duration = Duration::from_secs(/*secs*/ 10);
-
-/// Keeps this Controller eligible and fed until `shutdown` resolves, then releases the lease so a
-/// successor need not wait for expiry. Every failure is logged and retried on the next tick; the
-/// loop never gives up on the authority, because nothing local could take its place.
-pub(super) async fn coordinate(
-    store: CloudStore,
-    shutdown: impl Future<Output = ()>,
-) -> io::Result<()> {
-    let mut renew = interval(RENEW_INTERVAL);
-    renew.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut claim = interval(store.inner.claim_interval);
-    claim.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut last_refusal: Option<String> = None;
-    tokio::pin!(shutdown);
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            _ = renew.tick() => keep_lease(&store).await,
-            _ = claim.tick() => {
-                if let Ok(epoch) = store.epoch() {
-                    claim_once(&store, epoch, &mut last_refusal).await;
-                }
-            }
-        }
-    }
-    release(&store).await;
-    Ok(())
-}
+pub(super) const RENEW_INTERVAL: Duration = Duration::from_secs(/*secs*/ 10);
 
 /// Acquires the lease when none is held, otherwise renews it; a renewal Cloud refuses as stale is
 /// followed by an immediate acquisition attempt so eligibility returns without waiting a tick.
-async fn keep_lease(store: &CloudStore) {
+pub(super) async fn keep_lease(store: &CloudStore) {
     let held = match store.lease() {
         None => None,
         Some(epoch) => match lease_call(store, proto::RenewLeaseRequest { epoch }).await {
@@ -83,86 +53,8 @@ async fn lease_call<R: LeaseRequest>(
         .ok_or(Error::Conflict)
 }
 
-/// Claims at most one accepted work item and registers its dispatch before any Node sees it. A
-/// claim is a pure read; ownership is decided when `RecordDispatch` commits.
-async fn claim_once(store: &CloudStore, epoch: i64, last_refusal: &mut Option<String>) {
-    let claimed = fault::write(|submission_id| async move {
-        let request = store.request(proto::ClaimWorkRequest {
-            submission_id,
-            epoch,
-        });
-        store.executions().claim_work(request).await
-    })
-    .await;
-    let item = match claimed {
-        Ok(proto::ClaimWorkResponse { item: Some(item) }) => item,
-        Ok(proto::ClaimWorkResponse { item: None }) => return,
-        Err(verdict) => {
-            let error = store.settle(verdict);
-            ora_logging::ora_warn!(error = %error, "Cloud work claim failed");
-            return;
-        }
-    };
-    match register(store, epoch, &item).await {
-        Ok(command) => {
-            *last_refusal = None;
-            ora_logging::ora_info!(
-                operation_id = %command.operation_id.as_str(),
-                execution_id = %command.execution_id.as_str(),
-                "dispatch recorded with Cloud; the Node session delivers it"
-            );
-        }
-        // The queue head stays the same until Cloud resolves it, so warn once per item rather
-        // than once per tick.
-        Err(error) if last_refusal.as_deref() != Some(item.operation_id.as_str()) => {
-            *last_refusal = Some(item.operation_id.clone());
-            ora_logging::ora_warn!(
-                operation_id = %item.operation_id,
-                error = %error,
-                "claimed work could not be registered for dispatch"
-            );
-        }
-        Err(_) => {}
-    }
-}
-
-/// Freezes the execution identity and full input with Cloud; the Node protocol validates the
-/// command first so nothing undispatchable is ever registered.
-async fn register(
-    store: &CloudStore,
-    epoch: i64,
-    item: &proto::WorkItem,
-) -> Result<CloneRepositoryMessage, Error> {
-    let command = CloneRepositoryMessage {
-        protocol_version: CURRENT_PROTOCOL_VERSION,
-        request_id: None,
-        operation_id: OperationId::new(item.operation_id.clone()),
-        execution_id: ExecutionId::new(uuid::Uuid::new_v4().to_string()),
-        payload: CloneRepository {
-            spec: mapping::spec(item.input.clone(), &store.inner.node)?,
-        },
-    };
-    command.validate()?;
-    let write = fault::write(|submission_id| {
-        let command = &command;
-        async move {
-            let request = store.request(proto::RecordDispatchRequest {
-                submission_id,
-                epoch,
-                operation_id: command.operation_id.as_str().into(),
-                execution_id: command.execution_id.as_str().into(),
-                node_id: store.inner.node.as_str().into(),
-                input: Some(mapping::input(&command.payload.spec)),
-            });
-            store.executions().record_dispatch(request).await
-        }
-    });
-    write.await.map_err(|verdict| store.settle(verdict))?;
-    Ok(command)
-}
-
 /// Gives the lease back on shutdown; failure only means a successor waits for expiry.
-async fn release(store: &CloudStore) {
+pub(super) async fn release(store: &CloudStore) {
     let Some(epoch) = store.lease() else {
         return;
     };

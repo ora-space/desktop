@@ -86,16 +86,38 @@ the listener flags are refused:
 unavailable authority at call time rather than a start-up failure. Controllers are not
 authenticated at this stage: every call carries `controller_id` as `x-ora-controller-id` metadata,
 which Cloud records as the lease and submission holder (it must be printable ASCII). `nodes` must contain exactly one Node: the adapter's
-`serve` task acquires Cloud's global lease, renews it every ten seconds, claims accepted work every
-`claim_interval_ms`, validates it as a Node command and registers the dispatch with `RecordDispatch`
-before the existing Node session delivers it through its periodic status query. Every write carries
+`serve` task acquires Cloud's global lease, renews it every ten seconds, claims accepted work,
+validates it as a Node command and registers the dispatch with `RecordDispatch` before the existing
+Node session delivers it through its periodic status query. One claim registers work until Cloud has
+none left or a step fails, in batches of at most 16 so a long queue never delays the lease renewal. Every write carries
 the lease epoch and a stable submission identity; only a lost reply is retransmitted, with the same
 identity, so Cloud replays its recorded response instead of applying the effect twice. Cloud's
 verdicts are mapped once, inside the adapter, to the interface's error classes: conflict (never
 retried as-is), unavailable (nothing committed, retry later), unknown (reply lost, same identity
 only), stale eligibility (the lease is forgotten and re-acquired by the next renewal). While the
 lease is not held nothing is claimed, dispatched or acknowledged, and the Controller never falls back
-to writing locally. The `Watch` signal stream is not consumed yet; claiming is periodic.
+to writing locally.
+
+While it holds the lease, the Controller keeps one `Watch` stream open, and the stream's state decides
+when it claims:
+
+| Stream  | Entered when                                                            | Claims                                                                        |
+| ------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| none    | start; the stream ends with an error status; the lease epoch is dropped | every `claim_interval_ms`, after trying to reopen the stream on every tick    |
+| live    | the stream opens (Cloud has sent its response headers)                  | once on opening, on every `WorkAvailable`, and once after every lease renewal |
+| drained | Cloud sends `Drain` or ends the stream cleanly                          | never; the lease is kept and Node sessions continue                           |
+
+`claim_interval_ms` is therefore the claim cadence without a stream only; with a live stream an idle
+Controller queries Cloud once per renewal instead of every interval. Signals only accelerate
+claiming: ownership is still decided when `RecordDispatch` commits, and the renewal backstop picks up
+work whose signal Cloud dropped from a full subscriber buffer. A drain means the Cloud instance is
+stopping; the Controller keeps retrying the stream on both ticks and leaves the drain when a new
+stream opens, or when a serving Cloud refuses the stream with anything but `UNAVAILABLE`, in which
+case it falls back to periodic claiming rather than pausing for good. The Cloud channel sends HTTP/2
+keepalive PINGs every 30 seconds, also when idle, and closes a connection whose PING goes unanswered
+for 10 seconds, so a silently dropped connection breaks the stream instead of leaving it looking
+live. Cloud accepts that cadence only from `ora-space/cloud` `34d8067` (cloud#29) on; an older Cloud
+answers it with `GOAWAY` after about two minutes of idleness.
 
 ```json
 {
@@ -176,7 +198,12 @@ proto and the Controller dials out as its client (see the
 Real SQLite tests, driven through the `CoordinationStore` and `CloneIntake` interfaces, cover acceptance, exclusive ownership, transaction failure, query/event ordering,
 duplicate takeover, conflicting facts and the retirement of completed executions from periodic queries.
 The Cloud adapter's verdict mapping, same-identity retransmission and message translation are unit
-tested; the runtime and executable tests cover that the cloud form opens no local state, serves no
+tested, and so are the transitions of the stream state. `apps/ora-controller/tests/cloud.rs` drives
+the runtime against an in-memory Cloud that serves the real contract through the test-only server
+stubs of `ora-controller-proto` (`test-server` feature), covering signal-driven claiming, work
+accepted before the stream opened, fallback and reopening after a broken stream, drains, a refused
+stream after a drain, a stale epoch on opening, batching, and cancelling the stream and releasing the
+lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state, serves no
 JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its
 behavior against a real Cloud (lease, claim, dispatch, takeover, restart without a second clone) is
 verified end to end with the [minicloud cloud form](../minicloud/runtime.md#cloud-persistence-mode) and is not yet an automated test. Framed-session tests cover bounded Unknown retransmission
