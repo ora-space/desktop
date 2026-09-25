@@ -26,6 +26,31 @@ Deno.test("format hook checks the index rather than unstaged fixes", () =>
   }),
 );
 
+Deno.test("format hook leaves generated Rust to its generator", () =>
+  withTempDirectory(async (root) => {
+    await initFormatterRepository(root);
+    await Deno.writeTextFile(
+      path.join(root, "generated.rs"),
+      '// @generated\n#[prost(tag="1")]\npub struct A{}\n',
+    );
+    await git(root, ["add", "generated.rs"]);
+    assert.deepEqual(await runScript("check-staged-format.ts", root), {
+      code: 0,
+      stdout: "",
+      stderr: "",
+    });
+    await Deno.writeTextFile(
+      path.join(root, "handwritten.rs"),
+      '#[prost(tag="1")]\npub struct A{}\n',
+    );
+    await git(root, ["add", "handwritten.rs"]);
+    const failed = await runScript("check-staged-format.ts", root);
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /handwritten.rs/);
+    assert.doesNotMatch(failed.stderr, /generated.rs/);
+  }),
+);
+
 Deno.test("format hook accepts an empty index", () =>
   withTempDirectory(async (root) => {
     await initFormatterRepository(root);

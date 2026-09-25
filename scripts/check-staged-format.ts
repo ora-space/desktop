@@ -31,6 +31,17 @@ for (const file of stagedFiles) {
 
   const source = spawnSync("git", ["show", `:${file}`], { encoding: "buffer" });
   if (source.status !== 0) process.exit(source.status ?? 1);
+  // rustfmt skips @generated files (a marker in the first five lines) when given a path, but not
+  // on stdin; mirror that rule so generated code such as prost output is checked by its generator.
+  if (
+    extension === "rs" &&
+    source.stdout
+      .toString("utf8")
+      .split("\n", 5)
+      .some((line) => line.includes("@generated"))
+  ) {
+    continue;
+  }
 
   const command = extension === "rs" ? "rustfmt" : Deno.execPath();
   const args =
