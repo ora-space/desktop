@@ -140,7 +140,14 @@ pub(super) fn collect(workspace: &Path) -> Result<BTreeMap<PathBuf, ModuleSize>>
         } else {
             RustSourceKind::Module
         };
-        let analysis = analyze_rust_source(&fs::read_to_string(&filename)?, &filename, kind)
+        let text = fs::read_to_string(&filename)?;
+        // Generator output carries the conventional `@generated` marker. Its size is the
+        // generator's, and a hand split would be overwritten by the next regeneration; drift
+        // checks, not module limits, keep it honest.
+        if text.starts_with("// @generated") {
+            continue;
+        }
+        let analysis = analyze_rust_source(&text, &filename, kind)
             .map_err(|error| format!("{}: {error}", filename.display()))?;
         let mut links = Vec::new();
         for module in &analysis.modules {
