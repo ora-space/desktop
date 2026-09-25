@@ -5,8 +5,8 @@
 //! WebSocket ping/pong only proves the nearest hop is alive because routers terminate each side;
 //! end-to-end liveness remains the protocol heartbeat and the sessions' I/O deadlines.
 use crate::{
-    Acceptor, CONTROL_SESSION_BUSY_CLOSE_CODE, ConnectError, ConnectFailure, FrameReceiver,
-    FrameSender, TransportError,
+    Acceptor, CONTROL_SESSION_BUSY_CLOSE_CODE, CloseReason, ConnectError, ConnectFailure,
+    FrameReceiver, FrameSender, TransportError,
 };
 use futures_util::{
     SinkExt, StreamExt,
@@ -78,8 +78,12 @@ fn config() -> WebSocketConfig {
         .max_frame_size(Some(MAX_FRAME_LENGTH))
 }
 
-/// Receiving half of a WebSocket connection.
-pub struct WsReceiver<S>(SplitStream<WebSocketStream<S>>);
+/// Receiving half of a WebSocket connection. `closed` holds the outcome of a received close
+/// until the close handshake has finished, so cancelling `recv` in between loses neither.
+pub struct WsReceiver<S> {
+    stream: SplitStream<WebSocketStream<S>>,
+    closed: Option<Result<Option<Vec<u8>>, TransportError>>,
+}
 
 /// Sending half of a WebSocket connection.
 pub struct WsSender<S>(SplitSink<WebSocketStream<S>, Message>);
@@ -93,22 +97,29 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
     /// Skips control messages; a normal close is a clean end, any other close code is surfaced so
-    /// callers can recognize a busy Node through a router.
+    /// callers can recognize a busy Node through a router. After a close the stream is polled to
+    /// its end, which flushes tungstenite's queued close reply: without it the peer (or router)
+    /// waits out its close-handshake timeout and never learns the connection ended cleanly.
     async fn recv(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         loop {
-            let Some(message) = self.0.next().await else {
+            if self.closed.is_some() {
+                while let Some(Ok(_)) = self.stream.next().await {}
+                return self.closed.take().unwrap_or(Ok(None));
+            }
+            let Some(message) = self.stream.next().await else {
                 return Ok(None);
             };
             match message? {
                 Message::Binary(frame) => return Ok(Some(frame.into())),
-                Message::Close(None) => return Ok(None),
+                Message::Close(None) => self.closed = Some(Ok(None)),
                 Message::Close(Some(frame)) => {
-                    if frame.code == CloseCode::Normal {
-                        return Ok(None);
-                    }
-                    return Err(TransportError::Closed {
-                        code: frame.code.into(),
-                        reason: frame.reason.to_string(),
+                    self.closed = Some(if frame.code == CloseCode::Normal {
+                        Ok(None)
+                    } else {
+                        Err(TransportError::Closed {
+                            code: frame.code.into(),
+                            reason: frame.reason.to_string(),
+                        })
                     });
                 }
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -127,6 +138,17 @@ where
         self.0.send(Message::Binary(frame.into())).await?;
         Ok(())
     }
+
+    /// Sends and flushes a close frame carrying the reason's code; the receiving half then reads
+    /// the peer's reply.
+    async fn close(&mut self, reason: CloseReason) -> Result<(), TransportError> {
+        let close = CloseFrame {
+            code: CloseCode::from(reason.code()),
+            reason: reason.text().into(),
+        };
+        self.0.send(Message::Close(Some(close))).await?;
+        Ok(())
+    }
 }
 
 /// Splits an upgraded connection into frame halves.
@@ -135,7 +157,13 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let (sink, stream) = stream.split();
-    (WsReceiver(stream), WsSender(sink))
+    (
+        WsReceiver {
+            stream,
+            closed: None,
+        },
+        WsSender(sink),
+    )
 }
 
 /// Opens a WebSocket to a Node, classifying failures by what a router can tell us: unknown

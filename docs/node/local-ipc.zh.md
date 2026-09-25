@@ -41,7 +41,14 @@ WebSocket 先完成 upgrade 再以 close code `4409`（`control session busy`）
 close code，却会把 HTTP 拒绝变成与 Node 不可达无法区分的网关错误。IPC 没有 close code，被拒绝的对端只会在握手阶段看到
 socket 关闭；Controller 无法区分“会话占用”和因 ControllerId 不符被关闭，两者都记为协议错误，
 并在 `reconnect_ms` 后重连。两端都不主动发送 WebSocket 保活 ping，只回复对端的 ping；Node 的
-心跳保证连接上持续有流量。Hello 协商现有版本、Node 身份／运行实例及
+心跳保证连接上持续有流量。
+
+任一端主动结束已建立的 WebSocket 会话时都会发送 close code，路由原样转发原因，而不是报告连接丢失
+（`1011`）：进程停止为 `1001`，协议违规为 `1002`，对端不是配置的另一方或缺少所需能力为 `4403`，
+对端在 I/O 期限内未发送或不再读取为 `4408`，本端自身失败（持久化或受理）为 `1011`。收到 close 的
+一端会应答，双方都不必等到关闭握手超时。Node 在准入路径之外完成该握手，关闭后迟迟不断开的
+Controller 不会让下一个连接被判为占用；只有正常停止会等待握手，上限为 `frame_timeout_ms`。IPC
+不携带 code，只结束字节流。无论哪个 code，关闭都只表示“连接不可用”。Hello 协商现有版本、Node 身份／运行实例及
 clone 能力；会话接收 clone、状态查询和精确确认，冲突或不支持的消息会关闭连接。
 心跳独立于阻塞 Git 执行；Node 主动按有界分页重放未确认 clone 事件，查询回复不确认事件。
 

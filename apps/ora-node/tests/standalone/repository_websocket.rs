@@ -5,7 +5,7 @@ use ora_controller::{
     SessionError, SqliteStore,
 };
 use ora_node_transport::{
-    FrameReceiver, FrameSender,
+    CloseReason, FrameReceiver, FrameSender, TransportError,
     websocket::{self, ClientReceiver, ClientSender, WsEndpoint},
 };
 use pretty_assertions::assert_eq;
@@ -197,7 +197,7 @@ fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session()
                 }
             };
             assert!(
-                matches!(refused, Err(SessionError::Protocol(_))),
+                matches!(refused, Err(SessionError::Mismatch(_))),
                 "{refused:?}"
             );
             outcome
@@ -465,5 +465,89 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
         );
         assert!(directory.is_dir());
         node.kill();
+    });
+}
+
+/// The Node ends sessions with a close code naming why: a Controller that does not own it gets
+/// the identity code, malformed input the protocol code, and a normal stop the shutdown code,
+/// so a router forwards the reason instead of reporting a lost connection.
+#[test]
+fn node_closes_sessions_with_the_reason_code() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let clone = configuration(&fixture, &server);
+        let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let mut node = launch(&fixture, &clone, bind);
+        until(|| {
+            fs::read_to_string(fixture.path().join("websocket.log"))
+                .unwrap_or_default()
+                .contains("Node WebSocket listening")
+        });
+        let endpoint = WsEndpoint {
+            url: format!("ws://{bind}{PATH}"),
+            headers: BTreeMap::new(),
+        };
+        let closed = |result: Result<Option<Vec<u8>>, TransportError>| result.unwrap_err();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (mut receiver, mut sender) = websocket::connect(&endpoint).await.unwrap();
+            send(
+                &mut sender,
+                &ControllerToNodeMessage::Hello(HelloMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Hello {
+                        controller_id: ControllerId::new("intruder"),
+                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                    },
+                }),
+            )
+            .await;
+            let refused = closed(receiver.recv().await);
+            assert!(
+                refused.is_closed_for(CloseReason::IdentityMismatch),
+                "{refused:?}"
+            );
+
+            let (mut receiver, mut sender) = hello(&endpoint).await;
+            sender.send(vec![0xff, b'{']).await.unwrap();
+            let violation = loop {
+                match receiver.recv().await {
+                    // Heartbeats sent before the Node read the bad frame.
+                    Ok(Some(_)) => {}
+                    other => break closed(other),
+                }
+            };
+            assert!(
+                violation.is_closed_for(CloseReason::ProtocolViolation),
+                "{violation:?}"
+            );
+
+            let (mut receiver, _sender) = hello(&endpoint).await;
+            // Signal without waiting: the Node's close waits for this side to answer it.
+            let status = Command::new("kill")
+                .arg("-TERM")
+                .arg(node.0.id().to_string())
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let stopping = loop {
+                match receiver.recv().await {
+                    Ok(Some(_)) => {}
+                    other => break closed(other),
+                }
+            };
+            assert!(
+                stopping.is_closed_for(CloseReason::Shutdown),
+                "{stopping:?}"
+            );
+        });
+        node.terminate();
     });
 }

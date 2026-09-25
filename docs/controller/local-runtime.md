@@ -163,9 +163,12 @@ Node. A Node in a sandbox is reached through its platform WebSocket router inste
 Headers are sent verbatim; vendor addressing and platform credentials live only there, and the
 handshake still verifies `node_id`. A `ws://`/`wss://` URL and valid header names and values are checked
 before any state opens. Each failed or lost session is logged with its class (unreachable, unknown
-sandbox, refused, busy, protocol, disconnected) and retried after `reconnect_ms` without failing or
-re-creating any execution. "Busy" is only recognizable over WebSocket, where the Node closes with code
-`4409`; an IPC Node can only close the socket, so an occupied IPC Node is logged as a protocol failure. Declare all Node/host/guardian state roots in `protected_state_directories`; configured endpoint
+sandbox, refused, busy, protocol, identity mismatch, silent Node, disconnected) and retried after
+`reconnect_ms` without failing or re-creating any execution. "Busy" is only recognizable over WebSocket, where the Node closes with code
+`4409`; an IPC Node can only close the socket, so an occupied IPC Node is logged as a protocol failure.
+Over WebSocket a Node closing with `1002` or `4403` is logged as a protocol failure or identity
+mismatch, and the Controller itself closes with the matching code (`1001` on stop, `1002`, `4403`,
+`4408`, or `1011` for a persistence failure) so the Node and any router see why the session ended. Declare all Node/host/guardian state roots in `protected_state_directories`; configured endpoint
 IPC socket parents are also protected. Overlap with Controller state is rejected before opening its database. The
 executable recovers already accepted records; its configuration file and stdin are not business command
 channels. Deploy host and Node separately unless hosting the Node, and configure Node's owner to match

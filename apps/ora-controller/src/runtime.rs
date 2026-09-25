@@ -162,17 +162,27 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
     }
 
     /// Reconnects configured Nodes and runs the adapter's authority coordination until shutdown.
-    /// Sessions are aborted first so nothing writes under a lease the adapter is about to release.
+    /// Sessions stop first so nothing writes under a lease the adapter is about to release: a
+    /// stopping session drops its coordination at once and only closes its connection, which is
+    /// bounded and aborted if the Node does not answer.
     pub async fn run(&self, shutdown: impl Future<Output = ()>) -> io::Result<()> {
         let mut sessions = tokio::task::JoinSet::new();
+        let (stop_sessions, sessions_stopping) = watch::channel(false);
         for target in self.config.nodes.clone() {
             let store = self.handle.store.clone();
             let settings = self.config.session.clone();
             let delay = Duration::from_millis(self.config.reconnect_ms);
+            let mut stopping = sessions_stopping.clone();
             sessions.spawn(async move {
                 loop {
-                    if let Err(error) = run_session(&store, &target, &settings).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
-                    tokio::time::sleep(delay).await;
+                    let stop = async {
+                        let _ = stopping.wait_for(|stop| *stop).await;
+                    };
+                    if let Err(error) = run_session_until(&store, &target, &settings, stop).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
+                    tokio::select! {
+                        _ = stopping.wait_for(|stop| *stop) => return,
+                        () = tokio::time::sleep(delay) => {}
+                    }
                 }
             });
         }
@@ -196,8 +206,17 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
                 Err(io::Error::other(format!("Controller authority coordination stopped: {result:?}")))
             }
         };
-        sessions.abort_all();
-        while sessions.join_next().await.is_some() {}
+        let _ = stop_sessions.send(true);
+        // A session may still be connecting when asked to stop; both steps share the I/O deadline.
+        let closing = Duration::from_millis(self.config.session.io_timeout_ms).saturating_mul(2);
+        let drained = tokio::time::timeout(closing, async {
+            while sessions.join_next().await.is_some() {}
+        })
+        .await;
+        if drained.is_err() {
+            sessions.abort_all();
+            while sessions.join_next().await.is_some() {}
+        }
         let _ = stop_serving.send(true);
         if !serving_done {
             // Releasing a remote lease is bounded; a hung authority must not hold up shutdown.

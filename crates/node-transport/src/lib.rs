@@ -19,6 +19,51 @@ pub mod websocket;
 /// only way the Controller can tell "occupied" from "unreachable" end to end.
 pub const CONTROL_SESSION_BUSY_CLOSE_CODE: u16 = 4409;
 
+/// Why a side deliberately ends an established connection. WebSocket carries it as a close code
+/// that routers forward unchanged, so operators on either side (and the router's own logs) can
+/// tell a deliberate end from a lost connection; IPC has no close code and only ends the stream.
+///
+/// A close never changes execution responsibility: every reason only means "connection
+/// unavailable" to the receiver, exactly like a lost connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseReason {
+    /// The process is stopping (`1001`).
+    Shutdown,
+    /// The peer sent something the protocol does not allow (`1002`).
+    ProtocolViolation,
+    /// The peer is not the configured counterpart or lacks a needed capability (`4403`).
+    IdentityMismatch,
+    /// The peer sent nothing, or stopped reading, within the I/O deadline (`4408`).
+    PeerSilent,
+    /// This side failed for a reason of its own, such as persistence or admission (`1011`).
+    InternalError,
+}
+
+impl CloseReason {
+    /// Private codes mirror HTTP statuses (like the busy code `4409`) so the table reads the same
+    /// in Ora, the router and packet captures.
+    pub const fn code(self) -> u16 {
+        match self {
+            Self::Shutdown => 1001,
+            Self::ProtocolViolation => 1002,
+            Self::IdentityMismatch => 4403,
+            Self::PeerSilent => 4408,
+            Self::InternalError => 1011,
+        }
+    }
+
+    /// Fixed wording keeps close frames free of peer-supplied or internal detail.
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::Shutdown => "shutting down",
+            Self::ProtocolViolation => "protocol violation",
+            Self::IdentityMismatch => "peer identity or capability mismatch",
+            Self::PeerSilent => "peer silent past I/O deadline",
+            Self::InternalError => "internal error",
+        }
+    }
+}
+
 /// Receiving half of a connection that yields one complete frame body per call.
 ///
 /// Implementations must be cancel-safe: dropping a pending `recv` (for example when a `select!`
@@ -36,6 +81,30 @@ pub trait FrameReceiver: Send {
 pub trait FrameSender: Send {
     /// Sends and flushes one frame body produced by the protocol encoder.
     fn send(&mut self, frame: Vec<u8>) -> impl Future<Output = Result<(), TransportError>> + Send;
+
+    /// Starts closing the connection for `reason`; no frame may be sent afterwards. IPC cannot
+    /// carry the reason and only ends its write side. Use [`close_connection`] to also let the
+    /// peer's reply arrive before the connection is dropped.
+    fn close(
+        &mut self,
+        reason: CloseReason,
+    ) -> impl Future<Output = Result<(), TransportError>> + Send;
+}
+
+/// Ends an established connection deliberately: sends `reason`, then discards incoming frames
+/// until the peer finishes closing. Dropping the socket right after the close would let unread
+/// frames turn it into a reset that can overtake the close, and a router would then report a lost
+/// connection instead of the reason. Failures are ignored because the connection is abandoned
+/// either way; a peer that already closed makes this return at once. The caller bounds the wait.
+pub async fn close_connection<R: FrameReceiver, W: FrameSender>(
+    receiver: &mut R,
+    sender: &mut W,
+    reason: CloseReason,
+) {
+    if sender.close(reason).await.is_err() {
+        return;
+    }
+    while let Ok(Some(_)) = receiver.recv().await {}
 }
 
 /// Accepts inbound control connections for a Node's single listening entry.
@@ -86,7 +155,16 @@ pub enum TransportError {
 impl TransportError {
     /// Whether the Node refused this connection because another control session is live.
     pub fn is_busy(&self) -> bool {
-        matches!(self, Self::Closed { code, .. } if *code == CONTROL_SESSION_BUSY_CLOSE_CODE)
+        self.closed_with(CONTROL_SESSION_BUSY_CLOSE_CODE)
+    }
+
+    /// Whether the peer closed the connection for `reason`.
+    pub fn is_closed_for(&self, reason: CloseReason) -> bool {
+        self.closed_with(reason.code())
+    }
+
+    fn closed_with(&self, expected: u16) -> bool {
+        matches!(self, Self::Closed { code, .. } if *code == expected)
     }
 }
 

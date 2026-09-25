@@ -49,6 +49,16 @@ peer only sees the socket close during the handshake; the Controller cannot tell
 Node that closed because the ControllerId does not match, and logs both as a protocol failure before
 reconnecting after `reconnect_ms`. WebSocket keepalive pings are not sent by either side; both only
 answer the peer's pings, and the Node heartbeat keeps traffic flowing.
+
+Either side that ends an established WebSocket session on purpose sends a close code, so a router
+forwards the reason instead of reporting a lost connection (`1011`): `1001` when the process stops,
+`1002` for a protocol violation, `4403` when the peer is not the configured counterpart or lacks a
+needed capability, `4408` when the peer sent nothing or stopped reading within the I/O deadline, and
+`1011` for the sender's own failure (persistence or admission). The receiving side answers the close
+so neither waits out a close-handshake timeout. The Node finishes that handshake off the admission
+path, so a Controller that lingers after a close cannot make the next connection busy; only a normal
+stop waits for it, bounded by `frame_timeout_ms`. IPC carries no code and only ends the stream.
+Every close, whatever its code, still only means "connection unavailable".
 Hello negotiates the existing version, Node identity/incarnation and clone capability. The session
 accepts clone, status and exact acknowledgement messages; unsupported/conflicting messages close it.
 The Node sends heartbeats independently of the blocking Git owner and actively replays bounded pages
