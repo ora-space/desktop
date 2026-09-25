@@ -116,10 +116,95 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         node.configure_clone(config).unwrap();
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
-        assert!(!matches!(
+        // The guardian terminated Git when its owner died, so recovery reads a confirmed
+        // termination: a retryable failure, not success and not permanent Unknown.
+        assert_interrupted(&state, &record, &command);
+        drop(node);
+        assert_single_retained_attempt(&fixture, &record, &command);
+    });
+}
+
+/// A normal stop settles the clone it cut short before exiting; no later recovery is needed.
+#[test]
+fn stopped_node_settles_its_interrupted_clone_before_exit() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        fixture.git(&["update-server-info"]);
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.paused.store(true, Ordering::SeqCst);
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "stop", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-stopped");
+        until(|| record.target.path.join(".git").is_dir());
+        child.terminate();
+        // Reading without recover_clones proves the stopping process itself persisted the result.
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert_interrupted(&state, &record, &command);
+        drop(node);
+        assert_single_retained_attempt(&fixture, &record, &command);
+    });
+}
+
+/// An expired command deadline ends the attempt the same way a stop does.
+#[test]
+fn command_deadline_settles_clone_as_interrupted() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        fixture.git(&["update-server-info"]);
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.paused.store(true, Ordering::SeqCst);
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "deadline", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut process = fixture.process();
+        process.command_timeout_ms = 500;
+        let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.recover_clones().unwrap();
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert_eq!(
             state,
-            ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(_)))
-        ));
+            ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneFailed(
+                CloneFailed {
+                    node: node.identity().clone(),
+                    spec: command.payload.spec.clone(),
+                    failure: CloneFailureCode::Interrupted,
+                    residual: retained(&record),
+                }
+            )))
+        );
+        drop(node);
+        assert_single_retained_attempt(&fixture, &record, &command);
+    });
+}
+
+/// Without guardian evidence the old Git may still write, so nothing is concluded.
+#[test]
+fn guardian_loss_keeps_interrupted_clone_unknown() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        fixture.git(&["update-server-info"]);
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.paused.store(true, Ordering::SeqCst);
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "lost", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-lost");
+        until(|| record.target.path.join(".git").is_dir());
+        fixture.kill_guardians();
+        child.kill();
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.recover_clones().unwrap();
+        assert_eq!(
+            node.submit_clone(command.clone()).unwrap().state,
+            ExecutionState::Unknown
+        );
         drop(node);
         let database = NodeDatabase::open(
             &fixture.config().home_directory.join("ora-node.sqlite3"),
@@ -128,7 +213,54 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         .unwrap();
         let journal = database.process_journal().unwrap();
         assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 1);
-        assert!(journal.pending(&command.execution_id).unwrap().is_empty());
         assert!(record.target.path.is_dir());
     });
+}
+
+/// The seeded target, which an interrupted attempt must keep rather than delete or reuse.
+fn retained(record: &CloneExecution) -> CloneResidual {
+    CloneResidual::Retained {
+        repository_id: record.target.repository_id.clone(),
+        path: NodePath::new(record.target.path.to_str().unwrap()),
+    }
+}
+
+/// Checks the interrupted failure; the reporting incarnation belongs to whichever process settled it.
+fn assert_interrupted(
+    state: &ExecutionState,
+    record: &CloneExecution,
+    command: &CloneRepositoryMessage,
+) {
+    let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneFailed(
+        failed,
+    ))) = state
+    else {
+        panic!("clone not settled as a failure: {state:?}");
+    };
+    assert_eq!(
+        failed,
+        &CloneFailed {
+            node: failed.node.clone(),
+            spec: command.payload.spec.clone(),
+            failure: CloneFailureCode::Interrupted,
+            residual: retained(record),
+        }
+    );
+}
+
+/// One dispatched Run, fully cleaned, and the original directory still in place.
+fn assert_single_retained_attempt(
+    fixture: &Fixture,
+    record: &CloneExecution,
+    command: &CloneRepositoryMessage,
+) {
+    let database = NodeDatabase::open(
+        &fixture.config().home_directory.join("ora-node.sqlite3"),
+        fixture.config().identity,
+    )
+    .unwrap();
+    let journal = database.process_journal().unwrap();
+    assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 1);
+    assert!(journal.pending(&command.execution_id).unwrap().is_empty());
+    assert!(record.target.path.is_dir());
 }

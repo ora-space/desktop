@@ -18,8 +18,10 @@ opaque evidence: a filesystem owner must capture and verify it, not infer owners
 Run can be recorded per clone execution. Retrying a failed clone requires new identities and a new target.
 
 Terminal result and original event commit in one transaction. Result input/resource/path must match the
-original record. A dispatched attempt requires exactly one observed exit code and no uncleaned Runs;
-success requires code zero; verification may reject a code-zero tag checkout as a missing branch.
+original record. A dispatched attempt requires exactly one observed ending and no uncleaned Runs: an exit code
+(`process_outcomes`) backs success or a Git failure, and a signal termination (`process_terminations`)
+backs only an `interrupted` failure. A Run cannot have both, and an undispatched execution cannot be
+interrupted. Success requires code zero; verification may reject a code-zero tag checkout as a missing branch.
 Missing exit/cleanup evidence remains recoverable,
 not terminal. Native repository fact checks are an additional runtime obligation, not supplied by SQLite.
 Pre-dispatch failures may complete with appropriate owned-residue evidence without inventing a Run.

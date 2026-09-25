@@ -1,7 +1,7 @@
 //! Node-owned Git execution association; process facts remain owned by host and guardian.
 mod repository;
 mod transport;
-pub(crate) use repository::CloneRecovery;
+pub(crate) use repository::{AttemptSettlement, CloneRecovery};
 
 use crate::git::ExecutionGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};

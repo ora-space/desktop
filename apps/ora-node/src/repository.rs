@@ -2,7 +2,10 @@ mod config;
 mod inspection;
 pub use config::{CloneConfig, CloneSsh};
 
-use crate::{Clock, Error, ManagedGitRunner, Node, NodeState, WorktreeGit, WriteGuard};
+use crate::{
+    Clock, Error, ManagedGitRunner, Node, NodeState, WorktreeGit, WriteGuard,
+    managed::{AttemptSettlement, CloneRecovery},
+};
 use gitlancer::git::branch_clone::build_branch_clone_command;
 use ora_node_db::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
 use ora_node_protocol::*;
@@ -228,16 +231,16 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             config.environment()?,
         );
         config.constrain(&mut command);
-        let outcome = match recovered {
-            None | Some(Ok(crate::managed::CloneRecovery::Absent)) => {
+        let settlement = match recovered {
+            None | Some(Ok(CloneRecovery::Absent)) => {
                 self.git.runner().execute_clone(&record, &command)
             }
-            Some(Ok(crate::managed::CloneRecovery::Exited(code))) => Ok(Some(code)),
-            Some(Ok(crate::managed::CloneRecovery::Unknown)) => Ok(None),
+            Some(Ok(CloneRecovery::Settled(settlement))) => Ok(settlement),
             Some(Err(error)) => Err(error),
         };
-        let Ok(Some(code)) = outcome else {
-            return self.unknown_clone(&record);
+        let settlement = match settlement {
+            Ok(AttemptSettlement::Unverified) | Err(_) => return self.unknown_clone(&record),
+            Ok(settlement) => settlement,
         };
         if !matches_directory(&record.target, &identity) {
             return self.unknown_clone(&record);
@@ -251,6 +254,15 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
                     .to_str()
                     .ok_or_else(|| Error::Configuration("non-UTF-8 clone target".into()))?,
             ),
+        };
+        // A terminated attempt never reached Git's own verdict: it cannot have succeeded, and the
+        // caller may retry with a new execution instead of investigating a Git failure.
+        let code = match settlement {
+            AttemptSettlement::Exited(code) => code,
+            AttemptSettlement::Terminated(_) => {
+                return self.fail_clone(&record, CloneFailureCode::Interrupted, residual);
+            }
+            AttemptSettlement::Unverified => return self.unknown_clone(&record),
         };
         if code != 0 {
             return self.fail_clone(&record, CloneFailureCode::OperationFailed, residual);

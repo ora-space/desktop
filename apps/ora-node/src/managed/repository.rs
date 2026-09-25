@@ -4,8 +4,21 @@ use ora_node_db::CloneExecution;
 /// Absence of any durable Run proves no dispatch; an existing uncertain Run must never be replaced.
 pub(crate) enum CloneRecovery {
     Absent,
+    Settled(AttemptSettlement),
+}
+
+/// How a clone attempt ended, read from the host only after its Scope was observed Closed.
+///
+/// The live and recovery paths share this classification so the same host observation always
+/// yields the same business outcome, whichever process happens to read it.
+pub(crate) enum AttemptSettlement {
+    /// Git exited with its own verdict.
     Exited(i32),
-    Unknown,
+    /// A signal ended Git before it reached a verdict (Node stop, command deadline or an external
+    /// kill) and cleanup completed, so no write can follow and success is impossible.
+    Terminated(i32),
+    /// Exit or cleanup facts are missing; nothing may be concluded about the directory.
+    Unverified,
 }
 
 impl<W: WriteGuard> ManagedGitRunner<W> {
@@ -24,7 +37,7 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         &self,
         record: &CloneExecution,
         command: &GitCommand,
-    ) -> std::io::Result<Option<i32>> {
+    ) -> std::io::Result<AttemptSettlement> {
         if self.shutdown.requested() {
             return Err(std::io::Error::other("Node is stopping"));
         }
@@ -43,28 +56,16 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             .record(&attempt)
             .map_err(std::io::Error::other)?;
         let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
-        let result = self.runtime.block_on(transport::execute(
+        // An expired stop grace or command deadline ends this wait without a verdict; the Run's
+        // real ending is only knowable after its Scope closes, so settlement reads it from the host
+        // instead of treating the interrupted wait as missing evidence.
+        let _ = self.runtime.block_on(transport::execute(
             &client,
             &attempt.intent,
             &self.config,
             &self.shutdown,
         ));
-        if let Ok(output) = &result
-            && let Some(code) = output.code
-        {
-            self.journal
-                .record_outcome(attempt.intent.run, code)
-                .map_err(std::io::Error::other)?;
-        }
-        self.runtime.block_on(transport::close(
-            &client,
-            attempt.intent.scope,
-            Duration::from_millis(self.config.cleanup_timeout_ms),
-        ))?;
-        self.journal
-            .cleaned(attempt.intent.run)
-            .map_err(std::io::Error::other)?;
-        result.map(|output| output.code)
+        self.settle(&client, &attempt)
     }
 
     /// Recovers the existing Run only; absence of a Run is not permission to redispatch an intent.
@@ -73,45 +74,66 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             .journal
             .attempts(&record.command.execution_id)
             .map_err(std::io::Error::other)?;
-        let [attempt] = attempts.as_slice() else {
-            return Ok(if attempts.is_empty() {
-                CloneRecovery::Absent
-            } else {
-                CloneRecovery::Unknown
-            });
-        };
-        let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
+        match attempts.as_slice() {
+            [] => Ok(CloneRecovery::Absent),
+            [attempt] => {
+                let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
+                self.settle(&client, attempt).map(CloneRecovery::Settled)
+            }
+            // Each execution dispatches at most one Run; more cannot be attributed safely.
+            [_, _, ..] => Ok(CloneRecovery::Settled(AttemptSettlement::Unverified)),
+        }
+    }
+
+    /// Closes the attempt's Scope, then classifies the host's view of its Run.
+    ///
+    /// Closing first is the fence: no directory fact is read while the old Git could still write.
+    fn settle(
+        &self,
+        client: &ProcessHost,
+        attempt: &ProcessAttempt,
+    ) -> std::io::Result<AttemptSettlement> {
         self.runtime.block_on(transport::close(
-            &client,
+            client,
             attempt.intent.scope,
             Duration::from_millis(self.config.cleanup_timeout_ms),
         ))?;
-        let code = match self
+        let snapshot = match self
             .runtime
             .block_on(client.execute(HostOperation::QueryRun {
                 run: attempt.intent.run,
             }))? {
-            HostReply::Run(view) => {
-                view.last_observed
-                    .and_then(|snapshot| match (snapshot.direct, snapshot.cleanup) {
-                        (
-                            DirectProcessState::Exited(ExitOutcome::Code(code)),
-                            CleanupState::Complete(_),
-                        ) => Some(code),
-                        _ => None,
-                    })
-            }
+            HostReply::Run(view) => view.last_observed,
             _ => None,
         };
-        if let Some(code) = code {
-            self.journal
+        let settlement = match snapshot.map(|snapshot| (snapshot.direct, snapshot.cleanup)) {
+            Some((
+                DirectProcessState::Exited(ExitOutcome::Code(code)),
+                CleanupState::Complete(_),
+            )) => AttemptSettlement::Exited(code),
+            Some((
+                DirectProcessState::Exited(ExitOutcome::Signal(signal)),
+                CleanupState::Complete(_),
+            )) => AttemptSettlement::Terminated(signal),
+            _ => AttemptSettlement::Unverified,
+        };
+        // The ending is persisted before cleanup is marked, so the database can later prove which
+        // business result the single Run supports.
+        match settlement {
+            AttemptSettlement::Exited(code) => self
+                .journal
                 .record_outcome(attempt.intent.run, code)
-                .map_err(std::io::Error::other)?;
+                .map_err(std::io::Error::other)?,
+            AttemptSettlement::Terminated(signal) => self
+                .journal
+                .record_termination(attempt.intent.run, signal)
+                .map_err(std::io::Error::other)?,
+            AttemptSettlement::Unverified => {}
         }
         self.journal
             .cleaned(attempt.intent.run)
             .map_err(std::io::Error::other)?;
-        Ok(code.map_or(CloneRecovery::Unknown, CloneRecovery::Exited))
+        Ok(settlement)
     }
 
     /// Inspects local facts under the same non-secret deployment environment and cleanup policy.

@@ -15,7 +15,7 @@ SQLite 会在数据库文件上加自己的锁，整文件租约在 macOS（`flo
 Windows（`LockFileEx` 为强制锁）上会与之冲突，表现为 "database is locked" 或磁盘 I/O 错误。
 sidecar 是数据库旁的 inode，同一 home 的任何拼写都解析到同一租约。SQLite 使用默认 rollback journal
 和 FULL 同步写入。
-新库的 application ID 为 `0x4f52414e`，schema version 为 4。精确 v1／v2／v3 结构在身份与完整性校验后事务迁移，
+新库的 application ID 为 `0x4f52414e`，schema version 为 5。精确 v1／v2／v3／v4 结构在身份与完整性校验后事务迁移，
 保留执行、结果与待确认事件。已有空文件、其他数据库、不支持的版本、
 目录和损坏数据库均拒绝打开，不自动重建。重开保留 NodeId，每个 Node 运行实例生成新的
 NodeIncarnationId；显式配置身份不匹配时初始化失败。
@@ -28,6 +28,9 @@ v3 新增 `execution_identities`、`clone_executions`、`clone_outbox` 和 `proc
 v4 新增部署指定的 `controller_binding` 和 `execution_controllers`。绑定跨重启保持，拒绝其他 Controller。
 触发器只在接受事务内为新 clone 记录归属；迁移和重传不认领无归属的历史执行。
 Controller 专属重放排除这些历史记录，但不删除原 outbox。旧 v3 程序拒绝 v4，不按旧 schema 误读。
+
+v5 新增 `process_terminations`，记录收尾已确认、被信号终止的 Run；触发器保证一个 Run 只有退出码或
+终止之一。迁移只建表，不改写已有尝试或结果；旧 v4 程序拒绝 v5，不会把没有退出码的 Run 误读为证据缺失。
 clone 持久边界见[仓库获取](repository-acquisition.zh.md)。
 完整命令与解析后的目标分别存储；目标冻结规范路径绑定、授权根、任务路径、分支和 base commit。
 operation／execution 唯一约束阻止身份改绑。Git 开始前预留 active 资源的 Workspace、路径和仓库内分支。

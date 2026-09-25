@@ -324,7 +324,7 @@ fn controller_binding_preserves_unclaimed_history_and_survives_restart() {
     let (old, target) = clone_fixture(db.node_id(), dir.path());
     let original = db.accept_clone(&old, &target).unwrap();
     drop(db);
-    Connection::open(&path).unwrap().execute_batch("DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
+    Connection::open(&path).unwrap().execute_batch("DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
     let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     let owner = ControllerId::new("owner");
     db.bind_controller(&owner).unwrap();
@@ -357,4 +357,145 @@ fn controller_binding_preserves_unclaimed_history_and_survives_restart() {
     );
     db.check_controller_execution(&owner, &new.operation_id, &new.execution_id)
         .unwrap();
+}
+
+/// Builds the retained-target failure a settled attempt reports for one failure category.
+fn clone_failed(record: &CloneExecution, failure: CloneFailureCode) -> CloneExecutionResult {
+    CloneExecutionResult::CloneFailed(CloneFailed {
+        node: NodeRuntimeIdentity {
+            node_id: record.command.payload.spec.node_id.clone(),
+            incarnation_id: NodeIncarnationId::new("original"),
+        },
+        spec: record.command.payload.spec.clone(),
+        failure,
+        residual: CloneResidual::Retained {
+            repository_id: record.target.repository_id.clone(),
+            path: NodePath::new(record.target.path.to_str().unwrap()),
+        },
+    })
+}
+
+/// A signal termination is the Run's only ending and backs Interrupted, never success or a Git failure.
+#[test]
+fn clone_interruption_requires_recorded_termination() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (record, attempt) = dispatch(&mut db, &accepted);
+    let journal = db.process_journal().unwrap();
+    journal
+        .record_termination(attempt.intent.run, /*signal*/ 9)
+        .unwrap();
+    journal
+        .record_termination(attempt.intent.run, /*signal*/ 9)
+        .unwrap();
+    assert!(matches!(
+        journal.record_termination(attempt.intent.run, /*signal*/ 15),
+        Err(Error::IdentityConflict)
+    ));
+    assert!(matches!(
+        journal.record_outcome(attempt.intent.run, /*exit_code*/ 0),
+        Err(Error::IdentityConflict)
+    ));
+    journal.cleaned(attempt.intent.run).unwrap();
+    for unsupported in [
+        clone_ready(&record),
+        clone_failed(&record, CloneFailureCode::OperationFailed),
+    ] {
+        assert!(matches!(
+            db.complete_clone(&record, unsupported),
+            Err(Error::InvalidTransition)
+        ));
+    }
+    let interrupted = clone_failed(&record, CloneFailureCode::Interrupted);
+    db.complete_clone(&record, interrupted.clone()).unwrap();
+    assert_eq!(
+        db.execution_state(&command.operation_id, &command.execution_id)
+            .unwrap(),
+        ExecutionState::Completed(ExecutionResult::Clone(interrupted))
+    );
+}
+
+/// An exit code is Git's own verdict: it never backs Interrupted, and no termination can follow it.
+#[test]
+fn clone_exit_code_cannot_back_an_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (record, attempt) = dispatch(&mut db, &accepted);
+    let journal = db.process_journal().unwrap();
+    journal
+        .record_outcome(attempt.intent.run, /*exit_code*/ 128)
+        .unwrap();
+    assert!(matches!(
+        journal.record_termination(attempt.intent.run, /*signal*/ 9),
+        Err(Error::IdentityConflict)
+    ));
+    journal.cleaned(attempt.intent.run).unwrap();
+    assert!(matches!(
+        db.complete_clone(
+            &record,
+            clone_failed(&record, CloneFailureCode::Interrupted)
+        ),
+        Err(Error::InvalidTransition)
+    ));
+    db.complete_clone(
+        &record,
+        clone_failed(&record, CloneFailureCode::OperationFailed),
+    )
+    .unwrap();
+    // A never-dispatched execution has no attempt that could have been interrupted.
+    let (mut other, mut other_target) = clone_fixture(db.node_id(), dir.path());
+    other.operation_id = OperationId::new("undispatched");
+    other.execution_id = ExecutionId::new("undispatched");
+    other_target.repository_id = RepositoryId::new("undispatched");
+    other_target.path = dir.path().join("undispatched");
+    let reserved = db.accept_clone(&other, &other_target).unwrap();
+    let mut interrupted = clone_failed(&reserved, CloneFailureCode::Interrupted);
+    if let CloneExecutionResult::CloneFailed(failed) = &mut interrupted {
+        failed.residual = CloneResidual::NoDirectory {};
+    }
+    assert!(matches!(
+        db.complete_clone(&reserved, interrupted),
+        Err(Error::InvalidTransition)
+    ));
+}
+
+/// Version 5 only adds termination evidence; an unfinished dispatched clone is kept untouched.
+#[test]
+fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (record, attempt) = dispatch(&mut db, &accepted);
+    drop(db);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; PRAGMA user_version=4;")
+        .unwrap();
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    assert_eq!(db.recoverable_clones().unwrap(), vec![record.clone()]);
+    let version: i64 = Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(
+            /*schema_name*/ None,
+            "user_version",
+            |r| r.get(/*idx*/ 0),
+        )
+        .unwrap();
+    assert_eq!(version, 5);
+    let journal = db.process_journal().unwrap();
+    journal
+        .record_termination(attempt.intent.run, /*signal*/ 9)
+        .unwrap();
+    journal.cleaned(attempt.intent.run).unwrap();
+    db.complete_clone(
+        &record,
+        clone_failed(&record, CloneFailureCode::Interrupted),
+    )
+    .unwrap();
 }

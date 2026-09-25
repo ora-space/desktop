@@ -33,12 +33,15 @@ Node 不交互接受。
 禁用 template、递归子模块、LFS smudge／process filter、hooks 和交互提示。同名 tag 不能满足分支请求。
 核实普通非 shallow checkout、独立对象、原来源／分支、HEAD 与已获取远端分支 commit 相同及 tracked 文件干净。
 
-恢复先关闭原受管 scope，再核实退出和原生目录证据，最后读取仓库事实。进程证据缺失不允许新 Run。
-没有 Run 的预留，仅在持久阶段证明从未派发时才可继续。已知失败保留目录；重试必须使用新 operation／execution，
+每次尝试结束（Git 自行退出、停止宽限或命令期限到期后收尾，或重启后恢复）都先关闭原受管 scope，
+再按 host 观察归类：以退出码结束且收尾完成，按退出码继续核实；被信号终止且收尾完成，以 `interrupted`
+失败结束并保留目录，因为 Git 尚未给出结论、不可能成功；退出或收尾事实缺失时保持 Unknown。
+Node 正常停止时在退出前就保存中断终态，强杀后由恢复得到同样结果。之后才核实原生目录证据并读取仓库事实。
+进程证据缺失不允许新 Run。没有 Run 的预留，仅在持久阶段证明从未派发时才可继续。已知失败保留目录；重试必须使用新 operation／execution，
 获得新目录。终态重放只使用原持久结果和事件，即使离线或文件被用户编辑，也不再检查或 clone。
 
 真实 Linux host／guardian 测试覆盖 TLS clone、部署凭据、分支缺失／仅有 tag、认证失败、checkout 扩展禁用、
-结果重放、已存在／替换路径、获取期间 Node 强杀、SSH 未知主机拒绝／成功及终态／outbox 写入失败恢复。
+结果重放、已存在／替换路径、获取期间 Node 强杀／正常停止／命令超时判为中断、guardian 丢失保持 Unknown、SSH 未知主机拒绝／成功及终态／outbox 写入失败恢复。
 Linux 验收需安装 OpenSSH client／server 并由系统预备 `/run/sshd`；fixture daemon 以普通测试用户在临时端口运行。
 CI 部署的是测试依赖，不是生产 Node 服务。这不代表 Controller 投递／重连验收或跨平台 Node 运行时完成。
 

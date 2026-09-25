@@ -17,7 +17,7 @@ and a whole-file lease there collides with them on macOS (`flock` and `fcntl` sh
 and on Windows (mandatory `LockFileEx` regions), which surfaces as "database is locked" or a disk I/O
 error. The sidecar is an inode beside the database, so every spelling of the same home resolves to
 the same lease. SQLite uses its default rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 4. Exact version 1/2/3 schemas migrate transactionally after identity and integrity
+and schema version 5. Exact version 1/2/3/4 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
@@ -34,6 +34,11 @@ immutable across restart; a different Controller is rejected. A trigger attribut
 clones in the acceptance transaction. Migration and retransmission never adopt unclaimed historical
 executions. Controller-scoped replay excludes those records without deleting their original outbox.
 Old version-3 binaries refuse version 4 rather than interpreting it as their own schema.
+
+Version 5 adds `process_terminations`, recording Runs a signal ended once cleanup was confirmed; triggers
+keep each Run to either an exit code or a termination. Migration only creates the table and rewrites no
+attempt or result; old version-4 binaries refuse version 5 rather than reading a Run without an exit code
+as missing evidence.
 Clone persistence is described in [repository acquisition](repository-acquisition.md).
 The complete command is stored separately from the resolved target, which freezes the canonical
 binding, authorized roots, task path, branch and base commit. Unique operation/execution identities

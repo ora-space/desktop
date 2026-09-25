@@ -98,7 +98,7 @@ fn version_two_upgrade_preserves_live_process_responsibility_and_legacy_results(
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     // Previous binaries accept only versions 1/2 before touching persistent pragmas or migration.
     assert!(!matches!(version, 1 | 2));
     let violations: i64 = inspect

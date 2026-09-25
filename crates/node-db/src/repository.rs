@@ -206,15 +206,31 @@ impl<G: WriteGuard> NodeDatabase<G> {
         if pending {
             return Err(Error::InvalidTransition);
         }
+        let interrupted = matches!(
+            &result,
+            CloneExecutionResult::CloneFailed(failed) if failed.failure == CloneFailureCode::Interrupted
+        );
         if matches!(phase, ClonePhase::Dispatched { .. }) {
             let codes: Vec<i32> = self.connection.prepare(
                 "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1",
             )?.query_map([record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0))?.collect::<Result<_, _>>()?;
+            let terminations: i64 = self.connection.query_row(
+                "SELECT count(*) FROM process_terminations JOIN process_attempts USING(run) WHERE execution=?1",
+                [record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0),
+            )?;
             let success = matches!(result, CloneExecutionResult::CloneReady(_));
-            if codes.len() != 1 || (success && codes[0] != 0) {
+            // The single Run's one recorded ending decides which results are attributable: an
+            // exit code backs success or a Git failure, a signal termination backs only Interrupted.
+            let attributable = match (codes.as_slice(), terminations) {
+                ([code], 0) => !interrupted && (!success || *code == 0),
+                ([], 1) => interrupted,
+                _ => false,
+            };
+            if !attributable {
                 return Err(Error::InvalidTransition);
             }
-        } else if matches!(result, CloneExecutionResult::CloneReady(_)) {
+        } else if matches!(result, CloneExecutionResult::CloneReady(_)) || interrupted {
+            // Nothing was dispatched, so there is neither a success nor a terminated attempt.
             return Err(Error::InvalidTransition);
         }
         self.guard.before_write(WritePoint::Complete)?;

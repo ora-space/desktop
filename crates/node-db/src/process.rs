@@ -77,6 +77,15 @@ impl<G: WriteGuard> ProcessJournal<G> {
 
     /// Persists only an observed exit code, without copying process output or credentials.
     pub fn record_outcome(&self, run: RunId, exit_code: i32) -> Result<(), Error> {
+        // A Run has exactly one ending; a recorded signal termination cannot gain an exit code.
+        let terminated: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM process_terminations WHERE run=?1)",
+            [run.to_string()],
+            |r| r.get(/*idx*/ 0),
+        )?;
+        if terminated {
+            return Err(Error::IdentityConflict);
+        }
         self.guard.before_write(WritePoint::Process)?;
         self.connection.execute(
             "INSERT INTO process_outcomes VALUES (?1,?2) ON CONFLICT(run) DO NOTHING",
@@ -88,6 +97,34 @@ impl<G: WriteGuard> ProcessJournal<G> {
             |r| r.get(/*idx*/ 0),
         )?;
         if saved != exit_code {
+            return Err(Error::IdentityConflict);
+        }
+        Ok(())
+    }
+
+    /// Persists that a signal ended the Run before Git reached a verdict, once cleanup confirmed it.
+    ///
+    /// A Run has exactly one ending: an exit code and a termination are mutually exclusive.
+    pub fn record_termination(&self, run: RunId, signal: i32) -> Result<(), Error> {
+        let exited: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM process_outcomes WHERE run=?1)",
+            [run.to_string()],
+            |r| r.get(/*idx*/ 0),
+        )?;
+        if exited {
+            return Err(Error::IdentityConflict);
+        }
+        self.guard.before_write(WritePoint::Process)?;
+        self.connection.execute(
+            "INSERT INTO process_terminations VALUES (?1,?2) ON CONFLICT(run) DO NOTHING",
+            params![run.to_string(), signal],
+        )?;
+        let saved: i32 = self.connection.query_row(
+            "SELECT signal FROM process_terminations WHERE run=?1",
+            [run.to_string()],
+            |r| r.get(/*idx*/ 0),
+        )?;
+        if saved != signal {
             return Err(Error::IdentityConflict);
         }
         Ok(())

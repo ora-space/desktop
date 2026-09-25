@@ -39,15 +39,20 @@ smudge/process filters; hooks and interactive prompts are disabled per command. 
 satisfy the requested branch. Verification requires a normal, nonshallow checkout, independent objects,
 the requested source/branch, matching HEAD and fetched branch commit, and clean tracked files.
 
-Recovery first closes the original managed scope, then checks exit and native directory evidence before
-reading repository facts. Missing process evidence cannot justify another Run. A reservation with no Run
+Every attempt ending (Git exiting on its own, cleanup after the stop grace or command deadline expires,
+or recovery after restart) first closes the original managed scope, then classifies the host's view: an
+exit code with completed cleanup continues to verification; a signal termination with completed cleanup
+fails as `interrupted` and keeps the directory, because Git never reached a verdict and cannot have
+succeeded; missing exit or cleanup facts stay Unknown. A normal Node stop saves the interrupted result
+before exiting, and recovery after a kill reaches the same result. Only then are native directory
+evidence and repository facts read. Missing process evidence cannot justify another Run. A reservation with no Run
 can resume only if its persisted phase proves dispatch never happened. Known failure retains its directory;
 a retry needs new operation/execution identities and receives a different directory. Terminal replay uses
 the original durable result and event, even offline or after user edits, without inspecting or recloning.
 
 Real Linux host/guardian tests cover TLS clone, deployment credentials, missing branches/tag-only sources,
-authentication failure, checkout extension suppression, replay, pre-existing/replaced paths and Node kill
-during acquisition, SSH known-host rejection/success and completion/outbox write-failure recovery.
+authentication failure, checkout extension suppression, replay, pre-existing/replaced paths, Node kill, normal stop and command deadline during acquisition
+settling as interrupted, guardian loss staying Unknown, SSH known-host rejection/success and completion/outbox write-failure recovery.
 Linux acceptance requires OpenSSH client/server installed and the system's `/run/sshd` directory provisioned;
 the fixture daemon runs as the ordinary test user on an ephemeral port. CI provisions this test dependency,
 not a production Node service. This is not Controller delivery/reconnect acceptance or a cross-platform Node runtime.
