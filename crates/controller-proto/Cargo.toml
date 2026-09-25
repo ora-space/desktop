@@ -11,3 +11,7 @@ prost.workspace = true
 prost-types.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+
+[features]
+# Compiles the generated server modules so tests can host a fake Cloud; production never enables it.
+test-server = []

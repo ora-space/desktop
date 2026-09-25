@@ -2,7 +2,9 @@
 # proto:check` fails on drift. The contract's single source is the Cloud repository, pinned as the
 # git submodule at third_party/cloud (sparse-checked-out to its proto directory); this crate never
 # holds a copy of the .proto files. Plugin versions are pinned so regeneration is reproducible.
-# Only the client is generated: Cloud is the server of every service, a Controller only dials out.
+# Production code only uses the client: Cloud is the server of every service, a Controller only
+# dials out. The server modules are compiled only under the `test-server` feature, so tests can host
+# an in-memory Cloud that speaks the real contract without any server code reaching a release.
 version: v2
 inputs:
   - directory: ../../third_party/cloud/proto
@@ -11,4 +13,4 @@ plugins:
     out: src/gen
   - remote: buf.build/community/neoeinstein-tonic:v0.5.0
     out: src/gen
-    opt: no_server
+    opt: server_mod_attribute=.=#[cfg(feature = "test-server")]
