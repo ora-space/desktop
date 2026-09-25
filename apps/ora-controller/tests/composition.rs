@@ -88,7 +88,7 @@ fn deployment(mode: FakeNode, ready_timeout_ms: u64, stop_timeout_ms: u64) -> De
     fs::write(
         &node_config,
         serde_json::to_vec(&serde_json::json!({
-            "ipc": { "controller_id": "owner", "endpoint": endpoint }
+            "control": { "controller_id": "owner", "listen": { "kind": "ipc", "path": endpoint } }
         }))
         .unwrap(),
     )
@@ -119,7 +119,7 @@ fn deployment(mode: FakeNode, ready_timeout_ms: u64, stop_timeout_ms: u64) -> De
                 "persistence": { "kind": "sqlite" },
                 "protected_state_directories": [path.join("node")],
                 "controller_id": "owner",
-                "nodes": [{ "node_id": "node", "endpoint": endpoint }],
+                "nodes": [{ "node_id": "node", "endpoint": { "kind": "ipc", "path": endpoint } }],
                 "session": { "io_timeout_ms": 500, "query_interval_ms": 100 },
                 "reconnect_ms": 200,
                 "timezone": "Asia/Shanghai",
@@ -269,8 +269,7 @@ fn refused_composition_leaves_no_state_behind() {
     }
     // A hosting request whose Node configuration binds another Controller is refused read-only.
     let original = fs::read(&deployment.node_config).unwrap();
-    let foreign: serde_json::Value =
-        serde_json::json!({ "ipc": { "controller_id": "other", "endpoint": deployment.endpoint } });
+    let foreign: serde_json::Value = serde_json::json!({ "control": { "controller_id": "other", "listen": { "kind": "ipc", "path": deployment.endpoint } } });
     fs::write(
         &deployment.node_config,
         serde_json::to_vec(&foreign).unwrap(),
@@ -494,7 +493,7 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
                 },
                 "protected_state_directories": [path.join("node")],
                 "controller_id": "owner",
-                "nodes": [{ "node_id": "node", "endpoint": path.join("node").join("control.sock") }],
+                "nodes": [{ "node_id": "node", "endpoint": { "kind": "ipc", "path": path.join("node").join("control.sock") } }],
                 "session": { "io_timeout_ms": 500, "query_interval_ms": 100 },
                 "reconnect_ms": 200,
                 "timezone": "Asia/Shanghai",

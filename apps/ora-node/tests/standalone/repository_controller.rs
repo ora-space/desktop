@@ -112,7 +112,7 @@ pub(super) fn launch(fixture: &Fixture, proxy: &Proxy) -> ChildGuard {
         "controller": {
             "home_directory": fixture.path().join("controller"), "persistence": { "kind": "sqlite" }, "controller_id": "owner",
             "protected_state_directories": [fixture.config().home_directory, fixture.process().host_directory],
-            "nodes": [{ "node_id": "test-node", "endpoint": proxy.endpoint }],
+            "nodes": [{ "node_id": "test-node", "endpoint": { "kind": "ipc", "path": proxy.endpoint } }],
             "session": { "io_timeout_ms": 5000, "query_interval_ms": 100 }, "reconnect_ms": 100, "timezone": "Asia/Shanghai",
         },
         "api": { "node_id": "test-node" },

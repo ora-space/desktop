@@ -1,22 +1,37 @@
-# Local Node control session
+# Node control session
 
 English | [中文](local-ipc.zh.md)
 
-Linux `ora-node` optionally accepts the existing length-prefixed JSON protocol over a private Unix
-socket. Add an `ipc` object alongside the [clone deployment configuration](repository-clone.md):
+Linux `ora-node` optionally accepts one Controller control session on exactly one listening entry:
+a private Unix socket for local deployments, or WebSocket for sandboxes reached through a platform
+router. Both carry the same frame body (`[type][JSON]`) and run the same session code. Add a
+`control` object alongside the [clone deployment configuration](repository-clone.md):
 
 ```json
 {
-  "ipc": {
+  "control": {
     "controller_id": "deployment-controller",
-    "endpoint": "/home/node/state/control.sock",
+    "listen": { "kind": "ipc", "path": "/home/node/state/control.sock" },
     "heartbeat_ms": 1000,
     "frame_timeout_ms": 10000
   }
 }
 ```
 
-The endpoint must be directly inside the injected Node home. That private directory and the Node
+In a sandbox, listen for WebSocket upgrades instead:
+
+```json
+"listen": { "kind": "websocket", "bind": "0.0.0.0:9001", "path": "/ora-node/v1" }
+```
+
+Over IPC each frame body is preceded by a four-byte big-endian length. Over WebSocket one binary
+message carries exactly one frame body; text messages, other paths and messages above the 16 MiB
+frame limit are refused. The Node does not authenticate WebSocket peers: the listener must only be
+reachable through the platform router, which authenticates the Controller, and platform credentials
+must not be placed in the Node configuration or image. WebSocket ping/pong only proves the nearest
+hop is alive; end-to-end liveness remains the protocol heartbeat and `frame_timeout_ms`.
+
+The IPC path must be directly inside the injected Node home. That private directory and the Node
 database lease protect endpoint recovery: only a same-owner private socket with a refused connection
 may be replaced. Files, symlinks and live listeners are preserved. The optional section requires clone
 configuration; without it the executable remains a recovery-only owner.
@@ -26,7 +41,14 @@ fails. Schema v4 attributes new clones atomically with acceptance; old unclaimed
 and are not replayed to or acknowledged by this session. This is trusted local ownership checking,
 not cryptographic authentication or a sandbox against same-UID code.
 
-One connection owns the handshake/control slot. Other connections are closed without replacing it.
+One connection owns the handshake/control slot, whichever transport it arrived on. Other connections
+are refused without replacing it: IPC closes the socket, WebSocket completes the upgrade and closes with
+code `4409` (`control session busy`), because routers forward close codes but turn HTTP refusals into
+gateway errors indistinguishable from an unreachable Node. IPC has no close code, so a refused IPC
+peer only sees the socket close during the handshake; the Controller cannot tell "occupied" from a
+Node that closed because the ControllerId does not match, and logs both as a protocol failure before
+reconnecting after `reconnect_ms`. WebSocket keepalive pings are not sent by either side; both only
+answer the peer's pings, and the Node heartbeat keeps traffic flowing.
 Hello negotiates the existing version, Node identity/incarnation and clone capability. The session
 accepts clone, status and exact acknowledgement messages; unsupported/conflicting messages close it.
 The Node sends heartbeats independently of the blocking Git owner and actively replays bounded pages
@@ -39,6 +61,12 @@ but cannot cancel already accepted clones. Reads, writes and command admission r
 while heartbeats are arriving; reconnect queries the original execution, not a new attempt. An idle
 Controller should periodically query its executions. Slow readers may be disconnected and reconnect
 for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
+
+A real WebSocket test runs the production Controller session against a production Node, takes over a
+clone result, observes the `4409` refusal of a second connection and rejects a mismatched Node identity. Another
+keeps a clone result unacknowledged across a WebSocket disconnect and a Node restart, verifies the
+identical replay, lets the production Controller session take it over and acknowledge it, and then
+confirms the event is no longer replayed.
 
 The real standalone test verifies owner/duplicate rejection, HTTPS clone, Node kill/restart, unchanged
 result replay and exact acknowledgement. [Controller acceptance](../controller/local-runtime.md) adds

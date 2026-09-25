@@ -21,6 +21,7 @@ uuid.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 ora-contracts.workspace = true
 ora-controller-proto.workspace = true
+ora-node-transport = { workspace = true, features = ["websocket"] }
 ora-utils = { workspace = true, features = ["local-ipc"] }
 libc.workspace = true
 clap.workspace = true
@@ -34,4 +35,5 @@ tempfile.workspace = true
 pretty_assertions.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+ora-node-transport = { workspace = true, features = ["websocket"] }
 reqwest = { workspace = true, features = ["json"] }

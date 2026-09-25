@@ -74,7 +74,10 @@ Deno.test(
       assert.deepEqual(controller.controller.nodes, [
         {
           node_id: "minicloud-node",
-          endpoint: path.join(root, "node", "control.sock"),
+          endpoint: {
+            kind: "ipc",
+            path: path.join(root, "node", "control.sock"),
+          },
         },
       ]);
       assert.equal(
@@ -90,8 +93,14 @@ Deno.test(
       const node = JSON.parse(
         await Deno.readTextFile(path.join(config, "node.json")),
       );
-      assert.equal(node.ipc.controller_id, controller.controller.controller_id);
-      assert.equal(node.ipc.endpoint, controller.controller.nodes[0].endpoint);
+      assert.equal(
+        node.control.controller_id,
+        controller.controller.controller_id,
+      );
+      assert.deepEqual(
+        node.control.listen,
+        controller.controller.nodes[0].endpoint,
+      );
       const client = JSON.parse(
         await Deno.readTextFile(path.join(config, "client.json")),
       );
@@ -140,7 +149,7 @@ Deno.test(
           nodes: [
             {
               node_id: "minicloud-node",
-              endpoint: path.join(node, "control.sock"),
+              endpoint: { kind: "ipc", path: path.join(node, "control.sock") },
             },
           ],
           session: { io_timeout_ms: 10000, query_interval_ms: 1000 },
@@ -191,6 +200,69 @@ Deno.test(
       await Deno.writeTextFile(config, JSON.stringify(edited));
       await initialize(root, "cloud");
       assert.deepEqual(JSON.parse(await Deno.readTextFile(config)), edited);
+    } finally {
+      await Deno.remove(temporary, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "minicloud initialization migrates legacy IPC configuration and keeps other edits",
+  async () => {
+    const temporary = await Deno.makeTempDir({ prefix: "mc-" });
+    const root = path.join(temporary, "dev");
+    try {
+      await initialize(root, "local");
+      const config = path.join(root, "config");
+      const socket = path.join(root, "node", "control.sock");
+      const nodeFile = path.join(config, "node.json");
+      const controllerFile = path.join(config, "controller.json");
+      // Recreate what an older launcher wrote, plus a user edit on each file.
+      const { control: _, ...node } = JSON.parse(
+        await Deno.readTextFile(nodeFile),
+      );
+      const legacyNode = {
+        ...node,
+        recovery_interval_ms: 2500,
+        ipc: {
+          controller_id: "minicloud-controller",
+          endpoint: socket,
+          heartbeat_ms: 700,
+          frame_timeout_ms: 9000,
+        },
+      };
+      await Deno.writeTextFile(nodeFile, JSON.stringify(legacyNode));
+      const controller = JSON.parse(await Deno.readTextFile(controllerFile));
+      controller.controller.reconnect_ms = 3000;
+      controller.controller.nodes = [
+        { node_id: "minicloud-node", endpoint: socket },
+      ];
+      await Deno.writeTextFile(controllerFile, JSON.stringify(controller));
+
+      await initialize(root, "local");
+
+      const { ipc: __, ...kept } = legacyNode;
+      assert.deepEqual(JSON.parse(await Deno.readTextFile(nodeFile)), {
+        ...kept,
+        control: {
+          controller_id: "minicloud-controller",
+          heartbeat_ms: 700,
+          frame_timeout_ms: 9000,
+          listen: { kind: "ipc", path: socket },
+        },
+      });
+      const migrated = JSON.parse(await Deno.readTextFile(controllerFile));
+      assert.equal(migrated.controller.reconnect_ms, 3000);
+      assert.deepEqual(migrated.controller.nodes, [
+        { node_id: "minicloud-node", endpoint: { kind: "ipc", path: socket } },
+      ]);
+      assert.equal((await Deno.stat(nodeFile)).mode! & 0o777, 0o600);
+      assert.equal((await Deno.stat(controllerFile)).mode! & 0o777, 0o600);
+
+      // A second run finds nothing legacy and rewrites nothing.
+      const before = await Deno.readTextFile(nodeFile);
+      await initialize(root, "local");
+      assert.equal(await Deno.readTextFile(nodeFile), before);
     } finally {
       await Deno.remove(temporary, { recursive: true });
     }

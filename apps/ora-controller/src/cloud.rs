@@ -345,9 +345,11 @@ mod tests {
             },
             protected_state_directories: Vec::new(),
             controller_id: ControllerId::new(controller_id),
-            nodes: vec![NodeEndpoint {
+            nodes: vec![NodeTarget {
                 node_id: NodeId::new("node"),
-                endpoint: "/nonexistent/control.sock".into(),
+                endpoint: NodeEndpoint::Ipc {
+                    path: "/nonexistent/control.sock".into(),
+                },
             }],
             session: SessionConfig {
                 io_timeout_ms: 100,

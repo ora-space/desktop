@@ -52,11 +52,11 @@ ora-controller --config /absolute/path/controller.json [--single-node]
                [--transport tcp|unix] [--host 127.0.0.1] [--port 4820] [--socket /path/api.sock]
 ```
 
-| 参数 | 规则 |
-|---|---|
-| `--transport tcp`（默认） | `--host` 默认 `127.0.0.1`，`--port` 默认 `4820`。非回环地址允许启动但会记录警告：API 没有认证，回环只是部署约束而不是安全保证。 |
-| `--transport unix` | 需要 `--socket`，必须是直接位于 `home_directory` 内的绝对路径，按与 Node endpoint 相同的私有 socket 规则创建；不接受 `--host`／`--port`。 |
-| `--single-node` | 按 `single_node` 段启动配置的 Node，正常关停时停止它，见下文。 |
+| 参数                      | 规则                                                                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `--transport tcp`（默认） | `--host` 默认 `127.0.0.1`，`--port` 默认 `4820`。非回环地址允许启动但会记录警告：API 没有认证，回环只是部署约束而不是安全保证。           |
+| `--transport unix`        | 需要 `--socket`，必须是直接位于 `home_directory` 内的绝对路径，按与 Node endpoint 相同的私有 socket 规则创建；不接受 `--host`／`--port`。 |
+| `--single-node`           | 按 `single_node` 段启动配置的 Node，正常关停时停止它，见下文。                                                                            |
 
 非法参数组合与配置都在获取数据库租约前拒绝。
 
@@ -92,7 +92,7 @@ ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好�
     "nodes": [
       {
         "node_id": "deployment-node",
-        "endpoint": "/home/node/state/control.sock"
+        "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" }
       }
     ],
     "session": { "io_timeout_ms": 10000, "query_interval_ms": 1000 },
@@ -109,13 +109,32 @@ ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好�
 }
 ```
 
-`api.node_id` 指定已接受 clone 派发到的 Node，调用方不选择 Node。`protected_state_directories`
-须列出所有 Node／host／guardian 状态根；配置的 endpoint 父目录也受保护。Controller 数据目录与它们
+`api.node_id` 指定已接受 clone 派发到的 Node，调用方不选择 Node。沙盒中的 Node 改为经平台
+WebSocket 路由访问：
+
+```json
+{
+  "node_id": "sandbox-node",
+  "endpoint": {
+    "kind": "websocket",
+    "url": "wss://router.example/ora-node/v1",
+    "headers": { "ate-target-actor": "atespace/sandbox-id" }
+  }
+}
+```
+
+请求头原样发送，厂商寻址和平台凭据只放在这里，握手仍校验 `node_id`。`ws://`／`wss://` URL 以及
+请求头名称和取值在开库前检查。每次会话失败或断开都会按类别（不可达、沙盒不存在、被拒绝、会话占用、
+协议错误、连接断开）记录日志，并在 `reconnect_ms` 后重试，不判定执行失败，也不重建执行。“会话占用”只有 WebSocket 能识别（Node 以
+close code `4409` 关闭）；IPC 的 Node 只能关闭 socket，会话占用会被记为协议错误。
+
+`protected_state_directories` 须列出所有 Node／host／guardian 状态根；配置的 IPC socket 父目录也受保护。Controller 数据目录与它们
 重叠时，在开库前拒绝。独立程序恢复已接受记录，配置文件和 stdin 不是业务命令通道。
 不托管 Node 时分别部署 host 和 Node，Node 配置的归属须匹配 ControllerId。
 
-`--single-node` 要求 `nodes` 恰好包含 `api.node_id` 这一个 Node。开库前，程序只读读取 `node_config`，
-其 `ipc.controller_id` 或 `ipc.endpoint` 不匹配、或 endpoint 上已有进程接受连接时拒绝启动。随后在
+`--single-node` 要求 `nodes` 恰好包含 `api.node_id` 这一个使用 `ipc` endpoint 的 Node。开库前，程序只读
+读取 `node_config`，其 `control.controller_id` 或 `control.listen`（`ipc` 类型且路径相同）不匹配、
+或 endpoint 上已有进程接受连接时拒绝启动。随后在
 自身进程组内（不新建会话）启动 `node_executable <node_config>`，在 `ready_timeout_ms` 内等待 endpoint
 可连接，然后才绑定 API。process host 与 guardian 是前置条件，程序不部署也不启动它们。Controller
 单独退出不会向 Node 发送任何信号，已接受的 clone 继续执行；运维或启动器按进程组停止时两者都会收到。

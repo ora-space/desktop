@@ -39,7 +39,7 @@ mod service;
 #[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
-pub use service::{IpcConfig, ServiceConfig, serve};
+pub use service::{ControlConfig, ControlListen, ServiceConfig, serve};
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
 pub use ora_node_db::{Command, DurableWrites, WriteGuard, WritePoint};

@@ -46,9 +46,11 @@ pub(super) fn write_config(
             node: fixture.config(),
             process: fixture.process(),
             clone: Some(clone.clone()),
-            ipc: Some(ora_node::IpcConfig {
+            control: Some(ora_node::ControlConfig {
                 controller_id: ControllerId::new("owner"),
-                endpoint: fixture.config().home_directory.join("control.sock"),
+                listen: ora_node::ControlListen::Ipc {
+                    path: fixture.config().home_directory.join("control.sock"),
+                },
                 heartbeat_ms: 100,
                 frame_timeout_ms,
             }),

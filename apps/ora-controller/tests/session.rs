@@ -25,9 +25,12 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                 SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner"))
                     .unwrap();
             fs::create_dir(root.path().join("node")).unwrap();
-            let target = NodeEndpoint {
+            let socket = root.path().join("node").join("control.sock");
+            let target = NodeTarget {
                 node_id: NodeId::new("node"),
-                endpoint: root.path().join("node").join("control.sock"),
+                endpoint: NodeEndpoint::Ipc {
+                    path: socket.clone(),
+                },
             };
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -46,7 +49,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                         )
                         .await
                         .unwrap();
-                    let listener = UnixListener::bind(&target.endpoint).unwrap();
+                    let listener = UnixListener::bind(&socket).unwrap();
                     let settings = SessionConfig {
                         io_timeout_ms: 1000,
                         query_interval_ms: 20,
@@ -108,9 +111,12 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
         let store =
             SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
         fs::create_dir(root.path().join("node")).unwrap();
-        let endpoint = NodeEndpoint {
+        let socket = root.path().join("node").join("control.sock");
+        let endpoint = NodeTarget {
             node_id: NodeId::new("node"),
-            endpoint: root.path().join("node").join("control.sock"),
+            endpoint: NodeEndpoint::Ipc {
+                path: socket.clone(),
+            },
         };
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
             let command = store
@@ -124,7 +130,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
                 )
                 .await
                 .unwrap();
-            let listener = UnixListener::bind(&endpoint.endpoint).unwrap();
+            let listener = UnixListener::bind(&socket).unwrap();
             let settings = SessionConfig { io_timeout_ms: 1000, query_interval_ms: 20 };
             let session = run_session(&store, &endpoint, &settings);
             let peer = async {
@@ -148,5 +154,73 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
             tokio::select! { _ = session => panic!("session ended before peer checks"), _ = peer => {} }
             assert_eq!(store.result(&command.execution_id).await.unwrap(), None);
         });
+    });
+}
+
+/// Connection failures are classified and keep every accepted dispatch pending for reconnection.
+#[test]
+fn connection_failures_are_classified_without_releasing_responsibility() {
+    ora_logging::with_trace_logging(|| {
+        let root = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(std::env::var_os("HOME").unwrap())
+            .unwrap();
+        let store =
+            SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
+        let settings = SessionConfig {
+            io_timeout_ms: 1000,
+            query_interval_ms: 20,
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let command = store
+                    .accept_request(
+                        RequestId::new("request"),
+                        CloneExecutionSpec {
+                            node_id: NodeId::new("node"),
+                            repository: CloneRepositoryUrl::parse("https://example.com/repo")
+                                .unwrap(),
+                            branch: BranchName::new("main"),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                // Reserve and release a port so nothing listens there.
+                let closed = std::net::TcpListener::bind("127.0.0.1:0")
+                    .unwrap()
+                    .local_addr()
+                    .unwrap();
+                for endpoint in [
+                    NodeEndpoint::Ipc {
+                        path: root.path().join("missing.sock"),
+                    },
+                    NodeEndpoint::WebSocket(ora_node_transport::websocket::WsEndpoint {
+                        url: format!("ws://{closed}/ora-node/v1"),
+                        headers: Default::default(),
+                    }),
+                ] {
+                    let target = NodeTarget {
+                        node_id: NodeId::new("node"),
+                        endpoint,
+                    };
+                    let error = run_session(&store, &target, &settings).await.unwrap_err();
+                    assert!(
+                        matches!(
+                            &error,
+                            SessionError::Connect(connect)
+                                if connect.failure == ora_node_transport::ConnectFailure::Unreachable
+                        ),
+                        "{error:?}"
+                    );
+                }
+                assert_eq!(
+                    store.pending_dispatches(&NodeId::new("node")).await.unwrap(),
+                    vec![command.clone()]
+                );
+                assert_eq!(store.result(&command.execution_id).await.unwrap(), None);
+            });
     });
 }

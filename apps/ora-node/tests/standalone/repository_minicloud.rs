@@ -2,7 +2,7 @@ use super::*;
 use crate::support::{ChildGuard, until};
 use ora_contracts::controller_api::*;
 use ora_controller::{
-    ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, Persistence, RuntimeConfig,
+    ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, NodeTarget, Persistence, RuntimeConfig,
     SessionConfig,
 };
 use pretty_assertions::assert_eq;
@@ -155,9 +155,11 @@ fn exercise(entry: Entry) {
                     fixture.process().host_directory,
                 ],
                 controller_id: ControllerId::new("owner"),
-                nodes: vec![NodeEndpoint {
+                nodes: vec![NodeTarget {
                     node_id: NodeId::new("test-node"),
-                    endpoint: fixture.config().home_directory.join("control.sock"),
+                    endpoint: NodeEndpoint::Ipc {
+                        path: fixture.config().home_directory.join("control.sock"),
+                    },
                 }],
                 session: SessionConfig {
                     io_timeout_ms: 5000,

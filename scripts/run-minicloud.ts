@@ -37,6 +37,51 @@ async function defaultFile(name: string, value: string): Promise<void> {
 }
 
 /**
+ * Rewrites a launcher-owned JSON file through a private temporary sibling, so a crash leaves either
+ * the old or the new content and never a truncated file.
+ */
+async function replaceJson(name: string, value: unknown): Promise<void> {
+  const temporary = `${name}.migrating`;
+  await Deno.writeTextFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await Deno.rename(temporary, name);
+}
+
+/**
+ * Upgrades configuration written before Node transports became selectable. Earlier launchers wrote
+ * `ipc` in node.json and a bare socket path as each Controller node endpoint; the executables now
+ * reject both, so existing state directories would stop starting. Only those legacy fields change:
+ * every other edit is preserved, and already migrated files are left untouched.
+ */
+export async function migrateTransportConfig(config: string): Promise<void> {
+  const nodeFile = path.join(config, "node.json");
+  const node = JSON.parse(await Deno.readTextFile(nodeFile));
+  if (node.ipc !== undefined && node.control === undefined) {
+    const { ipc, ...rest } = node;
+    const { endpoint, ...timing } = ipc;
+    await replaceJson(nodeFile, {
+      ...rest,
+      control: { ...timing, listen: { kind: "ipc", path: endpoint } },
+    });
+  }
+  const controllerFile = path.join(config, "controller.json");
+  const controller = JSON.parse(await Deno.readTextFile(controllerFile));
+  const nodes = controller.controller?.nodes;
+  if (
+    Array.isArray(nodes) &&
+    nodes.some((target) => typeof target.endpoint === "string")
+  ) {
+    controller.controller.nodes = nodes.map((target) =>
+      typeof target.endpoint === "string"
+        ? { ...target, endpoint: { kind: "ipc", path: target.endpoint } }
+        : target,
+    );
+    await replaceJson(controllerFile, controller);
+  }
+}
+
+/**
  * Which persistence authority the launched Controller uses. Each mode keeps its own state root: a
  * Node's journal records executions of exactly one authority, so SQLite-era work must never be
  * reported to a Cloud-backed Controller, nor clone destinations shared between them.
@@ -106,9 +151,9 @@ export async function initialize(root: string, mode: Mode): Promise<void> {
         search_path: ["/usr/bin"],
         ssh: { kind: "disabled" },
       },
-      ipc: {
+      control: {
         controller_id: "minicloud-controller",
-        endpoint: path.join(node, "control.sock"),
+        listen: { kind: "ipc", path: path.join(node, "control.sock") },
         heartbeat_ms: 1000,
         frame_timeout_ms: 10000,
       },
@@ -137,7 +182,7 @@ export async function initialize(root: string, mode: Mode): Promise<void> {
         nodes: [
           {
             node_id: "minicloud-node",
-            endpoint: path.join(node, "control.sock"),
+            endpoint: { kind: "ipc", path: path.join(node, "control.sock") },
           },
         ],
         session: { io_timeout_ms: 10000, query_interval_ms: 1000 },
@@ -154,6 +199,7 @@ export async function initialize(root: string, mode: Mode): Promise<void> {
       },
     }),
   );
+  await migrateTransportConfig(config);
   if (mode === "local") {
     // Listener choices are per-process flags, so the launcher keeps them beside the frontend port.
     await defaultFile(
@@ -507,7 +553,9 @@ async function run(): Promise<void> {
     if (
       nodeConfig.node.home_directory !== path.join(root, "node") ||
       nodeConfig.process.host_directory !== path.join(root, "p") ||
-      nodeConfig.ipc.endpoint !== path.join(root, "node", "control.sock") ||
+      nodeConfig.control?.listen?.kind !== "ipc" ||
+      nodeConfig.control.listen.path !==
+        path.join(root, "node", "control.sock") ||
       controllerConfig.controller.home_directory !==
         path.join(root, "controller") ||
       controllerConfig.single_node?.node_config !==
@@ -577,7 +625,7 @@ async function run(): Promise<void> {
     const host = path.join(root, "p");
     if (
       (await socket(path.join(host, "host.sock"))) ||
-      (await socket(nodeConfig.ipc.endpoint))
+      (await socket(nodeConfig.control.listen.path))
     ) {
       throw new Error(
         "A host or Node is already running for this directory; stop that owner before using the launcher.",

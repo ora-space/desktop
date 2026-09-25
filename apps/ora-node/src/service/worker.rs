@@ -16,11 +16,11 @@ pub(super) fn run(
             node.configure_clone(clone).map_err(|e| e.to_string())?;
         }
         let controller = config
-            .ipc
+            .control
             .as_ref()
-            .map(|ipc| ipc.controller_id.clone())
+            .map(|control| control.controller_id.clone())
             .unwrap_or_else(|| ControllerId::new("recovery-only"));
-        if config.ipc.is_some() {
+        if config.control.is_some() {
             node.database
                 .bind_controller(&controller)
                 .map_err(|e| e.to_string())?;

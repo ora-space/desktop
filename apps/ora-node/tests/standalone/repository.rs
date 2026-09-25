@@ -38,6 +38,9 @@ mod minicloud;
 #[path = "repository_single_node.rs"]
 mod single_node;
 
+#[path = "repository_websocket.rs"]
+mod websocket;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");

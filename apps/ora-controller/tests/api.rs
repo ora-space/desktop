@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 use ora_contracts::controller_api::*;
 use ora_controller::{
-    ApiConfig, CloneIntake, DeploymentConfig, NodeEndpoint, NodeHosting, Persistence,
+    ApiConfig, CloneIntake, DeploymentConfig, NodeEndpoint, NodeHosting, NodeTarget, Persistence,
     RuntimeConfig, Service, SessionConfig, SingleNodeConfig, SqliteStore, Transport,
 };
 use ora_node_protocol::{BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId};
@@ -45,9 +45,11 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                 persistence: Persistence::Sqlite,
                 protected_state_directories: vec![root.path().join("process")],
                 controller_id: ControllerId::new("owner"),
-                nodes: vec![NodeEndpoint {
+                nodes: vec![NodeTarget {
                     node_id: NodeId::new("node"),
-                    endpoint: root.path().join("node").join("control.sock"),
+                    endpoint: NodeEndpoint::Ipc {
+                        path: root.path().join("node").join("control.sock"),
+                    },
                 }],
                 session: SessionConfig {
                     io_timeout_ms: 100,
@@ -104,9 +106,11 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                     ready_timeout_ms: 1000,
                     stop_timeout_ms: 1000,
                 });
-                many.controller.nodes.push(NodeEndpoint {
+                many.controller.nodes.push(NodeTarget {
                     node_id: NodeId::new("second"),
-                    endpoint: root.path().join("second").join("control.sock"),
+                    endpoint: NodeEndpoint::Ipc {
+                        path: root.path().join("second").join("control.sock"),
+                    },
                 });
                 assert!(
                     Service::<SqliteStore>::start(

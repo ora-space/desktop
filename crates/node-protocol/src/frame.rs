@@ -70,6 +70,60 @@ where
     write_message(writer, message).await
 }
 
+/// Encodes one validated Controller message as a frame body, `[type][JSON]`, for transports that
+/// carry their own message boundaries, such as one WebSocket binary message per frame.
+pub fn encode_controller_frame(message: &ControllerToNodeMessage) -> Result<Vec<u8>, FrameError> {
+    encode_frame(message)
+}
+
+/// Encodes one validated Node message as a frame body, `[type][JSON]`.
+pub fn encode_node_frame(message: &NodeToControllerMessage) -> Result<Vec<u8>, FrameError> {
+    encode_frame(message)
+}
+
+/// Decodes and validates one complete Controller frame body received as a single unit.
+pub fn decode_controller_frame(frame: &[u8]) -> Result<ControllerToNodeMessage, FrameError> {
+    decode_frame(frame)
+}
+
+/// Decodes and validates one complete Node frame body received as a single unit.
+pub fn decode_node_frame(frame: &[u8]) -> Result<NodeToControllerMessage, FrameError> {
+    decode_frame(frame)
+}
+
+/// The frame body is the unit every transport carries; the stream envelope only adds a length
+/// prefix in front of exactly these bytes, so both representations share one size limit.
+fn encode_frame<Message>(message: &Message) -> Result<Vec<u8>, FrameError>
+where
+    Message: Serialize + ValidateMessage,
+{
+    let payload = encode_payload(message)?;
+    frame_length(payload.len())?;
+    let mut frame = Vec::with_capacity(payload.len() + 1);
+    frame.push(NODE_MESSAGE_FRAME_TYPE);
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+/// Applies the same length, type and message checks as the stream reader to a complete body.
+fn decode_frame<Message>(frame: &[u8]) -> Result<Message, FrameError>
+where
+    Message: DeserializeOwned + ValidateMessage,
+{
+    if !(1..=MAX_FRAME_LENGTH).contains(&frame.len()) {
+        return Err(FrameError::InvalidLength {
+            length: frame.len(),
+        });
+    }
+    let (&frame_type, payload) = frame
+        .split_first()
+        .ok_or(FrameError::InvalidLength { length: 0 })?;
+    if frame_type != NODE_MESSAGE_FRAME_TYPE {
+        return Err(FrameError::UnsupportedFrameType { frame_type });
+    }
+    decode_payload(payload)
+}
+
 /// Shares decoding and invariant checks while public functions retain peer direction in their type.
 async fn read_message<R, Message>(reader: &mut R) -> Result<Option<Message>, FrameError>
 where
@@ -79,15 +133,23 @@ where
     let Some(payload) = read_frame(reader).await? else {
         return Ok(None);
     };
+    decode_payload(&payload).map(Some)
+}
+
+/// JSON decoding and invariant validation shared by the stream reader and complete-body decoding.
+fn decode_payload<Message>(payload: &[u8]) -> Result<Message, FrameError>
+where
+    Message: DeserializeOwned + ValidateMessage,
+{
     // TODO(todo-87602f0b): WARN on decode rejection with receive direction, payload length,
     // NODE_MESSAGE_FRAME_TYPE and JSON error category/location; no typed value exists yet.
-    let message = serde_json::from_slice::<Message>(&payload).map_err(FrameError::DecodeJson)?;
+    let message = serde_json::from_slice::<Message>(payload).map_err(FrameError::DecodeJson)?;
     // TODO(todo-87602f0b): WARN on inbound validation rejection with receive direction,
     // payload length, frame type and MessageValidationError category/fields.
     message.validate()?;
     // TODO(todo-87602f0b): TRACE the accepted inbound typed message, receive direction,
     // payload length and frame type here, after all validation succeeds.
-    Ok(Some(message))
+    Ok(message)
 }
 
 /// Shares encoding and invariant checks while public functions retain peer direction in their type.
@@ -96,15 +158,35 @@ where
     W: AsyncWrite + Unpin,
     Message: Serialize + ValidateMessage,
 {
+    let payload = encode_payload(message)?;
+    // TODO(todo-87602f0b): TRACE the outbound typed message, send direction, payload length
+    // and frame type after this write succeeds; failures are recorded at their I/O sites below.
+    write_frame(writer, &payload).await
+}
+
+/// Invariant validation and JSON encoding shared by the stream writer and complete-body encoding.
+fn encode_payload<Message>(message: &Message) -> Result<Vec<u8>, FrameError>
+where
+    Message: Serialize + ValidateMessage,
+{
     // TODO(todo-87602f0b): WARN on outbound validation rejection with send direction and
     // MessageValidationError category/fields; no serialized payload or frame length exists yet.
     message.validate()?;
     // TODO(todo-87602f0b): ERROR on JSON encode failure with send direction and serializer
     // error category; the typed message is available but no complete payload length exists yet.
-    let payload = serde_json::to_vec(message).map_err(FrameError::EncodeJson)?;
-    // TODO(todo-87602f0b): TRACE the outbound typed message, send direction, payload length
-    // and frame type after this write succeeds; failures are recorded at their I/O sites below.
-    write_frame(writer, &payload).await
+    serde_json::to_vec(message).map_err(FrameError::EncodeJson)
+}
+
+/// Bounds a frame body (type byte plus payload) before any bytes are emitted.
+fn frame_length(payload_length: usize) -> Result<usize, FrameError> {
+    // TODO(todo-87602f0b): WARN on outbound length rejection with payload length,
+    // MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE and InvalidLength category before writing bytes.
+    payload_length
+        .checked_add(/*rhs*/ 1)
+        .filter(|length| *length <= MAX_FRAME_LENGTH)
+        .ok_or(FrameError::InvalidLength {
+            length: payload_length.saturating_add(/*rhs*/ 1),
+        })
 }
 
 /// Reads framing metadata before allocating the bounded JSON payload.
@@ -153,15 +235,7 @@ async fn write_frame<W>(writer: &mut W, payload: &[u8]) -> Result<(), FrameError
 where
     W: AsyncWrite + Unpin,
 {
-    // TODO(todo-87602f0b): WARN on outbound length rejection with payload.len(),
-    // MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE and InvalidLength category before writing bytes.
-    let length = payload
-        .len()
-        .checked_add(/*rhs*/ 1)
-        .filter(|length| *length <= MAX_FRAME_LENGTH)
-        .ok_or(FrameError::InvalidLength {
-            length: payload.len().saturating_add(/*rhs*/ 1),
-        })?;
+    let length = frame_length(payload.len())?;
     // TODO(todo-87602f0b): ERROR if the bounded outbound length cannot fit u32, recording
     // length, frame type and InvalidLength category (currently prevented by MAX_FRAME_LENGTH).
     let length = u32::try_from(length).map_err(|_| FrameError::InvalidLength { length })?;

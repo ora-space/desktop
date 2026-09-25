@@ -1,0 +1,35 @@
+[package]
+name = "ora-node-transport"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_node_transport"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Cloud connections reach Nodes through a platform WebSocket router; local-only consumers skip it.
+websocket = ["dep:tokio-tungstenite", "dep:serde"]
+
+[dependencies]
+futures-util = { workspace = true }
+ora-node-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+tokio-tungstenite = { version = "0.29", optional = true, features = ["rustls-tls-native-roots"] }
+tokio-util = { workspace = true, features = ["codec"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[[test]]
+name = "websocket"
+required-features = ["websocket"]

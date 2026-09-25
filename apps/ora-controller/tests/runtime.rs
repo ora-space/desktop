@@ -18,9 +18,11 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             persistence: Persistence::Sqlite,
             protected_state_directories: vec![root.path().join("process")],
             controller_id: ControllerId::new("owner"),
-            nodes: vec![NodeEndpoint {
+            nodes: vec![NodeTarget {
                 node_id: NodeId::new("node"),
-                endpoint: root.path().join("node").join("control.sock"),
+                endpoint: NodeEndpoint::Ipc {
+                    path: root.path().join("node").join("control.sock"),
+                },
             }],
             session: SessionConfig {
                 io_timeout_ms: 100,
@@ -49,9 +51,11 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
         ));
         // Cloud persistence dispatches to one Node and never creates local state, even when run.
         let mut two_nodes = cloud.clone();
-        two_nodes.nodes.push(NodeEndpoint {
+        two_nodes.nodes.push(NodeTarget {
             node_id: NodeId::new("second"),
-            endpoint: root.path().join("second").join("control.sock"),
+            endpoint: NodeEndpoint::Ipc {
+                path: root.path().join("second").join("control.sock"),
+            },
         });
         assert!(matches!(
             ControllerRuntime::<CloudStore>::open(two_nodes),
@@ -65,6 +69,19 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             ControllerRuntime::<CloudStore>::open(bad_endpoint),
             Err(Error::Configuration(_))
         ));
+        // A WebSocket endpoint that can never connect is a deployment error, not endless reconnects.
+        for url in ["http://127.0.0.1:1/ora-node/v1", "not a url"] {
+            let mut websocket = config.clone();
+            websocket.nodes[0].endpoint =
+                NodeEndpoint::WebSocket(ora_node_transport::websocket::WsEndpoint {
+                    url: url.into(),
+                    headers: Default::default(),
+                });
+            assert!(matches!(
+                ControllerRuntime::<SqliteStore>::open(websocket),
+                Err(Error::Conflict)
+            ));
+        }
         assert!(!root.path().join("controller").exists());
         tokio::runtime::Builder::new_current_thread()
             .enable_all()

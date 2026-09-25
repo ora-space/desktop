@@ -60,11 +60,11 @@ ora-controller --config /absolute/path/controller.json [--single-node]
                [--transport tcp|unix] [--host 127.0.0.1] [--port 4820] [--socket /path/api.sock]
 ```
 
-| Flag | Rule |
-|---|---|
+| Flag                        | Rule                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--transport tcp` (default) | `--host` defaults to `127.0.0.1`, `--port` to `4820`. A non-loopback host is accepted with a warning: the API has no authentication, so loopback is a deployment restriction, not a security guarantee. |
-| `--transport unix` | Requires `--socket`, an absolute path directly inside `home_directory`, created with the same private-socket rules as the Node endpoint. `--host`/`--port` are rejected. |
-| `--single-node` | Starts the configured Node from the `single_node` section and stops it on normal shutdown; see below. |
+| `--transport unix`          | Requires `--socket`, an absolute path directly inside `home_directory`, created with the same private-socket rules as the Node endpoint. `--host`/`--port` are rejected.                                |
+| `--single-node`             | Starts the configured Node from the `single_node` section and stops it on normal shutdown; see below.                                                                                                   |
 
 Invalid flag combinations and configuration are rejected before the database lease is taken.
 
@@ -107,7 +107,7 @@ to writing locally. The `Watch` signal stream is not consumed yet; claiming is p
     "nodes": [
       {
         "node_id": "deployment-node",
-        "endpoint": "/home/node/state/control.sock"
+        "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" }
       }
     ],
     "session": { "io_timeout_ms": 10000, "query_interval_ms": 1000 },
@@ -125,15 +125,33 @@ to writing locally. The `Watch` signal stream is not consumed yet; claiming is p
 ```
 
 `api.node_id` names the configured Node that accepted clones are dispatched to; callers never choose a
-Node. Declare all Node/host/guardian state roots in `protected_state_directories`; configured endpoint
-parents are also protected. Overlap with Controller state is rejected before opening its database. The
+Node. A Node in a sandbox is reached through its platform WebSocket router instead:
+
+```json
+{
+  "node_id": "sandbox-node",
+  "endpoint": {
+    "kind": "websocket",
+    "url": "wss://router.example/ora-node/v1",
+    "headers": { "ate-target-actor": "atespace/sandbox-id" }
+  }
+}
+```
+
+Headers are sent verbatim; vendor addressing and platform credentials live only there, and the
+handshake still verifies `node_id`. A `ws://`/`wss://` URL and valid header names and values are checked
+before any state opens. Each failed or lost session is logged with its class (unreachable, unknown
+sandbox, refused, busy, protocol, disconnected) and retried after `reconnect_ms` without failing or
+re-creating any execution. "Busy" is only recognizable over WebSocket, where the Node closes with code
+`4409`; an IPC Node can only close the socket, so an occupied IPC Node is logged as a protocol failure. Declare all Node/host/guardian state roots in `protected_state_directories`; configured endpoint
+IPC socket parents are also protected. Overlap with Controller state is rejected before opening its database. The
 executable recovers already accepted records; its configuration file and stdin are not business command
 channels. Deploy host and Node separately unless hosting the Node, and configure Node's owner to match
 this ControllerId.
 
 With `--single-node`, `nodes` must contain exactly the `api.node_id` Node. Before opening state, the
-executable reads `node_config` read-only and refuses to start when its `ipc.controller_id` or
-`ipc.endpoint` does not match, or when something already accepts connections on the endpoint. It then
+executable requires an `ipc` endpoint, reads `node_config` read-only and refuses to start when its
+`control.controller_id` or `control.listen` (kind `ipc` and the same path) does not match, or when something already accepts connections on the endpoint. It then
 starts `node_executable <node_config>` in its own process group (no new session), waits up to
 `ready_timeout_ms` for the endpoint, and only then binds the API. Process host and guardian are
 prerequisites: the executable neither deploys nor starts them. Controller death alone signals nothing to

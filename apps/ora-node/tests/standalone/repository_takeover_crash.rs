@@ -1,8 +1,8 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
 use ora_controller::{
-    CloneIntake, CoordinationStore, ExecutionOutcome, NodeEndpoint, SessionConfig, SqliteStore,
-    WriteGuard, WritePoint,
+    CloneIntake, CoordinationStore, ExecutionOutcome, NodeEndpoint, NodeTarget, SessionConfig,
+    SqliteStore, WriteGuard, WritePoint,
 };
 use pretty_assertions::assert_eq;
 use std::{
@@ -30,7 +30,7 @@ impl WriteGuard for PauseBeforeCommit {
 fn controller_transaction_child() {
     ora_logging::with_trace_logging(|| {
         let root = PathBuf::from(std::env::var_os("ORA_TEST_CONTROLLER_CRASH_ROOT").unwrap());
-        let endpoint: NodeEndpoint =
+        let endpoint: NodeTarget =
             serde_json::from_slice(&fs::read(root.join("target.json")).unwrap()).unwrap();
         let store = SqliteStore::open_with_guard(
             &root.join("controller"),
@@ -84,9 +84,11 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         let proxy = controller::Proxy::new(&fixture);
         fs::write(
             fixture.path().join("target.json"),
-            serde_json::to_vec(&NodeEndpoint {
+            serde_json::to_vec(&NodeTarget {
                 node_id: NodeId::new("test-node"),
-                endpoint: proxy.endpoint.clone(),
+                endpoint: NodeEndpoint::Ipc {
+                    path: proxy.endpoint.clone(),
+                },
             })
             .unwrap(),
         )

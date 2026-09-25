@@ -31,7 +31,7 @@ pub use runtime::{ControllerHandle, ControllerRuntime, Persistence, RuntimeConfi
 #[cfg(target_os = "linux")]
 pub use service::Service;
 #[cfg(target_os = "linux")]
-pub use session::{NodeEndpoint, SessionConfig, run_session};
+pub use session::{NodeEndpoint, NodeTarget, SessionConfig, SessionError, run_session};
 pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;

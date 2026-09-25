@@ -30,7 +30,7 @@ pub struct RuntimeConfig {
     pub persistence: Persistence,
     pub protected_state_directories: Vec<PathBuf>,
     pub controller_id: ControllerId,
-    pub nodes: Vec<NodeEndpoint>,
+    pub nodes: Vec<NodeTarget>,
     pub session: SessionConfig,
     pub reconnect_ms: u64,
     pub timezone: String,
@@ -102,8 +102,12 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             return Err(Error::InvalidStorage);
         }
         for (index, node) in config.nodes.iter().enumerate() {
+            let endpoint_valid = match &node.endpoint {
+                NodeEndpoint::Ipc { path } => path.is_absolute(),
+                NodeEndpoint::WebSocket(endpoint) => endpoint.validate().is_ok(),
+            };
             if node.node_id.as_str().trim().is_empty()
-                || !node.endpoint.is_absolute()
+                || !endpoint_valid
                 || config.nodes[..index]
                     .iter()
                     .any(|other| other.node_id == node.node_id || other.endpoint == node.endpoint)
@@ -117,10 +121,11 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             .iter()
             .map(PathBuf::as_path)
             .chain(
-                config
-                    .nodes
-                    .iter()
-                    .filter_map(|node| node.endpoint.parent()),
+                // Only local sockets live on this filesystem; remote endpoints own no local state.
+                config.nodes.iter().filter_map(|node| match &node.endpoint {
+                    NodeEndpoint::Ipc { path } => path.parent(),
+                    NodeEndpoint::WebSocket(_) => None,
+                }),
             )
         {
             if !root.is_absolute() {
@@ -164,7 +169,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             let delay = Duration::from_millis(self.config.reconnect_ms);
             sessions.spawn(async move {
                 loop {
-                    if run_session(&store, &target, &settings).await.is_err() { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), "Controller connection unavailable; original execution responsibility retained"); }
+                    if let Err(error) = run_session(&store, &target, &settings).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
                     tokio::time::sleep(delay).await;
                 }
             });

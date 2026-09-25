@@ -19,7 +19,8 @@ pub struct ManagedNode {
 /// A validated hosting request; nothing has been started and no Controller state has been opened yet.
 pub struct NodeLaunch<'a> {
     config: &'a SingleNodeConfig,
-    target: &'a NodeEndpoint,
+    node_id: &'a NodeId,
+    endpoint: &'a Path,
 }
 
 impl ManagedNode {
@@ -31,23 +32,34 @@ impl ManagedNode {
         let target = runtime.nodes.first().ok_or_else(|| {
             Error::Configuration("single_node requires one configured Node".into())
         })?;
+        // Hosting starts a local process, so only a local socket can be the Node it reaches.
+        let NodeEndpoint::Ipc { path: endpoint } = &target.endpoint else {
+            return Err(Error::Configuration(
+                "single_node requires the configured Node to use an ipc endpoint".into(),
+            ));
+        };
         // The Node owns its configuration; only confirm it binds this Controller at this endpoint.
         let node: serde_json::Value = serde_json::from_slice(&fs::read(&config.node_config)?)?;
-        let ipc = &node["ipc"];
-        if ipc["controller_id"].as_str() != Some(runtime.controller_id.as_str())
-            || ipc["endpoint"].as_str().map(Path::new) != Some(target.endpoint.as_path())
+        let control = &node["control"];
+        if control["controller_id"].as_str() != Some(runtime.controller_id.as_str())
+            || control["listen"]["kind"].as_str() != Some("ipc")
+            || control["listen"]["path"].as_str().map(Path::new) != Some(endpoint.as_path())
         {
             return Err(Error::Configuration(
                 "Node configuration does not bind this Controller at the configured endpoint"
                     .into(),
             ));
         }
-        if UnixStream::connect(&target.endpoint).await.is_ok() {
+        if UnixStream::connect(endpoint).await.is_ok() {
             return Err(Error::Configuration(
                 "a Node already listens on the configured endpoint; stop it or run without --single-node".into(),
             ));
         }
-        Ok(NodeLaunch { config, target })
+        Ok(NodeLaunch {
+            config,
+            node_id: &target.node_id,
+            endpoint,
+        })
     }
 
     /// Resolves only when the Node exits on its own; the composition then loses its execution environment.
@@ -97,7 +109,11 @@ impl ManagedNode {
 impl NodeLaunch<'_> {
     /// Starts the Node once the Controller owns its state, then waits for the endpoint to accept.
     pub async fn start(self) -> Result<ManagedNode, Error> {
-        let NodeLaunch { config, target } = self;
+        let NodeLaunch {
+            config,
+            node_id,
+            endpoint,
+        } = self;
         let mut child = Command::new(&config.node_executable)
             .arg(&config.node_config)
             .stdin(Stdio::null())
@@ -116,7 +132,7 @@ impl NodeLaunch<'_> {
                     "Node exited before becoming ready: {status}"
                 )));
             }
-            if UnixStream::connect(&target.endpoint).await.is_ok() {
+            if UnixStream::connect(endpoint).await.is_ok() {
                 break;
             }
             if Instant::now() >= deadline {
@@ -129,7 +145,7 @@ impl NodeLaunch<'_> {
             }
             tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;
         }
-        ora_logging::ora_info!(node_id = %target.node_id.as_str(), "managed Node ready");
+        ora_logging::ora_info!(node_id = %node_id.as_str(), "managed Node ready");
         Ok(ManagedNode {
             child,
             handle,
