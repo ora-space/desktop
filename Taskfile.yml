@@ -32,6 +32,9 @@ tasks:
     desc: Install dependencies for all Rust workspace packages
     cmds:
       - cargo fetch
+      # lint:crates runs proto:check, which needs buf and the pinned contract submodule;
+      # proto:init is skipped on Windows, where the committed client is used as is.
+      - task: proto:init
 
   ###################################################
   ############## Clean and Build Tasks ##############
