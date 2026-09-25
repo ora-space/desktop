@@ -364,9 +364,18 @@ fn controller_heartbeats_keep_idle_session_and_foreign_heartbeat_ends_it() {
                     .await;
                     assert!(idle.is_err(), "idle session ended before the observation window");
                 }
-                let mut rejected = ipc::connect(&endpoint, "owner").await;
-                // A refused IPC connection is closed with our Hello unread, which may surface as
-                // either end of stream or a reset; both mean admission was not granted.
+                // A refused IPC connection may be closed before or after our Hello is written, so
+                // the write can fail and the read may see end of stream or a reset; each means
+                // admission was not granted.
+                let mut rejected = tokio::net::UnixStream::connect(&endpoint).await.unwrap();
+                let hello = ControllerToNodeMessage::Hello(HelloMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Hello {
+                        controller_id: ControllerId::new("owner"),
+                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                    },
+                });
+                let _ = write_controller_message(&mut rejected, &hello).await;
                 let refusal =
                     timeout(Duration::from_secs(/*secs*/ 2), read_node_message(&mut rejected))
                         .await
