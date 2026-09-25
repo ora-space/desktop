@@ -347,3 +347,123 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
         node.kill();
     });
 }
+
+/// A clone cut short by a normal Node stop reaches the Controller as a terminal interrupted failure
+/// over WebSocket: the stopping Node settles it, the restarted Node replays it, the production
+/// session takes it over, and the execution leaves the Controller's pending queries for good.
+#[test]
+fn controller_session_takes_over_interrupted_clone_after_node_stop() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        fixture.git(&["update-server-info"]);
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.paused.store(true, Ordering::SeqCst);
+        let clone = configuration(&fixture, &server);
+        let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let listening = |fixture: &Fixture| {
+            fs::read_to_string(fixture.path().join("websocket.log"))
+                .unwrap_or_default()
+                .contains("Node WebSocket listening")
+        };
+        let mut node = launch(&fixture, &clone, bind);
+        until(|| listening(&fixture));
+        let store = SqliteStore::open(
+            &fixture.path().join("controller"),
+            ControllerId::new("owner"),
+        )
+        .unwrap();
+        let target = NodeTarget {
+            node_id: NodeId::new("test-node"),
+            endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                url: format!("ws://{bind}{PATH}"),
+                headers: BTreeMap::new(),
+            }),
+        };
+        let settings = SessionConfig {
+            io_timeout_ms: 40_000,
+            query_interval_ms: 100,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Retries cover the window in which the Node still holds admission for a dropped peer.
+        let session = || async {
+            loop {
+                let _ = ora_controller::run_session(&store, &target, &settings).await;
+                tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
+            }
+        };
+        let (command, directory) = runtime.block_on(async {
+            let command = store
+                .accept_request(
+                    RequestId::new("websocket-interrupted"),
+                    CloneExecutionSpec {
+                        node_id: NodeId::new("test-node"),
+                        repository: CloneRepositoryUrl::parse(&server.address).unwrap(),
+                        branch: BranchName::new("main"),
+                    },
+                )
+                .await
+                .unwrap();
+            // The session dispatches the clone; Git then blocks on the paused HTTPS server.
+            let dispatched = async {
+                loop {
+                    let started = fs::read_dir(&clone.repository_root)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| path.join(".git").is_dir());
+                    if let Some(directory) = started {
+                        break directory;
+                    }
+                    tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
+                }
+            };
+            let directory = tokio::select! {
+                () = session() => unreachable!(),
+                directory = dispatched => directory,
+            };
+            (command, directory)
+        });
+        node.terminate();
+        let mut node = launch(&fixture, &clone, bind);
+        until(|| listening(&fixture));
+        let outcome = runtime.block_on(async {
+            let taken_over = async {
+                loop {
+                    if let Some(outcome) = store.result(&command.execution_id).await.unwrap() {
+                        break outcome;
+                    }
+                    tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
+                }
+            };
+            tokio::select! {
+                () = session() => unreachable!(),
+                outcome = taken_over => outcome,
+            }
+        });
+        let ExecutionOutcome::Failed { node: reporter, .. } = &outcome else {
+            panic!("interrupted clone must fail: {outcome:?}");
+        };
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Failed {
+                node: reporter.clone(),
+                failure: CloneFailureCode::Interrupted,
+                retained_path: Some(NodePath::new(directory.to_str().unwrap())),
+            }
+        );
+        // A terminal result is no longer queried, unlike the permanent Unknown it replaces.
+        assert_eq!(
+            runtime
+                .block_on(store.pending_dispatches(&NodeId::new("test-node")))
+                .unwrap(),
+            vec![]
+        );
+        assert!(directory.is_dir());
+        node.kill();
+    });
+}
