@@ -1,4 +1,7 @@
-//! One blocking execution owner and an independently responsive, bounded control session.
+//! One blocking database owner, a clone executor that waits on Git for it, and an independently
+//! responsive, bounded control session.
+mod clones;
+mod executor;
 mod session;
 mod worker;
 use crate::{CloneConfig, NodeConfig, ProcessConfig, Shutdown};

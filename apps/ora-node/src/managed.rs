@@ -1,7 +1,7 @@
 //! Node-owned Git execution association; process facts remain owned by host and guardian.
 mod repository;
 mod transport;
-pub(crate) use repository::{AttemptSettlement, CloneRecovery};
+pub(crate) use repository::{AttemptSettlement, CloneHost};
 
 use crate::git::ExecutionGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};
@@ -68,6 +68,7 @@ pub struct ManagedGitRunner<W: WriteGuard = DurableWrites> {
     shutdown: Shutdown,
     owner: RunLifetime,
     reads: RefCell<Option<(ScopeId, usize)>>,
+    clone_host: CloneHost,
 }
 
 impl<W: WriteGuard> ManagedGitRunner<W> {
@@ -87,7 +88,12 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             ));
         }
         let stat = ora_utils::process::linux_process(std::process::id())?;
+        let owner = RunLifetime::TerminateOnOwnerExit {
+            pid: stat.pid,
+            start_ticks: stat.start_ticks,
+        };
         Ok(Self {
+            clone_host: CloneHost::new(config.clone(), shutdown.clone(), owner)?,
             journal,
             config,
             shutdown,
@@ -95,10 +101,7 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
-            owner: RunLifetime::TerminateOnOwnerExit {
-                pid: stat.pid,
-                start_ticks: stat.start_ticks,
-            },
+            owner,
             reads: RefCell::new(None),
         })
     }

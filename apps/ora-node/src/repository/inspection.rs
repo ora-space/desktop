@@ -1,10 +1,11 @@
 use super::*;
+use crate::managed::CloneHost;
 use gitlancer::{GitCommand, GitIntent};
 use std::io;
 
 /// Requires the original branch and remote-tracking commit, not a same-named tag or later user commit.
-pub(super) fn verify<W: WriteGuard>(
-    runner: &ManagedGitRunner<W>,
+pub(super) fn verify(
+    host: &CloneHost,
     record: &CloneExecution,
     config: &CloneConfig,
 ) -> io::Result<Option<CommitId>> {
@@ -29,7 +30,7 @@ pub(super) fn verify<W: WriteGuard>(
             GitIntent::ReadOnly,
         );
         config.constrain(&mut command);
-        let output = runner.inspect_clone(&command)?;
+        let output = host.inspect(&command)?;
         if output.code != Some(0) {
             return Err(io::Error::other("local checkout facts unavailable"));
         }

@@ -1,10 +1,12 @@
 mod config;
+mod drive;
 mod inspection;
 pub use config::{CloneConfig, CloneSsh};
+pub(crate) use drive::{CloneStep, CloneStepResult};
 
 use crate::{
     Clock, Error, ManagedGitRunner, Node, NodeState, WorktreeGit, WriteGuard,
-    managed::{AttemptSettlement, CloneRecovery},
+    managed::AttemptSettlement,
 };
 use gitlancer::git::branch_clone::build_branch_clone_command;
 use ora_node_db::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
@@ -115,7 +117,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
     }
 
     /// Updates admission visibility without confusing an unknown clone with an unknown Worktree.
-    fn refresh_clone_state(&mut self) -> Result<(), Error> {
+    pub(crate) fn refresh_clone_state(&mut self) -> Result<(), Error> {
         self.state = if self.database.recoverable()?.is_empty()
             && self.database.recoverable_clones()?.is_empty()
         {
@@ -124,172 +126,6 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             NodeState::RecoveryPending
         };
         Ok(())
-    }
-
-    /// Advances only proven phases; any ambiguity keeps the target and original execution reserved.
-    fn drive_clone(&mut self, mut record: CloneExecution) -> Result<(), Error> {
-        let phase = match &record.progress {
-            CloneProgress::Pending(phase) | CloneProgress::Unknown(phase) => phase.clone(),
-            CloneProgress::Completed(_) => return Ok(()),
-        };
-        // Process responsibility is reconciled even if configuration or filesystem ownership changed.
-        let recovered = if matches!(phase, ClonePhase::Dispatched { .. }) {
-            Some(self.git.runner().recover_clone(&record))
-        } else {
-            None
-        };
-        let Some(config) = self.repository_config.clone() else {
-            return Ok(());
-        };
-        if record.target.root != config.repository_root {
-            return self.unknown_clone(&record);
-        }
-        if matches!(
-            record.progress,
-            CloneProgress::Unknown(ClonePhase::Reserved)
-        ) {
-            return Ok(());
-        }
-        if phase == ClonePhase::Reserved {
-            // Recheck topology at use time: configuration may have outlived a replaced root.
-            // This is accidental-replacement protection, not a sandbox against trusted owners.
-            if ora_utils::path::open_trusted_path(
-                &record.target.root,
-                self.git.runner().process_config().expected_uid,
-                ora_utils::path::TrustedPathKind::Directory,
-            )
-            .is_err()
-            {
-                return self.unknown_clone(&record);
-            }
-            match fs::DirBuilder::new()
-                .mode(/*mode*/ 0o700)
-                .create(&record.target.path)
-            {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    return self.unknown_clone(&record);
-                }
-                Err(_) => {
-                    return self.fail_clone(
-                        &record,
-                        CloneFailureCode::OperationFailed,
-                        CloneResidual::NoDirectory {},
-                    );
-                }
-            }
-            let evidence = (|| -> Result<String, Box<dyn std::error::Error>> {
-                fs::File::open(&record.target.path)?.sync_all()?;
-                fs::File::open(&record.target.root)?.sync_all()?;
-                Ok(serde_json::to_string(&DirectoryEvidence {
-                    root: DirectoryIdentity::read(&record.target.root)?,
-                    target: DirectoryIdentity::read(&record.target.path)?,
-                })?)
-            })();
-            let Ok(identity) = evidence else {
-                return self.unknown_clone(&record);
-            };
-            record = self.database.advance_clone(
-                &record,
-                CloneProgress::Pending(ClonePhase::DirectoryCreated { identity }),
-            )?;
-        }
-        let identity = match &record.progress {
-            CloneProgress::Pending(
-                ClonePhase::DirectoryCreated { identity } | ClonePhase::Dispatched { identity },
-            )
-            | CloneProgress::Unknown(
-                ClonePhase::DirectoryCreated { identity } | ClonePhase::Dispatched { identity },
-            ) => identity.clone(),
-            CloneProgress::Pending(ClonePhase::Reserved)
-            | CloneProgress::Unknown(ClonePhase::Reserved)
-            | CloneProgress::Completed(_) => return Ok(()),
-        };
-        if !matches_directory(&record.target, &identity) {
-            return self.unknown_clone(&record);
-        }
-        let newly_dispatched = matches!(
-            record.progress,
-            CloneProgress::Pending(ClonePhase::DirectoryCreated { .. })
-                | CloneProgress::Unknown(ClonePhase::DirectoryCreated { .. })
-        );
-        if newly_dispatched {
-            // DirectoryCreated has no network effects; a journal write failure is safely retryable.
-            self.git.runner().prepare_clone(&record)?;
-            record = self.database.advance_clone(
-                &record,
-                CloneProgress::Pending(ClonePhase::Dispatched {
-                    identity: identity.clone(),
-                }),
-            )?;
-        }
-        let mut command = build_branch_clone_command(
-            record.command.payload.spec.repository.as_str(),
-            record.command.payload.spec.branch.as_str(),
-            &record.target.path,
-            &record.target.root,
-            config.environment()?,
-        );
-        config.constrain(&mut command);
-        let settlement = match recovered {
-            None | Some(Ok(CloneRecovery::Absent)) => {
-                self.git.runner().execute_clone(&record, &command)
-            }
-            Some(Ok(CloneRecovery::Settled(settlement))) => Ok(settlement),
-            Some(Err(error)) => Err(error),
-        };
-        let settlement = match settlement {
-            Ok(AttemptSettlement::Unverified) | Err(_) => return self.unknown_clone(&record),
-            Ok(settlement) => settlement,
-        };
-        if !matches_directory(&record.target, &identity) {
-            return self.unknown_clone(&record);
-        }
-        let residual = CloneResidual::Retained {
-            repository_id: record.target.repository_id.clone(),
-            path: NodePath::new(
-                record
-                    .target
-                    .path
-                    .to_str()
-                    .ok_or_else(|| Error::Configuration("non-UTF-8 clone target".into()))?,
-            ),
-        };
-        // A terminated attempt never reached Git's own verdict: it cannot have succeeded, and the
-        // caller may retry with a new execution instead of investigating a Git failure.
-        let code = match settlement {
-            AttemptSettlement::Exited(code) => code,
-            AttemptSettlement::Terminated(_) => {
-                return self.fail_clone(&record, CloneFailureCode::Interrupted, residual);
-            }
-            AttemptSettlement::Unverified => return self.unknown_clone(&record),
-        };
-        if code != 0 {
-            return self.fail_clone(&record, CloneFailureCode::OperationFailed, residual);
-        }
-        let inspected = inspection::verify(self.git.runner(), &record, &config);
-        if !matches_directory(&record.target, &identity) {
-            return self.unknown_clone(&record);
-        }
-        match inspected {
-            Ok(Some(commit)) => self
-                .database
-                .complete_clone(
-                    &record,
-                    CloneExecutionResult::CloneReady(CloneReady {
-                        node: self.identity.clone(),
-                        spec: record.command.payload.spec.clone(),
-                        repository_id: record.target.repository_id.clone(),
-                        path: NodePath::new(record.target.path.to_str().ok_or_else(|| {
-                            Error::Configuration("non-UTF-8 clone target".into())
-                        })?),
-                        commit,
-                    }),
-                )
-                .map_err(Error::from),
-            Ok(None) => self.fail_clone(&record, CloneFailureCode::BranchNotFound, residual),
-            Err(_) => self.unknown_clone(&record),
-        }
     }
 
     /// Persists uncertainty without allowing another clone or deleting an ambiguous directory.

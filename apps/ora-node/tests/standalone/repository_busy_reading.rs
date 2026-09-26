@@ -1,5 +1,5 @@
-//! The session keeps reading while Git occupies the worker, so a peer that leaves releases the
-//! control slot at once instead of after the admission deadline, and router pings are answered.
+//! The session keeps reading while clone Git runs, so a peer that leaves releases the control
+//! slot at once instead of after the admission deadline, and router pings are answered.
 use super::*;
 use crate::support::until;
 use futures_util::{SinkExt, StreamExt};
@@ -19,8 +19,8 @@ use tokio_tungstenite::tungstenite::{
 /// proves the Node noticed the departed peer rather than timing out the unanswered request.
 const RELEASE_BOUND: Duration = Duration::from_secs(/*secs*/ 5);
 
-/// How long a status query must stay unanswered before the worker counts as occupied by Git.
-const UNANSWERED: Duration = Duration::from_millis(/*millis*/ 800);
+/// How long to wait for a status reply; the worker answers without waiting on Git.
+const ANSWER: Duration = Duration::from_secs(/*secs*/ 5);
 
 /// The deployment owner's handshake.
 fn hello() -> ControllerToNodeMessage {
@@ -33,7 +33,7 @@ fn hello() -> ControllerToNodeMessage {
     })
 }
 
-/// Asks for the status of `command`; while Git occupies the worker the reply stays queued.
+/// Asks for the status of `command`.
 fn status_query(command: &CloneRepositoryMessage) -> ControllerToNodeMessage {
     ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -45,7 +45,7 @@ fn status_query(command: &CloneRepositoryMessage) -> ControllerToNodeMessage {
     })
 }
 
-/// Reads until the Accepted status, proving the clone is durable and will occupy the worker.
+/// Reads until the Accepted status, proving the clone is durable and will be dispatched.
 async fn accepted_ipc(stream: &mut UnixStream) {
     loop {
         if let Some(NodeToControllerMessage::ExecutionStatus(status)) =
@@ -57,9 +57,35 @@ async fn accepted_ipc(stream: &mut UnixStream) {
     }
 }
 
-/// Over IPC, ending a session whose status query waits behind Git frees the slot immediately.
+/// Queries until the clone's Git is dispatched and waiting on the paused remote.
+async fn running_ipc(stream: &mut UnixStream, command: &CloneRepositoryMessage) {
+    loop {
+        write_controller_message(stream, &status_query(command))
+            .await
+            .unwrap();
+        let state = timeout(ANSWER, async {
+            loop {
+                match read_node_message(stream).await.unwrap() {
+                    Some(NodeToControllerMessage::Heartbeat(_)) => {}
+                    Some(NodeToControllerMessage::ExecutionStatus(status)) => {
+                        return status.payload.state;
+                    }
+                    other => panic!("unexpected message {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("status queries are answered while Git runs");
+        if state == ExecutionState::Running {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
+    }
+}
+
+/// Over IPC, ending a session while its clone's Git runs frees the slot immediately.
 #[test]
-fn ipc_peer_leaving_while_worker_runs_git_releases_the_control_slot() {
+fn ipc_peer_leaving_while_clone_git_runs_releases_the_control_slot() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         fixture.git(&["update-server-info"]);
@@ -91,26 +117,7 @@ fn ipc_peer_leaving_while_worker_runs_git_releases_the_control_slot() {
                 .await
                 .unwrap();
                 accepted_ipc(&mut stream).await;
-                // The worker picks the clone up on its next recovery pass; until then a query is
-                // answered. A query left unanswered for a while is waiting behind the paused Git.
-                loop {
-                    write_controller_message(&mut stream, &status_query(&command))
-                        .await
-                        .unwrap();
-                    let answered = timeout(UNANSWERED, async {
-                        loop {
-                            match read_node_message(&mut stream).await.unwrap() {
-                                Some(NodeToControllerMessage::Heartbeat(_)) => {}
-                                Some(NodeToControllerMessage::ExecutionStatus(_)) => return,
-                                other => panic!("unexpected message {other:?}"),
-                            }
-                        }
-                    })
-                    .await;
-                    if answered.is_err() {
-                        break;
-                    }
-                }
+                running_ipc(&mut stream, &command).await;
                 // Half-close like a peer that has finished but whose socket lingers: heartbeat
                 // writes still succeed, so only reading the end of stream can release the slot.
                 stream.shutdown().await.unwrap();
@@ -141,10 +148,10 @@ fn ipc_peer_leaving_while_worker_runs_git_releases_the_control_slot() {
     });
 }
 
-/// Over WebSocket, the Node answers pings and honors a close while its worker is busy, so a peer
+/// Over WebSocket, the Node answers pings and honors a close while clone Git runs, so a peer
 /// reconnecting through a restarted router is admitted instead of refused with `4409`.
 #[test]
-fn websocket_session_answers_ping_and_close_while_worker_runs_git() {
+fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         fixture.git(&["update-server-info"]);
@@ -190,11 +197,11 @@ fn websocket_session_answers_ping_and_close_while_worker_runs_git() {
                             if status.payload.state == ExecutionState::Accepted
                     );
                 }
-                // As over IPC, keep querying until one query stays unanswered behind the paused Git.
+                // As over IPC, keep querying until the clone's Git is dispatched and paused.
                 loop {
                     let query = encode_controller_frame(&status_query(&command)).unwrap();
                     socket.send(Message::Binary(query.into())).await.unwrap();
-                    let answered = timeout(UNANSWERED, async {
+                    let state = timeout(ANSWER, async {
                         loop {
                             let Message::Binary(frame) = socket.next().await.unwrap().unwrap()
                             else {
@@ -202,15 +209,19 @@ fn websocket_session_answers_ping_and_close_while_worker_runs_git() {
                             };
                             match decode_node_frame(&frame).unwrap() {
                                 NodeToControllerMessage::Heartbeat(_) => {}
-                                NodeToControllerMessage::ExecutionStatus(_) => return,
+                                NodeToControllerMessage::ExecutionStatus(status) => {
+                                    return status.payload.state;
+                                }
                                 other => panic!("unexpected message {other:?}"),
                             }
                         }
                     })
-                    .await;
-                    if answered.is_err() {
+                    .await
+                    .expect("status queries are answered while Git runs");
+                    if state == ExecutionState::Running {
                         break;
                     }
+                    tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
                 }
                 socket
                     .send(Message::Ping(b"router".to_vec().into()))
@@ -232,7 +243,7 @@ fn websocket_session_answers_ping_and_close_while_worker_runs_git() {
                     }
                 })
                 .await
-                .expect("a busy worker must not stop the Node from answering pings");
+                .expect("running clone Git must not stop the Node from answering pings");
                 socket
                     .send(Message::Close(Some(CloseFrame {
                         code: CloseCode::Normal,
@@ -279,10 +290,10 @@ fn websocket_session_answers_ping_and_close_while_worker_runs_git() {
     });
 }
 
-/// A Controller polling on its timer during a long Git pass outruns the unanswered-request bound;
-/// the excess queries are shed rather than closing the session, and answers resume after Git.
+/// A Controller flooding status queries during a long clone keeps its session: excess queries
+/// beyond the unanswered-request bound are shed rather than closing it, and answers keep coming.
 #[test]
-fn polling_beyond_the_unanswered_bound_keeps_the_session_while_git_runs() {
+fn polling_flood_while_git_runs_keeps_the_session() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         fixture.git(&["update-server-info"]);
@@ -314,55 +325,36 @@ fn polling_beyond_the_unanswered_bound_keeps_the_session_while_git_runs() {
                 .await
                 .unwrap();
                 accepted_ipc(&mut stream).await;
-                // Wait until a query stays unanswered, then send several times the bound more.
-                loop {
-                    write_controller_message(&mut stream, &status_query(&command))
-                        .await
-                        .unwrap();
-                    let answered = timeout(UNANSWERED, async {
-                        while !matches!(
-                            read_node_message(&mut stream).await.unwrap(),
-                            Some(NodeToControllerMessage::ExecutionStatus(_))
-                        ) {}
-                    })
-                    .await;
-                    if answered.is_err() {
-                        break;
-                    }
-                }
+                running_ipc(&mut stream, &command).await;
                 for _ in 0..48 {
                     write_controller_message(&mut stream, &status_query(&command))
                         .await
                         .unwrap();
                 }
-                // The session outlives the flood: heartbeats keep arriving while Git is paused.
-                for _ in 0..5 {
-                    assert!(matches!(
-                        timeout(
-                            Duration::from_secs(/*secs*/ 2),
-                            read_node_message(&mut stream)
-                        )
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                        Some(NodeToControllerMessage::Heartbeat(_))
-                    ));
-                }
-                server.paused.store(false, Ordering::SeqCst);
-                timeout(Duration::from_secs(/*secs*/ 35), async {
-                    loop {
-                        match read_node_message(&mut stream).await.unwrap() {
+                // The session outlives the flood: while Git stays paused, answers and heartbeats
+                // keep arriving and the connection never closes.
+                let (mut answers, mut beats) = (0, 0);
+                let window = tokio::time::sleep(Duration::from_secs(/*secs*/ 3));
+                tokio::pin!(window);
+                loop {
+                    tokio::select! {
+                        _ = &mut window => break,
+                        message = read_node_message(&mut stream) => match message.unwrap() {
                             Some(NodeToControllerMessage::ExecutionStatus(status)) => {
-                                assert_eq!(status.execution_id, command.execution_id);
-                                return;
+                                assert_eq!(status.payload.state, ExecutionState::Running);
+                                answers += 1;
                             }
-                            Some(_) => {}
+                            Some(NodeToControllerMessage::Heartbeat(_)) => beats += 1,
+                            Some(other) => panic!("unexpected message {other:?}"),
                             None => panic!("session closed after the flood of queries"),
-                        }
+                        },
                     }
-                })
-                .await
-                .expect("queued queries are answered once Git finishes");
+                }
+                assert!(
+                    answers > 0 && beats > 0,
+                    "flood left {answers} answers and {beats} heartbeats"
+                );
+                server.paused.store(false, Ordering::SeqCst);
             });
         child.terminate();
     });

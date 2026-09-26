@@ -62,19 +62,27 @@ Every close, whatever its code, still only means "connection unavailable".
 
 Hello negotiates the existing version, Node identity/incarnation and clone capability. The session
 accepts clone, status and exact acknowledgement messages; unsupported/conflicting messages close it.
-The Node sends heartbeats independently of the blocking Git owner and actively replays bounded pages
+The Node sends heartbeats independently of clone Git and actively replays bounded pages
 of unacknowledged clone events. Status replies do not acknowledge events.
 
 Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
 that guard; Git runs afterwards. Disconnect or session revocation discards unaccepted queued work,
 but cannot cancel already accepted clones. Reads, writes and command admission replies use the finite
-`frame_timeout_ms` deadline; an admission reply's deadline starts when its frame arrives. A busy
-worker can therefore cause a query/command session to close even while heartbeats are arriving;
-reconnect queries the original execution, not a new attempt.
+`frame_timeout_ms` deadline; an admission reply's deadline starts when its frame arrives.
+
+The worker that answers admission owns the Node database and never waits on Git. Every clone step
+that needs the host (dispatching the Run, settling it after its Scope closes, inspecting a successful
+checkout) runs on a separate clone executor, one step at a time; the worker records each step's input
+before handing it over and persists what the executor observed. Status queries, acknowledgements and
+replay are therefore answered while a clone's Git waits on its remote, and a second clone is accepted
+at once but dispatched only after the first one's step finishes. A stop lets the outstanding step
+finish for up to `shutdown_grace_ms + cleanup_timeout_ms`; anything left is settled from the recorded
+attempt on the next start. See the
+[decision](../../specs/decisions/node/repository/20260925-clone-git-effects-run-outside-the-admission-worker.md).
 
 Reading never waits for the worker. The session reads the next frame while earlier requests wait for
 their answers, so a peer's end of stream, a WebSocket close or ping, and a truncated frame are seen
-even while Git occupies the worker: a router that restarts mid-clone gets its close honored and the
+at once, including while a clone's Git runs: a router that restarts mid-clone gets its close honored and the
 control slot released at once, instead of the reconnect being refused with `4409`. Answers leave in
 request order. At most 15 requests may be unanswered (one worker queue slot stays free for replay).
 Beyond that, status queries are dropped, because the Controller polls on a timer and asks again, and
@@ -83,8 +91,7 @@ any other message closes the session so the Controller reconciles it by query af
 The Node's per-frame read deadline is also the Controller liveness deadline. On every
 `query_interval_ms` tick the Controller sends exactly one frame: a status query for a pending
 dispatch, or, when nothing is pending, a Controller `heartbeat` carrying its `controller_id`. The Node
-handles that heartbeat inside the session read loop without entering the worker queue, so it never
-waits behind Git, and ends the session if the `controller_id` is not its owner. An idle session
+handles that heartbeat inside the session read loop without entering the worker queue, and ends the session if the `controller_id` is not its owner. An idle session
 therefore stays open, while a vanished Controller or half-open connection releases the control slot
 within `frame_timeout_ms`. Keep `query_interval_ms` well below the Node's `frame_timeout_ms` (at most
 half of it); the two live in different processes' configuration and cannot be checked at startup.
