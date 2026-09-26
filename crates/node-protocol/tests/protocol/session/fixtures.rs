@@ -73,7 +73,33 @@ pub(super) fn heartbeat() -> Case {
     }
 }
 
+/// Pairs the Controller heartbeat typed fixture with an independent wire contract.
+pub(super) fn controller_heartbeat() -> Case {
+    Case {
+        message: Message::Controller(ControllerToNodeMessage::Heartbeat(
+            ControllerHeartbeatMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                payload: ControllerHeartbeat {
+                    controller_id: ControllerId::new("controller-1"),
+                },
+            },
+        )),
+        wire: json!({
+            "message_type": "heartbeat",
+            "protocol_version": 1,
+            "payload": {
+                "controller_id": "controller-1"
+            }
+        }),
+    }
+}
+
 /// Lists this business slice’s legal wire shapes.
 pub(super) fn cases() -> Vec<Case> {
-    vec![hello(), hello_accepted(), heartbeat()]
+    vec![
+        hello(),
+        hello_accepted(),
+        heartbeat(),
+        controller_heartbeat(),
+    ]
 }
