@@ -302,3 +302,110 @@ fn busy_clone_keeps_heartbeats_and_revokes_timed_out_queued_command() {
         child.terminate();
     });
 }
+
+/// An idle Controller keeps its session past the read deadline with heartbeats alone, and a
+/// heartbeat naming another Controller ends the session and releases admission.
+#[test]
+fn controller_heartbeats_keep_idle_session_and_foreign_heartbeat_ends_it() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let endpoint = fixture.config().home_directory.join("control.sock");
+        let mut child =
+            ipc::launch_with_deadline(&fixture, &config, /*frame_timeout_ms*/ 1000);
+        until(|| {
+            fs::read_to_string(fixture.path().join("ipc.log"))
+                .unwrap_or_default()
+                .contains("Node IPC listening")
+        });
+        let heartbeat = |owner: &str| {
+            ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                payload: ControllerHeartbeat {
+                    controller_id: ControllerId::new(owner),
+                },
+            })
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut stream = ipc::connect(&endpoint, "owner").await;
+                assert!(matches!(
+                    read_node_message(&mut stream).await.unwrap(),
+                    Some(NodeToControllerMessage::HelloAccepted(_))
+                ));
+                {
+                    let (mut reader, mut writer) = stream.split();
+                    let beat = async {
+                        let mut tick = tokio::time::interval(Duration::from_millis(/*millis*/ 250));
+                        loop {
+                            tick.tick().await;
+                            write_controller_message(&mut writer, &heartbeat("owner"))
+                                .await
+                                .unwrap();
+                        }
+                    };
+                    let drain = async {
+                        loop {
+                            let message = read_node_message(&mut reader).await.unwrap();
+                            assert!(
+                                matches!(message, Some(NodeToControllerMessage::Heartbeat(_))),
+                                "idle session with Controller heartbeats must stay open, got {message:?}"
+                            );
+                        }
+                    };
+                    // Three read deadlines with no command traffic: only heartbeats flow.
+                    let idle = timeout(Duration::from_secs(/*secs*/ 3), async {
+                        tokio::select! { () = beat => {}, () = drain => {} }
+                    })
+                    .await;
+                    assert!(idle.is_err(), "idle session ended before the observation window");
+                }
+                // A refused IPC connection may be closed before or after our Hello is written, so
+                // the write can fail and the read may see end of stream or a reset; each means
+                // admission was not granted.
+                let mut rejected = tokio::net::UnixStream::connect(&endpoint).await.unwrap();
+                let hello = ControllerToNodeMessage::Hello(HelloMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Hello {
+                        controller_id: ControllerId::new("owner"),
+                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                    },
+                });
+                let _ = write_controller_message(&mut rejected, &hello).await;
+                let refusal =
+                    timeout(Duration::from_secs(/*secs*/ 2), read_node_message(&mut rejected))
+                        .await
+                        .unwrap();
+                assert!(
+                    matches!(refusal, Ok(None) | Err(FrameError::Io(_))),
+                    "the heartbeating session must still own admission, got {refusal:?}"
+                );
+                write_controller_message(&mut stream, &heartbeat("other"))
+                    .await
+                    .unwrap();
+                timeout(Duration::from_secs(/*secs*/ 2), async {
+                    while let Some(message) = read_node_message(&mut stream).await.unwrap() {
+                        assert!(matches!(message, NodeToControllerMessage::Heartbeat(_)));
+                    }
+                })
+                .await
+                .expect("a foreign Controller heartbeat must end the session");
+                let mut replacement = ipc::connect(&endpoint, "owner").await;
+                assert!(matches!(
+                    timeout(
+                        Duration::from_secs(/*secs*/ 2),
+                        read_node_message(&mut replacement)
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                    Some(NodeToControllerMessage::HelloAccepted(_))
+                ));
+            });
+        child.terminate();
+    });
+}

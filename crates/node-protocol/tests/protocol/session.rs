@@ -181,5 +181,16 @@ async fn rejects_missing_and_empty_fields() -> Result<(), TestError> {
             ],
         )
         .await?;
+    fixtures::controller_heartbeat()
+        .assert_fields(
+            &[
+                "/message_type",
+                "/protocol_version",
+                "/payload",
+                "/payload/controller_id",
+            ],
+            &[("/payload/controller_id", "controller_id")],
+        )
+        .await?;
     Ok(())
 }

@@ -48,7 +48,7 @@ gateway errors indistinguishable from an unreachable Node. IPC has no close code
 peer only sees the socket close during the handshake; the Controller cannot tell "occupied" from a
 Node that closed because the ControllerId does not match, and logs both as a protocol failure before
 reconnecting after `reconnect_ms`. WebSocket keepalive pings are not sent by either side; both only
-answer the peer's pings, and the Node heartbeat keeps traffic flowing.
+answer the peer's pings, and the heartbeats in both directions keep traffic flowing.
 Hello negotiates the existing version, Node identity/incarnation and clone capability. The session
 accepts clone, status and exact acknowledgement messages; unsupported/conflicting messages close it.
 The Node sends heartbeats independently of the blocking Git owner and actively replays bounded pages
@@ -57,7 +57,9 @@ of unacknowledged clone events. Status replies do not acknowledge events.
 Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
 that guard; Git runs afterwards. Disconnect or session revocation discards unaccepted queued work,
 but cannot cancel already accepted clones. Reads, writes and command admission replies use the finite
-`frame_timeout_ms` deadline; an admission reply's deadline starts when its frame arrives.
+`frame_timeout_ms` deadline; an admission reply's deadline starts when its frame arrives. A busy
+worker can therefore cause a query/command session to close even while heartbeats are arriving;
+reconnect queries the original execution, not a new attempt.
 
 Reading never waits for the worker. The session reads the next frame while earlier requests wait for
 their answers, so a peer's end of stream, a WebSocket close or ping, and a truncated frame are seen
@@ -65,10 +67,18 @@ even while Git occupies the worker: a router that restarts mid-clone gets its cl
 control slot released at once, instead of the reconnect being refused with `4409`. Answers leave in
 request order. At most 15 requests may be unanswered (one worker queue slot stays free for replay).
 Beyond that, status queries are dropped, because the Controller polls on a timer and asks again, and
-any other message closes the session so the Controller reconciles it by query after reconnecting. A busy worker can therefore cause a query/command session to close even
-while heartbeats are arriving; reconnect queries the original execution, not a new attempt. An idle
-Controller should periodically query its executions. Slow readers may be disconnected and reconnect
-for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
+any other message closes the session so the Controller reconciles it by query after reconnecting.
+
+The Node's per-frame read deadline is also the Controller liveness deadline. On every
+`query_interval_ms` tick the Controller sends exactly one frame: a status query for a pending
+dispatch, or, when nothing is pending, a Controller `heartbeat` carrying its `controller_id`. The Node
+handles that heartbeat inside the session read loop without entering the worker queue, so it never
+waits behind Git, and ends the session if the `controller_id` is not its owner. An idle session
+therefore stays open, while a vanished Controller or half-open connection releases the control slot
+within `frame_timeout_ms`. Keep `query_interval_ms` well below the Node's `frame_timeout_ms` (at most
+half of it); the two live in different processes' configuration and cannot be checked at startup.
+Controller and Node must run the same release: an older Node rejects the Controller heartbeat.
+Slow readers may be disconnected and reconnect for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
 
 A real WebSocket test runs the production Controller session against a production Node, takes over a
 clone result, observes the `4409` refusal of a second connection and rejects a mismatched Node identity. Another

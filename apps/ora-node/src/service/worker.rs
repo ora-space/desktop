@@ -122,8 +122,10 @@ fn handle(
             node.acknowledge(&ack)?;
             Ok(vec![])
         }
+        // The session read loop consumes Controller heartbeats; they never reach admission.
         Request::Message(
             ControllerToNodeMessage::Hello(_)
+            | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_),
         ) => Err(crate::Error::Configuration(
