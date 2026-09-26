@@ -62,7 +62,12 @@ enum Request {
 struct Work {
     active: Arc<Mutex<bool>>,
     request: Request,
-    reply: oneshot::Sender<Result<Vec<NodeToControllerMessage>, String>>,
+    reply: oneshot::Sender<Result<Vec<NodeToControllerMessage>, Rejection>>,
+}
+/// Why the worker refused a request, and the close code the session ends with because of it.
+struct Rejection {
+    close: ora_node_transport::CloseReason,
+    message: String,
 }
 #[derive(Clone)]
 struct SessionInfo {
@@ -111,10 +116,21 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
     let startup = started.await.map_err(io::Error::other)?;
     let result = match startup {
         Ok(info) => match control {
-            Some(control) => tokio::select! {
-                result = session::serve(control, info, sender, shutdown.clone()) => result,
-                result = &mut worker => return result.map_err(io::Error::other)?.map_err(io::Error::other),
-            },
+            Some(control) => {
+                let session = session::serve(control, info, sender, shutdown.clone());
+                tokio::pin!(session);
+                tokio::select! {
+                    result = &mut session => result,
+                    result = &mut worker => {
+                        // A normal stop can finish the worker first; the session then only tells
+                        // the Controller it is stopping, bounded by its frame deadline.
+                        if shutdown.requested() {
+                            let _ = session.await;
+                        }
+                        return result.map_err(io::Error::other)?.map_err(io::Error::other);
+                    }
+                }
+            }
             None => {
                 while !shutdown.requested() && !worker.is_finished() {
                     tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;

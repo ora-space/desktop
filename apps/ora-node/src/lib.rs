@@ -77,6 +77,9 @@ pub enum Error {
     Shutdown(String),
     #[error("invalid Node configuration: {0}")]
     Configuration(String),
+    /// The Controller sent a message this session does not handle.
+    #[error("message is not supported in this session")]
+    UnsupportedMessage,
 }
 
 /// Exclusive mutable execution access serializes commands and recovery for the leased database.
