@@ -1,0 +1,9 @@
+# The images only compile the Rust workspace; everything else stays out of the build context.
+.git
+target
+**/node_modules
+**/dist
+third_party
+specs
+.data
+.tmp

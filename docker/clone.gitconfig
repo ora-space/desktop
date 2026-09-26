@@ -1,0 +1,2 @@
+# Non-interactive clone configuration for sandbox Nodes. The image ships no credentials; mount a
+# replacement at /etc/ora/clone.gitconfig to add a CA bundle or a credential helper.
