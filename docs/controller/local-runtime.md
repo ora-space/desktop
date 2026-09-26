@@ -100,6 +100,15 @@ only), stale eligibility (the lease is forgotten and re-acquired by the next ren
 lease is not held nothing is claimed, dispatched or acknowledged, and the Controller never falls back
 to writing locally.
 
+Tenant work is claimed only after a session with the static Node completed its handshake in this
+process, which proves that the configured `node_id` is the Node behind the endpoint. A dispatch
+names its Node for good (the Node may already have run it, so it is never moved to another
+identity); registering work under a misconfigured `node_id` would leave it pending forever. Until
+the handshake succeeds the work stays queued with Cloud and the Controller logs once that it is
+waiting; the first successful handshake triggers a claim at once. The proof is not withdrawn when
+the Node disconnects later: work registered then simply waits for it to return
+([ADR](../../specs/decisions/controller/node-management/20260926-static-node-identity-proven-before-dispatch.md)).
+
 While it holds the lease, the Controller keeps one `Watch` stream open, and the stream's state decides
 when it claims:
 
@@ -255,8 +264,9 @@ duplicate takeover, conflicting facts and the retirement of completed executions
 The Cloud adapter's verdict mapping, same-identity retransmission and message translation are unit
 tested, and so are the transitions of the stream state. `apps/ora-controller/tests/cloud.rs` drives
 the runtime against an in-memory Cloud that serves the real contract through the test-only server
-stubs of `ora-controller-proto` (`test-server` feature), covering signal-driven claiming, work
-accepted before the stream opened, fallback and reopening after a broken stream, drains, a refused
+stubs of `ora-controller-proto` (`test-server` feature) and a fake static Node over IPC, covering
+signal-driven claiming, work queued before the Node's handshake, work held back while the Node
+presents another identity, fallback and reopening after a broken stream, drains, a refused
 stream after a drain, a stale epoch on opening, batching, and cancelling the stream and releasing the
 lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state, serves no
 JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its

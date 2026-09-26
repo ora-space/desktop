@@ -2,8 +2,9 @@
 //! server stubs of `ora-controller-proto`. It keeps just enough authority to exercise the
 //! Controller's Cloud adapter: one lease with an epoch, a queue of accepted work, registered
 //! dispatches, and at most one `Watch` subscriber. Every call is recorded so tests can compare the
-//! whole conversation, and hooks let a test publish signals, drain, break the stream, or refuse
-//! later subscriptions.
+//! whole conversation of the coordination loop; the reads a Node session repeats on every query
+//! tick are recorded apart so they do not make that order depend on session timing. Hooks let a
+//! test publish signals, drain, break the stream, or refuse later subscriptions.
 use futures::{Stream, stream};
 use ora_controller_proto::v1::{
     self as proto,
@@ -54,6 +55,8 @@ pub enum WatchPolicy {
 /// The authority's state; tests read it through [`FakeCloud::until`] and [`FakeCloud::calls`].
 pub struct State {
     pub calls: Vec<Call>,
+    /// `GetDispatch` and `ListPendingDispatches`, which Node sessions make on their own schedule.
+    pub reads: Vec<Call>,
     /// The current lease epoch, or `None` while nobody holds it.
     pub epoch: Option<i64>,
     next_epoch: i64,
@@ -109,6 +112,7 @@ impl FakeCloud {
         Self {
             state: Arc::new(Mutex::new(State {
                 calls: Vec::new(),
+                reads: Vec::new(),
                 epoch: None,
                 next_epoch: 1,
                 queue: VecDeque::new(),
@@ -394,7 +398,7 @@ impl ExecutionService for FakeCloud {
     ) -> Result<Response<proto::GetDispatchResponse>, Status> {
         let execution_id = request.into_inner().execution_id;
         let record = self.update(|state| {
-            state.calls.push(Call::GetDispatch);
+            state.reads.push(Call::GetDispatch);
             state
                 .dispatches
                 .iter()
@@ -415,7 +419,7 @@ impl ExecutionService for FakeCloud {
         _request: Request<proto::ListPendingDispatchesRequest>,
     ) -> Result<Response<proto::ListPendingDispatchesResponse>, Status> {
         let records = self.update(|state| {
-            state.calls.push(Call::ListPendingDispatches);
+            state.reads.push(Call::ListPendingDispatches);
             state.dispatches.clone()
         });
         Ok(Response::new(proto::ListPendingDispatchesResponse {

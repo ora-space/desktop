@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::{SessionObserver, run_observed_session};
 use serde::{Deserialize, Serialize};
 use std::{future::Future, io, sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -200,7 +201,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
                     let stop = async {
                         let _ = stopping.wait_for(|stop| *stop).await;
                     };
-                    if let Err(error) = run_session_until(&store, &target, &settings, stop).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
+                    if let Err(error) = run_observed_session(&store, &target, &settings, stop, &StaticNode(&store)).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
                     tokio::select! {
                         _ = stopping.wait_for(|stop| *stop) => return,
                         () = tokio::time::sleep(delay) => {}
@@ -249,6 +250,20 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
         }
         result
     }
+}
+
+/// Reports a static Node's handshake to the store, which may wait for that proof of the
+/// configured identity before it registers work for the Node.
+struct StaticNode<'a, S>(&'a S);
+
+impl<S: CoordinationStore> SessionObserver for StaticNode<'_, S> {
+    fn established(&self, node: &NodeRuntimeIdentity) {
+        self.0.static_node_established(node);
+    }
+
+    fn unresolved(&self, _execution: &ExecutionId) {}
+
+    fn answered(&self, _execution: &ExecutionId) {}
 }
 
 impl<S: CloneIntake> ControllerHandle<S> {
