@@ -5,12 +5,17 @@
 mod claim;
 mod coordinate;
 mod fault;
+mod fleet;
 mod lease;
 mod mapping;
+mod operations;
+mod reports;
 mod signals;
+mod substrate;
 
 use crate::*;
 use fault::Verdict;
+use fleet::SandboxDeployment;
 use ora_controller_proto::v1::{
     self as proto, control_signal_service_client::ControlSignalServiceClient,
     controller_lease_service_client::ControllerLeaseServiceClient,
@@ -56,8 +61,12 @@ impl Clone for CloudStore {
 
 struct Inner {
     id: ControllerId,
-    /// The one Node this deployment dispatches to; the contract keeps the target beside the input.
-    node: NodeId,
+    /// The one static Node tenant clones are dispatched to; the contract keeps the target beside
+    /// the input. A deployment that only drives Workspace sandboxes may have none.
+    node: Option<NodeId>,
+    /// How Workspace sandboxes are created and reached; `None` leaves Workspace operations to
+    /// another Controller deployment.
+    sandboxes: Option<Arc<SandboxDeployment>>,
     channel: Channel,
     /// `controller_id` as request metadata: Cloud records it as the lease and submission holder.
     holder: AsciiMetadataValue,
@@ -75,17 +84,29 @@ impl CloudStore {
         let Persistence::Cloud {
             endpoint,
             claim_interval_ms,
+            substrate,
         } = &config.persistence
         else {
             return Err(Error::Configuration(
                 "cloud adapter requires persistence.kind = cloud".into(),
             ));
         };
-        let [node] = config.nodes.as_slice() else {
-            return Err(Error::Configuration(
-                "cloud persistence dispatches to exactly one configured Node".into(),
-            ));
+        // Tenant clones need their one static Node; sandbox Nodes are found at run time, so a
+        // deployment with a Substrate may leave `nodes` empty.
+        let node = match (config.nodes.as_slice(), substrate) {
+            ([node], _) => Some(node.node_id.clone()),
+            ([], Some(_)) => None,
+            _ => {
+                return Err(Error::Configuration(
+                    "cloud persistence dispatches tenant clones to exactly one configured Node, or to none when substrate is configured".into(),
+                ));
+            }
         };
+        let sandboxes = substrate
+            .as_ref()
+            .map(|substrate| SandboxDeployment::new(substrate, config))
+            .transpose()?
+            .map(Arc::new);
         if *claim_interval_ms == 0 || config.controller_id.as_str().trim().is_empty() {
             return Err(Error::Configuration(
                 "cloud persistence needs a nonzero claim_interval_ms and a controller_id".into(),
@@ -114,7 +135,8 @@ impl CloudStore {
         Ok(Self {
             inner: Arc::new(Inner {
                 id: config.controller_id.clone(),
-                node: node.node_id.clone(),
+                node,
+                sandboxes,
                 channel,
                 holder,
                 lease: Mutex::new(None),
@@ -314,7 +336,7 @@ impl CoordinationStore for CloudStore {
         if record.operation_id != operation.as_str() || record.node_id != session.node_id.as_str() {
             return Err(Error::Conflict);
         }
-        mapping::command(&record, &self.inner.node)
+        mapping::command(&record, &session.node_id)
     }
 
     async fn pending_dispatches(
@@ -365,6 +387,7 @@ mod tests {
             persistence: Persistence::Cloud {
                 endpoint: "http://127.0.0.1:1".into(),
                 claim_interval_ms: 100,
+                substrate: None,
             },
             protected_state_directories: Vec::new(),
             controller_id: ControllerId::new(controller_id),

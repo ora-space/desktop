@@ -105,6 +105,33 @@ impl From<TransportError> for SessionError {
     }
 }
 
+/// What a session tells its owner beyond its own result. Static Nodes need nothing; the Cloud
+/// adapter's sandbox sessions report the handshake to Cloud and stop a Workspace's clone step when
+/// the Node cannot tell an execution's outcome. Callbacks run on the session task and must not
+/// block it.
+pub(crate) trait SessionObserver: Send + Sync {
+    /// The handshake completed with this Node incarnation; the session is live from here on.
+    fn established(&self, node: &NodeRuntimeIdentity);
+    /// The Node still answers `Unknown` for an execution after this connection retransmitted its
+    /// original command once. It may be a retained uncertain attempt or a command the Node has not
+    /// admitted yet; the owner decides how long that may last.
+    fn unresolved(&self, execution: &ExecutionId);
+    /// The Node reported the execution as accepted, running or completed, which ends any earlier
+    /// unresolved report for it.
+    fn answered(&self, execution: &ExecutionId);
+}
+
+/// The observer of sessions nobody watches.
+pub(crate) struct Unobserved;
+
+impl SessionObserver for Unobserved {
+    fn established(&self, _node: &NodeRuntimeIdentity) {}
+
+    fn unresolved(&self, _execution: &ExecutionId) {}
+
+    fn answered(&self, _execution: &ExecutionId) {}
+}
+
 /// Bounds one I/O step; an elapsed deadline is connection loss, not an execution outcome.
 async fn bounded<T>(
     deadline: Duration,
@@ -155,6 +182,17 @@ pub async fn run_session_until<S: CoordinationStore>(
     config: &SessionConfig,
     stop: impl std::future::Future<Output = ()>,
 ) -> Result<(), SessionError> {
+    run_observed_session(store, target, config, stop, &Unobserved).await
+}
+
+/// Like [`run_session_until`], reporting the handshake and unresolved executions to `observer`.
+pub(crate) async fn run_observed_session<S: CoordinationStore, O: SessionObserver>(
+    store: &S,
+    target: &NodeTarget,
+    config: &SessionConfig,
+    stop: impl std::future::Future<Output = ()>,
+    observer: &O,
+) -> Result<(), SessionError> {
     if config.io_timeout_ms == 0 || config.query_interval_ms == 0 {
         return Err(SessionError::Configuration);
     }
@@ -174,30 +212,49 @@ pub async fn run_session_until<S: CoordinationStore>(
             let (receiver, writer) = timeout(deadline, ipc::connect(path))
                 .await
                 .map_err(unreachable)??;
-            drive(store, &target.node_id, config, receiver, writer, stop).await
+            drive(
+                store,
+                &target.node_id,
+                config,
+                receiver,
+                writer,
+                stop,
+                observer,
+            )
+            .await
         }
         NodeEndpoint::WebSocket(endpoint) => {
             let (receiver, writer) = timeout(deadline, websocket::connect(endpoint))
                 .await
                 .map_err(unreachable)??;
-            drive(store, &target.node_id, config, receiver, writer, stop).await
+            drive(
+                store,
+                &target.node_id,
+                config,
+                receiver,
+                writer,
+                stop,
+                observer,
+            )
+            .await
         }
     }
 }
 
 /// Runs one established session until it fails or `stop` completes, then closes the connection
 /// with the matching reason under the I/O deadline.
-async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
+async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: SessionObserver>(
     store: &S,
     node_id: &NodeId,
     config: &SessionConfig,
     mut receiver: R,
     mut writer: W,
     stop: impl std::future::Future<Output = ()>,
+    observer: &O,
 ) -> Result<(), SessionError> {
     let deadline = Duration::from_millis(config.io_timeout_ms);
     let (result, reason) = tokio::select! {
-        result = coordinate(store, node_id, config, &mut receiver, &mut writer) => {
+        result = coordinate(store, node_id, config, &mut receiver, &mut writer, observer) => {
             let Err(error) = result;
             let reason = error.close_reason();
             (Err(error), reason)
@@ -215,12 +272,13 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
 }
 
 /// Runs the handshake and the coordination loop over any frame transport; it only ends by failing.
-async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
+async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: SessionObserver>(
     store: &S,
     node_id: &NodeId,
     config: &SessionConfig,
     receiver: &mut R,
     writer: &mut W,
+    observer: &O,
 ) -> Result<std::convert::Infallible, SessionError> {
     let deadline = Duration::from_millis(config.io_timeout_ms);
     let id = store.id().clone();
@@ -247,6 +305,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
         ));
     }
     let identity = hello.payload.node;
+    observer.established(&identity);
     let mut tick = interval(Duration::from_millis(config.query_interval_ms));
     let mut cursor = 0usize;
     // Unknown can also be a retained uncertain attempt. Repeated Unknown replies must not form
@@ -275,18 +334,27 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
             }
         };
         let ack = take_over(store, &identity, &message).await?;
+        if let NodeToControllerMessage::ExecutionStatus(status) = &message
+            && status.payload.state != ExecutionState::Unknown
+        {
+            observer.answered(&status.execution_id);
+        }
         let reply = if let Some(ack) = ack {
             Some(ControllerToNodeMessage::EventAck(ack))
         } else if let NodeToControllerMessage::ExecutionStatus(status) = &message
             && status.payload.state == ExecutionState::Unknown
             && store.result(&status.execution_id).await?.is_none()
-            && retransmitted.insert(status.execution_id.clone())
         {
-            Some(ControllerToNodeMessage::CloneRepository(
-                store
-                    .original_dispatch(&identity, &status.operation_id, &status.execution_id)
-                    .await?,
-            ))
+            if retransmitted.insert(status.execution_id.clone()) {
+                Some(ControllerToNodeMessage::CloneRepository(
+                    store
+                        .original_dispatch(&identity, &status.operation_id, &status.execution_id)
+                        .await?,
+                ))
+            } else {
+                observer.unresolved(&status.execution_id);
+                None
+            }
         } else {
             None
         };

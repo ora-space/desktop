@@ -85,7 +85,9 @@ the listener flags are refused:
 `endpoint` is Cloud's gRPC address; the channel connects lazily, so an unreachable Cloud is an
 unavailable authority at call time rather than a start-up failure. Controllers are not
 authenticated at this stage: every call carries `controller_id` as `x-ora-controller-id` metadata,
-which Cloud records as the lease and submission holder (it must be printable ASCII). `nodes` must contain exactly one Node: the adapter's
+which Cloud records as the lease and submission holder (it must be printable ASCII). Without a
+`substrate` section `nodes` must contain exactly one Node; with one it may be empty (see
+[Workspace sandboxes](#workspace-sandboxes)). The adapter's
 `serve` task acquires Cloud's global lease, renews it every ten seconds, claims accepted work,
 validates it as a Node command and registers the dispatch with `RecordDispatch` before the existing
 Node session delivers it through its periodic status query. One claim registers work until Cloud has
@@ -118,6 +120,56 @@ keepalive PINGs every 30 seconds, also when idle, and closes a connection whose 
 for 10 seconds, so a silently dropped connection breaks the stream instead of leaving it looking
 live. Cloud accepts that cadence only from `ora-space/cloud` `34d8067` (cloud#29) on; an older Cloud
 answers it with `GOAWAY` after about two minutes of idleness.
+
+### Workspace sandboxes
+
+With a `substrate` section the cloud form also drives Cloud's Workspace operations (ADR
+[Controller drives Workspace sandboxes](../../specs/decisions/controller/node-management/0-controller-drives-workspace-sandboxes.md)):
+
+```json
+"persistence": {
+  "kind": "cloud",
+  "endpoint": "http://127.0.0.1:8082",
+  "claim_interval_ms": 1000,
+  "substrate": {
+    "effects_url": "http://127.0.0.1:8090",
+    "router_url": "ws://127.0.0.1:8091/node",
+    "atespace": "ora",
+    "request_timeout_ms": 30000
+  }
+}
+```
+
+`effects_url` is the Substrate sandbox server's effect API (`GET`/`PUT /effects/{id}`). The
+Controller reads an effect before writing it and, after a timeout or an unexpected server error,
+reads the same id again, so an effect whose reply was lost is never sent twice under a new identity.
+There is no provider abstraction beyond that HTTP boundary.
+
+On every claim tick (and on `OperationAvailable`) the Controller claims one Workspace operation at a
+time with `ClaimOperation`, records the step's effect plan, executes it and advances or defers the
+operation with the claimed version. Cloud hands back the oldest runnable operation, so operations run
+one after another. The steps are:
+
+| Step      | What the Controller does                                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| sandbox   | executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`)                                           |
+| node      | opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
+| clone     | dispatches the latest clone through the Node session and advances once its result is ready                                          |
+| quiesce   | closes the sandbox's dispatch gate and reports idle only when no dispatch is pending or unresolved                                  |
+| terminate | stops the Node session first, then executes the terminate effect                                                                    |
+| cleanup   | executes the data-delete effect                                                                                                     |
+
+Node targets come only from Cloud's sandbox rows; static `nodes` stay tenant clone targets, and a
+sandbox whose NodeId collides with a static Node is refused. The Controller never recreates a sandbox
+on its own. After a handshake it registers the Node incarnation with `RegisterNode`, reports it
+connected every ten seconds, reports it disconnected once when the session is lost (not when the Controller stopped it), and ends a previous
+incarnation before registering a new one. A failed effect defers the operation with
+`external_failure`, a timed-out one with `substrate_timeout`, and an unconfirmed termination blocks
+it with `termination_unconfirmed`. A clone whose ref the Node protocol refuses (such as `HEAD`)
+blocks the step without a dispatch.
+
+Sessions are rebuilt from the claimed operation's snapshot: after a Controller restart a live sandbox
+regains its session only when an operation for its Workspace is claimed again.
 
 ```json
 {
@@ -209,7 +261,12 @@ stream after a drain, a stale epoch on opening, batching, and cancelling the str
 lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state, serves no
 JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its
 behavior against a real Cloud (lease, claim, dispatch, takeover, restart without a second clone) is
-verified end to end with the [minicloud cloud form](../minicloud/runtime.md#cloud-persistence-mode) and is not yet an automated test. Framed-session tests cover bounded Unknown retransmission
+verified end to end with the [minicloud cloud form](../minicloud/runtime.md#cloud-persistence-mode) and is not yet an automated test. `apps/ora-controller/tests/workspaces.rs` drives
+Workspace operations against a fake Cloud, a fake Substrate effect server and a fake Node: creating
+and stopping a Workspace runs every step, registers the Node before the clone, reports idle and stops
+the session before terminating without reporting that stop as a lost connection; an unclonable ref blocks the clone step without a dispatch; and quiesce reports busy
+while a dispatch has no result. The Substrate client is unit tested for querying a timed-out effect
+by the same id and for not resending a completed effect. Framed-session tests cover bounded Unknown retransmission
 and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills
 Controller after durable takeover, restarts it offline, then checks original result, exact Ack, cleared

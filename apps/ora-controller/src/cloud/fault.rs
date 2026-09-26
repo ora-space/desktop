@@ -5,6 +5,9 @@ use prost::Message;
 use std::{fmt, future::Future, time::Duration};
 use tonic::{Code, Status};
 
+/// The fault code Cloud sends as the status message for a stale operation snapshot.
+const STALE_OPERATION: &str = "stale_operation";
+
 /// Each call waits this long for a reply before treating the outcome as lost.
 pub(super) const RPC_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
 /// How many times one submission identity is presented before an unknown outcome is reported.
@@ -85,6 +88,11 @@ pub(super) fn classify(status: &Status) -> Verdict {
         Code::Aborted | Code::InvalidArgument | Code::AlreadyExists | Code::OutOfRange => {
             Verdict::Conflict
         }
+        // Cloud reports an operation that is no longer running under this epoch, or whose version
+        // moved on, with the same status as a stale lease. Only the lease verdict may drop the
+        // epoch; a stale operation snapshot is a conflict the operation driver resolves by
+        // claiming again.
+        Code::FailedPrecondition if status.message() == STALE_OPERATION => Verdict::Conflict,
         Code::FailedPrecondition => Verdict::Stale(detail),
         // Cloud authenticates no Controller at this stage, so a refusal means the deployments
         // disagree; nothing was committed and the call is retried like an outage.
@@ -238,6 +246,15 @@ mod tests {
         assert_eq!(
             detail.to_string(),
             "ERROR_CODE_STALE_CONTROLLER (FailedPrecondition): stale_controller"
+        );
+        // A stale operation snapshot shares the lease's status code but never drops the lease.
+        assert_eq!(
+            classify(&cloud_status(
+                Code::FailedPrecondition,
+                "stale_operation",
+                ErrorCode::StaleController,
+            )),
+            Verdict::Conflict
         );
         assert!(matches!(
             classify(&Status::unavailable("persistence unavailable")),

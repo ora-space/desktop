@@ -16,17 +16,23 @@ Cloud 已授权的 opaque 身份，没有 tenant、user 或 membership 字段。
 与 `Watch` 流均已接入，由流决定何时领取，规则见
 `decisions/controller/api-boundary/20260924-controller-consumes-watch-signals.md`；其持久语义遵循
 `decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`。
+配置了 Substrate 时，它还经 `WorkspaceOperationService` 推进运行时 Workspace 操作，经 `NodeReportService`
+代报沙盒 Node，规则见 `decisions/controller/node-management/0-controller-drives-workspace-sandboxes.md`。
 
 ## 服务与语义要点
 
-| 服务                     | 方法                                                                                                              | 要点                                                                                                                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ControllerLeaseService` | `AcquireLease`／`RenewLease`／`ReleaseLease`                                                                      | 全局协调租约；`epoch` 是所有写操作的 fencing token                                                                                                                                            |
-| `ExecutionService`       | `ClaimWork`、`RecordDispatch`、`TakeOverNodeEvent`、`RecordQueriedResult`、`GetDispatch`、`ListPendingDispatches` | 写操作携带 `submission_id`：同身份同内容返回原结果，不同内容 `ABORTED`+`CONFLICT`；`RecordDispatch` 成功后才可派发，`TakeOverNodeEvent` 成功后才可 Ack，`RecordQueriedResult` 不产生 Ack 依据 |
-| `ControlSignalService`   | `Watch`（服务端流）                                                                                               | `WorkAvailable`／`Drain`／`NodeAssignment`；至多一次、不持久化、不改变归属；断流退回周期 `ClaimWork`                                                                                          |
+| 服务                        | 方法                                                                                                              | 要点                                                                                                                                                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ControllerLeaseService`    | `AcquireLease`／`RenewLease`／`ReleaseLease`                                                                      | 全局协调租约；`epoch` 是所有写操作的 fencing token                                                                                                                                                              |
+| `ExecutionService`          | `ClaimWork`、`RecordDispatch`、`TakeOverNodeEvent`、`RecordQueriedResult`、`GetDispatch`、`ListPendingDispatches` | 写操作携带 `submission_id`：同身份同内容返回原结果，不同内容 `ABORTED`+`CONFLICT`；`RecordDispatch` 成功后才可派发，`TakeOverNodeEvent` 成功后才可 Ack，`RecordQueriedResult` 不产生 Ack 依据                   |
+| `ControlSignalService`      | `Watch`（服务端流）                                                                                               | `WorkAvailable`／`OperationAvailable`／`Drain`／`NodeAssignment`；至多一次、不持久化、不改变归属；断流退回周期 `ClaimWork` 与 `ClaimOperation`                                                                  |
+| `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`                        | `ClaimOperation` 返回最早的可领取操作（进行中的会以新 version 再次返回），所以一个 Controller 同一时刻只推进一个操作；写操作受 `epoch` 与操作 `version` fencing；clone 步骤以操作 ID 经 `ExecutionService` 派发 |
+| `NodeReportService`         | `RegisterNode`、`ReportNodeStatus`、`EndNode`、`ReportNodeIdle`                                                   | Controller 代报它持有会话的沙盒 Node；`RegisterNode` 按（sandbox, incarnation）幂等，前一个 incarnation 结束前登记第二个会冲突                                                                                  |
 
 失败以 gRPC 状态码为主分类并附 `ErrorDetail{ErrorCode}`；Rust 侧在 Cloud RPC 适配器内把它们映射
-一次为持久协调接口的分类（冲突、缺失、不可用、未知、资格失效），协调逻辑不感知 gRPC。
+一次为持久协调接口的分类（冲突、缺失、不可用、未知、资格失效），协调逻辑不感知 gRPC。Cloud 对过期的
+操作快照（`stale_operation`）与过期租约都回 `FAILED_PRECONDITION`；适配器把前者归为冲突，只有租约的判定
+才会丢弃持有的 epoch。
 
 ## 契约的获取：submodule + sparse-checkout
 

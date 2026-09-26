@@ -40,6 +40,8 @@ pub(super) enum Opening<S> {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Event {
     WorkAvailable,
+    /// A runtime Workspace operation became claimable.
+    OperationAvailable,
     NodeAssignment,
     Drain,
     /// The stream ended with OK, which Cloud only does while draining.
@@ -98,7 +100,9 @@ impl<S> Signals<S> {
     /// from a full subscriber buffer.
     pub(super) fn received(self, event: Event) -> (Self, Claim) {
         match (self, event) {
-            (Self::Live(stream), Event::WorkAvailable) => (Self::Live(stream), Claim::Now),
+            (Self::Live(stream), Event::WorkAvailable | Event::OperationAvailable) => {
+                (Self::Live(stream), Claim::Now)
+            }
             (Self::Live(stream), Event::NodeAssignment | Event::Unrecognized) => {
                 (Self::Live(stream), Claim::Skip)
             }
@@ -166,6 +170,13 @@ pub(super) async fn next(signals: &mut Signals<Stream>) -> Event {
                     "Cloud signalled available work"
                 );
                 Event::WorkAvailable
+            }
+            Some(Signal::OperationAvailable(operation)) => {
+                ora_logging::ora_info!(
+                    operation_id = %operation.operation_id,
+                    "Cloud signalled an available Workspace operation"
+                );
+                Event::OperationAvailable
             }
             Some(Signal::NodeAssignment(assignment)) => {
                 ora_logging::ora_info!(
@@ -284,6 +295,7 @@ mod tests {
     fn stream_events_follow_the_decision_table() {
         let cases = [
             (Event::WorkAvailable, State::Live(()), Claim::Now),
+            (Event::OperationAvailable, State::Live(()), Claim::Now),
             (Event::NodeAssignment, State::Live(()), Claim::Skip),
             (Event::Unrecognized, State::Live(()), Claim::Skip),
             (Event::Drain, State::Drained, Claim::Skip),

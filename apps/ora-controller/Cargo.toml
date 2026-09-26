@@ -28,6 +28,8 @@ clap.workspace = true
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 prost.workspace = true
 prost-types.workspace = true
+# The Substrate effects interface is plain HTTP+JSON; the workspace client already carries rustls.
+reqwest = { workspace = true, features = ["json"] }
 tonic.workspace = true
 
 [dev-dependencies]

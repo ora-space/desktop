@@ -66,6 +66,7 @@ where
                         persistence: Persistence::Cloud {
                             endpoint,
                             claim_interval_ms,
+                            substrate: None,
                         },
                         protected_state_directories: Vec::new(),
                         controller_id: ControllerId::new(controller_id),
