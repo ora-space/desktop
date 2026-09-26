@@ -18,7 +18,8 @@ use tokio::time::{MissedTickBehavior, interval};
 /// its place.
 ///
 /// Branches are biased in priority order: shutdown, renewal (a long claim backlog must not let the
-/// lease expire), stream events, a pending backlog, then the claim tick.
+/// lease expire), stream events, the static Node's first handshake (tenant work queued while it
+/// was unproven has no signal coming), a pending backlog, then the claim tick.
 pub(super) async fn coordinate(
     store: CloudStore,
     shutdown: impl Future<Output = ()>,
@@ -31,6 +32,7 @@ pub(super) async fn coordinate(
     let mut report = Report::default();
     let mut refusals = Refusals::default();
     let mut backlog = Backlog::Settled;
+    let mut node_verified = store.inner.node_verified.subscribe();
     // Workspace operations and their sandbox sessions exist only where a Substrate is configured.
     // The sessions outlive a lost lease (a successor decides their fate); the operation task does not.
     let mut workspaces = store
@@ -53,6 +55,8 @@ pub(super) async fn coordinate(
                 report.state(&signals);
                 claim
             }
+            // The flag only ever turns true once, so this branch fires at most once.
+            Ok(()) = node_verified.changed() => Claim::Now,
             _ = std::future::ready(()), if backlog == Backlog::Pending => Claim::Now,
             _ = claim_tick.tick() => tick(&store, &mut signals, &mut report, Tick::Claim).await,
         };

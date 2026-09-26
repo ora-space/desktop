@@ -82,6 +82,12 @@ ASCII），Cloud 把它记为租约与提交的持有者。没有 `substrate` �
 （不按原样重试）、不可用（未提交，稍后重试）、未知（回复丢失，只能同身份重传）、资格失效（忘记租约，
 由下一次续期重新获取）。未持有租约时不领取、不派发、不确认，Controller 从不退回本机写入。
 
+租户级工作只在本进程内与静态 Node 的会话完成握手后才领取：握手证明配置的 `node_id` 就是端点背后的
+Node。派发一经登记就绑定该 Node（Node 可能已经执行，不能改派到其他身份），把工作登记到配错的 `node_id`
+会让它永远挂起。握手成功前工作留在 Cloud 的队列里，Controller 只记录一次正在等待；第一次握手成功立即
+触发一次领取。Node 之后断开不会撤销这一证明，此时登记的工作等它恢复即可
+（[ADR](../../specs/decisions/controller/node-management/20260926-static-node-identity-proven-before-dispatch.md)）。
+
 持有租约期间，Controller 维持一条 `Watch` 流，由流的状态决定何时领取：
 
 | 流状态 | 进入条件                                  | 领取                                                                  |
@@ -215,7 +221,8 @@ proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约
 真实 SQLite 测试经 `CoordinationStore` 与 `CloneIntake` 接口覆盖接受、独占、事务失败、查询／事件乱序、
 重复接管、冲突事实，以及已完成执行退出周期查询。Cloud 适配器的裁决映射、同身份重传、消息翻译与流状态迁移
 有单元测试；`apps/ora-controller/tests/cloud.rs` 以内存假 Cloud 驱动运行时，假 Cloud 经 `ora-controller-proto`
-测试专用的服务端桩（`test-server` feature）提供真实契约，覆盖信号触发领取、流建立前已接受的工作、断流回退与
+测试专用的服务端桩（`test-server` feature）提供真实契约，并配一个经 IPC 的假静态 Node，覆盖信号触发领取、
+Node 握手前已排队的工作、Node 声称其他身份时不领取、断流回退与
 重开、排空、排空后流被拒绝、打开时 epoch 陈旧、批量登记，以及关停时关闭流并释放租约。运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
 不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 [minicloud 云端
 形态](../minicloud/runtime.zh.md#云端持久模式)端到端验证，尚未自动化；

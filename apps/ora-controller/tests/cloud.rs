@@ -1,20 +1,32 @@
 //! Behavior of the Cloud persistence adapter's coordination loop against an in-memory Cloud that
 //! serves the real contract: signal-driven claiming, fallback and reopening, drains, stale
-//! eligibility and shutdown.
+//! eligibility and shutdown, and claiming only once the static Node proved its identity.
 //!
 //! Spec: specs/test-cases/controller/api-boundary/watch-signal-claiming.md
+//! Decision: specs/decisions/controller/node-management/20260926-static-node-identity-proven-before-dispatch.md
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_cloud.rs"]
 mod fake_cloud;
 
-use fake_cloud::{Call, FakeCloud, WatchPolicy};
+use fake_cloud::{Call, FakeCloud, State, WatchPolicy};
 use ora_controller::*;
 use ora_node_protocol::*;
+use ora_node_transport::{Acceptor, FrameReceiver, FrameSender, ipc::IpcAcceptor};
 use pretty_assertions::assert_eq;
-use std::{fs, future::Future, os::unix::fs::PermissionsExt, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{
+    fs,
+    future::Future,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
 
 /// The first lease the fake grants; every call below runs under it unless a test drops it.
 const EPOCH: i64 = 1;
@@ -37,12 +49,110 @@ impl Controller {
     }
 }
 
+/// The static Node on the configured socket. It does not listen until [`Node::listen`], so a test
+/// decides when the handshake that lets the Controller claim tenant work can happen. It presents
+/// the configured `node` unless a test makes it present another identity.
+#[derive(Clone)]
+struct Node {
+    socket: PathBuf,
+    identity: Arc<Mutex<NodeId>>,
+    hellos: Arc<AtomicUsize>,
+}
+
+impl Node {
+    /// Starts accepting sessions. Each session answers status queries with `Unknown` and keeps
+    /// sending heartbeats; nothing is ever executed.
+    fn listen(&self) {
+        let acceptor = IpcAcceptor::new(UnixListener::bind(&self.socket).unwrap());
+        let node = self.clone();
+        tokio::spawn(async move {
+            while let Ok(pending) = acceptor.accept().await {
+                if let Ok((receiver, sender)) = acceptor.open(pending).await {
+                    node.session(receiver, sender).await;
+                }
+            }
+        });
+    }
+
+    /// Makes later handshakes present `node_id`.
+    fn present(&self, node_id: &str) {
+        *self.identity.lock().unwrap() = NodeId::new(node_id);
+    }
+
+    /// Waits until the Controller has sent `count` handshakes in total.
+    async fn until_hellos(&self, count: usize) {
+        tokio::time::timeout(Duration::from_secs(/*secs*/ 5), async {
+            while self.hellos.load(Ordering::SeqCst) < count {
+                tokio::time::sleep(Duration::from_millis(/*millis*/ 5)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    /// One Node session until the Controller closes it.
+    async fn session<R: FrameReceiver, W: FrameSender>(&self, mut receiver: R, mut sender: W) {
+        let identity = NodeRuntimeIdentity {
+            node_id: self.identity.lock().unwrap().clone(),
+            incarnation_id: NodeIncarnationId::new("incarnation"),
+        };
+        let mut greeted = false;
+        // Well inside the Controller's I/O deadline, which the heartbeats keep from elapsing.
+        let mut beat = tokio::time::interval(Duration::from_millis(/*millis*/ 20));
+        loop {
+            let reply = tokio::select! {
+                frame = receiver.recv() => {
+                    let Ok(Some(frame)) = frame else { return };
+                    match decode_controller_frame(&frame).unwrap() {
+                        ControllerToNodeMessage::Hello(_) => {
+                            greeted = true;
+                            self.hellos.fetch_add(1, Ordering::SeqCst);
+                            Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
+                                protocol_version: CURRENT_PROTOCOL_VERSION,
+                                payload: HelloAccepted {
+                                    selected_version: CURRENT_PROTOCOL_VERSION,
+                                    node: identity.clone(),
+                                    capabilities: vec![NodeCapability::RepositoryClone],
+                                },
+                            }))
+                        }
+                        ControllerToNodeMessage::GetExecutionStatus(query) => {
+                            Some(NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage {
+                                protocol_version: CURRENT_PROTOCOL_VERSION,
+                                operation_id: query.operation_id,
+                                execution_id: query.execution_id,
+                                payload: ExecutionStatus {
+                                    node: identity.clone(),
+                                    state: ExecutionState::Unknown,
+                                },
+                            }))
+                        }
+                        _ => None,
+                    }
+                }
+                _ = beat.tick(), if greeted => Some(NodeToControllerMessage::Heartbeat(HeartbeatMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Heartbeat { node: identity.clone() },
+                })),
+            };
+            if let Some(reply) = reply
+                && sender
+                    .send(encode_node_frame(&reply).unwrap())
+                    .await
+                    .is_err()
+            {
+                return;
+            }
+        }
+    }
+}
+
 /// Runs `test` with a fake Cloud and a Controller claiming every `claim_interval_ms` without a
-/// stream. The Node endpoint does not exist, so the session only retries its connection and never
-/// touches the store; every recorded call comes from the coordination loop.
+/// stream. The configured Node is `node`; it is unreachable until the test lets it listen, and the
+/// session then only reads from the store, so every recorded call comes from the coordination loop.
 fn scenario<F, Fut>(claim_interval_ms: u64, test: F)
 where
-    F: FnOnce(FakeCloud, Box<dyn FnOnce(&str) -> Controller>) -> Fut,
+    F: FnOnce(FakeCloud, Box<dyn FnOnce(&str) -> Controller>, Node) -> Fut,
     Fut: Future<Output = ()>,
 {
     ora_logging::with_trace_logging(|| {
@@ -52,6 +162,12 @@ where
             .unwrap();
         let home = root.path().join("controller");
         let socket = root.path().join("node").join("control.sock");
+        fs::create_dir(root.path().join("node")).unwrap();
+        let node = Node {
+            socket: socket.clone(),
+            identity: Arc::new(Mutex::new(NodeId::new("node"))),
+            hellos: Arc::default(),
+        };
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -78,7 +194,8 @@ where
                             io_timeout_ms: 100,
                             query_interval_ms: 10,
                         },
-                        reconnect_ms: 1_000,
+                        // Short, so a Node that starts listening is reached within a few ticks.
+                        reconnect_ms: 20,
                         timezone: "Asia/Shanghai".into(),
                     };
                     let runtime = ControllerRuntime::<CloudStore>::open(config).unwrap();
@@ -92,7 +209,7 @@ where
                     });
                     Controller { stop, running }
                 });
-                test(cloud, start).await;
+                test(cloud, start, node).await;
                 drop(served);
             });
         // Cloud persistence never creates local state.
@@ -105,19 +222,22 @@ fn count(calls: &[Call], call: &Call) -> usize {
     calls.iter().filter(|recorded| *recorded == call).count()
 }
 
-/// Waits until the stream is established and the claim it triggers has run.
-async fn established(cloud: &FakeCloud) {
+/// Waits until the stream is established, lets the Node complete its handshake, and waits for the
+/// claim that proof triggers.
+async fn established(cloud: &FakeCloud, node: &Node) {
+    cloud.until(State::watching).await;
+    node.listen();
     cloud
-        .until(|state| state.watching() && state.calls.contains(&Call::ClaimWork { epoch: EPOCH }))
+        .until(|state| state.calls.contains(&Call::ClaimWork { epoch: EPOCH }))
         .await;
 }
 
 /// A `WorkAvailable` signal registers the dispatch at once, with no periodic claim in between.
 #[test]
 fn signals_claim_without_waiting_for_the_claim_interval() {
-    scenario(NEVER, |cloud, start| async move {
+    scenario(NEVER, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         let signalled = tokio::time::Instant::now();
         cloud.enqueue("op-1");
         cloud.signal_work("op-1");
@@ -142,14 +262,16 @@ fn signals_claim_without_waiting_for_the_claim_interval() {
     });
 }
 
-/// Work Cloud accepted before the subscription existed has no signal coming; establishing the
-/// stream claims it at once.
+/// Work Cloud accepted before the static Node proved its identity has no signal coming; the
+/// handshake that proves it claims the work at once, with no periodic claim in between.
 #[test]
-fn work_accepted_before_the_stream_opens_is_claimed_on_establishment() {
-    scenario(NEVER, |cloud, start| async move {
+fn work_queued_before_the_node_handshake_is_claimed_once_it_completes() {
+    scenario(NEVER, |cloud, start, node| async move {
         cloud.enqueue("op-1");
         cloud.enqueue("op-2");
         let controller = start("owner");
+        cloud.until(State::watching).await;
+        node.listen();
         cloud
             .until(|state| state.dispatched() == ["op-1", "op-2"])
             .await;
@@ -180,16 +302,16 @@ fn work_accepted_before_the_stream_opens_is_claimed_on_establishment() {
 /// again.
 #[test]
 fn a_broken_stream_falls_back_to_periodic_claims_and_reopens() {
-    scenario(FAST, |cloud, start| async move {
+    scenario(FAST, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         cloud.answer_watch(WatchPolicy::Unavailable);
         cloud.break_stream();
         // No signal is sent: only the periodic claim can find this work.
         cloud.enqueue("op-1");
         cloud.until(|state| state.dispatched() == ["op-1"]).await;
         cloud.answer_watch(WatchPolicy::Accept);
-        cloud.until(|state| state.watching()).await;
+        cloud.until(State::watching).await;
         cloud.enqueue("op-2");
         cloud.signal_work("op-2");
         cloud
@@ -203,9 +325,9 @@ fn a_broken_stream_falls_back_to_periodic_claims_and_reopens() {
 /// claims the work accepted meanwhile.
 #[test]
 fn a_drain_pauses_claims_until_a_new_stream_opens() {
-    scenario(FAST, |cloud, start| async move {
+    scenario(FAST, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         cloud.drain();
         cloud.enqueue("op-1");
         let drained_at = cloud.calls().len();
@@ -236,9 +358,9 @@ fn a_drain_pauses_claims_until_a_new_stream_opens() {
 /// periodic fallback instead of stopping for good.
 #[test]
 fn a_refused_stream_after_a_drain_resumes_periodic_claims() {
-    scenario(FAST, |cloud, start| async move {
+    scenario(FAST, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         cloud.drain();
         cloud.answer_watch(WatchPolicy::Unimplemented);
         cloud.enqueue("op-1");
@@ -251,9 +373,11 @@ fn a_refused_stream_after_a_drain_resumes_periodic_claims() {
 /// lease is acquired again, which only the next renewal would attempt.
 #[test]
 fn a_stale_stream_open_stops_claims_and_writes() {
-    scenario(FAST, |cloud, start| async move {
+    scenario(FAST, |cloud, start, node| async move {
         cloud.answer_watch(WatchPolicy::Stale);
         cloud.enqueue("op-1");
+        // The Node is proven, so only the lost epoch can be what stops the claims.
+        node.listen();
         let controller = start("owner");
         cloud
             .until(|state| state.calls.contains(&Call::Watch { epoch: EPOCH }))
@@ -273,9 +397,9 @@ fn a_stale_stream_open_stops_claims_and_writes() {
 /// Shutdown cancels the stream and releases the lease under the epoch it was opened with.
 #[test]
 fn shutdown_cancels_the_stream_and_releases_the_lease() {
-    scenario(NEVER, |cloud, start| async move {
+    scenario(NEVER, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         let cancelled = cloud.clone();
         let cancelled = tokio::spawn(async move { cancelled.watch_cancelled().await });
         controller.stop().await;
@@ -291,15 +415,41 @@ fn shutdown_cancels_the_stream_and_releases_the_lease() {
 /// instead of waiting for another trigger.
 #[test]
 fn one_signal_registers_a_backlog_beyond_one_batch() {
-    scenario(NEVER, |cloud, start| async move {
+    scenario(NEVER, |cloud, start, node| async move {
         let controller = start("owner");
-        established(&cloud).await;
+        established(&cloud, &node).await;
         let operations: Vec<String> = (1..=17).map(|index| format!("op-{index:02}")).collect();
         for operation in &operations {
             cloud.enqueue(operation);
         }
         cloud.signal_work("op-01");
         cloud.until(|state| state.dispatched() == operations).await;
+        controller.stop().await;
+    });
+}
+
+/// A Node that answers for another identity than the configured one never lets tenant work be
+/// registered: the work stays queued with Cloud through many claim ticks instead of being bound
+/// for good to a NodeId nothing serves. Once the Node behind the endpoint presents the configured
+/// identity, the next handshake proves it and the queued work is claimed without a signal.
+#[test]
+fn tenant_work_waits_until_the_configured_node_proves_its_identity() {
+    scenario(FAST, |cloud, start, node| async move {
+        cloud.enqueue("op-1");
+        node.present("another-node");
+        node.listen();
+        let controller = start("owner");
+        cloud.until(State::watching).await;
+        // Every refused handshake is followed by a reconnect; several of them, spanning several
+        // claim ticks, prove the Controller kept trying and still registered nothing.
+        node.until_hellos(3).await;
+        tokio::time::sleep(Duration::from_millis(FAST * 4)).await;
+        assert_eq!(
+            cloud.calls(),
+            vec![Call::AcquireLease, Call::Watch { epoch: EPOCH }]
+        );
+        node.present("node");
+        cloud.until(|state| state.dispatched() == ["op-1"]).await;
         controller.stop().await;
     });
 }

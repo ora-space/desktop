@@ -19,10 +19,12 @@ pub(super) enum Backlog {
 }
 
 /// The queue head this Controller already warned about. It stays the head until Cloud resolves
-/// it, so one warning per item replaces one per trigger.
+/// it, so one warning per item replaces one per trigger. The same holds for the wait on the static
+/// Node's handshake, which every trigger would otherwise report again.
 #[derive(Default)]
 pub(super) struct Refusals {
     last: Option<String>,
+    unverified: bool,
 }
 
 /// Claims and registers accepted work until Cloud has none left, a step fails, or one batch is
@@ -34,6 +36,20 @@ pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlo
     let Some(node) = &store.inner.node else {
         return Backlog::Settled;
     };
+    // A dispatch names its Node for good: the Node may already have run it, so it can never be
+    // moved to another identity. Registering work before a handshake proved the configured
+    // NodeId would leave it pending forever if that identity is wrong; unclaimed, it waits in
+    // Cloud's queue for a Controller whose Node is the right one.
+    if !*store.inner.node_verified.borrow() {
+        if !refusals.unverified {
+            ora_logging::ora_info!(
+                node_id = %node.as_str(),
+                "tenant work stays queued with Cloud until the configured Node completes a handshake"
+            );
+            refusals.unverified = true;
+        }
+        return Backlog::Settled;
+    }
     for _ in 0..BATCH {
         // The lease is re-read per item: a stale verdict inside the batch drops it.
         let Ok(epoch) = store.epoch() else {

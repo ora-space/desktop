@@ -253,6 +253,9 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
     }
 
     /// The local authority is this process; there is no lease to keep and no queue to claim.
+    /// The JSON surface records the dispatch when it accepts a request, so there is nothing to gate.
+    fn static_node_established(&self, _node: &NodeRuntimeIdentity) {}
+
     async fn serve(&self, shutdown: impl Future<Output = ()> + Send + 'static) -> io::Result<()> {
         shutdown.await;
         Ok(())

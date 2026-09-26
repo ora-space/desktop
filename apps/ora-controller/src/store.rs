@@ -58,6 +58,13 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         execution: &ExecutionId,
     ) -> impl Future<Output = Result<Option<ExecutionOutcome>, Error>> + Send;
 
+    /// Learns that a session with a statically configured Node completed its handshake, which
+    /// proves that the configured `NodeId` names the Node actually behind the endpoint. The Cloud
+    /// adapter registers tenant work to that Node only after this, so a misconfigured identity
+    /// leaves the work queued with Cloud instead of pending forever on a Node that does not exist.
+    /// The local adapter records dispatches at intake and ignores it.
+    fn static_node_established(&self, node: &NodeRuntimeIdentity);
+
     /// Runs the adapter's own coordination with its authority until `shutdown` resolves, then
     /// releases what it held. A remote authority needs its lease kept and accepted work claimed
     /// and registered; the local adapter, which accepts work itself, has nothing to do. The

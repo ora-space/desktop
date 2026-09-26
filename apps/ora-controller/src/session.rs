@@ -105,9 +105,9 @@ impl From<TransportError> for SessionError {
     }
 }
 
-/// What a session tells its owner beyond its own result. Static Nodes need nothing; the Cloud
-/// adapter's sandbox sessions report the handshake to Cloud and stop a Workspace's clone step when
-/// the Node cannot tell an execution's outcome. Callbacks run on the session task and must not
+/// What a session tells its owner beyond its own result. A static Node's handshake proves its
+/// configured identity to the store; the Cloud adapter's sandbox sessions report the handshake to
+/// Cloud and stop a Workspace's clone step when the Node cannot tell an execution's outcome. Callbacks run on the session task and must not
 /// block it.
 pub(crate) trait SessionObserver: Send + Sync {
     /// The handshake completed with this Node incarnation; the session is live from here on.

@@ -26,6 +26,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::watch;
 use tonic::{
     metadata::{AsciiMetadataValue, MetadataValue},
     transport::Channel,
@@ -64,6 +65,10 @@ struct Inner {
     /// The one static Node tenant clones are dispatched to; the contract keeps the target beside
     /// the input. A deployment that only drives Workspace sandboxes may have none.
     node: Option<NodeId>,
+    /// Whether a handshake in this process proved that `node` is the Node behind its endpoint.
+    /// It only ever turns true: the configuration cannot change without a restart, and a Node that
+    /// disconnected later is still the right target for work that waits for it to return.
+    node_verified: watch::Sender<bool>,
     /// How Workspace sandboxes are created and reached; `None` leaves Workspace operations to
     /// another Controller deployment.
     sandboxes: Option<Arc<SandboxDeployment>>,
@@ -136,6 +141,7 @@ impl CloudStore {
             inner: Arc::new(Inner {
                 id: config.controller_id.clone(),
                 node,
+                node_verified: watch::Sender::new(false),
                 sandboxes,
                 channel,
                 holder,
@@ -365,6 +371,16 @@ impl CoordinationStore for CloudStore {
             .and_then(|record| record.result)
             .map(mapping::outcome)
             .transpose()
+    }
+
+    fn static_node_established(&self, node: &NodeRuntimeIdentity) {
+        if self.inner.node.as_ref() == Some(&node.node_id) {
+            self.inner.node_verified.send_if_modified(|verified| {
+                let first = !*verified;
+                *verified = true;
+                first
+            });
+        }
     }
 
     fn serve(
