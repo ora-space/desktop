@@ -41,6 +41,9 @@ mod single_node;
 #[path = "repository_websocket.rs"]
 mod websocket;
 
+#[path = "repository_busy_reading.rs"]
+mod busy_reading;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");

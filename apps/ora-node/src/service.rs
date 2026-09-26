@@ -50,7 +50,10 @@ pub struct ServiceConfig {
     pub timezone: String,
 }
 
-// The queue holds at most 16 entries; inline envelopes avoid another allocation per control message.
+/// Requests waiting for the blocking worker, across message handling and the replay pass.
+const ADMISSION_QUEUE_BOUND: usize = 16;
+
+// The queue holds at most ADMISSION_QUEUE_BOUND entries; inline envelopes avoid another allocation per control message.
 #[allow(clippy::large_enum_variant)]
 enum Request {
     Message(ControllerToNodeMessage),
@@ -105,7 +108,7 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
         }
     }
     let control = config.control.clone();
-    let (sender, receiver) = mpsc::sync_channel(/*bound*/ 16);
+    let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);
     let (ready, started) = oneshot::channel();
     let worker_shutdown = shutdown.clone();
     let mut worker =

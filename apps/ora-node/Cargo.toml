@@ -37,4 +37,6 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ora-contracts.workspace = true
+futures-util.workspace = true
+tokio-tungstenite = "0.29"
 reqwest = { workspace = true, features = ["json"] }

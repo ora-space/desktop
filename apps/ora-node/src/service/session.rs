@@ -5,9 +5,16 @@ use ora_node_transport::{
 };
 use tokio::{
     net::TcpListener,
-    sync::mpsc as async_queue,
-    time::{interval, timeout},
+    sync::{Semaphore, mpsc as async_queue},
+    time::{Instant, interval, timeout, timeout_at},
 };
+
+/// Controller messages one session may leave unanswered. One admission slot stays free for the
+/// replay pass, so a full pipeline never makes the worker queue itself refuse a request.
+const UNANSWERED_REQUEST_LIMIT: usize = ADMISSION_QUEUE_BOUND - 1;
+
+/// The worker's eventual answer to one queued request.
+type Response = oneshot::Receiver<Result<Vec<NodeToControllerMessage>, Rejection>>;
 
 /// Binds the single configured entry and serves it; the match only picks the monomorphized
 /// acceptor, so admission and session handling are the same code for every transport.
@@ -219,12 +226,13 @@ async fn transmit<W: FrameSender>(
     Ok(writer.send(frame).await?)
 }
 
-/// Queues bounded requests with a revocable admission identity; closing a connection does not cancel accepted work.
-async fn request(
+/// Queues bounded requests with a revocable admission identity without waiting for the worker;
+/// closing a connection does not cancel accepted work.
+fn enqueue(
     sender: &mpsc::SyncSender<Work>,
     active: &Arc<Mutex<bool>>,
     request: Request,
-) -> Result<Vec<NodeToControllerMessage>, Failure> {
+) -> Result<Response, Failure> {
     let (reply, response) = oneshot::channel();
     sender
         .try_send(Work {
@@ -238,13 +246,19 @@ async fn request(
                 "Node admission queue unavailable",
             )
         })?;
+    Ok(response)
+}
+
+/// Waits for the worker's answer; a dropped reply means the worker has stopped.
+async fn settle(response: Response) -> Result<Vec<NodeToControllerMessage>, Failure> {
     response
         .await
         .map_err(|error| Failure::local(CloseReason::InternalError, error))?
         .map_err(|rejection| Failure::local(rejection.close, rejection.message))
 }
 
-/// Keeps one reader future alive per frame and gives heartbeat/output independent execution from Git.
+/// Runs reading, answering, replay and writing as independent futures so neither Git in the worker
+/// nor a slow peer stops the others; the first to fail ends the whole session.
 async fn connected<R: FrameReceiver, W: FrameSender>(
     receiver: &mut R,
     writer: &mut W,
@@ -284,6 +298,13 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     // The write task owns the receiving end of `outgoing`, so a failed send means the session is
     // already ending.
     let queue_closed = |_| Failure::local(CloseReason::InternalError, "session output closed");
+    // Permits travel with each request until it is answered, so the bound covers the request the
+    // answering future is waiting on as well as the ones queued behind it.
+    let unanswered = Arc::new(Semaphore::new(UNANSWERED_REQUEST_LIMIT));
+    let (answer_later, mut answering) = async_queue::unbounded_channel();
+    // Reading never waits for the worker: a peer's close, a router's ping and a truncated frame
+    // must be observed while Git occupies the worker, or the control slot stays held for a peer
+    // that is already gone and its reconnection is refused as busy.
     let read = async {
         loop {
             let message = timeout(deadline, receive(receiver))
@@ -306,26 +327,47 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 ControllerToNodeMessage::Heartbeat(_) => continue,
                 _ => {}
             }
-            // Git may occupy the worker. Bound admission waiting independently of heartbeats so
-            // revocation invalidates queued work; already durable executions are not canceled.
-            let replies = timeout(
-                deadline,
-                request(sender, &active, Request::Message(message)),
-            )
-            .await
-            .map_err(|_| {
+            let Ok(permit) = unanswered.clone().try_acquire_owned() else {
+                // The Controller polls status on a timer without waiting for replies, so a long
+                // Git pass fills the pipeline with queries. Shedding the excess is safe because
+                // a query changes nothing and the Controller asks again; a command must not be
+                // lost silently, and closing makes the Controller reconcile it by query.
+                if matches!(message, ControllerToNodeMessage::GetExecutionStatus(_)) {
+                    continue;
+                }
+                return Err(Failure::local(
+                    CloseReason::InternalError,
+                    "Controller exceeded unanswered request limit",
+                ));
+            };
+            // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
+            let response = enqueue(sender, &active, Request::Message(message))?;
+            answer_later
+                .send((Instant::now() + deadline, response, permit))
+                .map_err(|_| {
+                    Failure::local(CloseReason::InternalError, "session answers closed")
+                })?;
+        }
+    };
+    // Git may occupy the worker. Each admission wait is bounded from the moment its frame arrived,
+    // independently of heartbeats, so revocation invalidates queued work; already durable
+    // executions are not canceled. Answers leave in request order because the worker is FIFO.
+    let answer = async {
+        while let Some((expiry, response, _permit)) = answering.recv().await {
+            let replies = timeout_at(expiry, settle(response)).await.map_err(|_| {
                 Failure::local(CloseReason::InternalError, "admission deadline elapsed")
             })??;
             for reply in replies {
                 outgoing.send(reply).await.map_err(queue_closed)?;
             }
         }
+        Ok::<(), Failure>(())
     };
     let replay = async {
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
             tick.tick().await;
-            for event in request(sender, &active, Request::Replay).await? {
+            for event in settle(enqueue(sender, &active, Request::Replay)?).await? {
                 outgoing.send(event).await.map_err(queue_closed)?;
             }
         }
@@ -344,5 +386,10 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 .map_err(|_| Failure::silent())??;
         }
     };
-    tokio::select! { result = read => result, result = write => result, result = replay => result }
+    tokio::select! {
+        result = read => result,
+        result = answer => result,
+        result = write => result,
+        result = replay => result,
+    }
 }
