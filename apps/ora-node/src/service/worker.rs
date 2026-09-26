@@ -1,5 +1,7 @@
 use super::*;
 use crate::{ManagedNode, Node};
+use ora_node_db::Error as StorageError;
+use ora_node_transport::CloseReason;
 use std::time::Instant;
 
 /// Owns the only mutable Node; admission/revocation locks cover SQLite work, never blocking Git.
@@ -54,9 +56,16 @@ pub(super) fn run(
                         .lock()
                         .map_err(|_| "session admission poisoned".to_owned())?;
                     let result = if *active {
-                        handle(&mut node, &controller, work.request).map_err(|e| e.to_string())
+                        handle(&mut node, &controller, work.request).map_err(|error| Rejection {
+                            close: close_reason(&error),
+                            message: error.to_string(),
+                        })
                     } else {
-                        Err("session revoked".into())
+                        // The session is already ending; nobody reads this reason.
+                        Err(Rejection {
+                            close: CloseReason::InternalError,
+                            message: "session revoked".into(),
+                        })
                     };
                     let _ = work.reply.send(result);
                     drop(active);
@@ -77,6 +86,33 @@ pub(super) fn run(
     })();
     node.shutdown().map_err(|e| e.to_string())?;
     result
+}
+
+/// How a refused request closes the session: what the Controller got wrong is its protocol or
+/// identity violation, a stopping Node is shutting down, and everything else is the Node's own
+/// failure.
+fn close_reason(error: &crate::Error) -> CloseReason {
+    match error {
+        crate::Error::Validation(_)
+        | crate::Error::UnsupportedMessage
+        | crate::Error::Storage(
+            StorageError::Validation(_) | StorageError::IdentityConflict | StorageError::InvalidAck,
+        ) => CloseReason::ProtocolViolation,
+        crate::Error::Storage(StorageError::ControllerMismatch) => CloseReason::IdentityMismatch,
+        crate::Error::Stopping | crate::Error::Shutdown(_) => CloseReason::Shutdown,
+        crate::Error::Configuration(_)
+        | crate::Error::Storage(
+            StorageError::Io(_)
+            | StorageError::Sql(_)
+            | StorageError::Encoding(_)
+            | StorageError::AlreadyRunning
+            | StorageError::InvalidSchema
+            | StorageError::NodeMismatch
+            | StorageError::ResourceConflict
+            | StorageError::InvalidTransition
+            | StorageError::Injected(_),
+        ) => CloseReason::InternalError,
+    }
 }
 
 /// Ownership checks precede each read, acknowledgement or new durable admission.
@@ -128,8 +164,6 @@ fn handle(
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_),
-        ) => Err(crate::Error::Configuration(
-            "message is not supported in this session".into(),
-        )),
+        ) => Err(crate::Error::UnsupportedMessage),
     }
 }

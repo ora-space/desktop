@@ -265,3 +265,176 @@ fn connection_failures_are_classified_without_releasing_responsibility() {
             });
     });
 }
+
+/// Why a WebSocket stand-in Node's session ends in [`controller_closes_with_the_reason_code`].
+#[derive(Clone, Copy, Debug)]
+enum Ending {
+    /// The Node announces another identity.
+    WrongNode,
+    /// The Node sends a frame the protocol does not allow.
+    MalformedFrame,
+    /// The Controller is asked to stop.
+    Stop,
+}
+
+/// The Controller ends sessions with a close code naming why, so a Node or router behind it can
+/// tell a deliberate end from a lost connection; a stop is a clean `Ok` for the caller.
+#[test]
+fn controller_closes_with_the_reason_code() {
+    use ora_node_transport::{
+        Acceptor, CloseReason, FrameReceiver, FrameSender,
+        websocket::{WsAcceptor, WsEndpoint},
+    };
+    ora_logging::with_trace_logging(|| {
+        let root = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(std::env::var_os("HOME").unwrap())
+            .unwrap();
+        let store =
+            SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
+        let settings = SessionConfig {
+            io_timeout_ms: 1000,
+            query_interval_ms: 20,
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for (ending, expected) in [
+                    (Ending::WrongNode, CloseReason::IdentityMismatch),
+                    (Ending::MalformedFrame, CloseReason::ProtocolViolation),
+                    (Ending::Stop, CloseReason::Shutdown),
+                ] {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    let address = listener.local_addr().unwrap();
+                    let acceptor = WsAcceptor::new(listener, "/ora-node/v1");
+                    let target = NodeTarget {
+                        node_id: NodeId::new("node"),
+                        endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                            url: format!("ws://{address}/ora-node/v1"),
+                            headers: Default::default(),
+                        }),
+                    };
+                    let (stop, stopping) = tokio::sync::oneshot::channel::<()>();
+                    let node = async {
+                        let (mut receiver, mut sender) = acceptor
+                            .open(acceptor.accept().await.unwrap())
+                            .await
+                            .unwrap();
+                        let hello =
+                            decode_controller_frame(&receiver.recv().await.unwrap().unwrap());
+                        assert!(matches!(hello, Ok(ControllerToNodeMessage::Hello(_))));
+                        let node_id = match ending {
+                            Ending::WrongNode => NodeId::new("other-node"),
+                            Ending::MalformedFrame | Ending::Stop => NodeId::new("node"),
+                        };
+                        let accepted =
+                            NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
+                                protocol_version: CURRENT_PROTOCOL_VERSION,
+                                payload: HelloAccepted {
+                                    selected_version: CURRENT_PROTOCOL_VERSION,
+                                    node: NodeRuntimeIdentity {
+                                        node_id,
+                                        incarnation_id: NodeIncarnationId::new("current"),
+                                    },
+                                    capabilities: vec![NodeCapability::RepositoryClone],
+                                },
+                            });
+                        sender
+                            .send(encode_node_frame(&accepted).unwrap())
+                            .await
+                            .unwrap();
+                        match ending {
+                            Ending::MalformedFrame => sender.send(vec![0xff, b'{']).await.unwrap(),
+                            Ending::Stop => stop.send(()).unwrap(),
+                            Ending::WrongNode => {}
+                        }
+                        loop {
+                            let received =
+                                timeout(Duration::from_secs(/*secs*/ 2), receiver.recv())
+                                    .await
+                                    .unwrap();
+                            match received {
+                                // Status queries sent before the Controller decided.
+                                Ok(Some(_)) => {}
+                                other => break other.unwrap_err(),
+                            }
+                        }
+                    };
+                    let session = run_session_until(&store, &target, &settings, async {
+                        let _ = stopping.await;
+                    });
+                    let (result, closed) = tokio::join!(session, node);
+                    assert!(closed.is_closed_for(expected), "{ending:?}: {closed:?}");
+                    match ending {
+                        Ending::WrongNode => {
+                            assert!(
+                                matches!(result, Err(SessionError::Mismatch(_))),
+                                "{result:?}"
+                            )
+                        }
+                        Ending::MalformedFrame => {
+                            assert!(
+                                matches!(result, Err(SessionError::Protocol(_))),
+                                "{result:?}"
+                            )
+                        }
+                        Ending::Stop => assert!(result.is_ok(), "{result:?}"),
+                    }
+                }
+            });
+    });
+}
+
+/// A Node that closes because this Controller does not own it is reported as a mismatch rather
+/// than a lost connection.
+#[test]
+fn node_identity_close_is_a_mismatch() {
+    use ora_node_transport::{
+        Acceptor, CloseReason, FrameReceiver, FrameSender,
+        websocket::{WsAcceptor, WsEndpoint},
+    };
+    ora_logging::with_trace_logging(|| {
+        let root = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(std::env::var_os("HOME").unwrap())
+            .unwrap();
+        let store =
+            SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
+        let settings = SessionConfig {
+            io_timeout_ms: 1000,
+            query_interval_ms: 20,
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let acceptor = WsAcceptor::new(listener, "/ora-node/v1");
+                let target = NodeTarget {
+                    node_id: NodeId::new("node"),
+                    endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                        url: format!("ws://{address}/ora-node/v1"),
+                        headers: Default::default(),
+                    }),
+                };
+                let node = async {
+                    let (mut receiver, mut sender) = acceptor
+                        .open(acceptor.accept().await.unwrap())
+                        .await
+                        .unwrap();
+                    let _ = receiver.recv().await.unwrap();
+                    sender.close(CloseReason::IdentityMismatch).await.unwrap();
+                    let _ = receiver.recv().await;
+                };
+                let (result, ()) = tokio::join!(run_session(&store, &target, &settings), node);
+                assert!(
+                    matches!(result, Err(SessionError::Mismatch(_))),
+                    "{result:?}"
+                );
+            });
+    });
+}

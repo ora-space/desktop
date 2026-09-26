@@ -3,7 +3,8 @@
 //! Local IPC framing through the production halves and acceptor.
 use ora_node_protocol::{FrameError, MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE};
 use ora_node_transport::{
-    Acceptor, ConnectFailure, FrameReceiver, FrameSender, TransportError, ipc,
+    Acceptor, CloseReason, ConnectFailure, FrameReceiver, FrameSender, TransportError,
+    close_connection, ipc,
 };
 use pretty_assertions::assert_eq;
 use std::time::Duration;
@@ -36,6 +37,25 @@ async fn frames_round_trip_with_length_prefix_wire() {
     assert_eq!(receiver.recv().await.unwrap(), Some(body));
     drop(raw);
     assert_eq!(receiver.recv().await.unwrap(), None);
+}
+
+/// IPC has no close code: a deliberate close is a clean end of stream for the peer, and
+/// `close_connection` returns once the peer has ended its side too.
+#[tokio::test]
+async fn deliberate_close_is_a_clean_end_of_stream() {
+    let (left, right) = UnixStream::pair().unwrap();
+    let (mut receiver, mut sender) = ipc::split(left);
+    let (mut peer_receiver, peer_sender) = ipc::split(right);
+    let peer = async move {
+        let end = peer_receiver.recv().await.unwrap();
+        drop(peer_sender);
+        end
+    };
+    let (end, ()) = tokio::join!(
+        peer,
+        close_connection(&mut receiver, &mut sender, CloseReason::IdentityMismatch)
+    );
+    assert_eq!(end, None);
 }
 
 /// Dropping a pending receive mid-frame, as a `select!` does, neither loses nor splits the frame.

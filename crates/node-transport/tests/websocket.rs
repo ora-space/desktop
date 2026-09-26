@@ -4,7 +4,8 @@
 use futures_util::{SinkExt, StreamExt};
 use ora_node_protocol::{MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE};
 use ora_node_transport::{
-    Acceptor, ConnectFailure, FrameReceiver, FrameSender, TransportError,
+    Acceptor, CloseReason, ConnectFailure, FrameReceiver, FrameSender, TransportError,
+    close_connection,
     websocket::{WsAcceptor, WsEndpoint, connect},
 };
 use pretty_assertions::assert_eq;
@@ -168,6 +169,80 @@ async fn busy_rejection_is_recognizable_close_code() {
     };
     let ((), result) = tokio::join!(server, client);
     assert!(result.unwrap_err().is_busy());
+}
+
+/// A deliberate close reaches the peer with its reason's code, and the receiving half answers the
+/// close while the peer is still connected, so neither side waits out a close-handshake timeout.
+#[tokio::test]
+async fn deliberate_close_carries_reason_and_is_answered() {
+    for reason in [
+        CloseReason::Shutdown,
+        CloseReason::ProtocolViolation,
+        CloseReason::IdentityMismatch,
+        CloseReason::PeerSilent,
+        CloseReason::InternalError,
+    ] {
+        let (acceptor, address) = acceptor().await;
+        let (answered, keep_open) = tokio::sync::oneshot::channel::<()>();
+        let server = async {
+            let (mut receiver, mut sender) = acceptor
+                .open(acceptor.accept().await.unwrap())
+                .await
+                .unwrap();
+            sender.close(reason).await.unwrap();
+            // tungstenite echoes the code, so the reply proves the peer flushed its answer.
+            let reply =
+                tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 5), receiver.recv())
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+            let _ = answered.send(());
+            reply
+        };
+        let client = async {
+            let (mut receiver, _sender) = connect(&endpoint(address, PATH, &[])).await.unwrap();
+            let result = receiver.recv().await;
+            let _ = keep_open.await;
+            result
+        };
+        let (reply, received) = tokio::join!(server, client);
+        let received = received.unwrap_err();
+        assert!(received.is_closed_for(reason), "{reason:?}: {received:?}");
+        assert!(reply.is_closed_for(reason), "{reason:?}: {reply:?}");
+    }
+}
+
+/// `close_connection` finishes once the peer's close reply arrives, well within any deadline.
+#[tokio::test]
+async fn close_connection_finishes_with_the_close_handshake() {
+    let (acceptor, address) = acceptor().await;
+    let server = async {
+        let (mut receiver, mut sender) = acceptor
+            .open(acceptor.accept().await.unwrap())
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(/*secs*/ 5),
+            close_connection(&mut receiver, &mut sender, CloseReason::Shutdown),
+        )
+        .await
+    };
+    let client = async {
+        let (mut receiver, _sender) = connect(&endpoint(address, PATH, &[])).await.unwrap();
+        assert!(
+            receiver
+                .recv()
+                .await
+                .unwrap_err()
+                .is_closed_for(CloseReason::Shutdown)
+        );
+        // Stay connected: only the close reply, not a dropped socket, may end the server's wait.
+        std::future::pending::<()>().await
+    };
+    tokio::select! {
+        finished = server => assert!(finished.is_ok(), "close handshake did not finish"),
+        () = client => unreachable!("the client stays connected"),
+    }
 }
 
 /// A normal close ends cleanly, another code is surfaced, and text or oversized messages are

@@ -140,8 +140,11 @@ WebSocket 路由访问：
 
 请求头原样发送，厂商寻址和平台凭据只放在这里，握手仍校验 `node_id`。`ws://`／`wss://` URL 以及
 请求头名称和取值在开库前检查。每次会话失败或断开都会按类别（不可达、沙盒不存在、被拒绝、会话占用、
-协议错误、连接断开）记录日志，并在 `reconnect_ms` 后重试，不判定执行失败，也不重建执行。“会话占用”只有 WebSocket 能识别（Node 以
+协议错误、身份不符、Node 静默、连接断开）记录日志，并在 `reconnect_ms` 后重试，不判定执行失败，也不重建执行。“会话占用”只有 WebSocket 能识别（Node 以
 close code `4409` 关闭）；IPC 的 Node 只能关闭 socket，会话占用会被记为协议错误。
+经 WebSocket 时，Node 以 `1002` 或 `4403` 关闭分别记为协议错误和身份不符；Controller 自己结束会话时
+也发送对应 code（停止为 `1001`，另有 `1002`、`4403`、`4408`，持久化失败为 `1011`），Node 和路由
+都能看到会话结束的原因。
 
 `protected_state_directories` 须列出所有 Node／host／guardian 状态根；配置的 IPC socket 父目录也受保护。Controller 数据目录与它们
 重叠时，在开库前拒绝。独立程序恢复已接受记录，配置文件和 stdin 不是业务命令通道。

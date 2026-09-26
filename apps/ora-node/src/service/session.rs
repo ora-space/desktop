@@ -1,6 +1,7 @@
 use super::*;
 use ora_node_transport::{
-    Acceptor, FrameReceiver, FrameSender, ipc::IpcAcceptor, websocket::WsAcceptor,
+    Acceptor, CloseReason, FrameReceiver, FrameSender, TransportError, close_connection,
+    ipc::IpcAcceptor, websocket::WsAcceptor,
 };
 use tokio::{
     net::TcpListener,
@@ -78,14 +79,51 @@ async fn run_exclusive<A: Acceptor>(
     let deadline = Duration::from_millis(config.frame_timeout_ms);
     let session = async {
         // The transport handshake counts as part of the admission window it already owns.
-        let (receiver, writer) = timeout(deadline, acceptor.open(pending))
-            .await
-            .map_err(io::Error::other)?
-            .map_err(io::Error::other)?;
-        connected(receiver, writer, config, info, sender, active.clone()).await
+        let (mut receiver, mut writer) = tokio::select! {
+            opened = timeout(deadline, acceptor.open(pending)) => opened
+                .map_err(io::Error::other)?
+                .map_err(io::Error::other)?,
+            () = stopped(shutdown) => return Ok(()),
+        };
+        // Shutdown is observed here rather than by dropping the session, so the Controller learns
+        // the Node is stopping instead of seeing a lost connection.
+        let (result, reason) = tokio::select! {
+            result = connected(&mut receiver, &mut writer, config, info, sender, active.clone()) => match result {
+                Ok(()) => (Ok(()), None),
+                Err(failure) => (Err(failure.error), failure.close),
+            },
+            () = stopped(shutdown) => (Ok(()), Some(CloseReason::Shutdown)),
+        };
+        // A stopping worker can fail the session before the shutdown poll notices the request;
+        // the Controller should still learn that the Node is stopping.
+        let reason = reason.map(|reason| {
+            if shutdown.requested() {
+                CloseReason::Shutdown
+            } else {
+                reason
+            }
+        });
+        match reason {
+            // The runtime ends soon after shutdown, so this close cannot be left to a task.
+            Some(CloseReason::Shutdown) => {
+                let _ = timeout(
+                    deadline,
+                    close_connection(&mut receiver, &mut writer, CloseReason::Shutdown),
+                )
+                .await;
+            }
+            // Admission is released without waiting for the Controller to finish closing, so a
+            // peer that lingers after the close cannot turn the next connection away as busy.
+            Some(reason) => {
+                tokio::spawn(timeout(deadline, async move {
+                    close_connection(&mut receiver, &mut writer, reason).await;
+                }));
+            }
+            None => {}
+        }
+        result
     };
     tokio::pin!(session);
-    let mut tick = interval(Duration::from_millis(/*millis*/ 25));
     let result = loop {
         tokio::select! {
             result = &mut session => break result,
@@ -94,28 +132,79 @@ async fn run_exclusive<A: Acceptor>(
                 // heartbeats and command handling independent of the rejected peer.
                 tokio::spawn(timeout(deadline, acceptor.reject_busy(accepted?)));
             }
-            _ = tick.tick() => { if shutdown.requested() { break Ok(()); } }
         }
     };
     *active
         .lock()
         .map_err(|_| io::Error::other("session admission poisoned"))? = false;
-    if result.is_err() {
+    if let Err(error) = result {
         ora_logging::ora_warn!(
+            error = %error,
             "Node control session closed; durable execution responsibility retained"
         );
     }
     Ok(())
 }
 
+/// Completes once shutdown is requested; the flag is polled because it is shared with blocking code.
+async fn stopped(shutdown: &Shutdown) {
+    let mut tick = interval(Duration::from_millis(/*millis*/ 25));
+    while !shutdown.requested() {
+        tick.tick().await;
+    }
+}
+
+/// A failed session and what the Node tells the Controller before closing; `None` when the
+/// Controller's side already ended the connection.
+struct Failure {
+    close: Option<CloseReason>,
+    error: io::Error,
+}
+
+impl Failure {
+    /// A failure this Node detected and reports with `reason`.
+    fn local(
+        reason: CloseReason,
+        error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self {
+            close: Some(reason),
+            error: io::Error::other(error),
+        }
+    }
+
+    /// The Controller missed the frame deadline, whether by not sending or by not reading.
+    fn silent() -> Self {
+        Self::local(CloseReason::PeerSilent, "frame deadline elapsed")
+    }
+}
+
+impl From<TransportError> for Failure {
+    /// Malformed input is the Controller's protocol violation; anything else means the
+    /// connection is already gone.
+    fn from(error: TransportError) -> Self {
+        match error {
+            TransportError::Frame(_) | TransportError::UnexpectedMessage => {
+                Self::local(CloseReason::ProtocolViolation, error)
+            }
+            TransportError::Io(_)
+            | TransportError::Closed { .. }
+            | TransportError::WebSocket(_) => Self {
+                close: None,
+                error: io::Error::other(error),
+            },
+        }
+    }
+}
+
 /// Reads and validates the next Controller message; `None` is a clean end of the connection.
 async fn receive<R: FrameReceiver>(
     receiver: &mut R,
-) -> io::Result<Option<ControllerToNodeMessage>> {
-    match receiver.recv().await.map_err(io::Error::other)? {
+) -> Result<Option<ControllerToNodeMessage>, Failure> {
+    match receiver.recv().await? {
         Some(frame) => decode_controller_frame(&frame)
             .map(Some)
-            .map_err(io::Error::other),
+            .map_err(|error| Failure::local(CloseReason::ProtocolViolation, error)),
         None => Ok(None),
     }
 }
@@ -124,9 +213,10 @@ async fn receive<R: FrameReceiver>(
 async fn transmit<W: FrameSender>(
     writer: &mut W,
     message: &NodeToControllerMessage,
-) -> io::Result<()> {
-    let frame = encode_node_frame(message).map_err(io::Error::other)?;
-    writer.send(frame).await.map_err(io::Error::other)
+) -> Result<(), Failure> {
+    let frame = encode_node_frame(message)
+        .map_err(|error| Failure::local(CloseReason::InternalError, error))?;
+    Ok(writer.send(frame).await?)
 }
 
 /// Queues bounded requests with a revocable admission identity; closing a connection does not cancel accepted work.
@@ -134,7 +224,7 @@ async fn request(
     sender: &mpsc::SyncSender<Work>,
     active: &Arc<Mutex<bool>>,
     request: Request,
-) -> io::Result<Vec<NodeToControllerMessage>> {
+) -> Result<Vec<NodeToControllerMessage>, Failure> {
     let (reply, response) = oneshot::channel();
     sender
         .try_send(Work {
@@ -142,31 +232,42 @@ async fn request(
             request,
             reply,
         })
-        .map_err(|_| io::Error::other("Node admission queue unavailable"))?;
+        .map_err(|_| {
+            Failure::local(
+                CloseReason::InternalError,
+                "Node admission queue unavailable",
+            )
+        })?;
     response
         .await
-        .map_err(io::Error::other)?
-        .map_err(io::Error::other)
+        .map_err(|error| Failure::local(CloseReason::InternalError, error))?
+        .map_err(|rejection| Failure::local(rejection.close, rejection.message))
 }
 
 /// Keeps one reader future alive per frame and gives heartbeat/output independent execution from Git.
 async fn connected<R: FrameReceiver, W: FrameSender>(
-    mut receiver: R,
-    mut writer: W,
+    receiver: &mut R,
+    writer: &mut W,
     config: &ControlConfig,
     info: &SessionInfo,
     sender: &mpsc::SyncSender<Work>,
     active: Arc<Mutex<bool>>,
-) -> io::Result<()> {
+) -> Result<(), Failure> {
     let deadline = Duration::from_millis(config.frame_timeout_ms);
-    let greeting = timeout(deadline, receive(&mut receiver))
+    let greeting = timeout(deadline, receive(receiver))
         .await
-        .map_err(io::Error::other)??;
+        .map_err(|_| Failure::silent())??;
     let Some(ControllerToNodeMessage::Hello(hello)) = greeting else {
-        return Err(io::Error::other("expected Hello"));
+        return Err(Failure::local(
+            CloseReason::ProtocolViolation,
+            "expected Hello",
+        ));
     };
     if hello.payload.controller_id != info.controller {
-        return Err(io::Error::other("Controller does not own this Node"));
+        return Err(Failure::local(
+            CloseReason::IdentityMismatch,
+            "Controller does not own this Node",
+        ));
     }
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -176,17 +277,20 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             capabilities: info.capabilities.clone(),
         },
     });
-    timeout(deadline, transmit(&mut writer, &response))
+    timeout(deadline, transmit(writer, &response))
         .await
-        .map_err(io::Error::other)??;
+        .map_err(|_| Failure::silent())??;
     let (outgoing, mut messages) = async_queue::channel(/*buffer*/ 16);
+    // The write task owns the receiving end of `outgoing`, so a failed send means the session is
+    // already ending.
+    let queue_closed = |_| Failure::local(CloseReason::InternalError, "session output closed");
     let read = async {
         loop {
-            let message = timeout(deadline, receive(&mut receiver))
+            let message = timeout(deadline, receive(receiver))
                 .await
-                .map_err(io::Error::other)??;
+                .map_err(|_| Failure::silent())??;
             let Some(message) = message else {
-                return Ok::<(), io::Error>(());
+                return Ok::<(), Failure>(());
             };
             // The per-frame deadline above is the Controller liveness deadline; its idle heartbeat
             // only renews it and must not queue behind Git in the worker.
@@ -194,7 +298,8 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 ControllerToNodeMessage::Heartbeat(heartbeat)
                     if heartbeat.payload.controller_id != info.controller =>
                 {
-                    return Err(io::Error::other(
+                    return Err(Failure::local(
+                        CloseReason::IdentityMismatch,
                         "heartbeat from a Controller that does not own this Node",
                     ));
                 }
@@ -208,9 +313,11 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 request(sender, &active, Request::Message(message)),
             )
             .await
-            .map_err(io::Error::other)??;
+            .map_err(|_| {
+                Failure::local(CloseReason::InternalError, "admission deadline elapsed")
+            })??;
             for reply in replies {
-                outgoing.send(reply).await.map_err(io::Error::other)?;
+                outgoing.send(reply).await.map_err(queue_closed)?;
             }
         }
     };
@@ -219,22 +326,22 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         loop {
             tick.tick().await;
             for event in request(sender, &active, Request::Replay).await? {
-                outgoing.send(event).await.map_err(io::Error::other)?;
+                outgoing.send(event).await.map_err(queue_closed)?;
             }
         }
         #[allow(unreachable_code)]
-        Ok::<(), io::Error>(())
+        Ok::<(), Failure>(())
     };
     let write = async {
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
             let message = tokio::select! {
-                message = messages.recv() => { let Some(message) = message else { return Ok::<(), io::Error>(()); }; message }
+                message = messages.recv() => { let Some(message) = message else { return Ok::<(), Failure>(()); }; message }
                 _ = tick.tick() => NodeToControllerMessage::Heartbeat(HeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: Heartbeat { node: info.identity.clone() } }),
             };
-            timeout(deadline, transmit(&mut writer, &message))
+            timeout(deadline, transmit(writer, &message))
                 .await
-                .map_err(io::Error::other)??;
+                .map_err(|_| Failure::silent())??;
         }
     };
     tokio::select! { result = read => result, result = write => result, result = replay => result }

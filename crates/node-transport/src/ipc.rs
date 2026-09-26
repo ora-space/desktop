@@ -1,6 +1,8 @@
 //! Local IPC over a Unix socket. Each frame body travels behind a four-byte big-endian length, the
 //! same bytes the protocol's stream reader and writer use, so the wire format is unchanged.
-use crate::{Acceptor, ConnectError, ConnectFailure, FrameReceiver, FrameSender, TransportError};
+use crate::{
+    Acceptor, CloseReason, ConnectError, ConnectFailure, FrameReceiver, FrameSender, TransportError,
+};
 use futures_util::{SinkExt, StreamExt};
 use ora_node_protocol::{FrameError, MAX_FRAME_LENGTH};
 use std::{future::Future, io, path::Path};
@@ -80,6 +82,14 @@ impl FrameSender for IpcSender {
     /// Writes and flushes one length-prefixed frame.
     fn send(&mut self, frame: Vec<u8>) -> impl Future<Output = Result<(), TransportError>> + Send {
         self.0.send(frame)
+    }
+
+    /// Shuts down the write side; the peer reads a clean end of stream, since IPC has no code.
+    fn close(
+        &mut self,
+        _reason: CloseReason,
+    ) -> impl Future<Output = Result<(), TransportError>> + Send {
+        self.0.close()
     }
 }
 

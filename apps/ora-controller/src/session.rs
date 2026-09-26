@@ -1,6 +1,6 @@
 use super::*;
 use ora_node_transport::{
-    ConnectError, FrameReceiver, FrameSender, TransportError, ipc,
+    CloseReason, ConnectError, FrameReceiver, FrameSender, TransportError, close_connection, ipc,
     websocket::{self, WsEndpoint},
 };
 use serde::{Deserialize, Serialize};
@@ -49,10 +49,17 @@ pub enum SessionError {
     /// The Node already serves another live control session.
     #[error("Node refused the connection: another control session is live")]
     Busy,
-    /// The peer violated the protocol or is not the configured Node with the needed capability.
+    /// The peer violated the protocol, or closed the connection saying this side did.
     #[error("protocol failure: {0}")]
     Protocol(String),
-    /// An established connection ended, failed or missed its I/O deadline.
+    /// The peer is not the configured Node with the needed capability, or closed the connection
+    /// because this Controller does not own it.
+    #[error("identity mismatch: {0}")]
+    Mismatch(String),
+    /// The Node sent nothing, or stopped reading, within the I/O deadline.
+    #[error("Node silent past the I/O deadline")]
+    Silent,
+    /// An established connection ended or failed.
     #[error("connection lost: {0}")]
     Disconnected(String),
     /// Persistence refused or could not confirm a step; nothing was acknowledged for it.
@@ -60,11 +67,32 @@ pub enum SessionError {
     Store(#[from] Error),
 }
 
+impl SessionError {
+    /// What to tell the Node when this failure ends an established session. Failures the Node
+    /// caused by closing need no close of our own; attempting one would only fail fast.
+    fn close_reason(&self) -> Option<CloseReason> {
+        match self {
+            Self::Protocol(_) => Some(CloseReason::ProtocolViolation),
+            Self::Mismatch(_) => Some(CloseReason::IdentityMismatch),
+            Self::Silent => Some(CloseReason::PeerSilent),
+            Self::Store(_) => Some(CloseReason::InternalError),
+            Self::Configuration | Self::Connect(_) | Self::Busy | Self::Disconnected(_) => None,
+        }
+    }
+}
+
 impl From<TransportError> for SessionError {
-    /// Separates frame-level violations from ordinary connection loss.
+    /// Separates frame-level violations from ordinary connection loss, and keeps the Node's
+    /// verdict when it closed for a protocol or identity reason.
     fn from(error: TransportError) -> Self {
         if error.is_busy() {
             return Self::Busy;
+        }
+        if error.is_closed_for(CloseReason::ProtocolViolation) {
+            return Self::Protocol(error.to_string());
+        }
+        if error.is_closed_for(CloseReason::IdentityMismatch) {
+            return Self::Mismatch(error.to_string());
         }
         match error {
             TransportError::Frame(_) | TransportError::UnexpectedMessage => {
@@ -84,7 +112,7 @@ async fn bounded<T>(
 ) -> Result<T, SessionError> {
     timeout(deadline, step)
         .await
-        .map_err(|_| SessionError::Disconnected("I/O deadline elapsed".into()))?
+        .map_err(|_| SessionError::Silent)?
 }
 
 /// Reads and validates the next Node message; `None` is a clean end of the connection.
@@ -116,6 +144,17 @@ pub async fn run_session<S: CoordinationStore>(
     target: &NodeTarget,
     config: &SessionConfig,
 ) -> Result<(), SessionError> {
+    run_session_until(store, target, config, std::future::pending()).await
+}
+
+/// Like [`run_session`], but returns `Ok(())` once `stop` completes, after telling the Node the
+/// Controller is shutting down so its logs show a deliberate end rather than a lost connection.
+pub async fn run_session_until<S: CoordinationStore>(
+    store: &S,
+    target: &NodeTarget,
+    config: &SessionConfig,
+    stop: impl std::future::Future<Output = ()>,
+) -> Result<(), SessionError> {
     if config.io_timeout_ms == 0 || config.query_interval_ms == 0 {
         return Err(SessionError::Configuration);
     }
@@ -135,25 +174,54 @@ pub async fn run_session<S: CoordinationStore>(
             let (receiver, writer) = timeout(deadline, ipc::connect(path))
                 .await
                 .map_err(unreachable)??;
-            drive(store, &target.node_id, config, receiver, writer).await
+            drive(store, &target.node_id, config, receiver, writer, stop).await
         }
         NodeEndpoint::WebSocket(endpoint) => {
             let (receiver, writer) = timeout(deadline, websocket::connect(endpoint))
                 .await
                 .map_err(unreachable)??;
-            drive(store, &target.node_id, config, receiver, writer).await
+            drive(store, &target.node_id, config, receiver, writer, stop).await
         }
     }
 }
 
-/// Runs the handshake and the coordination loop over any frame transport.
+/// Runs one established session until it fails or `stop` completes, then closes the connection
+/// with the matching reason under the I/O deadline.
 async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
     store: &S,
     node_id: &NodeId,
     config: &SessionConfig,
     mut receiver: R,
     mut writer: W,
+    stop: impl std::future::Future<Output = ()>,
 ) -> Result<(), SessionError> {
+    let deadline = Duration::from_millis(config.io_timeout_ms);
+    let (result, reason) = tokio::select! {
+        result = coordinate(store, node_id, config, &mut receiver, &mut writer) => {
+            let Err(error) = result;
+            let reason = error.close_reason();
+            (Err(error), reason)
+        }
+        () = stop => (Ok(()), Some(CloseReason::Shutdown)),
+    };
+    if let Some(reason) = reason {
+        let _ = timeout(
+            deadline,
+            close_connection(&mut receiver, &mut writer, reason),
+        )
+        .await;
+    }
+    result
+}
+
+/// Runs the handshake and the coordination loop over any frame transport; it only ends by failing.
+async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
+    store: &S,
+    node_id: &NodeId,
+    config: &SessionConfig,
+    receiver: &mut R,
+    writer: &mut W,
+) -> Result<std::convert::Infallible, SessionError> {
     let deadline = Duration::from_millis(config.io_timeout_ms);
     let id = store.id().clone();
     let hello = ControllerToNodeMessage::Hello(HelloMessage {
@@ -163,8 +231,8 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
     });
-    bounded(deadline, transmit(&mut writer, &hello)).await?;
-    let greeting = bounded(deadline, receive(&mut receiver)).await?;
+    bounded(deadline, transmit(writer, &hello)).await?;
+    let greeting = bounded(deadline, receive(receiver)).await?;
     let Some(NodeToControllerMessage::HelloAccepted(hello)) = greeting else {
         return Err(SessionError::Protocol("Node did not accept Hello".into()));
     };
@@ -174,7 +242,7 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
             .capabilities
             .contains(&NodeCapability::RepositoryClone)
     {
-        return Err(SessionError::Protocol(
+        return Err(SessionError::Mismatch(
             "Node identity or capability mismatch".into(),
         ));
     }
@@ -186,7 +254,7 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
     let mut retransmitted = std::collections::HashSet::new();
     loop {
         // One deadline spans the whole wait across query ticks; frame receipt itself is cancel-safe.
-        let read = bounded(deadline, receive(&mut receiver));
+        let read = bounded(deadline, receive(receiver));
         tokio::pin!(read);
         let message = loop {
             tokio::select! {
@@ -202,7 +270,7 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
                         Some(command) => ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id, execution_id: command.execution_id, payload: GetExecutionStatus { node_id: node_id.clone() } }),
                         None => ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: id.clone() } }),
                     };
-                    bounded(deadline, transmit(&mut writer, &uplink)).await?;
+                    bounded(deadline, transmit(writer, &uplink)).await?;
                 }
             }
         };
@@ -223,7 +291,7 @@ async fn drive<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
             None
         };
         if let Some(reply) = reply {
-            bounded(deadline, transmit(&mut writer, &reply)).await?;
+            bounded(deadline, transmit(writer, &reply)).await?;
         }
     }
 }
