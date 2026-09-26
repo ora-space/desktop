@@ -2,7 +2,8 @@
 //! these targets are never configured: each one is derived from Cloud's record of a live sandbox
 //! of the current generation (its `sandbox_ensure` evidence) and the deployment's router, and it
 //! lives until the terminate step stops it or Cloud reports the sandbox terminated. The Controller
-//! keeps no local record of them; a new process rebuilds them from the snapshots it claims.
+//! keeps no local record of them; a new process rebuilds them from Cloud's list of live sandboxes
+//! when it first holds the lease, and from the snapshots it claims.
 use super::{
     CloudStore,
     reports::{self, Reported},

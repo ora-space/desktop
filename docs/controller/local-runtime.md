@@ -168,8 +168,12 @@ incarnation before registering a new one. A failed effect defers the operation w
 it with `termination_unconfirmed`. A clone whose ref the Node protocol refuses (such as `HEAD`)
 blocks the step without a dispatch.
 
-Sessions are rebuilt from the claimed operation's snapshot: after a Controller restart a live sandbox
-regains its session only when an operation for its Workspace is claimed again.
+Sessions follow Cloud's record. When a lease epoch is first held, the Controller calls
+`ListLiveSandboxes`, starts a session for every listed sandbox and stops any it holds that is not
+listed, so a restarted Controller reconnects before any operation is claimed; each claimed
+operation's snapshot then keeps its own Project's sandboxes in line. A failed list does not hold
+operations back and is retried on the next wake. Cloud requires a concrete Project default branch,
+so `HEAD` reaches the clone step only for Projects created before that rule.
 
 ```json
 {
