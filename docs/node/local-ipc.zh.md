@@ -52,14 +52,20 @@ Controller 不会让下一个连接被判为占用；只有正常停止会等待
 
 Hello 协商现有版本、Node 身份／运行实例及
 clone 能力；会话接收 clone、状态查询和精确确认，冲突或不支持的消息会关闭连接。
-心跳独立于阻塞 Git 执行；Node 主动按有界分页重放未确认 clone 事件，查询回复不确认事件。
+心跳独立于 clone 的 Git 执行；Node 主动按有界分页重放未确认 clone 事件，查询回复不确认事件。
 
 受理使用有界队列和可撤销会话门禁。门禁只覆盖持久受理，随后才运行 Git；断连或会话撤销丢弃尚未受理
 的排队工作，不取消已经受理的 clone。读帧、写帧及命令受理回复均使用有限的 `frame_timeout_ms` 期限；
-受理回复的期限从对应帧到达时起算。执行线程繁忙时，即使心跳正常，查询／命令会话也可能超时关闭；
-重连查询原执行，不创建新尝试。
+受理回复的期限从对应帧到达时起算。
 
-读帧从不等待执行线程：前面的请求等待回复时，会话照常读取下一帧，因此即使 Git 占用执行线程，
+负责受理的 worker 独占 Node 数据库，从不等待 Git。clone 中需要 host 的每一步（派发 Run、Scope 关闭后
+收尾、核实成功的 checkout）都在独立的 clone 执行器上运行，一次一步；worker 在交出之前先持久化该步骤的
+输入，再持久化执行器返回的观察。因此 clone 的 Git 等待远端期间，状态查询、确认和重放照常得到回复；
+第二个 clone 会被立即受理，但要等第一个的步骤结束后才派发。正常停止时，在途步骤最多再等待
+`shutdown_grace_ms + cleanup_timeout_ms`；未完成的部分在下次启动时依据已记录的尝试收尾。见
+[决策](../../specs/decisions/node/repository/20260925-clone-git-effects-run-outside-the-admission-worker.md)。
+
+读帧从不等待 worker：前面的请求等待回复时，会话照常读取下一帧，因此即使 clone 的 Git 正在运行，
 对端结束流、WebSocket close／ping 和半帧也都能及时发现。clone 中途重启的路由发出的 close 会被立即
 处理并释放控制槽，重连不再被 `4409` 拒绝。回复按请求顺序发出。未回复请求最多 15 个（为重放保留
 一个执行队列位置）；超出时丢弃状态查询，因为 Controller 按定时器轮询、会再次查询；其他消息则关闭
@@ -67,7 +73,7 @@ clone 能力；会话接收 clone、状态查询和精确确认，冲突或不�
 
 Node 的每帧读期限同时是 Controller 的存活期限。Controller 在每个 `query_interval_ms` 节拍恰好发送
 一帧：有待确认的派发时发送状态查询，没有时发送携带 `controller_id` 的 Controller `heartbeat`。Node
-在会话读循环内处理该心跳，不进入 worker 队列，因此不会排在 Git 之后；`controller_id` 不是本 Node
+在会话读循环内处理该心跳，不进入 worker 队列；`controller_id` 不是本 Node
 的归属时结束会话。空闲会话因此保持连接，而 Controller 消失或连接半开时，控制槽会在
 `frame_timeout_ms` 内释放。`query_interval_ms` 应远小于 Node 的 `frame_timeout_ms`（不超过其一半）；
 两者位于不同进程的配置中，启动时无法互相校验。Controller 与 Node 必须使用同一版本：旧 Node 会拒绝
