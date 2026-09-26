@@ -144,7 +144,10 @@ Controller 从不自行重建沙箱。握手后它以 `RegisterNode` 登记 Node
 断开（Controller 主动停止的不算），登记新化身前先结束旧化身。效果失败以 `external_failure` 延后操作，超时以 `substrate_timeout` 延后，
 终止未确认以 `termination_unconfirmed` 阻塞。Node 协议拒绝的 ref（如 `HEAD`）使 clone 步骤阻塞且不派发。
 
-会话按领取到的操作快照重建：Controller 重启后，存活沙箱只有在其 Workspace 再次被领取操作时才恢复会话。
+会话以 Cloud 的记录为准。首次持有某个租约 epoch 时，Controller 调用 `ListLiveSandboxes`，为列出的每个沙箱
+启动会话，并停止它持有但未被列出的会话，因此重启后的 Controller 不必等到领取操作就能重连；之后每个领取到的
+操作快照继续校正其 Project 的沙箱。列表失败不阻塞操作推进，下次唤醒时重试。Cloud 要求 Project 使用具体的
+默认分支，只有该规则之前创建的 Project 才会让 `HEAD` 到达 clone 步骤。
 
 ```json
 {

@@ -204,6 +204,54 @@ struct World {
     cloud: WorkspaceCloud,
     node: Node,
     timeline: Timeline,
+    controller: Controller,
+}
+
+/// The running Controller process of a scenario, which a test may restart.
+#[derive(Clone)]
+struct Controller {
+    config: RuntimeConfig,
+    running: Arc<tokio::sync::Mutex<Option<Running>>>,
+}
+
+/// One started Controller runtime and the way to stop it.
+struct Running {
+    stop: oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl Controller {
+    /// Opens and runs a new Controller runtime from the scenario's configuration.
+    async fn start(&self) {
+        let runtime = ControllerRuntime::<CloudStore>::open(self.config.clone()).unwrap();
+        let (stop, stopped) = oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            runtime
+                .run(async {
+                    let _ = stopped.await;
+                })
+                .await
+        });
+        *self.running.lock().await = Some(Running { stop, task });
+    }
+
+    /// Stops the running Controller and waits until it exited.
+    async fn stop(&self) {
+        let Running { stop, task } = self.running.lock().await.take().unwrap();
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+    }
+}
+
+impl World {
+    /// Stops the Controller and starts a new process with the same configuration and no memory of
+    /// the old one's sessions; returns how many events the timeline held in between.
+    async fn restart(&self) -> usize {
+        self.controller.stop().await;
+        let before = self.timeline.events().len();
+        self.controller.start().await;
+        before
+    }
 }
 
 /// Runs `test` against a Controller with a Substrate and no static Node.
@@ -259,23 +307,19 @@ fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(Wor
                     reconnect_ms: 50,
                     timezone: "Asia/Shanghai".into(),
                 };
-                let runtime = ControllerRuntime::<CloudStore>::open(config).unwrap();
-                let (stop, stopped) = oneshot::channel::<()>();
-                let running = tokio::spawn(async move {
-                    runtime
-                        .run(async {
-                            let _ = stopped.await;
-                        })
-                        .await
-                });
+                let controller = Controller {
+                    config,
+                    running: Arc::default(),
+                };
+                controller.start().await;
                 test(World {
                     cloud,
                     node,
                     timeline,
+                    controller: controller.clone(),
                 })
                 .await;
-                stop.send(()).unwrap();
-                running.await.unwrap().unwrap();
+                controller.stop().await;
                 drop(served);
             });
     });
@@ -384,6 +428,35 @@ fn quiesce_reports_busy_while_a_dispatch_has_no_result() {
                 kind: "sandbox_terminate"
             }),
             "{events:#?}"
+        );
+    });
+}
+
+/// A restarted Controller reconnects to the Workspace's live sandbox from Cloud's list of live
+/// sandboxes, before and without any operation of that Workspace being claimed, and reports the
+/// reconnected Node to Cloud: Cloud does not have to wait for a new operation to see it again.
+#[test]
+fn a_restarted_controller_reconnects_live_sandboxes_without_an_operation() {
+    scenario("main", |world| async move {
+        let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        settled(&world, &create, proto::OperationState::Succeeded).await;
+        let before = world.restart().await;
+        let registered = Event::Registered {
+            incarnation: "incarnation-1".into(),
+        };
+        world
+            .timeline
+            .until(|events| events[before..].contains(&registered))
+            .await;
+        let events = world.timeline.events()[before..].to_vec();
+        assert!(
+            position(&events, &Event::Listed { sandboxes: 1 }) < position(&events, &registered)
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Claimed { .. })),
+            "the session must come back without a claimed operation: {events:#?}"
         );
     });
 }

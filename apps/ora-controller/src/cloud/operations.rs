@@ -7,6 +7,7 @@
 //! claims, takes the current step as far as it can and either advances or parks the operation;
 //! the next round claims again and starts from Cloud's fresh snapshot. The task that runs the
 //! rounds belongs to the lease it was started under and is stopped when that lease is lost.
+mod live;
 mod steps;
 
 use super::{CloudStore, fault, fleet::Fleet, substrate::Observation};
@@ -14,7 +15,13 @@ use crate::*;
 use ora_controller_proto::v1::{
     self as proto, workspace_operation_service_client::WorkspaceOperationServiceClient,
 };
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::Duration,
+};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
@@ -25,6 +32,9 @@ const RETRY_SECONDS: u32 = 5;
 #[derive(Default)]
 pub(super) struct Operations {
     task: Option<(i64, JoinHandle<()>)>,
+    /// The latest epoch under which the sandbox targets were rebuilt from Cloud's list; 0 before
+    /// the first rebuild. Cloud's epochs start at 1.
+    rebuilt: Arc<AtomicI64>,
 }
 
 impl Operations {
@@ -41,10 +51,23 @@ impl Operations {
             return;
         }
         self.stop();
-        let (store, fleet) = (store.clone(), fleet.clone());
+        let (store, fleet, rebuilt) = (store.clone(), fleet.clone(), self.rebuilt.clone());
         self.task = Some((
             epoch,
-            tokio::spawn(async move { drain(&store, &fleet, epoch).await }),
+            tokio::spawn(async move {
+                if rebuilt.load(Ordering::Acquire) != epoch {
+                    // A failed rebuild does not hold operations back: each claimed operation
+                    // brings its own sandboxes' targets in line, and the next wake retries.
+                    match live::rebuild(&store, &fleet, epoch).await {
+                        Ok(()) => rebuilt.store(epoch, Ordering::Release),
+                        Err(error) => ora_logging::ora_warn!(
+                            error = %error,
+                            "listing live sandboxes failed; retrying on the next wake"
+                        ),
+                    }
+                }
+                drain(&store, &fleet, epoch).await;
+            }),
         ));
     }
 

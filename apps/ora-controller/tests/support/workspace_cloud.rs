@@ -70,6 +70,10 @@ pub enum Event {
     },
     /// The fake Node's session with the Controller ended.
     SessionEnded,
+    /// The Controller listed the live sandboxes; `sandboxes` is how many Cloud returned.
+    Listed {
+        sandboxes: usize,
+    },
 }
 
 /// A shared, append-only timeline.
@@ -761,6 +765,69 @@ impl WorkspaceOperationService for WorkspaceCloud {
         Ok(Response::new(proto::DeferOperationResponse {
             operation: Some(operation),
         }))
+    }
+
+    async fn list_live_sandboxes(
+        &self,
+        request: Request<proto::ListLiveSandboxesRequest>,
+    ) -> Result<Response<proto::ListLiveSandboxesResponse>, Status> {
+        if request.get_ref().epoch != EPOCH {
+            return Err(Status::failed_precondition("stale_controller"));
+        }
+        let sandboxes = Self::live_sandboxes(&self.lock());
+        self.timeline.push(Event::Listed {
+            sandboxes: sandboxes.len(),
+        });
+        Ok(Response::new(proto::ListLiveSandboxesResponse {
+            sandboxes,
+        }))
+    }
+}
+
+impl WorkspaceCloud {
+    /// The sandboxes the real Cloud lists as live: not terminating or terminated, of the
+    /// Workspace's current generation, with a succeeded ensure effect giving the NodeId.
+    fn live_sandboxes(state: &State) -> Vec<proto::LiveSandbox> {
+        state
+            .sandboxes
+            .iter()
+            .filter(|sandbox| {
+                !matches!(
+                    sandbox.observed_state.as_str(),
+                    "terminating" | "terminated"
+                ) && sandbox.generation == state.workspace.runtime_generation
+            })
+            .filter_map(|sandbox| {
+                let ensure = state
+                    .effects
+                    .iter()
+                    .map(|(_, effect)| effect)
+                    .find(|effect| effect.id == sandbox.id)?;
+                let Some(proto::EffectEvidence {
+                    evidence: Some(Evidence::SandboxEnsured(ensured)),
+                }) = &ensure.evidence
+                else {
+                    return None;
+                };
+                let mut record = sandbox.clone();
+                record.substrate_sandbox_id = record
+                    .substrate_sandbox_id
+                    .or_else(|| ensure.external_id.clone());
+                Some(proto::LiveSandbox {
+                    sandbox: Some(record),
+                    node_id: ensured.node_id.clone(),
+                    nodes: state
+                        .nodes
+                        .iter()
+                        .filter(|node| {
+                            node.sandbox_instance_id == sandbox.id
+                                && node.connection != proto::NodeConnection::Ended as i32
+                        })
+                        .cloned()
+                        .collect(),
+                })
+            })
+            .collect()
     }
 }
 

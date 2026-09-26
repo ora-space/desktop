@@ -817,6 +817,31 @@ pub struct DeferOperationResponse {
     #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListLiveSandboxesRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+}
+/// One sandbox a Controller should hold a session with, and everything needed to reach its Node.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LiveSandbox {
+    /// substrate_sandbox_id is always set: the ensure effect's external identity when the sandbox
+    /// step has not advanced yet.
+    #[prost(message, optional, tag="1")]
+    pub sandbox: ::core::option::Option<SandboxRecord>,
+    /// The NodeId the ensure effect reported; the Node's handshake must present it.
+    #[prost(string, tag="2")]
+    pub node_id: ::prost::alloc::string::String,
+    /// Node incarnations of this sandbox that have not ended.
+    #[prost(message, repeated, tag="3")]
+    pub nodes: ::prost::alloc::vec::Vec<NodeRecord>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListLiveSandboxesResponse {
+    /// Ordered by sandbox ID.
+    #[prost(message, repeated, tag="1")]
+    pub sandboxes: ::prost::alloc::vec::Vec<LiveSandbox>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum OperationKind {
