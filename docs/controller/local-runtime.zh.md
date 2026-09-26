@@ -74,7 +74,8 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 `endpoint` 是 Cloud 的 gRPC 地址；连接惰性建立，Cloud 不可达是调用时的"权威不可用"，不是启动失败。
 当前阶段不认证 Controller：每次调用以 `x-ora-controller-id` metadata 携带 `controller_id`（须为可打印
-ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好一个 Node：适配器的 `serve` 任务获取 Cloud 的全局租约、每十秒续期、
+ASCII），Cloud 把它记为租约与提交的持有者。没有 `substrate` 段时 `nodes` 必须恰好一个 Node；有该段时可以为空（见
+[Workspace 沙箱](#workspace-沙箱)）。适配器的 `serve` 任务获取 Cloud 的全局租约、每十秒续期、
 领取已接受的工作、按 Node 命令校验后用 `RecordDispatch` 登记派发，再由现有 Node 会话经周期状态查询交付。
 一次领取连续登记直到 Cloud 没有工作或某一步失败，单批最多 16 项，长队列不会推迟租约续期。每个写操作携带租约 epoch 与稳定的提交身份；只有回复丢失时才重传，且用同一身份，
 让 Cloud 回放已记录的响应而不是重复施加效果。Cloud 的裁决在适配器内一次映射为接口的错误分类：冲突
@@ -96,6 +97,48 @@ ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好�
 Cloud 通道每 30 秒发送 HTTP/2 保活 PING（空闲时也发送），10 秒无回应即关闭连接，使被静默丢弃的连接让流以
 错误结束，而不是看似在线。Cloud 从 `ora-space/cloud` `34d8067`（cloud#29）起才接受这一间隔；更早的 Cloud
 会在空闲约两分钟后以 `GOAWAY` 断开连接。
+
+### Workspace 沙箱
+
+配置 `substrate` 段后，云端形态还驱动 Cloud 的 Workspace 操作（ADR
+[Controller 驱动 Workspace 沙箱](../../specs/decisions/controller/node-management/0-controller-drives-workspace-sandboxes.md)）：
+
+```json
+"persistence": {
+  "kind": "cloud",
+  "endpoint": "http://127.0.0.1:8082",
+  "claim_interval_ms": 1000,
+  "substrate": {
+    "effects_url": "http://127.0.0.1:8090",
+    "router_url": "ws://127.0.0.1:8091/node",
+    "atespace": "ora",
+    "request_timeout_ms": 30000
+  }
+}
+```
+
+`effects_url` 是 Substrate 沙箱服务的效果接口（`GET`/`PUT /effects/{id}`）。Controller 写效果前先读；超时或
+遇到意外的服务端错误后，按同一 id 再读，因此回复丢失的效果不会换新身份重发。HTTP 边界之外没有 provider 抽象。
+
+每个领取节拍（以及收到 `OperationAvailable` 时），Controller 用 `ClaimOperation` 一次领取一个 Workspace
+操作，先登记当前步骤的效果计划，再执行，并以领取到的版本推进或延后操作。Cloud 总是交回最早可运行的操作，
+所以操作依次执行。各步骤：
+
+| 步骤      | Controller 的动作                                                                                  |
+| --------- | -------------------------------------------------------------------------------------------------- |
+| sandbox   | 执行 ensure 效果，以其证据（`sandboxInstanceId`、`nodeId`）推进                                    |
+| node      | 经 `router_url` 以 `ate-target-actor: <atespace>/<externalId>` 建立 Node 会话，等 Cloud 列为已连接 |
+| clone     | 经 Node 会话派发最新的 clone，结果就绪后推进                                                       |
+| quiesce   | 关闭该沙箱的派发闸门，只有没有待定或未决派发时才报告空闲                                           |
+| terminate | 先停止 Node 会话，再执行 terminate 效果                                                            |
+| cleanup   | 执行数据删除效果                                                                                   |
+
+Node 目标只来自 Cloud 的沙箱行；静态 `nodes` 仍是租户 clone 目标，NodeId 与静态 Node 冲突的沙箱被拒绝。
+Controller 从不自行重建沙箱。握手后它以 `RegisterNode` 登记 Node 化身，每十秒报告已连接，会话丢失时报告一次
+断开（Controller 主动停止的不算），登记新化身前先结束旧化身。效果失败以 `external_failure` 延后操作，超时以 `substrate_timeout` 延后，
+终止未确认以 `termination_unconfirmed` 阻塞。Node 协议拒绝的 ref（如 `HEAD`）使 clone 步骤阻塞且不派发。
+
+会话按领取到的操作快照重建：Controller 重启后，存活沙箱只有在其 Workspace 再次被领取操作时才恢复会话。
 
 ```json
 {
@@ -176,6 +219,10 @@ proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约
 重开、排空、排空后流被拒绝、打开时 epoch 陈旧、批量登记，以及关停时关闭流并释放租约。运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
 不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 [minicloud 云端
 形态](../minicloud/runtime.zh.md#云端持久模式)端到端验证，尚未自动化；
+`apps/ora-controller/tests/workspaces.rs` 以假 Cloud、假 Substrate 效果服务和假 Node 驱动 Workspace 操作：
+创建和停止 Workspace 走完所有步骤、clone 前登记 Node、终止前先报告空闲并停会话且不把这次停止报告为断开；不可 clone 的 ref 使 clone 步骤阻塞且
+不派发；派发没有结果时 quiesce 报告忙碌。Substrate 客户端有单元测试覆盖超时效果按同一 id 查询、已完成效果
+不重发；
 framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。
 独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。

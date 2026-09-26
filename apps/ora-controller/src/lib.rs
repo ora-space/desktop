@@ -27,7 +27,9 @@ pub use coordination::take_over;
 pub use deployment::{ApiConfig, DeploymentConfig, NodeHosting, SingleNodeConfig};
 use ora_node_protocol::*;
 #[cfg(target_os = "linux")]
-pub use runtime::{ControllerHandle, ControllerRuntime, Persistence, RuntimeConfig};
+pub use runtime::{
+    ControllerHandle, ControllerRuntime, Persistence, RuntimeConfig, SubstrateConfig,
+};
 #[cfg(target_os = "linux")]
 pub use service::Service;
 #[cfg(target_os = "linux")]

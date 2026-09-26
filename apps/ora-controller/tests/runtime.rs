@@ -40,6 +40,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
         cloud.persistence = Persistence::Cloud {
             endpoint: "http://127.0.0.1:1".into(),
             claim_interval_ms: 1000,
+            substrate: None,
         };
         assert!(matches!(
             ControllerRuntime::<SqliteStore>::open(cloud.clone()),

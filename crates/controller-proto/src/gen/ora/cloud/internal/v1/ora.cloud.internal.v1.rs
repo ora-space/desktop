@@ -327,6 +327,813 @@ pub struct ReleaseLeaseResponse {
     #[prost(message, optional, tag="1")]
     pub lease: ::core::option::Option<Lease>,
 }
+/// Cloud's record of one Node incarnation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NodeRecord {
+    /// Cloud's own identity of this incarnation record; later reports name it.
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub sandbox_instance_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub workspace_id: ::prost::alloc::string::String,
+    /// Unset only for records a Node registered itself before Controllers reported Nodes.
+    #[prost(message, optional, tag="4")]
+    pub identity: ::core::option::Option<NodeIdentity>,
+    #[prost(enumeration="NodeConnection", tag="5")]
+    pub connection: i32,
+    #[prost(bool, tag="6")]
+    pub initialized: bool,
+    /// Resource version; every report names the version it was based on.
+    #[prost(int64, tag="7")]
+    pub version: i64,
+    /// Admission epoch of the latest accepted idle evidence.
+    #[prost(int64, optional, tag="8")]
+    pub idle_admission_epoch: ::core::option::Option<i64>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RegisterNodeRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    /// The effect ID of the sandbox's ensure effect, which is also the sandbox instance ID.
+    #[prost(string, tag="3")]
+    pub sandbox_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub generation: i64,
+    #[prost(message, optional, tag="5")]
+    pub node: ::core::option::Option<NodeIdentity>,
+    #[prost(uint32, tag="6")]
+    pub protocol_version: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RegisterNodeResponse {
+    #[prost(message, optional, tag="1")]
+    pub node: ::core::option::Option<NodeRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReportNodeStatusRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    /// CONNECTED or DISCONNECTED.
+    #[prost(enumeration="NodeConnection", tag="5")]
+    pub connection: i32,
+    #[prost(bool, tag="6")]
+    pub initialized: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReportNodeStatusResponse {
+    #[prost(message, optional, tag="1")]
+    pub node: ::core::option::Option<NodeRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EndNodeRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EndNodeResponse {
+    #[prost(message, optional, tag="1")]
+    pub node: ::core::option::Option<NodeRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReportNodeIdleRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    #[prost(string, tag="5")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="6")]
+    pub admission_epoch: i64,
+    #[prost(bool, tag="7")]
+    pub idle: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReportNodeIdleResponse {
+    /// False when idle was false: Cloud restored admission and failed the operation.
+    #[prost(bool, tag="1")]
+    pub accepted: bool,
+    /// The updated record when the idle evidence was accepted.
+    #[prost(message, optional, tag="2")]
+    pub node: ::core::option::Option<NodeRecord>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NodeConnection {
+    Unspecified = 0,
+    Connected = 1,
+    Disconnected = 2,
+    /// Set by Cloud only: the incarnation ended or its sandbox was terminated.
+    Ended = 3,
+}
+impl NodeConnection {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "NODE_CONNECTION_UNSPECIFIED",
+            Self::Connected => "NODE_CONNECTION_CONNECTED",
+            Self::Disconnected => "NODE_CONNECTION_DISCONNECTED",
+            Self::Ended => "NODE_CONNECTION_ENDED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "NODE_CONNECTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "NODE_CONNECTION_CONNECTED" => Some(Self::Connected),
+            "NODE_CONNECTION_DISCONNECTED" => Some(Self::Disconnected),
+            "NODE_CONNECTION_ENDED" => Some(Self::Ended),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Operation {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(enumeration="OperationKind", tag="2")]
+    pub kind: i32,
+    #[prost(enumeration="OperationState", tag="3")]
+    pub state: i32,
+    #[prost(enumeration="OperationStep", tag="4")]
+    pub step: i32,
+    #[prost(string, tag="5")]
+    pub project_id: ::prost::alloc::string::String,
+    /// Unset for a Project-wide operation (delete_project).
+    #[prost(string, optional, tag="6")]
+    pub workspace_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, tag="7")]
+    pub version: i64,
+    /// Epoch of the Controller that claimed it last.
+    #[prost(int64, optional, tag="8")]
+    pub controller_epoch: ::core::option::Option<i64>,
+    #[prost(string, optional, tag="9")]
+    pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperationProject {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub repository_url: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub default_branch: ::prost::alloc::string::String,
+    /// Infrastructure reference to the repository credential; never the credential itself.
+    #[prost(string, optional, tag="4")]
+    pub credential_ref: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperationWorkspace {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(enumeration="WorkspaceKind", tag="2")]
+    pub kind: i32,
+    /// running, stopped or deleted.
+    #[prost(string, tag="3")]
+    pub desired_state: ::prost::alloc::string::String,
+    /// provisioning, starting, ready, stopping, stopped, unavailable, deleting or deleted.
+    #[prost(string, tag="4")]
+    pub observed_state: ::prost::alloc::string::String,
+    #[prost(int64, tag="5")]
+    pub runtime_generation: i64,
+    #[prost(bool, tag="6")]
+    pub admission_open: bool,
+    #[prost(int64, tag="7")]
+    pub admission_epoch: i64,
+    /// The ref the Workspace's Node clones.
+    #[prost(string, tag="8")]
+    pub requested_ref: ::prost::alloc::string::String,
+    /// Commit of the Workspace's successful clone.
+    #[prost(string, optional, tag="9")]
+    pub base_commit_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, tag="10")]
+    pub version: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SandboxRecord {
+    /// Equal to the ID of the ensure effect that created it.
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="3")]
+    pub generation: i64,
+    #[prost(string, optional, tag="4")]
+    pub substrate_sandbox_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// allocating, starting, running, terminating or terminated.
+    #[prost(string, tag="5")]
+    pub observed_state: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SandboxEnsureRequest {
+    #[prost(string, tag="1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SandboxTerminateRequest {
+    #[prost(string, tag="1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub sandbox_instance_id: ::prost::alloc::string::String,
+}
+/// Deletes all data of one Workspace; planned only once the Workspace has no live sandbox.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkspaceDataDeleteRequest {
+    #[prost(string, tag="1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginArtifact {
+    /// Rust target triple; unset for a universal release.
+    #[prost(string, optional, tag="1")]
+    pub target: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="2")]
+    pub url: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub sha256: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PluginEnsureRequest {
+    #[prost(string, tag="1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub plugin_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub version: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="5")]
+    pub universal: ::core::option::Option<PluginArtifact>,
+    #[prost(message, repeated, tag="6")]
+    pub targets: ::prost::alloc::vec::Vec<PluginArtifact>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginDeleteRequest {
+    #[prost(string, tag="1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub plugin_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub version: ::prost::alloc::string::String,
+}
+/// The request Cloud planned; the Controller sends it to the Substrate unchanged.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EffectRequest {
+    #[prost(oneof="effect_request::Request", tags="1, 2, 3, 4, 5")]
+    pub request: ::core::option::Option<effect_request::Request>,
+}
+/// Nested message and enum types in `EffectRequest`.
+pub mod effect_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Request {
+        #[prost(message, tag="1")]
+        SandboxEnsure(super::SandboxEnsureRequest),
+        #[prost(message, tag="2")]
+        SandboxTerminate(super::SandboxTerminateRequest),
+        #[prost(message, tag="3")]
+        WorkspaceDataDelete(super::WorkspaceDataDeleteRequest),
+        #[prost(message, tag="4")]
+        PluginEnsure(super::PluginEnsureRequest),
+        #[prost(message, tag="5")]
+        PluginDelete(super::PluginDeleteRequest),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SandboxEnsured {
+    #[prost(string, tag="1")]
+    pub sandbox_instance_id: ::prost::alloc::string::String,
+    /// Identity of the Node the sandbox runs; fixed per Workspace data.
+    #[prost(string, tag="2")]
+    pub node_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SandboxTerminated {
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkspaceDataDeleted {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginInstalled {
+    #[prost(string, tag="1")]
+    pub version: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginRemoved {
+}
+/// Success evidence of one effect; its member must match the effect kind.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EffectEvidence {
+    #[prost(oneof="effect_evidence::Evidence", tags="1, 2, 3, 4, 5")]
+    pub evidence: ::core::option::Option<effect_evidence::Evidence>,
+}
+/// Nested message and enum types in `EffectEvidence`.
+pub mod effect_evidence {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Evidence {
+        #[prost(message, tag="1")]
+        SandboxEnsured(super::SandboxEnsured),
+        #[prost(message, tag="2")]
+        SandboxTerminated(super::SandboxTerminated),
+        #[prost(message, tag="3")]
+        WorkspaceDataDeleted(super::WorkspaceDataDeleted),
+        #[prost(message, tag="4")]
+        PluginInstalled(super::PluginInstalled),
+        #[prost(message, tag="5")]
+        PluginRemoved(super::PluginRemoved),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Effect {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(enumeration="EffectKind", tag="2")]
+    pub kind: i32,
+    #[prost(enumeration="EffectState", tag="3")]
+    pub state: i32,
+    #[prost(string, tag="4")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="5")]
+    pub request: ::core::option::Option<EffectRequest>,
+    #[prost(string, optional, tag="6")]
+    pub external_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Set when the effect succeeded.
+    #[prost(message, optional, tag="7")]
+    pub evidence: ::core::option::Option<EffectEvidence>,
+    /// Set when the effect failed and the Substrate gave a reason.
+    #[prost(string, optional, tag="8")]
+    pub failure: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, tag="9")]
+    pub reconciled_epoch: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OperationSnapshot {
+    #[prost(message, optional, tag="1")]
+    pub operation: ::core::option::Option<Operation>,
+    #[prost(message, optional, tag="2")]
+    pub project: ::core::option::Option<OperationProject>,
+    /// Live Workspaces of the operation's Project.
+    #[prost(message, repeated, tag="3")]
+    pub workspaces: ::prost::alloc::vec::Vec<OperationWorkspace>,
+    #[prost(message, repeated, tag="4")]
+    pub sandboxes: ::prost::alloc::vec::Vec<SandboxRecord>,
+    #[prost(message, repeated, tag="5")]
+    pub nodes: ::prost::alloc::vec::Vec<NodeRecord>,
+    /// Effects of this operation. Records of retired storage and worktree effects are left out.
+    #[prost(message, repeated, tag="6")]
+    pub effects: ::prost::alloc::vec::Vec<Effect>,
+    /// Clone executions registered for this operation's clone step.
+    #[prost(message, repeated, tag="7")]
+    pub clones: ::prost::alloc::vec::Vec<ExecutionRecord>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaimOperationRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClaimOperationResponse {
+    #[prost(message, optional, tag="1")]
+    pub snapshot: ::core::option::Option<OperationSnapshot>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PlanEffectRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    #[prost(enumeration="EffectKind", tag="5")]
+    pub kind: i32,
+    #[prost(string, tag="6")]
+    pub workspace_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PlanEffectResponse {
+    #[prost(message, optional, tag="1")]
+    pub effect: ::core::option::Option<Effect>,
+    #[prost(message, optional, tag="2")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RecordEffectResultRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    #[prost(string, tag="5")]
+    pub effect_id: ::prost::alloc::string::String,
+    /// RUNNING, SUCCEEDED, FAILED or ABSENT.
+    #[prost(enumeration="EffectState", tag="6")]
+    pub state: i32,
+    /// The Substrate's identity for the effect; required unless state is ABSENT.
+    #[prost(string, tag="7")]
+    pub external_id: ::prost::alloc::string::String,
+    /// Required when state is SUCCEEDED.
+    #[prost(message, optional, tag="8")]
+    pub evidence: ::core::option::Option<EffectEvidence>,
+    /// Optional reason when state is FAILED.
+    #[prost(string, optional, tag="9")]
+    pub failure: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RecordEffectResultResponse {
+    #[prost(message, optional, tag="1")]
+    pub effect: ::core::option::Option<Effect>,
+    #[prost(message, optional, tag="2")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdvanceOperationRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdvanceOperationResponse {
+    #[prost(message, optional, tag="1")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeferOperationRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    #[prost(enumeration="DeferState", tag="5")]
+    pub state: i32,
+    #[prost(enumeration="DeferReason", tag="6")]
+    pub reason: i32,
+    /// 1 to 3600 seconds.
+    #[prost(uint32, tag="7")]
+    pub retry_seconds: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeferOperationResponse {
+    #[prost(message, optional, tag="1")]
+    pub operation: ::core::option::Option<Operation>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum OperationKind {
+    Unspecified = 0,
+    CreateProject = 1,
+    CreateWorkspace = 2,
+    Start = 3,
+    Stop = 4,
+    AdministrativeStop = 5,
+    DeleteWorkspace = 6,
+    DeleteProject = 7,
+    InstallPlugin = 8,
+    RemovePlugin = 9,
+}
+impl OperationKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "OPERATION_KIND_UNSPECIFIED",
+            Self::CreateProject => "OPERATION_KIND_CREATE_PROJECT",
+            Self::CreateWorkspace => "OPERATION_KIND_CREATE_WORKSPACE",
+            Self::Start => "OPERATION_KIND_START",
+            Self::Stop => "OPERATION_KIND_STOP",
+            Self::AdministrativeStop => "OPERATION_KIND_ADMINISTRATIVE_STOP",
+            Self::DeleteWorkspace => "OPERATION_KIND_DELETE_WORKSPACE",
+            Self::DeleteProject => "OPERATION_KIND_DELETE_PROJECT",
+            Self::InstallPlugin => "OPERATION_KIND_INSTALL_PLUGIN",
+            Self::RemovePlugin => "OPERATION_KIND_REMOVE_PLUGIN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OPERATION_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "OPERATION_KIND_CREATE_PROJECT" => Some(Self::CreateProject),
+            "OPERATION_KIND_CREATE_WORKSPACE" => Some(Self::CreateWorkspace),
+            "OPERATION_KIND_START" => Some(Self::Start),
+            "OPERATION_KIND_STOP" => Some(Self::Stop),
+            "OPERATION_KIND_ADMINISTRATIVE_STOP" => Some(Self::AdministrativeStop),
+            "OPERATION_KIND_DELETE_WORKSPACE" => Some(Self::DeleteWorkspace),
+            "OPERATION_KIND_DELETE_PROJECT" => Some(Self::DeleteProject),
+            "OPERATION_KIND_INSTALL_PLUGIN" => Some(Self::InstallPlugin),
+            "OPERATION_KIND_REMOVE_PLUGIN" => Some(Self::RemovePlugin),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum OperationState {
+    Unspecified = 0,
+    Queued = 1,
+    Running = 2,
+    RetryWait = 3,
+    Blocked = 4,
+    Succeeded = 5,
+    Failed = 6,
+}
+impl OperationState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "OPERATION_STATE_UNSPECIFIED",
+            Self::Queued => "OPERATION_STATE_QUEUED",
+            Self::Running => "OPERATION_STATE_RUNNING",
+            Self::RetryWait => "OPERATION_STATE_RETRY_WAIT",
+            Self::Blocked => "OPERATION_STATE_BLOCKED",
+            Self::Succeeded => "OPERATION_STATE_SUCCEEDED",
+            Self::Failed => "OPERATION_STATE_FAILED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OPERATION_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "OPERATION_STATE_QUEUED" => Some(Self::Queued),
+            "OPERATION_STATE_RUNNING" => Some(Self::Running),
+            "OPERATION_STATE_RETRY_WAIT" => Some(Self::RetryWait),
+            "OPERATION_STATE_BLOCKED" => Some(Self::Blocked),
+            "OPERATION_STATE_SUCCEEDED" => Some(Self::Succeeded),
+            "OPERATION_STATE_FAILED" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum OperationStep {
+    Unspecified = 0,
+    Sandbox = 1,
+    Node = 2,
+    Clone = 3,
+    Quiesce = 4,
+    Terminate = 5,
+    Cleanup = 6,
+    Plugin = 7,
+    Done = 8,
+}
+impl OperationStep {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "OPERATION_STEP_UNSPECIFIED",
+            Self::Sandbox => "OPERATION_STEP_SANDBOX",
+            Self::Node => "OPERATION_STEP_NODE",
+            Self::Clone => "OPERATION_STEP_CLONE",
+            Self::Quiesce => "OPERATION_STEP_QUIESCE",
+            Self::Terminate => "OPERATION_STEP_TERMINATE",
+            Self::Cleanup => "OPERATION_STEP_CLEANUP",
+            Self::Plugin => "OPERATION_STEP_PLUGIN",
+            Self::Done => "OPERATION_STEP_DONE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OPERATION_STEP_UNSPECIFIED" => Some(Self::Unspecified),
+            "OPERATION_STEP_SANDBOX" => Some(Self::Sandbox),
+            "OPERATION_STEP_NODE" => Some(Self::Node),
+            "OPERATION_STEP_CLONE" => Some(Self::Clone),
+            "OPERATION_STEP_QUIESCE" => Some(Self::Quiesce),
+            "OPERATION_STEP_TERMINATE" => Some(Self::Terminate),
+            "OPERATION_STEP_CLEANUP" => Some(Self::Cleanup),
+            "OPERATION_STEP_PLUGIN" => Some(Self::Plugin),
+            "OPERATION_STEP_DONE" => Some(Self::Done),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum WorkspaceKind {
+    Unspecified = 0,
+    Main = 1,
+    Isolated = 2,
+}
+impl WorkspaceKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "WORKSPACE_KIND_UNSPECIFIED",
+            Self::Main => "WORKSPACE_KIND_MAIN",
+            Self::Isolated => "WORKSPACE_KIND_ISOLATED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "WORKSPACE_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "WORKSPACE_KIND_MAIN" => Some(Self::Main),
+            "WORKSPACE_KIND_ISOLATED" => Some(Self::Isolated),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EffectKind {
+    Unspecified = 0,
+    SandboxEnsure = 1,
+    SandboxTerminate = 2,
+    WorkspaceDataDelete = 3,
+    PluginEnsure = 4,
+    PluginDelete = 5,
+}
+impl EffectKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EFFECT_KIND_UNSPECIFIED",
+            Self::SandboxEnsure => "EFFECT_KIND_SANDBOX_ENSURE",
+            Self::SandboxTerminate => "EFFECT_KIND_SANDBOX_TERMINATE",
+            Self::WorkspaceDataDelete => "EFFECT_KIND_WORKSPACE_DATA_DELETE",
+            Self::PluginEnsure => "EFFECT_KIND_PLUGIN_ENSURE",
+            Self::PluginDelete => "EFFECT_KIND_PLUGIN_DELETE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EFFECT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "EFFECT_KIND_SANDBOX_ENSURE" => Some(Self::SandboxEnsure),
+            "EFFECT_KIND_SANDBOX_TERMINATE" => Some(Self::SandboxTerminate),
+            "EFFECT_KIND_WORKSPACE_DATA_DELETE" => Some(Self::WorkspaceDataDelete),
+            "EFFECT_KIND_PLUGIN_ENSURE" => Some(Self::PluginEnsure),
+            "EFFECT_KIND_PLUGIN_DELETE" => Some(Self::PluginDelete),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EffectState {
+    Unspecified = 0,
+    Planned = 1,
+    Running = 2,
+    Succeeded = 3,
+    Failed = 4,
+    /// Only as a report: the Substrate has no record of a planned effect, which stays planned.
+    Absent = 5,
+}
+impl EffectState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EFFECT_STATE_UNSPECIFIED",
+            Self::Planned => "EFFECT_STATE_PLANNED",
+            Self::Running => "EFFECT_STATE_RUNNING",
+            Self::Succeeded => "EFFECT_STATE_SUCCEEDED",
+            Self::Failed => "EFFECT_STATE_FAILED",
+            Self::Absent => "EFFECT_STATE_ABSENT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EFFECT_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "EFFECT_STATE_PLANNED" => Some(Self::Planned),
+            "EFFECT_STATE_RUNNING" => Some(Self::Running),
+            "EFFECT_STATE_SUCCEEDED" => Some(Self::Succeeded),
+            "EFFECT_STATE_FAILED" => Some(Self::Failed),
+            "EFFECT_STATE_ABSENT" => Some(Self::Absent),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DeferState {
+    Unspecified = 0,
+    RetryWait = 1,
+    Blocked = 2,
+}
+impl DeferState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DEFER_STATE_UNSPECIFIED",
+            Self::RetryWait => "DEFER_STATE_RETRY_WAIT",
+            Self::Blocked => "DEFER_STATE_BLOCKED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DEFER_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "DEFER_STATE_RETRY_WAIT" => Some(Self::RetryWait),
+            "DEFER_STATE_BLOCKED" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DeferReason {
+    Unspecified = 0,
+    SubstrateTimeout = 1,
+    TerminationUnconfirmed = 2,
+    NodeUnavailable = 3,
+    ExternalFailure = 4,
+    /// The Node reported a failed clone; a retry dispatches a new execution.
+    CloneFailed = 5,
+    /// The Node could not tell the clone's outcome; the operation stays blocked and is not retried
+    /// automatically.
+    CloneResultUnknown = 6,
+}
+impl DeferReason {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DEFER_REASON_UNSPECIFIED",
+            Self::SubstrateTimeout => "DEFER_REASON_SUBSTRATE_TIMEOUT",
+            Self::TerminationUnconfirmed => "DEFER_REASON_TERMINATION_UNCONFIRMED",
+            Self::NodeUnavailable => "DEFER_REASON_NODE_UNAVAILABLE",
+            Self::ExternalFailure => "DEFER_REASON_EXTERNAL_FAILURE",
+            Self::CloneFailed => "DEFER_REASON_CLONE_FAILED",
+            Self::CloneResultUnknown => "DEFER_REASON_CLONE_RESULT_UNKNOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DEFER_REASON_UNSPECIFIED" => Some(Self::Unspecified),
+            "DEFER_REASON_SUBSTRATE_TIMEOUT" => Some(Self::SubstrateTimeout),
+            "DEFER_REASON_TERMINATION_UNCONFIRMED" => Some(Self::TerminationUnconfirmed),
+            "DEFER_REASON_NODE_UNAVAILABLE" => Some(Self::NodeUnavailable),
+            "DEFER_REASON_EXTERNAL_FAILURE" => Some(Self::ExternalFailure),
+            "DEFER_REASON_CLONE_FAILED" => Some(Self::CloneFailed),
+            "DEFER_REASON_CLONE_RESULT_UNKNOWN" => Some(Self::CloneResultUnknown),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchRequest {
     /// The caller's current lease epoch; a stale epoch fails with FAILED_PRECONDITION.
@@ -336,7 +1143,7 @@ pub struct WatchRequest {
 /// One signal per stream message.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchResponse {
-    #[prost(oneof="watch_response::Signal", tags="1, 2, 3")]
+    #[prost(oneof="watch_response::Signal", tags="1, 2, 3, 4")]
     pub signal: ::core::option::Option<watch_response::Signal>,
 }
 /// Nested message and enum types in `WatchResponse`.
@@ -349,6 +1156,8 @@ pub mod watch_response {
         Drain(super::Drain),
         #[prost(message, tag="3")]
         NodeAssignment(super::NodeAssignment),
+        #[prost(message, tag="4")]
+        OperationAvailable(super::OperationAvailable),
     }
 }
 /// Hints that work can be claimed; ownership is still decided by ClaimWork.
@@ -357,6 +1166,14 @@ pub struct WorkAvailable {
     /// Set when Cloud knows which operation became claimable.
     #[prost(string, optional, tag="1")]
     pub operation_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Hints that a runtime Workspace operation became claimable after the transaction that queued it
+/// committed; ownership is still decided by ClaimOperation. An operation whose retry delay elapses
+/// has no such commit and is found by the periodic claim instead.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OperationAvailable {
+    #[prost(string, tag="1")]
+    pub operation_id: ::prost::alloc::string::String,
 }
 /// The instance that sends it is about to stop. The holder stops claiming from it until a new Watch
 /// is established; Drain does not ask the holder to release its lease, and it never cancels user work

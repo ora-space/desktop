@@ -12,14 +12,36 @@ pub enum Persistence {
     /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
     Sqlite,
     /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
-    /// at `endpoint` (a gRPC URI); no database is opened locally. Work accepted by Cloud is
-    /// dispatched to the single configured Node. While a `Watch` stream is live, claims follow its
-    /// signals and every lease renewal; `claim_interval_ms` is the claim cadence while no stream
-    /// is live.
+    /// at `endpoint` (a gRPC URI); no database is opened locally. Tenant clone work accepted by
+    /// Cloud is dispatched to the single configured Node. While a `Watch` stream is live, claims
+    /// follow its signals and every lease renewal; `claim_interval_ms` is the claim cadence while
+    /// no stream is live. With `substrate`, the Controller also drives runtime Workspace
+    /// operations: it creates and terminates Workspace sandboxes through the Substrate effects
+    /// interface and reaches each sandbox's Node through the router; static `nodes` then serve
+    /// only tenant clones and may be empty.
     Cloud {
         endpoint: String,
         claim_interval_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        substrate: Option<SubstrateConfig>,
     },
+}
+
+/// Where Workspace sandboxes are created and how their Nodes are reached. Both implementations of
+/// the Substrate effects interface (the local Sandbox Server and the platform adapter) sit behind
+/// `effects_url`, so the Controller needs no per-platform code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubstrateConfig {
+    /// Base URL of `GET/PUT /effects/{effectId}`.
+    pub effects_url: String,
+    /// WebSocket URL of the Node router including its path, such as
+    /// `ws://sandbox-server:18000/ora-node/v1`; every sandbox Node is reached through it.
+    pub router_url: String,
+    /// The atespace that prefixes the `ate-target-actor` routing header.
+    pub atespace: String,
+    /// Deadline of one effect call; an elapsed call is queried again, never assumed absent.
+    pub request_timeout_ms: u64,
 }
 
 /// Shared deployment configuration for the standalone executable and embedded HTTP composition.

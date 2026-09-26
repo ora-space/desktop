@@ -29,6 +29,11 @@ pub(super) struct Refusals {
 /// full. One trigger drains the backlog, because the renewal backstop comes only every ten
 /// seconds and a backlog left by dropped signals would otherwise shrink by one item per backstop.
 pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlog {
+    // Without a static Node nothing could be dispatched, so claiming would only leave work
+    // registered nowhere; a deployment with a static Node elsewhere claims it instead.
+    let Some(node) = &store.inner.node else {
+        return Backlog::Settled;
+    };
     for _ in 0..BATCH {
         // The lease is re-read per item: a stale verdict inside the batch drops it.
         let Ok(epoch) = store.epoch() else {
@@ -51,7 +56,14 @@ pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlo
                 return Backlog::Settled;
             }
         };
-        match register(store, epoch, &item).await {
+        let registered = match mapping::spec(item.input.clone(), node) {
+            Ok(spec) => {
+                let operation = OperationId::new(item.operation_id.clone());
+                record_dispatch(store, epoch, operation, spec).await
+            }
+            Err(error) => Err(error),
+        };
+        match registered {
             Ok(command) => {
                 refusals.last = None;
                 ora_logging::ora_info!(
@@ -78,21 +90,21 @@ pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlo
     Backlog::Pending
 }
 
-/// Freezes the execution identity and full input with Cloud; the Node protocol validates the
-/// command first so nothing undispatchable is ever registered.
-async fn register(
+/// Freezes a new execution identity and the full input with Cloud, for a tenant work item or a
+/// Workspace operation's clone step alike; the Node protocol validates the command first so
+/// nothing undispatchable is ever registered. The Node session delivers it afterwards.
+pub(super) async fn record_dispatch(
     store: &CloudStore,
     epoch: i64,
-    item: &proto::WorkItem,
+    operation: OperationId,
+    spec: CloneExecutionSpec,
 ) -> Result<CloneRepositoryMessage, Error> {
     let command = CloneRepositoryMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         request_id: None,
-        operation_id: OperationId::new(item.operation_id.clone()),
+        operation_id: operation,
         execution_id: ExecutionId::new(uuid::Uuid::new_v4().to_string()),
-        payload: CloneRepository {
-            spec: mapping::spec(item.input.clone(), &store.inner.node)?,
-        },
+        payload: CloneRepository { spec },
     };
     command.validate()?;
     let write = fault::write(|submission_id| {
@@ -103,7 +115,7 @@ async fn register(
                 epoch,
                 operation_id: command.operation_id.as_str().into(),
                 execution_id: command.execution_id.as_str().into(),
-                node_id: store.inner.node.as_str().into(),
+                node_id: command.payload.spec.node_id.as_str().into(),
                 input: Some(mapping::input(&command.payload.spec)),
             });
             store.executions().record_dispatch(request).await

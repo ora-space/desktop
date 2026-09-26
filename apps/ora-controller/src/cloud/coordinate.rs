@@ -4,7 +4,9 @@
 use super::{
     CloudStore,
     claim::{self, Backlog, Refusals},
+    fleet::Fleet,
     lease,
+    operations::Operations,
     signals::{self, Claim, Opening, Signals, Stream, Tick},
 };
 use std::{io, mem};
@@ -29,6 +31,13 @@ pub(super) async fn coordinate(
     let mut report = Report::default();
     let mut refusals = Refusals::default();
     let mut backlog = Backlog::Settled;
+    // Workspace operations and their sandbox sessions exist only where a Substrate is configured.
+    // The sessions outlive a lost lease (a successor decides their fate); the operation task does not.
+    let mut workspaces = store
+        .inner
+        .sandboxes
+        .clone()
+        .map(|deployment| (Fleet::new(store.clone(), deployment), Operations::default()));
     tokio::pin!(shutdown);
     loop {
         let claim = tokio::select! {
@@ -47,6 +56,9 @@ pub(super) async fn coordinate(
             _ = std::future::ready(()), if backlog == Backlog::Pending => Claim::Now,
             _ = claim_tick.tick() => tick(&store, &mut signals, &mut report, Tick::Claim).await,
         };
+        if let (Claim::Now, Some((fleet, operations))) = (claim, &mut workspaces) {
+            operations.wake(&store, fleet);
+        }
         backlog = match (claim, &signals) {
             (Claim::Now, _) => claim::batch(&store, &mut refusals).await,
             // A drain stops the backlog too: the instance that holds it is stopping.
@@ -57,7 +69,16 @@ pub(super) async fn coordinate(
         if store.lease().is_none() {
             signals = mem::replace(&mut signals, Signals::Closed).lease_lost();
             report.state(&signals);
+            if let Some((_, operations)) = &mut workspaces {
+                operations.stop();
+            }
         }
+    }
+    // Operation rounds stop and sandbox sessions close before the lease is released, so nothing
+    // they would write or report is attempted under a lease a successor may already hold.
+    if let Some((fleet, mut operations)) = workspaces {
+        operations.stop();
+        fleet.shutdown().await;
     }
     // Dropping the stream cancels it before the lease it was opened under is released.
     drop(signals);
