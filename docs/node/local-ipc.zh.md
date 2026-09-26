@@ -40,7 +40,7 @@ schema v4 在接受事务中为新 clone 保存归属；旧的未认领执行原
 WebSocket 先完成 upgrade 再以 close code `4409`（`control session busy`）关闭，因为路由会原样转发
 close code，却会把 HTTP 拒绝变成与 Node 不可达无法区分的网关错误。IPC 没有 close code，被拒绝的对端只会在握手阶段看到
 socket 关闭；Controller 无法区分“会话占用”和因 ControllerId 不符被关闭，两者都记为协议错误，
-并在 `reconnect_ms` 后重连。两端都不主动发送 WebSocket 保活 ping，只回复对端的 ping；Node 的
+并在 `reconnect_ms` 后重连。两端都不主动发送 WebSocket 保活 ping，只回复对端的 ping；双向的
 心跳保证连接上持续有流量。
 
 任一端主动结束已建立的 WebSocket 会话时都会发送 close code，路由原样转发原因，而不是报告连接丢失
@@ -48,15 +48,23 @@ socket 关闭；Controller 无法区分“会话占用”和因 ControllerId 不
 对端在 I/O 期限内未发送或不再读取为 `4408`，本端自身失败（持久化或受理）为 `1011`。收到 close 的
 一端会应答，双方都不必等到关闭握手超时。Node 在准入路径之外完成该握手，关闭后迟迟不断开的
 Controller 不会让下一个连接被判为占用；只有正常停止会等待握手，上限为 `frame_timeout_ms`。IPC
-不携带 code，只结束字节流。无论哪个 code，关闭都只表示“连接不可用”。Hello 协商现有版本、Node 身份／运行实例及
+不携带 code，只结束字节流。无论哪个 code，关闭都只表示“连接不可用”。
+
+Hello 协商现有版本、Node 身份／运行实例及
 clone 能力；会话接收 clone、状态查询和精确确认，冲突或不支持的消息会关闭连接。
 心跳独立于阻塞 Git 执行；Node 主动按有界分页重放未确认 clone 事件，查询回复不确认事件。
 
 受理使用有界队列和可撤销会话门禁。门禁只覆盖持久受理，随后才运行 Git；断连或会话撤销丢弃尚未受理
 的排队工作，不取消已经受理的 clone。读帧、写帧及命令受理回复均使用有限的 `frame_timeout_ms` 期限。
 执行线程繁忙时，即使心跳正常，查询／命令会话也可能超时关闭；重连查询原执行，不创建新尝试。
-空闲 Controller 应定期查询执行；慢读可被断开，
-随后重连恢复投递。正常停止先关闭受理，再执行原受管进程清理。
+
+Node 的每帧读期限同时是 Controller 的存活期限。Controller 在每个 `query_interval_ms` 节拍恰好发送
+一帧：有待确认的派发时发送状态查询，没有时发送携带 `controller_id` 的 Controller `heartbeat`。Node
+在会话读循环内处理该心跳，不进入 worker 队列，因此不会排在 Git 之后；`controller_id` 不是本 Node
+的归属时结束会话。空闲会话因此保持连接，而 Controller 消失或连接半开时，控制槽会在
+`frame_timeout_ms` 内释放。`query_interval_ms` 应远小于 Node 的 `frame_timeout_ms`（不超过其一半）；
+两者位于不同进程的配置中，启动时无法互相校验。Controller 与 Node 必须使用同一版本：旧 Node 会拒绝
+Controller 心跳。慢读可被断开，随后重连恢复投递。正常停止先关闭受理，再执行原受管进程清理。
 
 真实 WebSocket 测试让生产 Controller 会话连接生产 Node，接管 clone 结果，观察第二个连接收到 `4409`
 拒绝，并拒绝身份不符的 Node。另一个测试让 clone 结果在 WebSocket 断线和 Node 重启后保持未确认，

@@ -469,7 +469,8 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
 }
 
 /// The Node ends sessions with a close code naming why: a Controller that does not own it gets
-/// the identity code, malformed input the protocol code, and a normal stop the shutdown code,
+/// the identity code (at Hello or through a foreign heartbeat), malformed input the protocol code,
+/// and a normal stop the shutdown code,
 /// so a router forwards the reason instead of reporting a lost connection.
 #[test]
 fn node_closes_sessions_with_the_reason_code() {
@@ -527,6 +528,28 @@ fn node_closes_sessions_with_the_reason_code() {
             assert!(
                 violation.is_closed_for(CloseReason::ProtocolViolation),
                 "{violation:?}"
+            );
+
+            let (mut receiver, mut sender) = hello(&endpoint).await;
+            send(
+                &mut sender,
+                &ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: ControllerHeartbeat {
+                        controller_id: ControllerId::new("intruder"),
+                    },
+                }),
+            )
+            .await;
+            let foreign = loop {
+                match receiver.recv().await {
+                    Ok(Some(_)) => {}
+                    other => break closed(other),
+                }
+            };
+            assert!(
+                foreign.is_closed_for(CloseReason::IdentityMismatch),
+                "{foreign:?}"
             );
 
             let (mut receiver, _sender) = hello(&endpoint).await;

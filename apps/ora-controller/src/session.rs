@@ -227,7 +227,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
     let hello = ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
-            controller_id: id,
+            controller_id: id.clone(),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
     });
@@ -264,10 +264,13 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender>(
                         let commands = store.pending_dispatches(node_id).await?;
                         if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
                     };
-                    if let Some(command) = command {
-                        let query = ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id, execution_id: command.execution_id, payload: GetExecutionStatus { node_id: node_id.clone() } });
-                        bounded(deadline, transmit(writer, &query)).await?;
-                    }
+                    // Every tick sends exactly one uplink frame: the Node treats its per-frame read
+                    // deadline as Controller liveness, so an idle session must still send something.
+                    let uplink = match command {
+                        Some(command) => ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id, execution_id: command.execution_id, payload: GetExecutionStatus { node_id: node_id.clone() } }),
+                        None => ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: id.clone() } }),
+                    };
+                    bounded(deadline, transmit(writer, &uplink)).await?;
                 }
             }
         };

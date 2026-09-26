@@ -292,6 +292,20 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             let Some(message) = message else {
                 return Ok::<(), Failure>(());
             };
+            // The per-frame deadline above is the Controller liveness deadline; its idle heartbeat
+            // only renews it and must not queue behind Git in the worker.
+            match &message {
+                ControllerToNodeMessage::Heartbeat(heartbeat)
+                    if heartbeat.payload.controller_id != info.controller =>
+                {
+                    return Err(Failure::local(
+                        CloseReason::IdentityMismatch,
+                        "heartbeat from a Controller that does not own this Node",
+                    ));
+                }
+                ControllerToNodeMessage::Heartbeat(_) => continue,
+                _ => {}
+            }
             // Git may occupy the worker. Bound admission waiting independently of heartbeats so
             // revocation invalidates queued work; already durable executions are not canceled.
             let replies = timeout(
