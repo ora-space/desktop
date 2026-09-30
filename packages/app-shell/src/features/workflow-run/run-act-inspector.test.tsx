@@ -19,6 +19,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import type {
   GraphWorkflowNodeState,
   GraphWorkflowRunStatus,
+  WorkflowAgentConfig,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
@@ -201,6 +202,34 @@ describe("RunActInspector agent config", () => {
       }),
     );
     expect(await screen.findByText("探索仓库结构与约束")).toBeInTheDocument();
+  });
+
+  it("safely renders an agent config when optional fields like skills, mcps, or roleId are undefined", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector(
+      { status: "succeeded" },
+      {
+        data: {
+          kind: "agent",
+          title: "Minimal Agent",
+          description: "",
+          agentConfig: {
+            schemaVersion: 3,
+            executor: {
+              agentCli: "official/ora-space.opencode",
+              modelId: "bluezone/zhipu/glm-5.3",
+            },
+            prompt: "Say hello",
+            interactive: false,
+          } as unknown as WorkflowAgentConfig,
+        },
+      },
+    );
+
+    expect(screen.getByText("Say hello")).toBeInTheDocument();
+    expect(
+      await screen.findByText("OpenCode · bluezone/zhipu/glm-5.3"),
+    ).toBeInTheDocument();
   });
 });
 

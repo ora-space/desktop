@@ -92,6 +92,15 @@ ID. Draft save, publish, duplicate, and import/export retain these values, inclu
 bindings. No selection (including old graphs without `mcps`) means the node is authorized to use no
 MCP servers. Malformed bindings are rejected when the executable graph is parsed.
 
+Run views render frozen snapshots defensively. An Agent node in an older or externally generated
+snapshot may predate the current `agentConfig` contract — `skills`, `mcps`, `roleId`, `prompt`, or
+the whole `executor` block can be absent. The read-only run inspector, Theater stage line, and
+Overview card treat every missing field as empty instead of crashing: absent lists select nothing,
+missing role/prompt values render quiet placeholders, and a missing executor identity degrades to
+an em dash (`formatAgentExecutorLabel`). The Loop round history likewise tolerates an absent
+round list. Stored snapshots are never rewritten to add these fields; missing simply means empty
+at display time.
+
 Execution uses the frozen run's enabled IDs throughout Session creation, restore, rebuild, and
 refresh. Editing a draft affects later runs only. An unavailable enabled dependency fails the node
 with an explicit error; it is never silently skipped. Unselected plugins cannot block the node.

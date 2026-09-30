@@ -43,16 +43,20 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const skillByName = new Map(
     (skillsQuery.data ?? []).map((skill) => [skill.name, skill]),
   );
-  const role = agentByName.get(config.roleId);
-  const roleLabel = role?.name ?? config.roleId;
+  const roleId = config.roleId ?? "";
+  const role = roleId ? agentByName.get(roleId) : undefined;
+  const roleLabel = role?.name ?? roleId;
   const roleDescription = role?.description?.trim() ?? "";
-  const modelLabel = formatAgentExecutorLabel(config.executor, agentCatalog);
-  const enabledSkills = config.skills.filter((skill) => skill.enabled);
+  const modelLabel = config.executor
+    ? formatAgentExecutorLabel(config.executor, agentCatalog)
+    : "—";
+  const enabledSkills = (config.skills ?? []).filter((skill) => skill.enabled);
   const enabledMcps = (config.mcps ?? []).filter((mcp) => mcp.enabled);
-  const agentLogo = agentCatalog.find(
-    (agent) => agent.agentRef === config.executor.agentCli,
-  )?.logo;
-  const prompt = config.prompt.trim();
+  const agentLogo = config.executor
+    ? agentCatalog.find((agent) => agent.agentRef === config.executor.agentCli)
+        ?.logo
+    : undefined;
+  const prompt = (config.prompt ?? "").trim();
   const retry = resolveAgentRetryDisplay(config);
   const retryText =
     retry.kind === "interactive"

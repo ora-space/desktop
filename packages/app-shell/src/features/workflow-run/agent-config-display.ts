@@ -18,10 +18,16 @@ import {
  * carries falls back to the identity itself: that is what the run was actually executed on.
  */
 export function formatAgentExecutorLabel(
-  executor: WorkflowAgentConfig["executor"],
+  executor: WorkflowAgentConfig["executor"] | undefined,
   agents: readonly AgentEntry[],
 ): string {
-  return `${agentLabel(agents, executor.agentCli)} · ${executor.modelId}`;
+  if (!executor) return "—";
+  // Runtime snapshots may predate the current executor contract, so each identity
+  // component degrades to an em dash instead of rendering the string "undefined".
+  const cliLabel = executor.agentCli
+    ? agentLabel(agents, executor.agentCli)
+    : "—";
+  return `${cliLabel} · ${executor.modelId ?? "—"}`;
 }
 
 /**

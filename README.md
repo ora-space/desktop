@@ -60,6 +60,15 @@ See [AGENTS.md](AGENTS.md) for code conventions. Common commands:
 - `task check:contracts` — verify generated contracts without rewriting the checkout; LF and CRLF
   line endings are treated as equivalent while other content changes still fail
 
+Maintenance scripts for locally stored workflow snapshots live in `scripts/`.
+`node scripts/repair_workflow_snapshots.mjs` rewrites the active snapshots in the local
+`%APPDATA%/space.ora.desktop/ora.sqlite3` database back into a valid shape: React Flow layout
+fields (`position`, edge `id`), the Loop-versus-Iteration container ownership contract
+(`data.containerId` only under a Loop, `parentId`-only under an Iteration), complete Agent
+`agentConfig` structures, and `schemaVersion: 2` for container graphs, finishing with a
+`PRAGMA wal_checkpoint(TRUNCATE)`. `scripts/workflow-qualification-suite/` generates and drives
+the 101-workflow release qualification suite against a running desktop build.
+
 ## Toolchain versions
 
 `.deno-version` is the Deno release pin consumed by CI and sidecar setup. Keep
