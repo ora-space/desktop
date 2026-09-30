@@ -3474,6 +3474,7 @@ dependencies = [
 name = "ora-controller-proto"
 version = "0.0.0"
 dependencies = [
+ "pretty_assertions",
  "prost",
  "prost-types",
  "tonic",
