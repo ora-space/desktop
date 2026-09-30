@@ -60,14 +60,18 @@ See [AGENTS.md](AGENTS.md) for code conventions. Common commands:
 - `task check:contracts` — verify generated contracts without rewriting the checkout; LF and CRLF
   line endings are treated as equivalent while other content changes still fail
 
-Maintenance scripts for locally stored workflow snapshots live in `scripts/`.
-`node scripts/repair_workflow_snapshots.mjs` rewrites the active snapshots in the local
-`%APPDATA%/space.ora.desktop/ora.sqlite3` database back into a valid shape: React Flow layout
-fields (`position`, edge `id`), the Loop-versus-Iteration container ownership contract
-(`data.containerId` only under a Loop, `parentId`-only under an Iteration), complete Agent
-`agentConfig` structures, and `schemaVersion: 2` for container graphs, finishing with a
-`PRAGMA wal_checkpoint(TRUNCATE)`. `scripts/workflow-qualification-suite/` generates and drives
-the 101-workflow release qualification suite against a running desktop build.
+Workflow pages restore missing presentation fields in memory when loading a snapshot.
+For explicit draft maintenance, `deno run -A scripts/repair_workflow_snapshots.mjs --database
+<absolute-path-to-ora.sqlite3>` previews layout repairs; add `--apply` to apply them after a
+complete SQLite backup. Only active drafts unreferenced by runs or published versions are
+eligible. The tool preserves execution configuration and rejects ambiguous ownership. Historical
+snapshots are never modified. Run `deno task test:tooling` for the temporary-database regressions.
+
+`deno run -A scripts/workflow-qualification-suite/validate_sample.mjs` analyzes all 101 generated
+graphs through a running desktop's `analyze_workflow` operation without creating workflows.
+The execution runner requires `ORA_QUALIFICATION_WORKSPACE_ID` to name an active, disposable
+isolated workspace; agents may edit files there. Reports contain measured backend results and
+explicitly identify unmeasured UI/memory checks. Failures exit nonzero; reports stay local.
 
 ## Toolchain versions
 

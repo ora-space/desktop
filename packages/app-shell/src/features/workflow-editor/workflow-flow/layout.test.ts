@@ -178,6 +178,7 @@ describe("workflow-flow layout", () => {
     const child: Node<WorkflowNodeData, "workflow"> = {
       id: "agent",
       type: "workflow",
+      parentId: "loop",
       position: { x: 40, y: 40 },
       data: {
         kind: "agent",
@@ -186,8 +187,10 @@ describe("workflow-flow layout", () => {
         containerId: "loop",
       },
     };
-    const first = containWorkflowCanvasNodes([child])[0];
-    const second = containWorkflowCanvasNodes([child])[0];
+    const loop = workflowNode("loop", 0, 0);
+    loop.data = { ...loop.data, kind: "loop" };
+    const first = containWorkflowCanvasNodes([loop, child])[1];
+    const second = containWorkflowCanvasNodes([loop, child])[1];
     expect(first).toBe(second);
     expect(first?.extent).toBe("parent");
     expect(first?.expandParent).toBe(true);
@@ -261,6 +264,21 @@ describe("workflow-flow layout", () => {
         extent: "parent",
         expandParent: true,
       },
+    ]);
+  });
+
+  it("does not constrain an orphan to a parent that was detached for rendering", () => {
+    const orphan = {
+      ...workflowNode("orphan", 200, 140),
+      parentId: "missing",
+      extent: "parent" as const,
+      expandParent: true,
+    };
+    orphan.data = { ...orphan.data, containerId: "missing" };
+    const detached: Node<WorkflowNodeData, "workflow"> = { ...orphan };
+    delete detached.parentId;
+    expect(containWorkflowCanvasNodes([orphan])).toEqual([
+      { ...detached, extent: undefined, expandParent: undefined },
     ]);
   });
 

@@ -577,62 +577,53 @@ function WorkflowEditorContent({
     // Agent nodes without a contract (legacy prompt/model graphs folded into Agent
     // on parse) get the default executor so the inspector stays editable.
     const nodes = normalizeWorkflowNodeAgentConfigs(
-      envelope.nodes
-        .map((node) => {
-          if (
-            node.data.kind !== "agent" ||
-            node.data.agentConfig !== undefined
-          ) {
-            return node;
-          }
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              agentConfig: capabilities.defaultAgentConfig,
+      envelope.nodes.map((node) => {
+        if (node.data.kind !== "agent" || node.data.agentConfig !== undefined) {
+          return node;
+        }
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            agentConfig: capabilities.defaultAgentConfig,
+          },
+        };
+      }),
+    ).map((node) => {
+      if (node.data.kind !== "agent" || node.data.agentConfig === undefined) {
+        return node;
+      }
+      if (
+        capabilitiesOverride !== undefined ||
+        availableAgentModels.length === 0
+      ) {
+        return node;
+      }
+      const { agentCli, modelId } = node.data.agentConfig.executor;
+      if (
+        availableAgentModels.some(
+          (model) => model.agentCli === agentCli && model.modelId === modelId,
+        )
+      ) {
+        return node;
+      }
+      const modelForCli = availableAgentModels.find(
+        (model) => model.agentCli === agentCli,
+      );
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          agentConfig: {
+            ...node.data.agentConfig,
+            executor: {
+              agentCli,
+              modelId: modelForCli?.modelId ?? modelId,
             },
-          };
-        })
-        .map((node) => {
-          if (
-            node.data.kind !== "agent" ||
-            node.data.agentConfig === undefined
-          ) {
-            return node;
-          }
-          if (
-            capabilitiesOverride !== undefined ||
-            availableAgentModels.length === 0
-          ) {
-            return node;
-          }
-          const { agentCli, modelId } = node.data.agentConfig.executor;
-          if (
-            availableAgentModels.some(
-              (model) =>
-                model.agentCli === agentCli && model.modelId === modelId,
-            )
-          ) {
-            return node;
-          }
-          const modelForCli = availableAgentModels.find(
-            (model) => model.agentCli === agentCli,
-          );
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              agentConfig: {
-                ...node.data.agentConfig,
-                executor: {
-                  agentCli,
-                  modelId: modelForCli?.modelId ?? modelId,
-                },
-              },
-            },
-          };
-        }),
-    );
+          },
+        },
+      };
+    });
     const hydratedWorkflow: DemoWorkflow = {
       id: draftQuery.data.workflow.id,
       name: draftQuery.data.workflow.name,

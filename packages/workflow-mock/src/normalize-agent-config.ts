@@ -1,16 +1,30 @@
 import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
 
 /**
- * Fills MCP bindings omitted from older drafts so the settings canvas can open
- * without crashing on `agentConfig.mcps`.
+ * Builds an editable/displayable projection of untrusted Agent JSON without
+ * choosing an executor or authorizing malformed dependency bindings.
  */
 export function normalizeWorkflowAgentConfig(
   config: WorkflowAgentConfig,
 ): WorkflowAgentConfig {
-  const skills = Array.isArray(config.skills) ? config.skills : [];
-  const mcps = Array.isArray(config.mcps) ? config.mcps : [];
+  const skills = Array.isArray(config?.skills)
+    ? config.skills.filter(
+        (skill) =>
+          typeof skill?.skillId === "string" &&
+          typeof skill.enabled === "boolean",
+      )
+    : [];
+  const mcps = Array.isArray(config?.mcps)
+    ? config.mcps.filter(
+        (mcp) =>
+          typeof mcp?.mcpId === "string" && typeof mcp.enabled === "boolean",
+      )
+    : [];
   const outputContract =
-    config.outputContract?.type === "structured"
+    config?.outputContract?.type === "structured" &&
+    typeof config.outputContract.schema === "object" &&
+    config.outputContract.schema !== null &&
+    !Array.isArray(config.outputContract.schema)
       ? {
           type: "structured" as const,
           schema: config.outputContract.schema,
@@ -20,11 +34,24 @@ export function normalizeWorkflowAgentConfig(
   // here would rewrite every saved graph the first time it is opened.
   return {
     ...config,
+    executor: {
+      ...config?.executor,
+      agentCli:
+        typeof config?.executor?.agentCli === "string"
+          ? config.executor.agentCli
+          : "",
+      modelId:
+        typeof config?.executor?.modelId === "string"
+          ? config.executor.modelId
+          : "",
+    },
+    roleId: typeof config?.roleId === "string" ? config.roleId : "",
+    prompt: typeof config?.prompt === "string" ? config.prompt : "",
     skills,
     mcps,
     // Missing `interactive` defaults to false so existing graphs stay fully automatic.
-    interactive: config.interactive ?? false,
-    ...(outputContract === undefined ? {} : { outputContract }),
+    interactive: config?.interactive === true,
+    outputContract,
   };
 }
 

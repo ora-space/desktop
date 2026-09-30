@@ -23,6 +23,7 @@ import type {
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
+import { parseWorkflowGraph } from "@ora/workflow-runtime";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -146,6 +147,43 @@ function renderInspector(
 }
 
 describe("RunActInspector agent config", () => {
+  it.each([
+    ["a missing executor", { executor: undefined }],
+    ["a null executor", { executor: null }],
+    ["an object instead of a skill list", { skills: {} }],
+    ["null members in the skill list", { skills: [null] }],
+    ["a string instead of an MCP list", { mcps: "invalid" }],
+    ["null members in the MCP list", { mcps: [null] }],
+    ["an object instead of a role identity", { roleId: {} }],
+    ["an object instead of a prompt", { prompt: {} }],
+    ["an object instead of a model identity", { executor: { modelId: {} } }],
+  ])("keeps an imported agent inspectable with %s", async (_name, patch) => {
+    await appI18n.changeLanguage("en-US");
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "agent-1",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "Imported agent",
+            description: "",
+            agentConfig: { ...AGENT_DATA.agentConfig, ...patch },
+          },
+        },
+      ],
+      edges: [],
+    });
+    const { nodes } = parseWorkflowGraph(graph);
+    const { user } = renderInspector(
+      { status: "succeeded" },
+      { data: nodes[0]!.data },
+    );
+    expect(await screen.findByText("Imported agent")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close/i }));
+  });
+
   it("shows completed Agent output alongside file changes instead of the empty outcome placeholder", async () => {
     await appI18n.changeLanguage("zh-CN");
     renderInspector({

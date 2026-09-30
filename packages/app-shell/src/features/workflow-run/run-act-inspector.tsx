@@ -321,7 +321,7 @@ function RunActInspectorPanel({
     state.autoRetry === undefined
       ? 0
       : state.autoRetry.retry - (state.startedAt === undefined ? 1 : 0);
-  const agentConfig = data.agentConfig;
+  const agentConfig = data.agentConfig ?? undefined;
   // An agent whose retry policy is on failed at once: say that this kind of failure is not
   // retried, so the policy does not look broken. Rows without the recorded flag say nothing.
   const failureKindNotRetried =

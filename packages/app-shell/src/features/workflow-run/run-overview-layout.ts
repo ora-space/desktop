@@ -18,9 +18,8 @@ export function createRunOverviewNodes(
     draggable: false,
     connectable: false,
     deletable: false,
-    ...(node.data.containerId === undefined
-      ? {}
-      : { extent: "parent" as const }),
+    extent: node.parentId === undefined ? undefined : ("parent" as const),
+    expandParent: false,
     zIndex: node.data.kind === "loop" ? 0 : 1,
     data: {
       ...node.data,

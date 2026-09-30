@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
+import { normalizeWorkflowAgentConfig } from "@ora/workflow-mock";
 import { IconRobot } from "@tabler/icons-react";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
@@ -25,7 +26,10 @@ interface RunActAgentConfigProps {
  * empty). Long prompt text also opens a preview when it would otherwise truncate.
  * Retry always shows the policy the engine applies, including the implicit default.
  */
-export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
+export function RunActAgentConfig({
+  config: rawConfig,
+}: RunActAgentConfigProps) {
+  const config = normalizeWorkflowAgentConfig(rawConfig);
   const { t } = useTranslation();
   const agentCatalog = useAgentCatalog();
   const agentsQuery = useAgents();

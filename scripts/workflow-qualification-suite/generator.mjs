@@ -1,5 +1,8 @@
+import { layoutWorkflowGraph as layoutGraph } from "./graph-layout.mjs";
+export { layoutGraph };
+
 // scripts/workflow-qualification-suite/generator.mjs
-// Generates 101 distinct, fully compliant Ora workflow definitions.
+// Generates 101 Ora workflow definitions checked against the execution graph contract.
 // Every workflow is guaranteed to include:
 // 1. Condition (条件分支)
 // 2. Variable Aggregator (变量聚合节点)
@@ -9,6 +12,19 @@
 
 const AGENT_CLI = "official/ora-space.opencode";
 const MODEL_ID = "bluezone/zhipu/glm-5.3";
+
+/** Creates complete authored Agent settings; layout repair must never synthesize them. */
+function agentConfiguration(prompt) {
+  return {
+    schemaVersion: 3,
+    executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
+    roleId: "",
+    skills: [],
+    mcps: [],
+    prompt,
+    interactive: false,
+  };
+}
 
 export function generateAllWorkflows() {
   const workflows = [];
@@ -21,7 +37,7 @@ export function generateAllWorkflows() {
   }
 
   // Generate Scenario 101: The Ultra Long-Running Stress Workflow
-  // (16 nodes total >= 15, contains 10 long-running nodes, runs >= 60 minutes)
+  // The runner measures whether this single execution actually reaches 60 minutes.
   const stress = generateStressWorkflow();
   stress.graph = layoutGraph(stress.graph);
   workflows.push(stress);
@@ -237,6 +253,27 @@ function generateScenarioWorkflow(index) {
 
   const isNumericCondition = typeof startRoute === "number";
   const startType = isNumericCondition ? "number" : "string";
+  // State feedback exercises multiple completed rounds instead of always stopping on round one.
+  const terminalToken = loopUntilVal || "DONE";
+  const intendedRounds = loopUntilOp === "not_empty" ? 1 : loopMaxIterations;
+  const loopStates = [
+    "init",
+    ...Array.from(
+      { length: intendedRounds - 1 },
+      (_, round) => `ROUND_${round + 1}`,
+    ),
+    terminalToken,
+  ];
+  const loopPrompt = [
+    "Current carried state: {{#loop.loop_state#}}.",
+    "Reply only with the next state token, without punctuation or explanation.",
+    ...loopStates
+      .slice(0, -1)
+      .map(
+        (state, round) =>
+          `If the state is ${JSON.stringify(state)}, reply ${JSON.stringify(loopStates[round + 1])}.`,
+      ),
+  ].join(" ");
 
   // Build the graph definition ensuring Start, Condition, Aggregator, Iteration, Loop, Output are present
   const graph = {
@@ -281,12 +318,9 @@ function generateScenarioWorkflow(index) {
         data: {
           kind: "agent",
           title: "Branch A Processor",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt: `Say: branch A chosen for scenario ${index}`,
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            `Say: branch A chosen for scenario ${index}`,
+          ),
         },
       },
       // Branch B Agent (Fallback on ELSE)
@@ -295,12 +329,9 @@ function generateScenarioWorkflow(index) {
         data: {
           kind: "agent",
           title: "Branch B Processor (ELSE)",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt: `Say: branch B chosen for scenario ${index}`,
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            `Say: branch B chosen for scenario ${index}`,
+          ),
         },
       },
       // 2. Variable Aggregator node
@@ -340,12 +371,7 @@ function generateScenarioWorkflow(index) {
         data: {
           kind: "agent",
           title: "Iteration Item Handler",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt: "Echo item: {{#iter.item#}}",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration("Echo item: {{#iter.item#}}"),
         },
       },
       // 4. Loop node
@@ -399,12 +425,7 @@ function generateScenarioWorkflow(index) {
           kind: "agent",
           containerId: "loop",
           title: "Loop Worker",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt: "Reply with DONE to finish loop.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(loopPrompt),
         },
       },
       // Output node
@@ -510,13 +531,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 1: Core System Architecture Audit",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Perform a thorough architectural assessment of the Ora 0.3.0 runtime, analyzing IPC bindings, thread synchronization, memory boundaries, and state machines. Provide an exhaustive structured analysis report.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Perform a thorough architectural assessment of the Ora 0.3.0 runtime, analyzing IPC bindings, thread synchronization, memory boundaries, and state machines. Provide an exhaustive structured analysis report.",
+          ),
         },
       },
       // Node 4 (Fallback branch): Standard analysis
@@ -525,12 +542,7 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Fallback Analysis Node",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt: "Standard runtime inspection.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration("Standard runtime inspection."),
         },
       },
       // Node 5: Variable Aggregator (Collapses Branch 1 & Fallback)
@@ -553,13 +565,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 2: SQLite Concurrency & Transaction Integrity",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Conduct a deep verification of SQLite WAL mode, foreign key integrity, concurrent transaction serialization, and crash recovery tables in Ora 0.3.0. Output detailed findings.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Conduct a deep verification of SQLite WAL mode, foreign key integrity, concurrent transaction serialization, and crash recovery tables in Ora 0.3.0. Output detailed findings.",
+          ),
         },
       },
       // Node 7 (Long-running node 3): Sidecar & Sandbox Isolation Audit
@@ -568,13 +576,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 3: Sidecar & Sandbox Isolation Audit",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Examine sidecar communication between ora-desktop, deno, ora-reaper, and rg under high load. Output comprehensive telemetry.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Examine sidecar communication between ora-desktop, deno, ora-reaper, and rg under high load. Output comprehensive telemetry.",
+          ),
         },
       },
       // Node 8 (Long-running node 4): Iteration Container (Foreach over tasks)
@@ -600,13 +604,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 5: Task Round Execution Worker",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Executing Iteration Task: {{#stress-iter.item#}} (Index {{#stress-iter.index#}}). Conduct step-by-step rigorous stress testing and report telemetry.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Executing Iteration Task: {{#stress-iter.item#}} (Index {{#stress-iter.index#}}). Conduct step-by-step rigorous stress testing and report telemetry.",
+          ),
         },
       },
       // Node 10 (Long-running node 6): Post-Iteration Variable Synthesis
@@ -615,13 +615,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 6: Multi-Stage Telemetry Synthesis",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Synthesize previous telemetry and perform long-range state transition modeling. Ensure no resource leaks.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Synthesize previous telemetry and perform long-range state transition modeling. Ensure no resource leaks.",
+          ),
         },
       },
       // Node 11 (Long-running node 7): Loop Container (Multi-round feedback convergence)
@@ -678,13 +674,9 @@ function generateStressWorkflow() {
           kind: "agent",
           containerId: "stress-loop",
           title: "Deep Node 8: Loop Feedback Verification Agent",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Review current loop state: {{#stress-loop.audit_state#}}. Perform iterative code verification, stability analysis, and converge with CONVERGED_QUALIFIED.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Review current loop state: {{#stress-loop.audit_state#}}. Perform iterative code verification, stability analysis, and converge with CONVERGED_QUALIFIED.",
+          ),
         },
       },
       // Node 14 (Long-running node 9): Security Posture & Memory Boundary Audit
@@ -693,13 +685,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 9: Security & Memory Safety Verification",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Audit WebView2 sandboxing, origin isolation, token storage, and process boundaries under stress. Output verification proof.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Audit WebView2 sandboxing, origin isolation, token storage, and process boundaries under stress. Output verification proof.",
+          ),
         },
       },
       // Node 15 (Long-running node 10): Final End-to-End Stress Qualification Sign-off
@@ -708,13 +696,9 @@ function generateStressWorkflow() {
         data: {
           kind: "agent",
           title: "Deep Node 10: Final System Qualification Sign-off",
-          agentConfig: {
-            schemaVersion: 3,
-            executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-            prompt:
-              "Consolidate all findings from the 10 deep stages. Produce the final release qualification certification for Ora 0.3.0.",
-            interactive: false,
-          },
+          agentConfig: agentConfiguration(
+            "Consolidate all findings from the 10 deep stages. Produce the final release qualification certification for Ora 0.3.0.",
+          ),
         },
       },
       // Node 16: Output Node (Assembles the comprehensive endurance report)
@@ -792,186 +776,4 @@ function generateStressWorkflow() {
     isStress: true,
     graph,
   };
-}
-
-export function layoutGraph(graph) {
-  if (!graph || !Array.isArray(graph.nodes)) return graph;
-
-  const nodes = graph.nodes;
-  const edges = Array.isArray(graph.edges) ? graph.edges : [];
-
-  const loopIds = new Set(
-    nodes.filter((n) => n.data?.kind === "loop").map((n) => n.id),
-  );
-  const iterIds = new Set(
-    nodes.filter((n) => n.data?.kind === "iteration").map((n) => n.id),
-  );
-  const containerIds = new Set([...loopIds, ...iterIds]);
-
-  const containerChildren = new Map();
-  for (const cId of containerIds) {
-    containerChildren.set(cId, []);
-  }
-
-  const outerNodes = [];
-  for (const node of nodes) {
-    if (!node.data) node.data = {};
-
-    if (node.data.kind === "agent") {
-      if (!node.data.agentConfig) {
-        node.data.agentConfig = {
-          schemaVersion: 3,
-          executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
-          roleId: "",
-          skills: [],
-          mcps: [],
-          prompt: "",
-          interactive: false,
-        };
-      }
-      if (!Array.isArray(node.data.agentConfig.skills)) {
-        node.data.agentConfig.skills = [];
-      }
-      if (!Array.isArray(node.data.agentConfig.mcps)) {
-        node.data.agentConfig.mcps = [];
-      }
-      if (typeof node.data.agentConfig.roleId !== "string") {
-        node.data.agentConfig.roleId = "";
-      }
-      if (typeof node.data.agentConfig.prompt !== "string") {
-        node.data.agentConfig.prompt = "";
-      }
-    }
-
-    const parentId = node.parentId || node.data.containerId;
-    if (parentId && loopIds.has(parentId)) {
-      node.parentId = parentId;
-      node.data.containerId = parentId;
-      containerChildren.get(parentId).push(node);
-    } else if (parentId && iterIds.has(parentId)) {
-      node.parentId = parentId;
-      delete node.data.containerId;
-      containerChildren.get(parentId).push(node);
-    } else {
-      delete node.parentId;
-      if (node.data?.containerId) delete node.data.containerId;
-      outerNodes.push(node);
-    }
-  }
-
-  for (const [cId, children] of containerChildren.entries()) {
-    const containerNode = nodes.find((n) => n.id === cId);
-    let curX = 40;
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      if (!child.position || typeof child.position.x !== "number") {
-        child.position = { x: curX, y: 120 };
-      }
-      curX += 280;
-    }
-    const neededWidth = Math.max(680, curX + 60);
-    const neededHeight = 380;
-    if (
-      !containerNode.initialWidth ||
-      containerNode.initialWidth < neededWidth
-    ) {
-      containerNode.initialWidth = neededWidth;
-    }
-    if (
-      !containerNode.initialHeight ||
-      containerNode.initialHeight < neededHeight
-    ) {
-      containerNode.initialHeight = neededHeight;
-    }
-  }
-
-  const outerNodeIds = new Set(outerNodes.map((n) => n.id));
-  const outerEdges = edges.filter(
-    (e) => outerNodeIds.has(e.source) && outerNodeIds.has(e.target),
-  );
-
-  const indegree = new Map(outerNodes.map((n) => [n.id, 0]));
-  const outgoing = new Map(outerNodes.map((n) => [n.id, []]));
-
-  for (const edge of outerEdges) {
-    outgoing.get(edge.source)?.push(edge.target);
-    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
-  }
-
-  const rank = new Map(outerNodes.map((n) => [n.id, 0]));
-  const queue = outerNodes
-    .filter((n) => indegree.get(n.id) === 0)
-    .map((n) => n.id);
-
-  while (queue.length > 0) {
-    const curr = queue.shift();
-    const currRank = rank.get(curr) || 0;
-    for (const next of outgoing.get(curr) || []) {
-      const existingRank = rank.get(next) || 0;
-      if (currRank + 1 > existingRank) {
-        rank.set(next, currRank + 1);
-      }
-      const newIn = (indegree.get(next) || 1) - 1;
-      indegree.set(next, newIn);
-      if (newIn <= 0) {
-        queue.push(next);
-      }
-    }
-  }
-
-  const rankGroups = new Map();
-  for (const node of outerNodes) {
-    const r = rank.get(node.id) || 0;
-    if (!rankGroups.has(r)) rankGroups.set(r, []);
-    rankGroups.get(r).push(node);
-  }
-
-  let curOuterX = 80;
-  const sortedRanks = Array.from(rankGroups.keys()).sort((a, b) => a - b);
-  for (const r of sortedRanks) {
-    const group = rankGroups.get(r);
-    let maxColWidth = 260;
-    for (let i = 0; i < group.length; i++) {
-      const node = group[i];
-      const nodeWidth =
-        node.initialWidth || (node.data?.kind === "condition" ? 320 : 240);
-      if (nodeWidth > maxColWidth) maxColWidth = nodeWidth;
-
-      if (!node.position || typeof node.position.x !== "number") {
-        const yOffset = (i - (group.length - 1) / 2) * 180;
-        node.position = {
-          x: curOuterX,
-          y: Math.round(200 + yOffset),
-        };
-      }
-    }
-    curOuterX += maxColWidth + 100;
-  }
-
-  for (const node of nodes) {
-    node.type = "workflow";
-    if (!node.position || typeof node.position.x !== "number") {
-      node.position = { x: 100, y: 100 };
-    }
-  }
-
-  for (let i = 0; i < edges.length; i++) {
-    const edge = edges[i];
-    edge.type = "workflow";
-    if (!edge.id) {
-      edge.id = `e-${edge.source}-${edge.target}${edge.sourceHandle ? "-" + edge.sourceHandle : ""}-${i}`;
-    }
-  }
-
-  if (!graph.viewport) {
-    graph.viewport = { x: 0, y: 0, zoom: 1 };
-  }
-  if (!Array.isArray(graph.annotations)) {
-    graph.annotations = [];
-  }
-  if (!Array.isArray(graph.globalVariables)) {
-    graph.globalVariables = [];
-  }
-
-  return graph;
 }

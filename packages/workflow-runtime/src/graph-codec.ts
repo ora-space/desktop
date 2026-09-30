@@ -5,7 +5,11 @@ import {
   type WorkflowGlobalVariable,
   type WorkflowViewport,
 } from "./types";
-import { workflowContainerNodes } from "./container-layout";
+import {
+  isWorkflowPosition,
+  workflowEdgeGeometry,
+  workflowNodesGeometry,
+} from "./graph-render-geometry";
 
 /** The persisted graph envelope: editor geometry plus optional metadata. */
 export interface WorkflowGraphEnvelope {
@@ -133,6 +137,7 @@ export function parseWorkflowGraphWithReport(
   const nodes: WorkflowDefinitionNode[] = [];
   const droppedNodeIds = new Set<string>();
   const droppedNodeKinds: string[] = [];
+  const renderedNodeIds = new Set<string>();
   for (const raw of rawNodes) {
     // Legacy kinds upgrade before the check so a persisted prompt/model node still lands on
     // its supported replacement rather than being read as an unknown kind and dropped.
@@ -141,12 +146,15 @@ export function parseWorkflowGraphWithReport(
     if (
       node !== null &&
       typeof kind === "string" &&
-      WORKFLOW_NODE_KIND_SET.has(kind)
+      WORKFLOW_NODE_KIND_SET.has(kind) &&
+      !renderedNodeIds.has(node.id)
     ) {
+      renderedNodeIds.add(node.id);
+      droppedNodeIds.delete(node.id);
       nodes.push(node);
       continue;
     }
-    if (isRecordWithId(raw)) {
+    if (isRecordWithId(raw) && !renderedNodeIds.has(raw.id)) {
       droppedNodeIds.add(raw.id);
     }
     if (typeof kind === "string" && !droppedNodeKinds.includes(kind)) {
@@ -157,14 +165,11 @@ export function parseWorkflowGraphWithReport(
   // resave; only the geometry the editor understands is normalized underneath them.
   const envelope: WorkflowGraphEnvelope = {
     ...record,
-    nodes: workflowContainerNodes(nodes),
-    edges: Array.isArray(record.edges)
-      ? (record.edges as WorkflowDefinitionEdge[]).filter(
-          (edge) =>
-            !droppedNodeIds.has(edge.source) &&
-            !droppedNodeIds.has(edge.target),
-        )
-      : [],
+    nodes: workflowNodesGeometry(nodes),
+    edges: workflowEdgeGeometry(
+      Array.isArray(record.edges) ? record.edges : [],
+      droppedNodeIds,
+    ),
     viewport: isWorkflowViewport(record.viewport)
       ? record.viewport
       : DEFAULT_VIEWPORT,
@@ -177,6 +182,8 @@ export function parseWorkflowGraphWithReport(
   };
   if (typeof record.description === "string") {
     envelope.description = record.description;
+  } else {
+    delete envelope.description;
   }
   return {
     envelope,
@@ -286,8 +293,9 @@ function isWorkflowViewport(value: unknown): value is WorkflowViewport {
   }
   const record = value as Record<string, unknown>;
   return (
-    typeof record.x === "number" &&
-    typeof record.y === "number" &&
-    typeof record.zoom === "number"
+    isWorkflowPosition(record) &&
+    typeof record.zoom === "number" &&
+    Number.isFinite(record.zoom) &&
+    record.zoom > 0
   );
 }

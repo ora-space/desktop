@@ -18,6 +18,12 @@ export function WorkflowEditorList() {
   );
   const managerError = useWorkflowEditorStore((state) => state.managerError);
   const actions = useWorkflowEditorStore((state) => state.actions);
+  const renderFailed = useWorkflowEditorStore(
+    (state) => state.renderRecovery.status === "failed",
+  );
+  const selectAfterRenderFailure = useWorkflowEditorStore(
+    (state) => state.selectAfterRenderFailure,
+  );
   const importedWorkflowIds = useWorkflowEditorStore(
     (state) => state.importedWorkflowIds,
   );
@@ -44,10 +50,15 @@ export function WorkflowEditorList() {
       selectedWorkflowId={selectedWorkflowId}
       error={error}
       disabled={actions === null}
+      selectionDisabled={actions === null && !renderFailed}
       onSelect={(workflowId) => {
-        // Never switch identity without the editor's flush path — a store-only
-        // write would drop unsaved canvas edits if the editor is still mounted.
-        if (actions !== null) void actions.select(workflowId);
+        // Mounted editors always flush before switching. Only a render failure
+        // that has unmounted the editor permits the recovery selection path.
+        if (actions !== null) {
+          void actions.select(workflowId);
+        } else {
+          selectAfterRenderFailure(workflowId);
+        }
       }}
       onCreate={(name) =>
         actions === null ? Promise.resolve(false) : actions.create(name)

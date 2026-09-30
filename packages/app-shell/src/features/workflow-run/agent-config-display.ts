@@ -24,10 +24,15 @@ export function formatAgentExecutorLabel(
   if (!executor) return "—";
   // Runtime snapshots may predate the current executor contract, so each identity
   // component degrades to an em dash instead of rendering the string "undefined".
-  const cliLabel = executor.agentCli
-    ? agentLabel(agents, executor.agentCli)
-    : "—";
-  return `${cliLabel} · ${executor.modelId ?? "—"}`;
+  const cliLabel =
+    typeof executor.agentCli === "string" && executor.agentCli !== ""
+      ? agentLabel(agents, executor.agentCli)
+      : "—";
+  const modelLabel =
+    typeof executor.modelId === "string" && executor.modelId !== ""
+      ? executor.modelId
+      : "—";
+  return `${cliLabel} · ${modelLabel}`;
 }
 
 /**
@@ -39,12 +44,13 @@ export function resolveTheaterActDetail(
   agents: readonly AgentEntry[],
 ): string | undefined {
   for (const candidate of [data.tool, data.condition]) {
-    const trimmed = candidate?.trim();
+    const trimmed =
+      typeof candidate === "string" ? candidate.trim() : undefined;
     if (trimmed !== undefined && trimmed !== "") {
       return trimmed;
     }
   }
-  if (data.agentConfig !== undefined) {
+  if (data.agentConfig != null) {
     return formatAgentExecutorLabel(data.agentConfig.executor, agents);
   }
   return undefined;
@@ -63,7 +69,7 @@ export function resolveTheaterActInstruction(data: WorkflowNodeData): string {
     data.kind === "start"
       ? (data.input ?? "")
       : (data.instruction ?? data.agentConfig?.prompt ?? "");
-  return text.trim();
+  return typeof text === "string" ? text.trim() : "";
 }
 
 /**

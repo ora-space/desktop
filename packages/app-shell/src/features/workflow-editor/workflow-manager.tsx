@@ -47,6 +47,8 @@ interface WorkflowManagerProps {
   error: string | null;
   /** True until the open editor has registered flush-before-switch actions. */
   disabled?: boolean;
+  /** Failed editors permit another selection while mutation actions remain unavailable. */
+  selectionDisabled?: boolean;
   onSelect: (workflowId: string) => void;
   onCreate: (name: string) => Promise<boolean>;
   onCopy: (workflowId: string) => Promise<boolean>;
@@ -63,6 +65,7 @@ export function WorkflowManager({
   selectedWorkflowId,
   error,
   disabled = false,
+  selectionDisabled = disabled,
   onSelect,
   onCreate,
   onCopy,
@@ -265,7 +268,7 @@ export function WorkflowManager({
             >
               <button
                 type="button"
-                disabled={disabled}
+                disabled={selectionDisabled}
                 onClick={() => onSelect(workflow.id)}
                 className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
               >

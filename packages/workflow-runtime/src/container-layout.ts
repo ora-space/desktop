@@ -4,6 +4,7 @@ interface WorkflowContainerNode {
   parentId?: string;
   data: {
     containerId?: string;
+    kind?: string;
   };
 }
 
@@ -14,12 +15,49 @@ interface WorkflowContainerNode {
 export function workflowContainerNodes<T extends WorkflowContainerNode>(
   nodes: readonly T[],
 ): T[] {
-  const knownIds = new Set(nodes.map((node) => node.id));
-  const normalized = nodes.map((node) => {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const parentById = new Map<string, string>();
+  for (const node of nodes) {
     const containerId = node.data.containerId;
-    return containerId !== undefined && knownIds.has(containerId)
-      ? ({ ...node, parentId: containerId } as T)
-      : node;
+    const parentId =
+      typeof containerId === "string" && nodeById.has(containerId)
+        ? containerId
+        : node.parentId;
+    if (typeof parentId === "string" && parentId !== node.id) {
+      const parent = nodeById.get(parentId);
+      if (
+        parent !== undefined &&
+        (parent.data.kind === undefined ||
+          parent.data.kind === "loop" ||
+          parent.data.kind === "iteration")
+      ) {
+        parentById.set(node.id, parentId);
+      }
+    }
+  }
+  // Invalid ownership remains in data for execution validation. Only visual parent links
+  // are detached: React Flow must never recurse through missing parents or parent cycles.
+  const checked = new Set<string>();
+  for (const node of nodes) {
+    const path = new Set<string>();
+    let id: string | undefined = node.id;
+    while (id !== undefined && !checked.has(id)) {
+      if (path.has(id)) {
+        parentById.delete(id);
+        break;
+      }
+      path.add(id);
+      id = parentById.get(id);
+    }
+    for (const member of path) checked.add(member);
+  }
+  const normalized = nodes.map((node) => {
+    const parentId = parentById.get(node.id);
+    if (parentId === node.parentId) return node;
+    const normalizedNode = { ...node };
+    if (parentId === undefined) delete normalizedNode.parentId;
+    else normalizedNode.parentId = parentId;
+    return normalizedNode;
   });
   const firstIndexById = new Map<string, number>();
   for (const [index, node] of normalized.entries()) {
@@ -30,29 +68,17 @@ export function workflowContainerNodes<T extends WorkflowContainerNode>(
 
   const ordered: T[] = [];
   const visited = new Set<number>();
-  const visiting = new Set<number>();
-
-  /** Visits the owning container first while tolerating malformed imported cycles. */
-  function visit(index: number): void {
-    if (visited.has(index) || visiting.has(index)) {
-      return;
-    }
-    visiting.add(index);
-    const node = normalized[index]!;
-    const parentIndex =
-      node.parentId === undefined
-        ? undefined
-        : firstIndexById.get(node.parentId);
-    if (parentIndex !== undefined) {
-      visit(parentIndex);
-    }
-    visiting.delete(index);
-    visited.add(index);
-    ordered.push(node);
-  }
-
   for (let index = 0; index < normalized.length; index += 1) {
-    visit(index);
+    const path: number[] = [];
+    let current: number | undefined = index;
+    while (current !== undefined && !visited.has(current)) {
+      visited.add(current);
+      path.push(current);
+      const parentId: string | undefined = normalized[current]!.parentId;
+      current =
+        parentId === undefined ? undefined : firstIndexById.get(parentId);
+    }
+    for (const ancestor of path.reverse()) ordered.push(normalized[ancestor]!);
   }
   return ordered;
 }

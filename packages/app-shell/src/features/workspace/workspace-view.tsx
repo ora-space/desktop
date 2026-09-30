@@ -66,6 +66,8 @@ import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { WorkflowEditor } from "../workflow-editor/workflow-editor";
+import { useWorkflowEditorRenderRecovery } from "../workflow-editor/workflow-editor-store";
+import { WorkflowSurfaceBoundary } from "./workflow-surface-boundary";
 import {
   WorkspaceReviewLayout,
   type WorkspaceReviewContext,
@@ -166,6 +168,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
+  const workflowEditorRecovery = useWorkflowEditorRenderRecovery();
   // Resolved the same way the picker shows it, so first send and model intent
   // target the same agent even while a switch remains client-side.
   const targetAgentCli = useTargetAgentCli(selection);
@@ -634,12 +637,32 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   // Graph workflow definition editor owns the main pane while it is open.
   if (workflowEditorOpen) {
-    return <WorkflowEditor />;
+    return (
+      <WorkflowSurfaceBoundary
+        scopeId="editor"
+        recoveryRevision={workflowEditorRecovery.revision}
+        onRenderFailure={workflowEditorRecovery.onRenderFailure}
+        onClose={() => useUiStore.getState().setWorkflowEditorOpen(false)}
+      >
+        <WorkflowEditor />
+      </WorkflowSurfaceBoundary>
+    );
   }
 
   // Graph workflow runs own a dedicated workspace branch (D2), not the chat layout.
   if (selection.workflowRunId !== null) {
-    return <WorkflowRunWorkspace runId={selection.workflowRunId} />;
+    return (
+      <WorkflowSurfaceBoundary
+        scopeId={selection.workflowRunId}
+        onClose={() =>
+          useWorkspaceSelectionStore
+            .getState()
+            .clearWorkflowRunSelection(selection.projectId ?? "")
+        }
+      >
+        <WorkflowRunWorkspace runId={selection.workflowRunId} />
+      </WorkflowSurfaceBoundary>
+    );
   }
 
   // Anything short of a persisted selected session is a new or optimistic chat.
