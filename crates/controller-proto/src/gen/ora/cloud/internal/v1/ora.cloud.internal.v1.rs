@@ -777,17 +777,22 @@ pub struct RecordThreadCommandDeliveredRequest {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecordThreadCommandDeliveredResponse {
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GrantRevisionUploadRequest {
     #[prost(int64, tag="1")]
     pub epoch: i64,
     /// A delivery execution registered through RecordDispatch.
     #[prost(string, tag="2")]
     pub execution_id: ::prost::alloc::string::String,
+    /// Optional object key -> lowercase hexadecimal SHA-256. Keys must belong to the frozen
+    /// delivery input. Cloud binds each checksum into its ephemeral PUT signature; refreshing
+    /// this capability never changes the execution input. Omit for legacy v1 grants.
+    #[prost(map="string, string", tag="3")]
+    pub checksums: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GrantRevisionUploadResponse {
-    /// One grant per object key in the delivery's input.
+    /// One grant per requested checksum key, or both input keys for legacy requests.
     #[prost(message, repeated, tag="1")]
     pub grants: ::prost::alloc::vec::Vec<UploadGrant>,
 }
