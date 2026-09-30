@@ -1,9 +1,11 @@
 //! Local durable clone coordination; no Desktop/Backend writer or Cloud authority is installed.
 //! Coordination logic reaches persistence only through [`CoordinationStore`]: the SQLite adapter
 //! under `sqlite` for local deployments, the Cloud RPC adapter under `cloud` for cloud ones.
+mod agent_command;
 #[cfg(target_os = "linux")]
 mod cloud;
 mod coordination;
+pub use agent_command::AgentCommand;
 #[cfg(target_os = "linux")]
 mod deployment;
 #[cfg(target_os = "linux")]

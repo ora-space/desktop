@@ -121,6 +121,7 @@ pub(super) enum Gate {
 pub(super) struct Sandbox {
     pub(super) binding: Binding,
     identity: watch::Sender<Option<NodeRuntimeIdentity>>,
+    work_hint: Arc<tokio::sync::Notify>,
     pub(super) report: sync::Mutex<Reported>,
     /// Held across a clone registration and while quiesce closes it, so a registration either
     /// committed before quiesce lists unfinished work or never happens.
@@ -145,6 +146,16 @@ impl Sandbox {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .contains(&NodeCapability::PluginInstall)
+    }
+
+    /// New session work requires a currently connected Node advertising Agent execution.
+    pub(super) fn agent_capable(&self) -> bool {
+        self.connected()
+            && self
+                .capabilities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&NodeCapability::AgentSession)
     }
 
     /// Whether a session is established right now.
@@ -203,6 +214,7 @@ impl SessionObserver for Sandbox {
     }
     fn established(&self, node: &NodeRuntimeIdentity) {
         self.identity.send_replace(Some(node.clone()));
+        self.work_hint.notify_one();
     }
 
     fn unresolved(&self, execution: &ExecutionId) {
@@ -292,6 +304,7 @@ impl Fleet {
         let sandbox = Arc::new(Sandbox {
             binding: binding.clone(),
             identity: watch::Sender::new(None),
+            work_hint: self.store.inner.work_hint.clone(),
             report: sync::Mutex::default(),
             gate: sync::Mutex::new(Gate::Open),
             unresolved: Mutex::default(),

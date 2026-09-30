@@ -57,14 +57,25 @@ pub(super) async fn coordinate(
             }
             // The flag only ever turns true once, so this branch fires at most once.
             Ok(()) = node_verified.changed() => Claim::Now,
+            _ = store.inner.work_hint.notified() => signals.claims_on(Tick::Renew),
             _ = std::future::ready(()), if backlog == Backlog::Pending => Claim::Now,
             _ = claim_tick.tick() => tick(&store, &mut signals, &mut report, Tick::Claim).await,
         };
+        if claim == Claim::Now {
+            store.inner.command_hint.notify_waiters();
+        }
         if let (Claim::Now, Some((fleet, operations))) = (claim, &mut workspaces) {
             operations.wake(&store, fleet);
         }
         backlog = match (claim, &signals) {
-            (Claim::Now, _) => claim::batch(&store, &mut refusals).await,
+            (Claim::Now, _) => {
+                claim::batch(
+                    &store,
+                    &mut refusals,
+                    workspaces.as_ref().map(|(fleet, _)| fleet),
+                )
+                .await
+            }
             // A drain stops the backlog too: the instance that holds it is stopping.
             (Claim::Skip, Signals::Drained) => Backlog::Settled,
             (Claim::Skip, Signals::Closed | Signals::Live(_)) => backlog,

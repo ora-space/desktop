@@ -1,3 +1,6 @@
+mod commands;
+mod control;
+mod relay;
 use super::*;
 use ora_node_transport::{
     CloseReason, ConnectError, FrameReceiver, FrameSender, TransportError, close_connection, ipc,
@@ -316,20 +319,32 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             "Node lacks mandatory runtime_control capability".into(),
         ));
     }
-    let plugin_capable = hello
+    let agent_capable = hello
         .payload
         .capabilities
-        .contains(&NodeCapability::PluginInstall);
+        .contains(&NodeCapability::AgentSession);
     observer.capabilities(&hello.payload.capabilities);
+    let capabilities = hello.payload.capabilities;
     let identity = hello.payload.node;
     observer.established(&identity);
     let mut tick = interval(Duration::from_millis(config.query_interval_ms));
     // Slow authority reads must not accumulate catch-up queries ahead of terminal evidence.
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut cursor = 0usize;
-    // Unknown can also be a retained uncertain attempt. Repeated Unknown replies must not form
-    // an immediate query/command feedback loop; one exact retransmission per connection is enough.
-    let mut retransmitted = std::collections::HashSet::new();
+    let mut relay = relay::Relay::new();
+    let mut commands = commands::Commands::new(
+        store.clone(),
+        identity.clone(),
+        Duration::from_millis(config.query_interval_ms),
+        agent_capable,
+    );
+    let mut control = control::Control::new(
+        store.clone(),
+        identity.clone(),
+        Duration::from_millis(config.query_interval_ms),
+        capabilities,
+        commands.input.clone(),
+    );
+    let mut settled = std::collections::HashSet::new();
     loop {
         // One deadline spans the whole wait across query ticks; frame receipt itself is cancel-safe.
         let read = bounded(deadline, receive(receiver));
@@ -338,81 +353,82 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             tokio::select! {
                 biased;
                 message = &mut read => break message?.ok_or_else(|| SessionError::Disconnected("Node closed the connection".into()))?,
+                result = relay.tasks.join_next(), if !relay.tasks.is_empty() => return Err(worker_failure(result)),
+                result = commands.tasks.join_next(), if !commands.tasks.is_empty() => return Err(worker_failure(result)),
+                Some(reply) = relay.outgoing.recv() => {
+                    let ack = match reply {
+                        relay::Receipt::Thread(ack) => ack,
+                        relay::Receipt::Terminal(ack) => { settled.insert(ack.execution_id.clone()); ack },
+                    };
+                    observer.answered(&ack.execution_id);
+                    bounded(deadline, transmit(writer, &ControllerToNodeMessage::EventAck(ack))).await?;
+                }
+                Some(reply) = commands.outgoing.recv(), if agent_capable => {
+                    bounded(deadline, transmit(writer, &reply)).await?;
+                }
+                result = control.tasks.join_next(), if !control.tasks.is_empty() => return Err(worker_failure(result)),
+                Some(action) = control.outgoing.recv() => match action {
+                    control::Action::Send(reply) => bounded(deadline, transmit(writer, &reply)).await?,
+                    control::Action::Answered(execution) => observer.answered(&execution),
+                    control::Action::Unresolved(execution) => { if !settled.contains(&execution) { observer.unresolved(&execution); } },
+                },
                 _ = tick.tick() => {
-                    for binding in store.runtime_bindings(node_id).await? {
-                        bounded(deadline,transmit(writer,&ControllerToNodeMessage::BindRuntime(binding))).await?;
-                    }
-                    let command = {
-                        let mut commands: Vec<_> = store.pending_dispatches(node_id).await?.into_iter().map(|c| (c.operation_id, c.execution_id)).collect();
-                        commands.extend(store.pending_plugins(node_id).await?.into_iter().map(|c| (c.operation_id().clone(), c.execution_id().clone())));
-                        if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
-                    };
-                    // Every tick sends exactly one uplink frame: the Node treats its per-frame read
-                    // deadline as Controller liveness, so an idle session must still send something.
-                    let uplink = match command {
-                        Some(command) => ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.0, execution_id: command.1, payload: GetExecutionStatus { node_id: node_id.clone() } }),
-                        None => ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: id.clone() } }),
-                    };
-                    bounded(deadline, transmit(writer, &uplink)).await?;
+                    let heartbeat = ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: id.clone() } });
+                    bounded(deadline, transmit(writer, &heartbeat)).await?;
                 }
             }
         };
-        let ack = take_over(store, &identity, &message).await?;
-        if let NodeToControllerMessage::PluginsResult(event) = &message {
-            observer.answered(&event.execution_id);
-        }
-        if let NodeToControllerMessage::CloneResult(event) = &message {
-            // Cloud has durably accepted the terminal fact; a prior Unknown is now resolved.
-            observer.answered(&event.execution_id);
-        }
-        if let NodeToControllerMessage::ExecutionStatus(status) = &message
-            && status.payload.state != ExecutionState::Unknown
-        {
-            observer.answered(&status.execution_id);
-        }
-        let reply = if let Some(ack) = ack {
-            Some(ControllerToNodeMessage::EventAck(ack))
-        } else if let NodeToControllerMessage::ExecutionStatus(status) = &message
-            && status.payload.state == ExecutionState::Unknown
-        {
-            if !retransmitted.contains(&status.execution_id) {
-                let command = if let Some(plugin) = store
-                    .original_plugin_dispatch(&identity, &status.operation_id, &status.execution_id)
-                    .await?
-                {
-                    if plugin_capable {
-                        store.dispatch_plugins(plugin).await?
-                    } else {
-                        None
-                    }
-                } else if store.result(&status.execution_id).await?.is_none() {
-                    store
-                        .dispatch_message(
-                            store
-                                .original_dispatch(
-                                    &identity,
-                                    &status.operation_id,
-                                    &status.execution_id,
-                                )
-                                .await?,
-                        )
-                        .await?
-                } else {
-                    None
-                };
-                if command.is_some() {
-                    retransmitted.insert(status.execution_id.clone());
-                }
-                command
-            } else {
-                observer.unresolved(&status.execution_id);
-                None
+        message.validate().map_err(Error::from)?;
+        match &message {
+            NodeToControllerMessage::ThreadEvent(event) if agent_capable => {
+                relay.push(store, &identity, relay::Event::Thread(event.clone()))?;
+                continue;
             }
-        } else {
-            None
-        };
-        if let Some(reply) = reply {
-            bounded(deadline, transmit(writer, &reply)).await?;
+            NodeToControllerMessage::AgentSessionEnded(event) if agent_capable => {
+                relay.push(store, &identity, relay::Event::End(event.clone()))?;
+                continue;
+            }
+            NodeToControllerMessage::SessionCommandAccepted(reply) if agent_capable => {
+                commands
+                    .input
+                    .try_send(commands::Reply::Command {
+                        operation: reply.operation_id.clone(),
+                        execution: reply.execution_id.clone(),
+                        command: reply.payload.command_id.clone(),
+                    })
+                    .map_err(|_| SessionError::Protocol("command reply queue overflow".into()))?;
+                continue;
+            }
+            NodeToControllerMessage::SessionCommandRejected(reply) if agent_capable => {
+                commands
+                    .input
+                    .try_send(commands::Reply::Command {
+                        operation: reply.operation_id.clone(),
+                        execution: reply.execution_id.clone(),
+                        command: reply.payload.command_id.clone(),
+                    })
+                    .map_err(|_| SessionError::Protocol("command reply queue overflow".into()))?;
+                continue;
+            }
+            NodeToControllerMessage::Heartbeat(heartbeat) if heartbeat.payload.node == identity => {
+                continue;
+            }
+            _ => {}
         }
+        control
+            .input
+            .try_send(message)
+            .map_err(|_| SessionError::Protocol("control reply queue overflow".into()))?;
+    }
+}
+
+/// Worker failures end this connection without inventing an acknowledgement; reconnect replays.
+fn worker_failure(
+    result: Option<Result<Result<(), Error>, tokio::task::JoinError>>,
+) -> SessionError {
+    match result {
+        Some(Ok(Err(error))) => SessionError::Store(error),
+        Some(Err(error)) => SessionError::Protocol(format!("session worker failed: {error}")),
+        _ => SessionError::Disconnected("session worker ended".into()),
     }
 }

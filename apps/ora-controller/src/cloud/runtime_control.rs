@@ -121,6 +121,27 @@ impl CloudStore {
         Ok(Some(message))
     }
 
+    /// Session starts inherit the same exact execution permit as clone and plugin mutations.
+    pub(super) async fn controlled_agent(
+        &self,
+        command: StartAgentSessionMessage,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        let Some(permit) = self
+            .execution_permit(&command.execution_id, &command.payload.spec.node_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let message = ControllerToNodeMessage::ControlledStartAgentSession(Box::new(
+            ControlledStartAgentSession {
+                binding: permit,
+                command,
+            },
+        ));
+        message.validate()?;
+        Ok(Some(message))
+    }
+
     /// Registration proves historical responsibility, not current permission to start work.
     async fn execution_permit(
         &self,

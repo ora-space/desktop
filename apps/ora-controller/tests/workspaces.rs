@@ -7,6 +7,8 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
 
+#[path = "workspaces/agents.rs"]
+mod agents;
 #[path = "workspaces/plugins.rs"]
 mod plugins;
 #[path = "support/workspace_cloud.rs"]
@@ -109,6 +111,7 @@ fn kind(request: &Value) -> &'static str {
 struct Node {
     completes: Arc<AtomicBool>,
     plugin_capable: Arc<AtomicBool>,
+    agents: agents::AgentNode,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
     timeline: Timeline,
 }
@@ -140,21 +143,32 @@ impl Node {
         };
         let mut results: HashMap<ExecutionId, ExecutionResult> = HashMap::new();
         let mut sequence = 0;
+        let mut greeted = false;
+        let mut agent_sent = std::collections::HashSet::new();
         let mut beat = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
         loop {
+            while greeted && let Some(event) = self.agents.next(&mut agent_sent) {
+                if sender
+                    .send(encode_node_frame(&event).unwrap())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
             let reply = tokio::select! {
                 frame = receiver.recv() => {
                     let Ok(Some(frame)) = frame else { return };
                     let Ok(message) = decode_controller_frame(&frame) else { return };
                     match message {
-                        ControllerToNodeMessage::Hello(_) => Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
+                        ControllerToNodeMessage::Hello(_) => { greeted = true; Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
                             payload: HelloAccepted {
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: plugins::capabilities(self),
                             },
-                        })),
+                        })) },
                         ControllerToNodeMessage::BindRuntime(binding) => Some(NodeToControllerMessage::RuntimeControlState(RuntimeControlState { binding, unfinished_execution_ids:vec![] })),
                         ControllerToNodeMessage::GetExecutionStatus(query) => Some(NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -162,7 +176,7 @@ impl Node {
                             execution_id: query.execution_id.clone(),
                             payload: ExecutionStatus {
                                 node: identity.clone(),
-                                state: results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone())),
+                                state: self.agents.status(&query.execution_id).unwrap_or_else(|| results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone()))),
                             },
                         })),
                         ControllerToNodeMessage::ControlledClone(ControlledClone { command, .. }) if self.completes.load(Ordering::SeqCst) => {
@@ -184,6 +198,10 @@ impl Node {
                                 payload: result,
                             }))
                         }
+                        ControllerToNodeMessage::ControlledStartAgentSession(envelope) => { self.agents.start(*envelope, &self.timeline); None }
+                        ControllerToNodeMessage::SubmitUserTurn(command) => self.agents.command(AgentCommand::Submit(command), &self.timeline),
+                        ControllerToNodeMessage::EndSession(command) => self.agents.command(AgentCommand::End(command), &self.timeline),
+                        ControllerToNodeMessage::EventAck(ack) => { self.agents.ack(&ack, &self.timeline); None }
                         ControllerToNodeMessage::ControlledPlugins(envelope) => {
                             let event = plugins::complete(self, &envelope, &identity);
                             results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
@@ -293,6 +311,7 @@ fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(Wor
                 let node = Node {
                     completes: Arc::new(AtomicBool::new(true)),
                     plugin_capable: Arc::new(AtomicBool::new(true)),
+                    agents: agents::AgentNode::default(),
                     plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
                     timeline: timeline.clone(),
                 };

@@ -55,18 +55,23 @@ pub async fn take_over<S: CoordinationStore>(
                 ExecutionState::Completed(ExecutionResult::Plugin(result)) => {
                     store.record_queried_plugins(session, &status.operation_id, &status.execution_id, result).await?;
                 }
-                // This Controller dispatches clones and plugins; any other result family cannot
+                ExecutionState::Completed(ExecutionResult::AgentSession(result)) => {
+                    let AgentSessionResult::AgentSessionEnded(ended) = result;
+                    if ended.node.node_id != session.node_id || store.original_agent_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() { return Err(Error::Conflict); }
+                    // A query has no event sequence. Wait for the durable terminal envelope so
+                    // Cloud cannot settle the session before preceding Thread records arrive.
+                }
+                // This Controller dispatches clones, plugins and sessions; any other result family cannot
                 // belong to one of its dispatches.
                 ExecutionState::Completed(
                     ExecutionResult::Worktree(_)
-                    | ExecutionResult::AgentSession(_)
                     | ExecutionResult::Revision(_),
                 ) => {
                     return Err(Error::Conflict);
                 }
                 // A status for an unknown dispatch is a conflict even when it carries no result.
                 ExecutionState::Unknown | ExecutionState::Accepted | ExecutionState::Running => {
-                    if store.original_plugin_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() {
+                    if store.original_agent_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_plugin_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() {
                         store.original_dispatch(session, &status.operation_id, &status.execution_id).await?;
                     }
                 }
@@ -82,8 +87,8 @@ pub async fn take_over<S: CoordinationStore>(
         | NodeToControllerMessage::WorktreeFailed(_)
         | NodeToControllerMessage::WorktreeRemoved(_)
         | NodeToControllerMessage::WorktreeRemovalFailed(_)
-        // Session and delivery executions are never dispatched by this Controller yet,
-        // so their events and replies cannot match a dispatch it owns.
+        // Session workers handle these ordered events and correlated replies; this single-message
+        // boundary cannot bypass them. Revision delivery is not implemented yet.
         | NodeToControllerMessage::ThreadEvent(_)
         | NodeToControllerMessage::AgentSessionEnded(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)

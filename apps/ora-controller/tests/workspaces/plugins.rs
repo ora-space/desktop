@@ -18,6 +18,9 @@ pub(super) fn capabilities(node: &Node) -> Vec<NodeCapability> {
     if node.plugin_capable.load(Ordering::SeqCst) {
         capabilities.push(NodeCapability::PluginInstall);
     }
+    if node.agents.enabled.load(Ordering::SeqCst) {
+        capabilities.push(NodeCapability::AgentSession);
+    }
     capabilities
 }
 

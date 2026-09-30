@@ -8,7 +8,7 @@ impl WorkspaceCloud {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let Some(op) = state.ops.iter().find(|o| {
+        let op = state.ops.iter().find(|o| {
             matches!(
                 o.operation.state(),
                 proto::OperationState::Running
@@ -16,35 +16,50 @@ impl WorkspaceCloud {
                     | proto::OperationState::RetryWait
                     | proto::OperationState::Blocked
             )
-        }) else {
-            return vec![];
-        };
-        state
-            .nodes
-            .iter()
-            .filter(|n| n.connection == proto::NodeConnection::Connected as i32)
-            .map(|n| {
-                let node = n.identity.as_ref().unwrap();
-                proto::RuntimeBinding {
-                    tenant_id: "tenant".into(),
-                    workspace_id: WORKSPACE.into(),
-                    sandbox_id: n.sandbox_instance_id.clone(),
-                    runtime_generation: state.workspace.runtime_generation,
-                    node_id: node.node_id.clone(),
-                    node_incarnation_id: node.node_incarnation_id.clone(),
-                    node_instance_id: n.id.clone(),
-                    controller_epoch: EPOCH,
-                    control_epoch: 1,
-                    control_version: 1,
-                    session_id: String::new(),
-                    actor_user_id: "original-actor".into(),
-                    operation_id: op.operation.id.clone(),
-                    execution_id: String::new(),
-                    node_operation_id: String::new(),
-                    input_closed: false,
-                    issued_at_ms: now,
-                    expires_at_ms: now + 60000,
-                }
+        });
+        let operations = op.map(|o| o.operation.id.clone()).into_iter().chain(
+            state
+                .clones
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.input.as_ref().and_then(|i| i.spec.as_ref()),
+                        Some(proto::execution_input::Spec::AgentSession(_))
+                    )
+                })
+                .map(|r| r.operation_id.clone()),
+        );
+        let generation = state.workspace.runtime_generation;
+        let input_closed = state.agents.input_closed;
+        operations
+            .flat_map(|operation| {
+                state
+                    .nodes
+                    .iter()
+                    .filter(|n| n.connection == proto::NodeConnection::Connected as i32)
+                    .map(move |n| {
+                        let node = n.identity.as_ref().unwrap();
+                        proto::RuntimeBinding {
+                            tenant_id: "tenant".into(),
+                            workspace_id: WORKSPACE.into(),
+                            sandbox_id: n.sandbox_instance_id.clone(),
+                            runtime_generation: generation,
+                            node_id: node.node_id.clone(),
+                            node_incarnation_id: node.node_incarnation_id.clone(),
+                            node_instance_id: n.id.clone(),
+                            controller_epoch: EPOCH,
+                            control_epoch: 1,
+                            control_version: 1,
+                            session_id: String::new(),
+                            actor_user_id: "original-actor".into(),
+                            operation_id: operation.clone(),
+                            execution_id: String::new(),
+                            node_operation_id: String::new(),
+                            input_closed,
+                            issued_at_ms: now,
+                            expires_at_ms: now + 60000,
+                        }
+                    })
             })
             .collect()
     }

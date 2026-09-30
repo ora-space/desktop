@@ -4,6 +4,8 @@
 //! (a succeeded effect, a registered and connected Node, a ready clone, accepted idle evidence),
 //! writes are fenced by epoch and version, and every decision the Controller made is appended to a
 //! timeline the fake Substrate and fake Node share, so tests can assert ordering across all three.
+#[path = "workspace_cloud/agents.rs"]
+mod agents;
 #[path = "workspace_cloud/plugins.rs"]
 mod plugins;
 #[path = "workspace_cloud/runtime_control.rs"]
@@ -41,6 +43,34 @@ pub const EPOCH: i64 = 1;
 /// One observable decision, from whichever party saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    AgentRegistered {
+        run: String,
+    },
+    AgentBatchAttempt {
+        run: String,
+        submission: String,
+    },
+    ThreadTaken {
+        run: String,
+        through: u64,
+    },
+    AgentEnded {
+        run: String,
+    },
+    CommandDelivered {
+        id: String,
+    },
+    AgentAck {
+        execution: String,
+        sequence: u64,
+    },
+    AgentStarted {
+        execution: String,
+    },
+    CommandReceived {
+        id: String,
+    },
+
     Claimed {
         step: &'static str,
     },
@@ -137,6 +167,7 @@ struct State {
     effects: Vec<(String, proto::Effect)>,
     clones: Vec<proto::ExecutionRecord>,
     plugin_input: Option<proto::ExecutionInput>,
+    agents: agents::AgentState,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
     next_id: u64,
 }
@@ -213,6 +244,7 @@ impl WorkspaceCloud {
                 effects: Vec::new(),
                 clones: Vec::new(),
                 plugin_input: None,
+                agents: agents::AgentState::default(),
                 subscriber: None,
                 next_id: 100,
             })),
@@ -227,6 +259,9 @@ impl WorkspaceCloud {
         let router = tonic::transport::Server::builder()
             .add_service(ControllerLeaseServiceServer::new(self.clone()))
             .add_service(ExecutionServiceServer::new(self.clone()))
+            .add_service(proto::agent_run_service_server::AgentRunServiceServer::new(
+                self.clone(),
+            ))
             .add_service(RuntimeControlServiceServer::new(self.clone()))
             .add_service(ControlSignalServiceServer::new(self.clone()))
             .add_service(WorkspaceOperationServiceServer::new(self.clone()))
@@ -266,7 +301,7 @@ impl WorkspaceCloud {
             }
             _ => panic!("unsupported operation kind in the fake"),
         };
-        let id = {
+        {
             let mut state = self.lock();
             state.next_id += 1;
             let id = format!("00000000-0000-4000-9000-{:012}", state.next_id);
@@ -292,8 +327,7 @@ impl WorkspaceCloud {
                 }));
             }
             id
-        };
-        id
+        }
     }
 
     /// The operation's current state and step.
@@ -896,7 +930,7 @@ impl NodeReportService for WorkspaceCloud {
                 let id = Self::next_id(&mut state);
                 let record = proto::NodeRecord {
                     id,
-                    sandbox_instance_id: message.sandbox_instance_id.clone(),
+                    sandbox_instance_id: message.sandbox_instance_id,
                     workspace_id: WORKSPACE.into(),
                     identity: Some(identity.clone()),
                     connection: proto::NodeConnection::Connected as i32,
@@ -1020,7 +1054,9 @@ impl ExecutionService for WorkspaceCloud {
         &self,
         _request: Request<proto::ClaimWorkRequest>,
     ) -> Result<Response<proto::ClaimWorkResponse>, Status> {
-        Ok(Response::new(proto::ClaimWorkResponse { item: None }))
+        Ok(Response::new(proto::ClaimWorkResponse {
+            item: self.agent_work(),
+        }))
     }
 
     async fn record_dispatch(
@@ -1028,6 +1064,12 @@ impl ExecutionService for WorkspaceCloud {
         request: Request<proto::RecordDispatchRequest>,
     ) -> Result<Response<proto::RecordDispatchResponse>, Status> {
         let message = request.into_inner();
+        if matches!(
+            message.input.as_ref().and_then(|i| i.spec.as_ref()),
+            Some(proto::execution_input::Spec::AgentSession(_))
+        ) {
+            return self.register_agent(&message);
+        }
         let record = {
             let mut state = self.lock();
             let op = state
@@ -1073,6 +1115,12 @@ impl ExecutionService for WorkspaceCloud {
         request: Request<proto::TakeOverNodeEventRequest>,
     ) -> Result<Response<proto::TakeOverNodeEventResponse>, Status> {
         let message = request.into_inner();
+        if matches!(
+            message.result.as_ref().and_then(|r| r.outcome.as_ref()),
+            Some(proto::execution_result::Outcome::AgentSessionEnded(_))
+        ) {
+            return self.end_agent(message);
+        }
         self.store_result(&message.execution_id, message.result)
             .map(|record| {
                 Response::new(proto::TakeOverNodeEventResponse {

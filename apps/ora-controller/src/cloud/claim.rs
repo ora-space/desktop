@@ -1,7 +1,11 @@
 //! Turns work Cloud accepted into registered dispatches the Node sessions then deliver. A claim is
 //! a pure read; ownership is decided when `RecordDispatch` commits, so claiming more often than
 //! needed costs queries but never duplicates work.
-use super::{CloudStore, fault, mapping};
+use super::{
+    CloudStore, fault,
+    fleet::{Fleet, Gate},
+    mapping,
+};
 use crate::*;
 use ora_controller_proto::v1 as proto;
 
@@ -30,24 +34,12 @@ pub(super) struct Refusals {
 /// Claims and registers accepted work until Cloud has none left, a step fails, or one batch is
 /// full. One trigger drains the backlog, because the renewal backstop comes only every ten
 /// seconds and a backlog left by dropped signals would otherwise shrink by one item per backstop.
-pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlog {
-    // Without a static Node nothing could be dispatched, so claiming would only leave work
-    // registered nowhere; a deployment with a static Node elsewhere claims it instead.
-    let Some(node) = &store.inner.node else {
-        return Backlog::Settled;
-    };
-    // A dispatch names its Node for good: the Node may already have run it, so it can never be
-    // moved to another identity. Registering work before a handshake proved the configured
-    // NodeId would leave it pending forever if that identity is wrong; unclaimed, it waits in
-    // Cloud's queue for a Controller whose Node is the right one.
-    if !*store.inner.node_verified.borrow() {
-        if !refusals.unverified {
-            ora_logging::ora_info!(
-                node_id = %node.as_str(),
-                "tenant work stays queued with Cloud until the configured Node completes a handshake"
-            );
-            refusals.unverified = true;
-        }
+pub(super) async fn batch(
+    store: &CloudStore,
+    refusals: &mut Refusals,
+    fleet: Option<&Fleet>,
+) -> Backlog {
+    if fleet.is_none() && (store.inner.node.is_none() || !*store.inner.node_verified.borrow()) {
         return Backlog::Settled;
     }
     for _ in 0..BATCH {
@@ -72,6 +64,40 @@ pub(super) async fn batch(store: &CloudStore, refusals: &mut Refusals) -> Backlo
                 return Backlog::Settled;
             }
         };
+        if let Some(target) = &item.target {
+            let Some(sandbox) = fleet.and_then(|fleet| fleet.get(&target.sandbox_instance_id))
+            else {
+                return Backlog::Settled;
+            };
+            if sandbox.binding.node_id.as_str() != target.node_id || !sandbox.agent_capable() {
+                return Backlog::Settled;
+            }
+            // Quiesce cannot race a new registration into the supposedly idle sandbox.
+            let Ok(gate) = sandbox.gate.try_lock() else {
+                return Backlog::Settled;
+            };
+            if *gate != Gate::Open {
+                return Backlog::Settled;
+            }
+            if let Err(error) = store
+                .record_agent(epoch, &item, &sandbox.binding.node_id)
+                .await
+            {
+                ora_logging::ora_warn!(error = %error, "session work remains queued in Cloud");
+                return Backlog::Settled;
+            }
+            continue;
+        }
+        let Some(node) = &store.inner.node else {
+            return Backlog::Settled;
+        };
+        if !*store.inner.node_verified.borrow() {
+            if !refusals.unverified {
+                ora_logging::ora_info!("tenant work waits for its configured Node handshake");
+                refusals.unverified = true;
+            }
+            return Backlog::Settled;
+        }
         let registered = match mapping::spec(item.input.clone(), node) {
             Ok(spec) => {
                 let operation = OperationId::new(item.operation_id.clone());

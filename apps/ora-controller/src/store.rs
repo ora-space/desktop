@@ -65,6 +65,65 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         async { Err(Error::Conflict) }
     }
 
+    /// Cloud session dispatches still awaiting terminal event takeover.
+    fn pending_agents(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<StartAgentSessionMessage>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// Resolves session ownership without treating another known execution family as a session.
+    fn original_agent_dispatch(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+    ) -> impl Future<Output = Result<Option<StartAgentSessionMessage>, Error>> + Send {
+        async { Ok(None) }
+    }
+    /// Obtains fresh runtime authority for a registered session start.
+    fn dispatch_agent(
+        &self,
+        _command: StartAgentSessionMessage,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+    /// Commits an ordered batch before the transport can acknowledge any member.
+    fn take_over_thread(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _events: &[ThreadEventMessage],
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+    /// Commits the terminal event only after all preceding Thread batches completed.
+    fn take_over_agent_end(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _event: &AgentSessionEndedMessage,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+    /// An advisory wake-up; periodic polling remains authoritative if a hint is missed.
+    fn wait_agent_command_hint(&self) -> impl Future<Output = ()> + Send {
+        std::future::pending()
+    }
+
+    /// Returns commands in Cloud creation order; the transport sends only one per execution at once.
+    fn pending_agent_commands(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<AgentCommand>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// Records delivery after a matching Node accepted/rejected reply, never after a send alone.
+    fn agent_command_delivered(
+        &self,
+        _command: &AgentCommand,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
     /// Cloud requires a negotiated runtime binding; local private IPC keeps its existing intake.
     fn requires_runtime_control(&self) -> bool {
         false

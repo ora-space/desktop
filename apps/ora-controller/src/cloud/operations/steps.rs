@@ -340,7 +340,11 @@ impl Round<'_> {
                 .pending_dispatches(&sandbox.binding.node_id)
                 .await?;
             let plugin_pending = self.store.pending_plugins(&sandbox.binding.node_id).await?;
-            let idle = pending.is_empty() && plugin_pending.is_empty() && !sandbox.any_unresolved();
+            let agent_pending = self.store.pending_agents(&sandbox.binding.node_id).await?;
+            let idle = pending.is_empty()
+                && plugin_pending.is_empty()
+                && agent_pending.is_empty()
+                && !sandbox.any_unresolved();
             let accepted = reports::idle(
                 self.store,
                 &sandbox,
