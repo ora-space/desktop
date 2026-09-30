@@ -59,6 +59,7 @@ fn upload_grant_preserves_checksum_headers() -> Result<(), prost::DecodeError> {
         object_key: "frozen/history".into(),
         method: "PUT".into(),
         headers: HashMap::from([
+            ("if-none-match".into(), "*".into()),
             ("x-amz-checksum-sha256".into(), "checksum-value".into()),
             ("x-amz-sdk-checksum-algorithm".into(), "SHA256".into()),
         ]),

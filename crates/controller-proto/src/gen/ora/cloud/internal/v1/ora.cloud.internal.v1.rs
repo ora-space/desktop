@@ -139,8 +139,10 @@ pub struct UploadGrant {
     /// Always PUT in the first version.
     #[prost(string, tag="3")]
     pub method: ::prost::alloc::string::String,
-    /// Headers the upload must carry unchanged. The Node adds `x-amz-checksum-sha256` with the digest
-    /// it computed, so the store rejects content that differs from what the Node will report.
+    /// Headers the upload must carry unchanged, including signed `If-None-Match: *` (create only).
+    /// A checksum-bound grant includes `x-amz-checksum-sha256`; legacy uploaders add that digest.
+    /// On 412, preserve the existing object and submit the declaration for Cloud verification;
+    /// neither the uploader nor Controller may treat 412 alone as proof that its bytes match.
     #[prost(map="string, string", tag="4")]
     pub headers: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(message, optional, tag="5")]
