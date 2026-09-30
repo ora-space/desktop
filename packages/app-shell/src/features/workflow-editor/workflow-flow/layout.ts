@@ -183,7 +183,13 @@ export function containWorkflowCanvasNodes(
   nodes: readonly Node<WorkflowNodeData, "workflow">[],
 ): Node<WorkflowNodeData, "workflow">[] {
   return workflowContainerNodes(nodes).map((node) => {
-    if (node.data.containerId === undefined) {
+    if (
+      node.parentId === undefined &&
+      (node.extent === "parent" || node.expandParent === true)
+    ) {
+      return { ...node, extent: undefined, expandParent: undefined };
+    }
+    if (node.data.containerId === undefined || node.parentId === undefined) {
       return node;
     }
     const cached = containedLoopChildCache.get(node);

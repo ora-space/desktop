@@ -166,6 +166,66 @@ describe("WorkflowRunWorkspace", () => {
     useLocationActionsStore.setState({ defaultTarget: "explorer" });
   });
 
+  it("loads a malformed frozen snapshot, opens its stage, and analyzes the original source", async () => {
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "start",
+          data: { kind: "start", title: "Imported start", description: "" },
+        },
+        {
+          id: "agent",
+          data: {
+            kind: "agent",
+            title: "Imported agent",
+            description: "",
+            agentConfig: {
+              schemaVersion: 3,
+              prompt: "Imported prompt",
+              skills: [null],
+              mcps: {},
+            },
+          },
+        },
+      ],
+      edges: [null, { source: "start", target: "agent" }],
+    });
+    const state = seedRun(graph);
+    const analyzedGraphs: string[] = [];
+    const handlers: TestHandlers = {
+      ...createFixtureHandlers(state),
+      analyzeWorkflow: ({ graph }) => {
+        analyzedGraphs.push(graph);
+        return { unusedNodeIds: [] };
+      },
+    };
+    const client = createTestClient(handlers);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+    const view = render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+    await user.click(await screen.findByLabelText(/Imported agent:/));
+    expect(
+      (await screen.findAllByText("Imported prompt")).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(analyzedGraphs).toContain(graph));
+    expect(state.workflows[0].published[0].graph).toBe(graph);
+    expect(state.workflows[0].draft.graph).toBe(graph);
+    view.unmount();
+    runtime.dispose();
+  });
+
   it("exposes the run Files panel for the Workspace-owned review surface", async () => {
     const state = seedRun();
     const clientHandlers: TestHandlers = createFixtureHandlers(state);

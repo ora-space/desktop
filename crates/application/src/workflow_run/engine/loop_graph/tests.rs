@@ -223,3 +223,76 @@ fn accepts_executable_iteration_bounds() {
         assert_eq!(graph.first_unsupported_node(), None);
     }
 }
+
+/// Generated qualification scenarios must satisfy the real decoder before any Agent is started.
+#[test]
+fn qualification_generator_obeys_execution_graph_contract() {
+    ora_logging::with_trace_logging(|| {
+        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("application crate belongs to the repository");
+        let pinned_version = std::fs::read_to_string(repository.join(".deno-version"))
+            .expect("repository pins the fixture runtime");
+        let runtime_version = std::process::Command::new("deno")
+            .arg("--version")
+            .output()
+            .expect("pinned Deno is available for generator contract tests");
+        assert!(runtime_version.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&runtime_version.stdout)
+                .split_whitespace()
+                .nth(1),
+            Some(pinned_version.trim())
+        );
+        let fixture = repository
+            .join("scripts")
+            .join("workflow-qualification-suite")
+            .join("export-graphs.mjs")
+            .canonicalize()
+            .expect("generator fixture export exists");
+        let generated = std::process::Command::new("deno")
+            .args(["run", "--no-config", "--no-lock"])
+            .arg(fixture)
+            .output()
+            .expect("generate qualification graphs without opening a database");
+        assert!(
+            generated.status.success(),
+            "generator failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let scenarios: Vec<Value> = serde_json::from_slice(&generated.stdout)
+            .expect("fixture export returns the complete generated scenario array");
+        assert_eq!(
+            scenarios
+                .iter()
+                .map(|scenario| scenario["index"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            (1..=101).collect::<Vec<_>>()
+        );
+        for scenario in scenarios {
+            let index = &scenario["index"];
+            let source = scenario["graph"].to_string();
+            let graph = WorkflowGraph::parse(&source).unwrap_or_else(|error| {
+                panic!("generated scenario {index} fails the decoder: {error}")
+            });
+            assert_eq!(
+                (
+                    graph
+                        .execution_scopes()
+                        .into_iter()
+                        .map(WorkflowGraph::node_count)
+                        .sum::<usize>(),
+                    WorkflowGraph::unused_node_ids(&source).unwrap(),
+                    graph.first_unsupported_node().is_none(),
+                ),
+                (
+                    scenario["graph"]["nodes"].as_array().unwrap().len(),
+                    Vec::<String>::new(),
+                    true,
+                ),
+                "generated scenario {index} must retain its complete executable graph"
+            );
+        }
+    });
+}

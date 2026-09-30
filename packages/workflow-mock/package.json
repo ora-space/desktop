@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "deno run -A ../../scripts/run-with-clean-stderr.ts \"vitest run\""
   },
   "dependencies": {
     "@xyflow/react": "12.11.2"

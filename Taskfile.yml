@@ -234,6 +234,7 @@ tasks:
       - deno task --filter @ora/chat test
       - deno task --filter @ora/editor test
       - deno task --filter @ora/workflow-runtime test
+      - deno task --filter @ora/workflow-mock test
       - deno task --filter @ora/app-shell test
       - deno task --filter @ora-space/plugin-sdk test
 

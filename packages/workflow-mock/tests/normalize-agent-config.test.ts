@@ -8,6 +8,52 @@ import {
 import type { WorkflowAgentConfig, WorkflowNodeData } from "../src/node-data";
 
 describe("normalizeWorkflowAgentConfig", () => {
+  it("keeps valid bindings and text while making malformed imported fields safe to display", () => {
+    const imported = JSON.parse(
+      JSON.stringify({
+        schemaVersion: 3,
+        executor: { modelId: {} },
+        roleId: {},
+        prompt: [],
+        interactive: "true",
+        skills: [
+          null,
+          { skillId: "unsafe", enabled: "true" },
+          { skillId: "s1", enabled: false },
+        ],
+        mcps: {},
+        retry: { enabled: false, maxRetries: 1, initialDelaySeconds: 0 },
+      }),
+    ) as WorkflowAgentConfig;
+    const before = JSON.stringify(imported);
+    expect(normalizeWorkflowAgentConfig(imported)).toEqual({
+      schemaVersion: 3,
+      executor: { agentCli: "", modelId: "" },
+      roleId: "",
+      prompt: "",
+      interactive: false,
+      skills: [{ skillId: "s1", enabled: false }],
+      mcps: [],
+      retry: { enabled: false, maxRetries: 1, initialDelaySeconds: 0 },
+    });
+    expect(JSON.stringify(imported)).toBe(before);
+  });
+
+  it("uses empty identities when the executor is absent, without choosing an installed agent", () => {
+    const imported = JSON.parse(
+      '{"schemaVersion":3,"prompt":"Review"}',
+    ) as WorkflowAgentConfig;
+    expect(normalizeWorkflowAgentConfig(imported)).toEqual({
+      schemaVersion: 3,
+      executor: { agentCli: "", modelId: "" },
+      roleId: "",
+      prompt: "Review",
+      interactive: false,
+      skills: [],
+      mcps: [],
+    });
+  });
+
   it("fills omitted mcps and skills with empty arrays", () => {
     const legacy = {
       schemaVersion: 3 as const,

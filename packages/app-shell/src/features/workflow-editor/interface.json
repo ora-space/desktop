@@ -10,8 +10,8 @@
       "purpose": "Workspace sidebar places the editor-owned definition list."
     },
     "./workflow-editor-store": {
-      "exports": ["useWorkflowEditorStore"],
-      "purpose": "Sidebar and shell integration tests coordinate editor selection; persisted definitions remain state/data owned."
+      "exports": ["useWorkflowEditorStore", "useWorkflowEditorRenderRecovery"],
+      "purpose": "Sidebar and shell integration tests coordinate editor selection; the workspace boundary observes editor-owned render recovery. Persisted definitions remain state/data owned."
     },
     "./translations": {
       "exports": ["workflowEditorTranslations"],

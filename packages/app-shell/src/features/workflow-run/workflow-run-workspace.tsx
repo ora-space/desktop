@@ -2,7 +2,6 @@ import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
 import { executableRun } from "./executable-run";
 import { isLoopHistoryNode } from "./loop-round-state";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
-import { serializeWorkflowGraph } from "@ora/workflow-runtime";
 import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -88,17 +87,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const projectId = useWorkspaceSelectionStore((s) => s.selection.projectId);
   const runQuery = useRealWorkflowRun(runId);
   const fullRun = runQuery.data?.run ?? null;
-  const analysisGraph = useMemo(
-    () =>
-      serializeWorkflowGraph(
-        fullRun?.definitionSnapshot ?? {
-          nodes: [],
-          edges: [],
-          viewport: { x: 0, y: 0, zoom: 1 },
-        },
-      ),
-    [fullRun?.definitionSnapshot],
-  );
+  // A render projection may detach unsafe parents or omit malformed records.
+  // Sending it to the engine would hide the author's structural validation errors.
+  const analysisGraph =
+    runQuery.data?.snapshotGraph ?? '{"nodes":[],"edges":[]}';
   const analysis = useWorkflowAnalysis(runId, analysisGraph);
   const run = useMemo(
     () =>

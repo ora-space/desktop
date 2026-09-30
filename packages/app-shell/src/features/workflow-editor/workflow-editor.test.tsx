@@ -546,6 +546,69 @@ describe("WorkflowEditor", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("opens and edits an imported Agent with no executor and malformed bindings", async () => {
+    const state = createFixtureState();
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "start",
+          data: { kind: "start", title: "Start", description: "" },
+        },
+        {
+          id: "agent",
+          data: {
+            kind: "agent",
+            title: "Imported Agent",
+            description: "",
+            containerId: "absent",
+            agentConfig: {
+              schemaVersion: 3,
+              prompt: "Imported prompt",
+              skills: [null],
+              mcps: {},
+              roleId: null,
+            },
+          },
+        },
+      ],
+      edges: [null, { source: "start", target: "agent" }],
+    });
+    state.workflows = [
+      {
+        workflow: {
+          id: "imported",
+          namespace: "local",
+          name: "Imported workflow",
+          publishedSnapshotId: null,
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        draft: {
+          id: "draft-imported",
+          workflowId: "imported",
+          version: "draft",
+          graph,
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        published: [],
+      },
+    ];
+    const user = userEvent.setup();
+    renderEditor(<WorkflowEditor />, state, undefined, false);
+    const agent = await screen.findByLabelText("Agent节点: Imported Agent");
+    await user.click(agent.closest(".react-flow__node") ?? agent);
+    const prompt = await screen.findByLabelText("自定义 Prompt");
+    expect(prompt).toHaveTextContent("Imported prompt");
+    expect(screen.getByRole("button", { name: "角色" })).toHaveTextContent(
+      "无角色",
+    );
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    expect(
+      await screen.findByLabelText("Agent节点: Agent 1"),
+    ).toBeInTheDocument();
+  });
+
   it("loads a draft with an unrenderable node kind by skipping that node", async () => {
     const state = createFixtureState();
     seedDemoWorkflows(state);

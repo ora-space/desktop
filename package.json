@@ -12,7 +12,7 @@
     "format:files": "prettier",
     "lint:commit": "commitlint",
     "check:tooling": "deno task check:toolchain && deno lint scripts && deno check scripts/*.ts",
-    "test:tooling": "deno task check:tooling && deno test -A scripts/*.test.ts",
+    "test:tooling": "deno task check:tooling && deno test -A scripts/*.test.ts scripts/repair_workflow_snapshots.test.mjs scripts/workflow-qualification-suite/*.test.mjs",
     "clean:frontend": "deno run --allow-read --allow-write scripts/clean-frontend.ts",
     "check:toolchain": "deno run --allow-read scripts/check-toolchain.ts"
   },

@@ -60,6 +60,19 @@ See [AGENTS.md](AGENTS.md) for code conventions. Common commands:
 - `task check:contracts` — verify generated contracts without rewriting the checkout; LF and CRLF
   line endings are treated as equivalent while other content changes still fail
 
+Workflow pages restore missing presentation fields in memory when loading a snapshot.
+For explicit draft maintenance, `deno run -A scripts/repair_workflow_snapshots.mjs --database
+<absolute-path-to-ora.sqlite3>` previews layout repairs; add `--apply` to apply them after a
+complete SQLite backup. Only active drafts unreferenced by runs or published versions are
+eligible. The tool preserves execution configuration and rejects ambiguous ownership. Historical
+snapshots are never modified. Run `deno task test:tooling` for the temporary-database regressions.
+
+`deno run -A scripts/workflow-qualification-suite/validate_sample.mjs` analyzes all 101 generated
+graphs through a running desktop's `analyze_workflow` operation without creating workflows.
+The execution runner requires `ORA_QUALIFICATION_WORKSPACE_ID` to name an active, disposable
+isolated workspace; agents may edit files there. Reports contain measured backend results and
+explicitly identify unmeasured UI/memory checks. Failures exit nonzero; reports stay local.
+
 ## Toolchain versions
 
 `.deno-version` is the Deno release pin consumed by CI and sidecar setup. Keep

@@ -50,6 +50,8 @@ describe("createRunOverviewNodes", () => {
         draggable: false,
         connectable: false,
         deletable: false,
+        extent: undefined,
+        expandParent: false,
         zIndex: 0,
         data: {
           kind: "loop",
@@ -64,6 +66,7 @@ describe("createRunOverviewNodes", () => {
         position: { x: 360, y: 145 },
         parentId: "loop",
         extent: "parent",
+        expandParent: false,
         selectable: true,
         draggable: false,
         connectable: false,

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
+import { normalizeWorkflowAgentConfig } from "@ora/workflow-mock";
 import { IconRobot } from "@tabler/icons-react";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
@@ -25,7 +26,10 @@ interface RunActAgentConfigProps {
  * empty). Long prompt text also opens a preview when it would otherwise truncate.
  * Retry always shows the policy the engine applies, including the implicit default.
  */
-export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
+export function RunActAgentConfig({
+  config: rawConfig,
+}: RunActAgentConfigProps) {
+  const config = normalizeWorkflowAgentConfig(rawConfig);
   const { t } = useTranslation();
   const agentCatalog = useAgentCatalog();
   const agentsQuery = useAgents();
@@ -43,16 +47,20 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const skillByName = new Map(
     (skillsQuery.data ?? []).map((skill) => [skill.name, skill]),
   );
-  const role = agentByName.get(config.roleId);
-  const roleLabel = role?.name ?? config.roleId;
+  const roleId = config.roleId ?? "";
+  const role = roleId ? agentByName.get(roleId) : undefined;
+  const roleLabel = role?.name ?? roleId;
   const roleDescription = role?.description?.trim() ?? "";
-  const modelLabel = formatAgentExecutorLabel(config.executor, agentCatalog);
-  const enabledSkills = config.skills.filter((skill) => skill.enabled);
+  const modelLabel = config.executor
+    ? formatAgentExecutorLabel(config.executor, agentCatalog)
+    : "—";
+  const enabledSkills = (config.skills ?? []).filter((skill) => skill.enabled);
   const enabledMcps = (config.mcps ?? []).filter((mcp) => mcp.enabled);
-  const agentLogo = agentCatalog.find(
-    (agent) => agent.agentRef === config.executor.agentCli,
-  )?.logo;
-  const prompt = config.prompt.trim();
+  const agentLogo = config.executor
+    ? agentCatalog.find((agent) => agent.agentRef === config.executor.agentCli)
+        ?.logo
+    : undefined;
+  const prompt = (config.prompt ?? "").trim();
   const retry = resolveAgentRetryDisplay(config);
   const retryText =
     retry.kind === "interactive"

@@ -299,12 +299,14 @@ function WorkflowCanvasInner({
       // grow through expandIterationFrames, and stacking both on nested regions fights
       // over parent size on every measurement and makes the canvas thrash.
       const extent =
-        node.data.containerId !== undefined ||
-        (node.parentId !== undefined && iterationIds.has(node.parentId))
+        node.parentId !== undefined &&
+        (node.data.containerId !== undefined || iterationIds.has(node.parentId))
           ? ("parent" as const)
           : undefined;
       const expandParent =
-        node.data.containerId !== undefined ? true : undefined;
+        node.parentId !== undefined && node.data.containerId !== undefined
+          ? true
+          : undefined;
       // Notes reserve the bottom layer, while selected executable nodes keep
       // React Flow's usual elevation over their executable peers.
       const zIndex =
