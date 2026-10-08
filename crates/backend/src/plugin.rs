@@ -771,20 +771,23 @@ impl PluginApi {
 ///
 /// A source that opts into the proxy cannot connect at all without one, so an absent or unusable
 /// proxy is reported as that source's error rather than silently falling back to a direct
-/// connection the user explicitly opted out of.
+/// connection the user explicitly opted out of. A source that opts out connects directly even when
+/// the user's Git config names a proxy, so the per-source switch is the only thing deciding it.
 fn with_source_proxy(
     source: ora_plugin_registry::RegistrySource,
     use_proxy: bool,
     proxy_settings: Option<&ora_application::NetworkProxySettings>,
 ) -> Result<ora_plugin_registry::RegistrySource, BackendError> {
-    if !use_proxy {
-        return Ok(source);
-    }
-    let git_env = proxy::git_proxy_env(proxy_settings)?.ok_or_else(|| {
-        BackendError::invalid_proxy_settings(
-            "a marketplace source uses the proxy but no proxy is configured",
-        )
-    })?;
+    let route = match (use_proxy, proxy_settings) {
+        (false, _) => proxy::GitProxyRoute::Direct,
+        (true, Some(settings)) => proxy::GitProxyRoute::Proxy(settings),
+        (true, None) => {
+            return Err(BackendError::invalid_proxy_settings(
+                "a marketplace source uses the proxy but no proxy is configured",
+            ));
+        }
+    };
+    let git_env = proxy::git_proxy_env(source.url(), route)?;
     Ok(source.with_git_env(git_env))
 }
 
