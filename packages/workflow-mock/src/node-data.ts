@@ -72,6 +72,8 @@ export interface WorkflowAgentConfig {
   prompt: string;
   /** Opt the node into a persistent interactive session that pauses for human input. */
   interactive?: boolean;
+  /** Silence handling for this node's prompts; absent or null keeps the default timeout. */
+  promptInactivity?: "timeout" | "wait" | null;
   /** Additional typed variables exposed beside the node's stable raw `output`. */
   outputContract?: WorkflowAgentOutputContract;
   /**

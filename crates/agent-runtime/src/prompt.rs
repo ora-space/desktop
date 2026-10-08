@@ -21,7 +21,25 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         &self,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, /*message_id*/ None).await
+        self.send_prompt(
+            request,
+            /*message_id*/ None,
+            PromptInactivityPolicy::Timeout,
+        )
+        .await
+    }
+
+    /// Starts one prompt with the host's turn-local response to inactivity.
+    ///
+    /// The policy is separate from the public request so only the owning host can opt a workflow
+    /// turn into waiting; callers of the ordinary session API keep the default watchdog.
+    pub async fn prompt_session_with_inactivity_policy(
+        &self,
+        request: PromptSessionRequest,
+        inactivity_policy: PromptInactivityPolicy,
+    ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
+        self.send_prompt(request, /*message_id*/ None, inactivity_policy)
+            .await
     }
 
     /// Starts a prompt whose recorded user message carries the host's identity for it.
@@ -33,7 +51,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         message_id: MessageId,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, Some(message_id)).await
+        self.send_prompt(request, Some(message_id), PromptInactivityPolicy::Timeout)
+            .await
     }
 
     /// Validates and admits one prompt on its session's actor.
@@ -41,6 +60,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         &self,
         request: PromptSessionRequest,
         message_id: Option<MessageId>,
+        inactivity_policy: PromptInactivityPolicy,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
         let prompt = request.prompt;
         let record_prompt = RecordedTurn {
@@ -90,6 +110,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 operation_id,
                 prompt,
                 record_prompt,
+                inactivity_policy,
                 model,
                 events: events_sender,
                 accepted: accepted_sender,

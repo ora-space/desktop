@@ -35,6 +35,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 
+#[cfg(test)]
+mod inactivity_tests;
 mod loop_exit;
 mod output;
 mod payload;
@@ -475,14 +477,14 @@ async fn drive_agent_node(
         let baseline = capture_worktree_snapshot(&workspace_root);
 
         let mut stream = agent_runtime
-            .prompt_session(PromptSessionRequest {
+            .prompt_session_with_inactivity_policy(PromptSessionRequest {
                 session_id: session_id.to_string(),
                 prompt,
                 record_prompt: None,
                 // The node's executor model was applied by the `startSession` above, which is
                 // still holding this session's provider; there is no attach left to carry one.
                 model: None,
-            })
+            }, config.prompt_inactivity)
             .await?;
 
         // Publish the binding only after the actor accepts the owning prompt. A workflow chat

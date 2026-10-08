@@ -368,6 +368,53 @@ describe("RunActInspector retry settings", () => {
   });
 });
 
+describe("RunActInspector frozen inactivity setting", () => {
+  it.each([
+    {
+      locale: "zh-CN",
+      config: {},
+      label: "长时间未收到进展时",
+      text: "按默认超时规则处理",
+    },
+    {
+      locale: "en-US",
+      config: { promptInactivity: null },
+      label: "When no progress is reported",
+      text: "Use default timeout handling",
+    },
+    {
+      locale: "en-US",
+      config: { promptInactivity: "timeout" },
+      label: "When no progress is reported",
+      text: "Use default timeout handling",
+    },
+    {
+      locale: "zh-CN",
+      config: { promptInactivity: "wait" },
+      label: "长时间未收到进展时",
+      text: "持续等待，直到完成或手动停止",
+    },
+    {
+      locale: "en-US",
+      config: { promptInactivity: "wait", interactive: true },
+      label: "When no progress is reported",
+      text: "Keep waiting until completion or manual stop",
+    },
+  ] as const)(
+    "shows the snapshot policy $config in $locale",
+    async ({ locale, config, label, text }) => {
+      await appI18n.changeLanguage(locale);
+      renderInspector({ status: "running" }, { data: agentDataWith(config) });
+
+      const heading = await screen.findByText(label);
+      expect(heading.nextElementSibling?.textContent).toBe(text);
+      expect(
+        screen.queryByRole("combobox", { name: label }),
+      ).not.toBeInTheDocument();
+    },
+  );
+});
+
 describe("RunActInspector failure detail", () => {
   it("renders the kind title, hint, and attempt line for a failed node", async () => {
     await appI18n.changeLanguage("zh-CN");

@@ -3331,6 +3331,7 @@ dependencies = [
  "ora-plugin-lifecycle",
  "ora-plugin-protocol",
  "ora-plugin-runtime",
+ "ora-process",
  "ora-scheduler",
  "pretty_assertions",
  "semver",

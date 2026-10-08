@@ -115,6 +115,7 @@ describe("normalizeWorkflowAgentConfig", () => {
     const normalized = normalizeWorkflowAgentConfig(config);
 
     expect(normalized).not.toHaveProperty("retry");
+    expect(normalized).not.toHaveProperty("promptInactivity");
     // Retry adds nothing: an already-normalized graph serializes byte-for-byte the same after
     // another pass. (Legacy graphs still gain `interactive: false`; that predates retry.)
     expect(JSON.stringify(normalized)).toBe(JSON.stringify(config));
@@ -138,6 +139,24 @@ describe("normalizeWorkflowAgentConfig", () => {
       initialDelaySeconds: 45,
     });
   });
+
+  it.each([null, "timeout", "wait"] as const)(
+    "keeps the saved inactivity policy %s without rewriting it",
+    (promptInactivity) => {
+      const config: WorkflowAgentConfig = {
+        schemaVersion: 3,
+        executor: { agentCli: DEMO_AGENT_REF.opencode, modelId: "m1" },
+        roleId: "",
+        skills: [],
+        mcps: [],
+        prompt: "p",
+        interactive: false,
+        promptInactivity,
+      };
+
+      expect(normalizeWorkflowAgentConfig(config)).toEqual(config);
+    },
+  );
 
   it("does not add or drop retry on agent nodes inside a graph envelope", () => {
     const agentConfig = (

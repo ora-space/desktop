@@ -1,5 +1,9 @@
 mod startup;
 
+#[cfg(test)]
+#[path = "prompt_policy_tests.rs"]
+mod prompt_policy_tests;
+
 use super::plugin_agent::PluginAcpTransport;
 use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};

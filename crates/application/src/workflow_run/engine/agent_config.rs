@@ -5,7 +5,7 @@
 
 use super::graph::GraphError;
 use super::retry::{AgentRetryPolicy, parse_retry_policy};
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PromptInactivityPolicy};
 use serde::{Deserialize, Deserializer, de::Error};
 use std::collections::HashSet;
 
@@ -52,6 +52,8 @@ pub struct AgentConfig {
     /// Automatic retry of failed attempts; graphs without `agentConfig.retry` get the default
     /// policy. The Agent runtime ignores it for interactive nodes.
     pub retry: AgentRetryPolicy,
+    /// Silence handling is frozen with the node so a draft edit cannot interrupt a running turn.
+    pub prompt_inactivity: PromptInactivityPolicy,
 }
 
 /// The agent CLI and model an `agent` node must run with.
@@ -117,6 +119,9 @@ pub(super) struct WireAgentConfig {
     /// the generic "not valid JSON" a typed serde failure would produce.
     #[serde(default)]
     retry: Option<serde_json::Value>,
+    /// Preserve invalid author input until it can be reported with the owning node and field.
+    #[serde(default)]
+    prompt_inactivity: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,8 +154,19 @@ struct WireAgentSkill {
 }
 
 impl WireAgentConfig {
-    /// Decodes the agent contract of node `node_id`; only an invalid retry policy fails.
+    /// Decodes the executable agent contract while rejecting invalid execution policies.
     pub(super) fn into_model(self, node_id: &str) -> Result<AgentConfig, GraphError> {
+        let prompt_inactivity = self
+            .prompt_inactivity
+            .map(|value| {
+                serde_json::from_value::<PromptInactivityPolicy>(value).map_err(|source| {
+                    GraphError::InvalidNode {
+                        reason: format!("node {node_id} has invalid promptInactivity: {source}"),
+                    }
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(AgentConfig {
             executor: AgentExecutor {
                 agent_cli: self
@@ -178,6 +194,7 @@ impl WireAgentConfig {
                 .output_contract
                 .and_then(WireOutputContract::into_model),
             retry: parse_retry_policy(node_id, self.retry.as_ref())?,
+            prompt_inactivity,
         })
     }
 }
@@ -216,7 +233,7 @@ impl WireAgentSkill {
 mod tests {
     use super::AgentMcp;
     use crate::WorkflowGraph;
-    use ora_domain::PluginId;
+    use ora_domain::{PluginId, PromptInactivityPolicy};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
@@ -276,6 +293,47 @@ mod tests {
             json!([{"mcpId": "a"}]),
         ] {
             assert!(parse_config(json!({"mcps": bindings})).is_err());
+        }
+    }
+
+    /// Older snapshots keep timeout semantics while explicit node author intent survives parsing.
+    #[test]
+    fn prompt_inactivity_defaults_and_explicit_policies_survive_graph_parsing() {
+        let legacy = parse_config(json!({})).unwrap();
+        let legacy = legacy.node("agent").unwrap().agent_config.as_ref().unwrap();
+        assert_eq!(legacy.prompt_inactivity, PromptInactivityPolicy::Timeout);
+        for (value, policy) in [
+            (json!(null), PromptInactivityPolicy::Timeout),
+            (json!("timeout"), PromptInactivityPolicy::Timeout),
+            (json!("wait"), PromptInactivityPolicy::Wait),
+        ] {
+            let graph = parse_config(json!({"promptInactivity": value})).unwrap();
+            assert_eq!(
+                graph.node("agent").unwrap().agent_config.as_ref().unwrap(),
+                &super::AgentConfig {
+                    prompt_inactivity: policy,
+                    ..legacy.clone()
+                },
+            );
+        }
+    }
+
+    /// Invalid silence handling cannot be silently replaced by a different execution policy.
+    #[test]
+    fn rejects_invalid_prompt_inactivity_with_node_and_field_context() {
+        for value in [
+            json!("disabled"),
+            json!(true),
+            json!(45),
+            json!({}),
+            json!([]),
+        ] {
+            let error = parse_config(json!({"promptInactivity": value})).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("invalid node: node agent has invalid promptInactivity: ")
+            );
         }
     }
 }

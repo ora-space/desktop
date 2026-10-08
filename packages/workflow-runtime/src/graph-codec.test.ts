@@ -455,6 +455,41 @@ it("preserves canonical MCP IDs and disabled bindings across graph round trips",
   expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
 });
 
+it.each([undefined, null, "timeout", "wait"] as const)(
+  "preserves the inactivity policy %s in saved and published graph snapshots",
+  (promptInactivity) => {
+    const input = {
+      nodes: [
+        {
+          id: "agent",
+          type: "workflow" as const,
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent" as const,
+            title: "Agent",
+            description: "",
+            agentConfig: {
+              schemaVersion: 3 as const,
+              executor: { agentCli: "official/agent", modelId: "model" },
+              roleId: "",
+              skills: [],
+              mcps: [],
+              prompt: "",
+              ...(promptInactivity === undefined ? {} : { promptInactivity }),
+            },
+          },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
+      globalVariables: [],
+    };
+
+    expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
+  },
+);
+
 // Absent retry means "default policy" to the engine, so the codec must neither add nor drop it.
 it("preserves agent retry settings and their absence across graph round trips", () => {
   const agent = (

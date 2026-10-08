@@ -209,6 +209,19 @@ export function RunActAgentConfig({
 
       <div className="space-y-1">
         <p className="text-[11px] text-muted-foreground">
+          {t("settings.workflow.field.promptInactivity")}
+        </p>
+        <StaticValue
+          value={t(
+            config.promptInactivity === "wait"
+              ? "workflowRun.inspector.promptInactivityWait"
+              : "workflowRun.inspector.promptInactivityTimeout",
+          )}
+        />
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-[11px] text-muted-foreground">
           {t("settings.workflow.field.retry")}
         </p>
         <StaticValue value={retryText} />

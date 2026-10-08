@@ -217,6 +217,9 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.retryConfigured_other":
       "最多重试 {{count}} 次，首次等待 {{seconds}} 秒",
     "workflowRun.inspector.retryDisabled": "已关闭",
+    "workflowRun.inspector.promptInactivityTimeout": "按默认超时规则处理",
+    "workflowRun.inspector.promptInactivityWait":
+      "持续等待，直到完成或手动停止",
     "workflowRun.inspector.retryNone": "不重试（最多重试次数为 0）",
     "workflowRun.inspector.retryInteractive": "不重试（交互模式节点）",
     "workflowRun.inspector.saveDraft": "保存",
@@ -638,6 +641,10 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.retryConfigured_other":
       "Up to {{count}} retries, first wait {{seconds}} s",
     "workflowRun.inspector.retryDisabled": "Off",
+    "workflowRun.inspector.promptInactivityTimeout":
+      "Use default timeout handling",
+    "workflowRun.inspector.promptInactivityWait":
+      "Keep waiting until completion or manual stop",
     "workflowRun.inspector.retryNone": "Not retried (max retries is 0)",
     "workflowRun.inspector.retryInteractive": "Not retried (interactive node)",
     "workflowRun.inspector.saveDraft": "Save",
