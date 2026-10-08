@@ -183,6 +183,24 @@ impl Drop for SilentHttpServer {
     }
 }
 
+/// Waits until the silent server has accepted at least `count` connections.
+///
+/// Accepting happens on the server's own polling thread, so a connection can already have
+/// completed on the client side — a probe may even have timed out — while it still sits in the
+/// kernel backlog. The accept count therefore settles after the probe that caused it, and a
+/// loaded runner can stretch that delay far beyond the probe's own timeout, so asserting the
+/// count immediately after a probe returns races with the accept thread.
+async fn wait_accepted(server: &SilentHttpServer, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if server.accepts() >= count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("silent server did not accept {count} connections before the deadline");
+}
+
 /// Runs one async body under a TRACE subscriber scoped to this thread so structured health events
 /// are observable even though probes settle on spawned tasks.
 fn with_scoped_trace<T>(action: impl std::future::Future<Output = T>) -> T {
@@ -391,7 +409,11 @@ fn concurrent_triggers_share_one_probe() {
                 error_code: McpHealthErrorCode::McpProbeTimeout
             }
         );
-        // One connection means one probe; two triggers that did not share would open two.
+        // One connection means one probe; two triggers that did not share would open two. The
+        // count settles on the server's polling thread, so wait for it, then leave a wrongly
+        // opened second connection time to be counted before asserting the exact total.
+        wait_accepted(&server, 1).await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
         assert_eq!(server.accepts(), 1);
         // Sharing also means the two triggers overlap instead of running back to back.
         assert!(
@@ -425,7 +447,9 @@ fn session_observation_reuses_a_matching_identity() {
             )
             .await
             .expect("seed probe");
-        assert_eq!(server.accepts(), 1);
+        // The seed connection settles on the server's polling thread, which a loaded runner can
+        // schedule long after the probe itself timed out, so wait for it to be counted.
+        wait_accepted(&server, 1).await;
 
         // The Session set contains the same eligible member, whose identity already matched, so the
         // backfill presents the existing result and opens no new connection.
