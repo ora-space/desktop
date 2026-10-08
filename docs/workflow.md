@@ -92,6 +92,32 @@ ID. Draft save, publish, duplicate, and import/export retain these values, inclu
 bindings. No selection (including old graphs without `mcps`) means the node is authorized to use no
 MCP servers. Malformed bindings are rejected when the executable graph is parsed.
 
+All workflow load paths restore presentation geometry in memory before rendering: missing or
+invalid node coordinates receive deterministic positions within their visual scope, recovered
+container bounds fit their children, unusable edge records are omitted,
+missing or duplicate edge identities are replaced without collisions, and invalid viewport values
+fall back to the origin. Duplicate/unsupported nodes follow the existing dropped-node notice.
+Dangling, cyclic, or non-container visual parents are detached without changing `data.containerId`. Execution
+analysis for a run uses the original frozen graph, so display recovery never hides structural errors.
+
+Agent configuration is projected safely for both the editor and read-only run views. Missing or
+wrongly typed identities/prompt values display empty placeholders, and only bindings with string
+identities and boolean enabled flags are shown. No executor/model is chosen to fill incomplete
+configuration. Valid settings and retry policy are retained. Frozen snapshots are never rewritten
+to add these fields. The Loop round history likewise tolerates an absent round list. Unexpected
+workflow render failures are isolated to the workflow pane, which offers a return-to-workspace
+action while sidebar navigation remains usable. Selecting another run or a recovery selection
+in the workflow library clears the error state. Healthy editor selections keep their existing
+draft-flush lifecycle; only an already unmounted failed editor can switch without that action.
+
+The explicit maintenance script previews repairs by default and requires a database path.
+`--apply` first creates a complete SQLite backup including committed WAL content, then updates
+eligible active drafts in one transaction. Published or run-referenced snapshots are excluded;
+invalid/ambiguous ownership is reported instead of changing execution semantics. Correct such
+configuration in a draft and publish a new version. The qualification suite analyzes all 101
+generated graphs before execution, targets an explicit disposable isolated workspace, cancels
+timed-out runs, and reports failed/incomplete or unmeasured checks honestly without publishing.
+
 Execution uses the frozen run's enabled IDs throughout Session creation, restore, rebuild, and
 refresh. Editing a draft affects later runs only. An unavailable enabled dependency fails the node
 with an explicit error; it is never silently skipped. Unselected plugins cannot block the node.

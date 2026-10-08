@@ -390,6 +390,7 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
       );
       return {
         run,
+        snapshotGraph: snapshot.graph,
         workspaceId: detail.workspaceId,
         projectId: detail.projectId,
       };
@@ -406,6 +407,8 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
 /** Persisted run detail plus its direct Workspace identity. */
 export type RealWorkflowRunDetail = {
   run: GraphWorkflowRun;
+  /** Execution analysis must inspect the frozen source, never the repaired render projection. */
+  snapshotGraph: string;
   workspaceId: string;
   projectId: string;
 };

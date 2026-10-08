@@ -53,6 +53,20 @@ describe("agent-config-display", () => {
     expect(resolveTheaterActInstruction(data)).toBe("梳理现状与风险。");
   });
 
+  it("keeps the theater detail line quiet when the agent config carries no executor", () => {
+    const data: WorkflowNodeData = {
+      kind: "agent",
+      title: "Legacy",
+      description: "Minimal snapshot node",
+      agentConfig: {
+        schemaVersion: 3,
+        prompt: "剩余提示词。",
+      } as unknown as WorkflowAgentConfig,
+    };
+    expect(resolveTheaterActDetail(data, AGENTS)).toBe("—");
+    expect(resolveTheaterActInstruction(data)).toBe("剩余提示词。");
+  });
+
   it("falls back to the raw identity when no installed package names the agent", () => {
     expect(
       formatAgentExecutorLabel(
@@ -60,6 +74,27 @@ describe("agent-config-display", () => {
         AGENTS,
       ),
     ).toBe("acme.my-agent · acme/one");
+  });
+
+  it("degrades to em dashes when a snapshot executor or its identities are missing", () => {
+    // Imported snapshots can predate the executor contract, so every missing
+    // component must render a quiet placeholder instead of "undefined".
+    expect(formatAgentExecutorLabel(undefined, AGENTS)).toBe("—");
+    expect(
+      formatAgentExecutorLabel(
+        undefined as unknown as WorkflowAgentConfig["executor"],
+        AGENTS,
+      ),
+    ).toBe("—");
+    expect(
+      formatAgentExecutorLabel(
+        {
+          agentCli: undefined,
+          modelId: undefined,
+        } as unknown as WorkflowAgentConfig["executor"],
+        AGENTS,
+      ),
+    ).toBe("— · —");
   });
 
   it("prefers flat tool/condition and instruction over agentConfig", () => {

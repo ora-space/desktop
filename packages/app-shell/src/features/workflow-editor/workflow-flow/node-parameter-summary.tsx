@@ -10,6 +10,7 @@ import {
 import { useAgents } from "../../../state/hooks/use-agents";
 import { useSkills } from "../../../state/hooks/use-skills";
 import { useInstalledPlugins } from "../../../state/hooks/use-installed-plugins";
+import { normalizeWorkflowAgentConfig } from "@ora/workflow-mock";
 
 interface NodeParameter {
   label: string;
@@ -93,23 +94,22 @@ function configuredParameters(
 ): NodeParameter[] {
   const parameters: NodeParameter[] = [];
   if (data.kind === "agent" && data.agentConfig !== undefined) {
-    const enabledSkills = (data.agentConfig.skills ?? [])
+    const config = normalizeWorkflowAgentConfig(data.agentConfig);
+    const enabledSkills = config.skills
       .filter((skill) => skill.enabled)
       .map((skill) => skillNameById.get(skill.skillId) ?? skill.skillId);
-    const enabledMcps = (data.agentConfig.mcps ?? [])
+    const enabledMcps = config.mcps
       .filter((mcp) => mcp.enabled)
       .map((mcp) => mcpNameById.get(mcp.mcpId) ?? mcp.mcpId);
     parameters.push(
       {
         label: t("settings.workflow.field.role"),
-        values: [
-          agentNameById.get(data.agentConfig.roleId) ?? data.agentConfig.roleId,
-        ],
+        values: [agentNameById.get(config.roleId) ?? config.roleId],
       },
       {
         label: t("settings.workflow.field.agentModel"),
         values: [
-          `${data.agentConfig.executor.agentCli} · ${data.agentConfig.executor.modelId}`,
+          `${config.executor.agentCli || "—"} · ${config.executor.modelId || "—"}`,
         ],
       },
     );

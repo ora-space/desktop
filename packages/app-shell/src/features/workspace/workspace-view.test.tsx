@@ -54,6 +54,8 @@ import {
   useSettingsStore,
 } from "../../state/stores/settings-store";
 import { WorkspaceView } from "./workspace-view";
+import { WorkspaceSidebar } from "./workspace-sidebar";
+import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 import { directChatTitle } from "./workspace-view-utils";
 import { AGENT_REF } from "../../test/agent-identity";
 
@@ -104,6 +106,12 @@ beforeEach(() => {
   useComposerInputStore.getState().reset();
   useSessionSetupStore.setState({ setups: {} });
   useUiStore.setState({ workflowEditorOpen: false });
+  useWorkflowEditorStore.setState({
+    selectedWorkflowId: null,
+    managerError: null,
+    actions: null,
+    renderRecovery: { status: "ready", revision: 0 },
+  });
   // Outlives a render on purpose — remembering one CLI's models across chat
   // surfaces is the point of the store — so each test has to start from a CLI
   // nothing has handshaken, or an earlier test's list would answer for it.
@@ -1973,6 +1981,138 @@ describe("WorkspaceView", () => {
 
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(state.sessions[0]?.historyState).toEqual({ type: "writable" });
+  });
+
+  it("recovers a failed editor through the real sidebar without remounting normal selections", async () => {
+    await act(() => appI18n.changeLanguage("en-US"));
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const updateDraft = vi.fn(workflowHandlers(state).updateDraft);
+    const client = createTestClient({
+      ...createFixtureHandlers(state),
+      updateDraft,
+    });
+    const healthy = await client.workflow.create({
+      name: "Opening workflow",
+      graph: JSON.stringify({
+        nodes: [
+          {
+            id: "start-a",
+            type: "workflow",
+            position: { x: 0, y: 0 },
+            data: { kind: "start", title: "Opening start" },
+          },
+        ],
+        edges: [],
+      }),
+    });
+    const otherHealthy = await client.workflow.create({
+      name: "Other healthy workflow",
+      graph: JSON.stringify({
+        nodes: [
+          {
+            id: "start-c",
+            type: "workflow",
+            position: { x: 0, y: 0 },
+            data: { kind: "start", title: "Other healthy start" },
+          },
+        ],
+        edges: [],
+      }),
+    });
+    const malformedGraph = JSON.stringify({
+      nodes: [
+        {
+          id: "condition-b",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: { kind: "condition", title: "Broken condition", cases: {} },
+        },
+      ],
+      edges: [],
+    });
+    const broken = await client.workflow.create({
+      name: "Broken workflow",
+      graph: malformedGraph,
+    });
+    const published = await client.workflow.publish({
+      workflowId: broken.workflow.id,
+      version: "frozen-invalid-configuration",
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkflowEditorStore
+      .getState()
+      .setSelectedWorkflowId(healthy.workflow.id);
+    useUiStore.setState({ workflowEditorOpen: true, sidebarCollapsed: false });
+    const onCaughtError = vi.fn();
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceSidebar
+                user={{ name: "Eric", email: "eric@ora.test" }}
+              />
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+      { onCaughtError },
+    );
+
+    expect(await screen.findByText("Opening start")).toBeInTheDocument();
+    const initialActions = useWorkflowEditorStore.getState().actions;
+    expect(initialActions).not.toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Other healthy workflow" }),
+    );
+    expect(await screen.findByText("Other healthy start")).toBeInTheDocument();
+    expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+      otherHealthy.workflow.id,
+    );
+    expect(
+      updateDraft.mock.calls.map(([request]) => request.workflowId),
+    ).toContain(healthy.workflow.id);
+    expect(useWorkflowEditorStore.getState().actions).toBe(initialActions);
+
+    await user.click(screen.getByRole("button", { name: "Broken workflow" }));
+    expect(
+      await screen.findByText("Unable to display this workflow"),
+    ).toBeInTheDocument();
+    expect(onCaughtError).toHaveBeenCalled();
+    expect(useWorkflowEditorStore.getState().actions).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Create or import workflow" }),
+    ).toBeDisabled();
+    const healthyRow = screen.getByRole("button", { name: "Opening workflow" });
+    expect(healthyRow).toBeEnabled();
+
+    await user.click(healthyRow);
+    expect(await screen.findByText("Opening start")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Unable to display this workflow"),
+    ).not.toBeInTheDocument();
+    expect(useWorkflowEditorStore.getState().actions).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Create or import workflow" }),
+    ).toBeEnabled();
+    expect(
+      await client.workflow.getDraft({ workflowId: broken.workflow.id }),
+    ).toEqual({
+      snapshot: broken.draft,
+    });
+    expect(
+      await client.workflow.getVersion({
+        workflowId: broken.workflow.id,
+        version: published.snapshot.version,
+      }),
+    ).toEqual(published);
   });
 
   it("renders the workflow editor in place of chat when the editor is open", async () => {

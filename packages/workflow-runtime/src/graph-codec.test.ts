@@ -137,6 +137,7 @@ describe("graph envelope codec", () => {
         },
         {
           ...node,
+          id: "legacy-model",
           data: { kind: "model", title: "总结", description: "LLM 推理" },
         },
       ],
@@ -213,6 +214,7 @@ describe("graph envelope codec", () => {
     expect(parseWorkflowGraph(graph)).toEqual({
       schemaVersion: 2,
       ...input,
+      nodes: [node, { ...loop, initialWidth: 620, initialHeight: 340 }, child],
     });
   });
 
@@ -246,10 +248,16 @@ describe("graph envelope codec", () => {
 
     const parsed = parseWorkflowGraph(graph);
 
-    expect(parsed.nodes[0]).not.toHaveProperty("initialWidth");
-    expect(parsed.nodes[0]).not.toHaveProperty("initialHeight");
-    expect(parsed.nodes[1]?.parentId).toBe("iter");
-    expect(parsed.edges[0]?.sourceHandle).toBe("iteration-entry");
+    const source = JSON.parse(graph);
+    expect(parsed).toEqual({
+      ...source,
+      nodes: [
+        { ...source.nodes[0], initialWidth: 560, initialHeight: 400 },
+        source.nodes[1],
+      ],
+      annotations: [],
+      globalVariables: [],
+    });
   });
 });
 

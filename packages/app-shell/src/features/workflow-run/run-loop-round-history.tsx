@@ -19,11 +19,12 @@ export function RunLoopRoundHistory({
   onSelectedRoundChange?: (roundId: string) => void;
 }) {
   const { t } = useTranslation();
+  const safeRounds = rounds ?? [];
   const [preferredRoundId, setPreferredRoundId] = useState<string | null>(null);
   const effectiveRoundId = selectedRoundId ?? preferredRoundId;
   const selectedRound =
-    rounds.find((round) => round.id === effectiveRoundId) ??
-    [...rounds].sort((a, b) => a.roundIndex - b.roundIndex)[0];
+    safeRounds.find((round) => round.id === effectiveRoundId) ??
+    [...safeRounds].sort((a, b) => a.roundIndex - b.roundIndex)[0];
 
   if (selectedRound === undefined) {
     return (
@@ -36,7 +37,7 @@ export function RunLoopRoundHistory({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-1.5" role="tablist">
-        {rounds.map((round) => {
+        {safeRounds.map((round) => {
           const selected = round.id === selectedRound.id;
           return (
             <button

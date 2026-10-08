@@ -1,6 +1,10 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const workspaceTranslations = {
   "zh-CN": {
+    "workspace.workflowRenderError.title": "无法显示这个工作流",
+    "workspace.workflowRenderError.description":
+      "工作流数据可能不完整或存在无效配置。请返回工作区后修正草稿；历史运行数据会保留。你仍可通过侧边栏打开其他会话。",
+    "workspace.workflowRenderError.close": "返回工作区",
     "errors.project_not_found": "未找到该项目。",
     "errors.task_not_found": "未找到该任务。",
     "errors.worktree_requires_git_repository":
@@ -98,6 +102,10 @@ export const workspaceTranslations = {
     "update.confirmAction": "立即更新",
   },
   "en-US": {
+    "workspace.workflowRenderError.title": "Unable to display this workflow",
+    "workspace.workflowRenderError.description":
+      "The workflow may contain incomplete or invalid configuration. Return to the workspace and correct its draft; historical run data is preserved. You can still open other sessions from the sidebar.",
+    "workspace.workflowRenderError.close": "Return to workspace",
     "errors.project_not_found": "The project was not found.",
     "errors.task_not_found": "The task was not found.",
     "errors.worktree_requires_git_repository":
