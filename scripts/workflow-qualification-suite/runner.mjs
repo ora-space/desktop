@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { generateAllWorkflows } from "./generator.mjs";
 import { connectCDP } from "./cdp.mjs";
 import { analyzeWorkflows } from "./analysis.mjs";
-import { runScenario, runEnduranceStress } from "./execution.mjs";
+import { runEnduranceStress, runScenario, runSuperLong } from "./execution.mjs";
 import { buildQualificationReport, qualificationPassed } from "./report.mjs";
 
 /** Runs an explicitly targeted disposable workspace and saves fresh, local evidence for this invocation. */
@@ -15,6 +15,7 @@ export async function main({
   generate = generateAllWorkflows,
   scenario = runScenario,
   endurance = runEnduranceStress,
+  superLong = runSuperLong,
   outputRoot = fileURLToPath(new URL("./results/", import.meta.url)),
   signal,
 } = {}) {
@@ -85,12 +86,18 @@ export async function main({
     for (const workflow of workflows) {
       if (signal?.aborted) throw new Error("Qualification interrupted.");
       log(`Running ${workflow.index}: ${workflow.name}`);
-      const execute = workflow.isStress ? endurance : scenario;
+      const execute = workflow.isStress
+        ? endurance
+        : workflow.isSuperLong
+          ? superLong
+          : scenario;
       const result = await execute(session, workflow, workspaceId, { signal });
       results.push(result);
       save();
       log(
-        `${result.qualified ? "PASS" : "FAIL"}: ${workflow.name} (${result.status})`,
+        `${
+          result.qualified ? "PASS" : "FAIL"
+        }: ${workflow.name} (${result.status})`,
       );
       if (!result.cleanupComplete) {
         throw new Error(

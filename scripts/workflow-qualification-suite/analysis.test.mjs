@@ -15,7 +15,7 @@ test("validates every generated graph through the production analysis operation 
     },
     workflows,
   );
-  assert.equal(workflows.length, 101);
+  assert.equal(workflows.length, 112);
   assert.deepEqual(
     calls,
     workflows.map((workflow) => ({

@@ -34,13 +34,14 @@ function sessionFixture({ rejectedAnalysis, workspaceKind = "isolated" } = {}) {
     },
     invoke(command, request) {
       calls.push({ command, request });
-      if (command === "list_workspaces")
+      if (command === "list_workspaces") {
         return {
           workspaces: [
             { id: "one", lifecycle: "active", kind: workspaceKind },
             { id: "two", lifecycle: "active", kind: workspaceKind },
           ],
         };
+      }
       if (command === "analyze_workflow") {
         if (rejectedAnalysis) throw new Error("Invalid graph");
         return { unusedNodeIds: [] };
@@ -191,12 +192,12 @@ test("cleanup failure halts subsequent agents and cannot disappear from the repo
   );
 });
 
-test("the validation entry point inspects all 101 graphs without creating user data", async (t) => {
+test("the validation entry point inspects all 112 graphs without creating user data", async (t) => {
   t.mock.method(console, "log", () => {});
   const session = sessionFixture();
   const result = await validate({ connect: () => session });
   assert.equal(result.passed, true);
-  assert.equal(result.analyses.length, 101);
+  assert.equal(result.analyses.length, 112);
   assert.ok(session.calls.every((call) => call.command === "analyze_workflow"));
   assert.equal(session.closeCount, 1);
 });

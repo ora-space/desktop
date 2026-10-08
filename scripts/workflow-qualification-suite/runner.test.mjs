@@ -34,7 +34,7 @@ function loadRunner(clock, session) {
     session,
   });
   return vm.runInContext(
-    `${source}\n({ runScenario, runEnduranceStress });`,
+    `${source}\n({ runScenario, runEnduranceStress, runSuperLong });`,
     context,
   );
 }
@@ -60,8 +60,9 @@ function createSession(status = "succeeded") {
     calls,
     invoke(command, request) {
       calls.push({ command, request });
-      if (command === "create_workflow")
+      if (command === "create_workflow") {
         return { workflow: { id: "workflow-1" } };
+      }
       if (command === "create_workflow_run") return { run: { id: "run-1" } };
       if (command === "get_workflow_run") return detail;
       if (command === "cancel_workflow_run") detail.run.status = "cancelled";
@@ -118,6 +119,49 @@ test("a timed-out active scenario is cancelled and settled before returning", as
       .slice(cancellation + 1)
       .some((call) => call.command === "get_workflow_run"),
   );
+});
+
+test("a super-long run must meet the node, deep-node, and duration class bars", async () => {
+  const clock = { value: 0, step: 20 * 60_000 };
+  const session = createSession();
+  const superLongWorkflow = {
+    index: 102,
+    name: "super-long",
+    isSuperLong: true,
+    deepNodeCount: 12,
+    graph,
+  };
+  const runner = loadRunner(clock, session);
+  const result = await runner.runSuperLong(
+    session,
+    superLongWorkflow,
+    "disposable-workspace",
+    {
+      now: () => clock.value,
+      sleep: () => {
+        clock.value += clock.step;
+      },
+    },
+  );
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.meetsDuration, true);
+  assert.equal(result.meetsNodeCount, true);
+  assert.equal(result.meetsDeepNodes, true);
+  assert.equal(result.qualified, true);
+  assert.equal(result.deepNodeCount, 12);
+
+  const quick = { ...superLongWorkflow, deepNodeCount: 3 };
+  const short = await runner.runSuperLong(
+    session,
+    quick,
+    "disposable-workspace",
+    {
+      now: () => 0,
+      sleep: () => {},
+    },
+  );
+  assert.equal(short.meetsDeepNodes, false);
+  assert.equal(short.qualified, false);
 });
 
 test("missing endurance evidence and failed scenarios cannot produce a release certification", () => {
