@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin, Skill } from "@ora/contracts";
+import { createMockWorkflow } from "@ora/workflow-mock";
+import {
+  parseWorkflowGraph,
+  serializeWorkflowGraph,
+} from "@ora/workflow-runtime";
 import {
   collectWorkflowDependencies,
   importPublishVersion,
   parseWorkflowImportFile,
   summarizeWorkflowTransfer,
   workflowExportFileName,
+  workflowExportDocument,
 } from "./workflow-transfer";
 
 /** Builds an MCP plugin row with only the fields readiness depends on varying. */
@@ -131,6 +137,41 @@ describe("parseWorkflowImportFile", () => {
       },
     });
   });
+});
+
+describe("workflow inactivity setting transfer", () => {
+  it.each([undefined, null, "timeout", "wait"] as const)(
+    "exports and imports the frozen snapshot policy %s despite later draft edits",
+    (promptInactivity) => {
+      const workflow = createMockWorkflow("en-US");
+      const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+      if (promptInactivity !== undefined) {
+        agent.data.agentConfig!.promptInactivity = promptInactivity;
+      }
+      const snapshot = parseWorkflowGraph(
+        serializeWorkflowGraph({
+          ...workflow,
+          edges: workflow.edges.map(({ id, source, target }) => ({
+            id,
+            source,
+            target,
+          })),
+        }),
+      );
+      agent.data.agentConfig!.promptInactivity = "timeout";
+
+      const exported = workflowExportDocument(workflow, snapshot);
+      const imported = parseWorkflowImportFile(JSON.stringify(exported));
+
+      expect(imported).toEqual({ ok: true, workflow: exported });
+      expect(exported.nodes).toEqual(snapshot.nodes);
+      if (promptInactivity === undefined) {
+        expect(
+          exported.nodes.find((node) => node.id === agent.id)!.data.agentConfig,
+        ).not.toHaveProperty("promptInactivity");
+      }
+    },
+  );
 });
 
 describe("collectWorkflowDependencies", () => {

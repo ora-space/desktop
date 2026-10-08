@@ -6,14 +6,17 @@ use ora_application::{
     WorkflowGraphNode, WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowVariablePool,
 };
 use ora_db::SqliteWorkflowRunEngineRepository;
-use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunStatus, WorkflowScopeId};
+use ora_domain::{
+    PromptInactivityPolicy, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunStatus,
+    WorkflowScopeId,
+};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 /// Records the committed pool seen by actual async dispatches, not merely persisted rows.
 #[derive(Clone, Default)]
-struct RecordingExecutor(Arc<Mutex<Vec<(String, Value)>>>);
+struct RecordingExecutor(Arc<Mutex<Vec<(String, Value, PromptInactivityPolicy)>>>);
 
 impl NodeExecutor for RecordingExecutor {
     fn dispatch(
@@ -30,14 +33,17 @@ impl NodeExecutor for RecordingExecutor {
         } else {
             "iter.item"
         };
-        self.0
-            .lock()
-            .unwrap()
-            .push((node.id.clone(), pool.values[selector].clone()));
+        self.0.lock().unwrap().push((
+            node.id.clone(),
+            pool.values[selector].clone(),
+            node.agent_config.as_ref().unwrap().prompt_inactivity,
+        ));
     }
 }
 
-/// Separate composites retain their own variable pools and every round reaches its driver.
+/// Separate composites retain their own variable pools and inactivity policies on every round.
+///
+/// Core case: specs/test-cases/desktop/core/workflow/prompt-inactivity.md#every-workflow-turn-uses-the-frozen-inactivity-policy
 #[test]
 fn loop_and_iteration_dispatch_each_round_with_the_committed_pool() {
     run_test(async {
@@ -55,7 +61,7 @@ fn loop_and_iteration_dispatch_each_round_with_the_committed_pool() {
                 }}},
                 {"id":"entry","parentId":"loop","data":{"kind":"start","containerId":"loop"}},
                 {"id":"writer","parentId":"loop","data":{"kind":"agent","containerId":"loop","agentConfig":{
-                    "executor":{"agentCli":"c","modelId":"m"},"prompt":"revise"
+                    "executor":{"agentCli":"c","modelId":"m"},"prompt":"revise", "promptInactivity":"wait"
                 }}},
                 {"id":"iter","data":{"kind":"iteration","iterationConfig":{
                     "iteratorSelector":["start","items"],"collectSelector":["fix","output"],"errorStrategy":"fail","maxIterations":3
@@ -98,10 +104,14 @@ fn loop_and_iteration_dispatch_each_round_with_the_committed_pool() {
         assert_eq!(
             *executor.0.lock().unwrap(),
             vec![
-                ("writer".into(), json!("seed")),
-                ("writer".into(), json!("again")),
-                ("fix".into(), json!("one")),
-                ("fix".into(), json!("two")),
+                ("writer".into(), json!("seed"), PromptInactivityPolicy::Wait),
+                (
+                    "writer".into(),
+                    json!("again"),
+                    PromptInactivityPolicy::Wait
+                ),
+                ("fix".into(), json!("one"), PromptInactivityPolicy::Timeout),
+                ("fix".into(), json!("two"), PromptInactivityPolicy::Timeout),
             ]
         );
         let run = repository

@@ -18,7 +18,7 @@ live in `packages/`. All Rust packages share the root Cargo workspace.
 - [Gitlancer Architecture](docs/gitlancer-architecture.md) — typed Git CLI
   runtime
 - [Workflow](docs/workflow.md) — definition management, draft/publish lifecycle,
-  versioned snapshots, and run CRUD
+  versioned snapshots, run CRUD, and long-running Agent prompt handling
 - [Workflow orax Import](docs/workflow-orax-import.md) — the `workflow` plugin kind,
   the document format it ships, and per-document import semantics
 

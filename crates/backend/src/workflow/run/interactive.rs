@@ -1,6 +1,8 @@
 //! Coordination for human interaction with workflow node sessions.
 
 mod completion;
+#[cfg(test)]
+mod inactivity_tests;
 mod session;
 mod turns;
 

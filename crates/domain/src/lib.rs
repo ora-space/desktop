@@ -8,6 +8,7 @@ mod namespace;
 mod plugin_id;
 mod plugin_namespace;
 mod project;
+mod prompt_inactivity_policy;
 mod session;
 mod session_title;
 mod skill;
@@ -37,6 +38,7 @@ pub use namespace::Namespace;
 pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use plugin_namespace::{MAX_PLUGIN_NAMESPACE_BYTES, PluginNamespace};
 pub use project::Project;
+pub use prompt_inactivity_policy::PromptInactivityPolicy;
 pub use session::{HistoryState, Session, SessionMcpSelection, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{

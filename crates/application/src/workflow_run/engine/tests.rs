@@ -316,6 +316,7 @@ fn parses_agent_config_into_the_model() {
             output_contract: None,
             // The linear_chain fixture omits `retry`, so the default policy applies.
             retry: crate::workflow_run::engine::AgentRetryPolicy::default(),
+            prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
         }),
         condition_config: None,
         aggregator_config: None,

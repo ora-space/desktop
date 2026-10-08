@@ -689,6 +689,7 @@ mod tests {
                 skills: Vec::new(),
                 prompt: "produce the decision".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
+                prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
                 output_contract: None,
             }),
@@ -787,6 +788,7 @@ mod tests {
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
+                prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -851,6 +853,7 @@ mod tests {
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
+                prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -930,6 +933,7 @@ mod tests {
                 skills: Vec::new(),
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
+                prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
                 output_contract: None,
             }),

@@ -122,6 +122,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     operation_id,
                     prompt,
                     record_prompt,
+                    inactivity_policy,
                     model,
                     events,
                     accepted,
@@ -134,8 +135,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         Ok(setup) => {
                             let _ = accepted.send(Ok(()));
                             if publish_setup(&events, setup) {
-                                self.run_prompt(operation_id, prompt, record_prompt, events)
-                                    .await;
+                                self.run_prompt(
+                                    operation_id,
+                                    prompt,
+                                    record_prompt,
+                                    inactivity_policy,
+                                    events,
+                                )
+                                .await;
                                 self.refresh_idle_mcp_if_owed().await;
                             }
                         }
@@ -227,6 +234,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         operation_id: u64,
         prompt: Vec<ContentBlock>,
         record_prompt: RecordedTurn,
+        inactivity_policy: PromptInactivityPolicy,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     ) {
         // An exit without a terminal provider response cannot prove remote work stopped.
@@ -291,7 +299,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         let agent_session_id = self.provider_session_id().to_string();
         let request = PromptRequest::new(agent_session_id.clone(), blocks);
-        ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
+        ora_debug!(session_id = %self.session.id, content_count = content_count, policy = ?inactivity_policy, "session/prompt sent");
         let mut pending = match client
             .start_session_request::<_, PromptResponse>(
                 AcpSessionId::new(agent_session_id.clone()),
@@ -344,7 +352,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &mut channel.controls,
                     &mut self.commands,
                 ) => Some(input),
-                () = liveness.wait() => None,
+                () = liveness.wait(inactivity_policy) => None,
             };
             let Some(input) = input else {
                 match retry_stalled_prompt(

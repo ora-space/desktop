@@ -30,8 +30,8 @@ export function normalizeWorkflowAgentConfig(
           schema: config.outputContract.schema,
         }
       : undefined;
-  // `retry` passes through untouched: absent already means the default policy, and filling it in
-  // here would rewrite every saved graph the first time it is opened.
+  // Optional execution policies pass through untouched: absence already means the default,
+  // and filling them in here would rewrite every saved graph the first time it is opened.
   return {
     ...config,
     executor: {

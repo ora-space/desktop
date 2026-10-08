@@ -11,19 +11,31 @@
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    AdvanceWorkflowRunResult, ApplicationError, RepositoryError, WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, ApplicationError, RepositoryError, WorkflowGraph,
+    WorkflowRunEngineRepository,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
-use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunStatus};
+use ora_domain::{
+    PromptInactivityPolicy, SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunStatus,
+};
 use std::sync::Arc;
 
 use super::CompletingNodeRuns;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
 
+/// A granted turn carries workflow policy only when it has a workflow owner.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HumanTurnAdmission {
+    Ordinary,
+    Workflow {
+        node_run_id: WorkflowNodeRunId,
+        prompt_inactivity: PromptInactivityPolicy,
+    },
+}
+
 /// Validates and flips an awaiting interactive node to `Running` before a human turn.
 ///
-/// Returns `Some(node_run_id)` when the session is bound to an awaiting interactive node that is
-/// now running; `None` when the session is bound to no workflow node (an ordinary session prompt).
+/// Workflow turns retain the frozen node's policy; an unbound session keeps ordinary defaults.
 /// Rejects with `WorkflowNodeNotAwaitingInput` when the node is terminal, already running, being
 /// completed, or its run is no longer executing, so a finished workflow node can never accept
 /// another prompt through this path.
@@ -33,7 +45,7 @@ pub(crate) async fn begin_human_turn(
     completing_node_runs: &Arc<CompletingNodeRuns>,
     transitions: &Arc<WorkflowRunTransitions>,
     session_id: &str,
-) -> Result<Option<WorkflowNodeRunId>, BackendError> {
+) -> Result<HumanTurnAdmission, BackendError> {
     let pool = pool.clone();
     let run_locks = run_locks.clone();
     let completing_node_runs = completing_node_runs.clone();
@@ -46,7 +58,7 @@ pub(crate) async fn begin_human_turn(
             .map_err(repository_error)?;
         let Some(node_run) = node_run else {
             // No workflow node is bound to this session: an ordinary session prompt.
-            return Ok(None);
+            return Ok(HumanTurnAdmission::Ordinary);
         };
         // Serialize against completion/cancel/scheduling for this run before deciding whether the
         // prompt may start, so a concurrent completion cannot be raced past.
@@ -56,16 +68,16 @@ pub(crate) async fn begin_human_turn(
             .find_node_run_by_session_id(&session_id)
             .map_err(repository_error)?;
         let Some(node_run) = node_run else {
-            return Ok(None);
+            return Ok(HumanTurnAdmission::Ordinary);
         };
         // The owning run must still be executing; a terminal run rejects a follow-up turn.
         let context = repository
             .find_execution_context(&node_run.run_id)
             .map_err(repository_error)?;
-        let run_running = context
-            .as_ref()
-            .is_some_and(|context| context.run.status == WorkflowRunStatus::Running);
-        if !run_running {
+        let Some(context) = context else {
+            return Err(node_not_awaiting(&node_run.node_id));
+        };
+        if context.run.status != WorkflowRunStatus::Running {
             return Err(node_not_awaiting(&node_run.node_id));
         }
         // A terminal node is read-only; a non-Pending node is not awaiting input.
@@ -79,6 +91,15 @@ pub(crate) async fn begin_human_turn(
         {
             return Err(node_not_awaiting(&node_run.node_id));
         }
+        // Resolve policy before the state transition, so a malformed frozen graph cannot strand
+        // an awaiting node at Running or let a newer draft change an admitted turn's behavior.
+        let graph = WorkflowGraph::parse(&context.graph_json)
+            .map_err(ApplicationError::WorkflowRunGraphParse)?;
+        let config = graph
+            .execution_node(&node_run.node_id)
+            .and_then(|node| node.agent_config.as_ref())
+            .ok_or_else(|| node_not_awaiting(&node_run.node_id))?;
+        let prompt_inactivity = config.prompt_inactivity;
         // The guarded transition both grants the turn and races against any concurrent mutation;
         // a rejected transition means the node is no longer awaiting and the prompt must not
         // start. It commits through the shared transition sink, so a granted turn publishes the
@@ -91,7 +112,10 @@ pub(crate) async fn begin_human_turn(
             )
             .map_err(repository_error)?
         {
-            AdvanceWorkflowRunResult::Advanced => Ok(Some(node_run.id)),
+            AdvanceWorkflowRunResult::Advanced => Ok(HumanTurnAdmission::Workflow {
+                node_run_id: node_run.id,
+                prompt_inactivity,
+            }),
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {
                 Err(node_not_awaiting(&node_run.node_id))
             }
@@ -165,7 +189,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(result, None);
+            assert_eq!(result, HumanTurnAdmission::Ordinary);
         });
     }
 
@@ -253,7 +277,13 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(result.is_some());
+            assert_eq!(
+                result,
+                HumanTurnAdmission::Workflow {
+                    node_run_id: _node_run_id,
+                    prompt_inactivity: PromptInactivityPolicy::Timeout,
+                }
+            );
 
             let node_runs = SqliteWorkflowRunRepository::new(pool)
                 .list_node_runs(&_run_id)
@@ -328,7 +358,13 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(result.is_some());
+            assert_eq!(
+                result,
+                HumanTurnAdmission::Workflow {
+                    node_run_id: _node_run_id,
+                    prompt_inactivity: PromptInactivityPolicy::Timeout,
+                }
+            );
             assert_eq!(
                 *recording.published.lock().unwrap(),
                 vec![run_id.to_string()],

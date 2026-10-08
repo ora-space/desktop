@@ -6,6 +6,7 @@ use crate::setup::DesktopTestSetup;
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason, TextContent};
 use ora_backend::{Backend, SessionEventStream};
 use ora_contracts::*;
+use ora_domain::PromptInactivityPolicy;
 use ora_history::{HistoryRecord, history_path, read_session_history};
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -179,171 +180,322 @@ fn stream_drop_cancels_the_actor_and_delete_cleans_its_history() -> TestResult {
 /// sessions stay out of ordinary session listing and cannot be prompted after cancellation.
 #[test]
 fn workflow_cancellation_stops_the_live_node_session() -> TestResult {
-    run_case(async {
-        let (_setup, backend, workspace_id) = fixture()?;
-        let run = start_interactive_workflow(&backend, workspace_id, "[hold-for-cancel]")?;
-        let runs = backend.workflow_runs();
-        let session_id = loop {
-            let nodes = runs
-                .list_node_runs(ListWorkflowNodeRunsRequest {
-                    run_id: run.id.clone(),
-                })?
-                .nodes;
-            if let Some(id) = nodes.into_iter().find_map(|node| node.session_id) {
-                break id;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        };
-        let sessions = backend.sessions();
-        let mut load = sessions
-            .load(LoadSessionRequest {
-                session_id: session_id.clone(),
-            })
-            .await?;
-        loop {
-            let event = load
-                .recv()
-                .await
-                .transpose()?
-                .ok_or("node session ended before prompting")?;
-            if matches!(
-                event,
-                LoadSessionEvent::SessionUpdate {
-                    update: SessionUpdate::AgentMessageChunk(_),
-                    ..
+    for inactivity_policy in [
+        PromptInactivityPolicy::Timeout,
+        PromptInactivityPolicy::Wait,
+    ] {
+        run_case(async {
+            let (_setup, backend, workspace_id) = fixture()?;
+            let run = start_interactive_workflow(
+                &backend,
+                workspace_id,
+                "[hold-for-cancel]",
+                inactivity_policy,
+            )?;
+            let runs = backend.workflow_runs();
+            let session_id = loop {
+                let nodes = runs
+                    .list_node_runs(ListWorkflowNodeRunsRequest {
+                        run_id: run.id.clone(),
+                    })?
+                    .nodes;
+                if let Some(id) = nodes.into_iter().find_map(|node| node.session_id) {
+                    break id;
                 }
-            ) {
-                break;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            };
+            let sessions = backend.sessions();
+            let mut load = sessions
+                .load(LoadSessionRequest {
+                    session_id: session_id.clone(),
+                })
+                .await?;
+            loop {
+                let event = load
+                    .recv()
+                    .await
+                    .transpose()?
+                    .ok_or("node session ended before prompting")?;
+                if matches!(
+                    event,
+                    LoadSessionEvent::SessionUpdate {
+                        update: SessionUpdate::AgentMessageChunk(_),
+                        ..
+                    }
+                ) {
+                    break;
+                }
             }
-        }
-        assert_eq!(
-            sessions.list(ListSessionsRequest {})?,
-            ListSessionsResponse {
-                sessions: Vec::new()
-            }
-        );
-        let response = runs
-            .cancel(CancelWorkflowRunRequest {
-                run_id: run.id.clone(),
-            })
-            .await?;
-        assert_eq!(response.run.status, WorkflowRunStatus::Cancelled);
-        assert_eq!(
-            sessions
-                .get(GetSessionRequest {
-                    session_id: session_id.clone()
-                })?
-                .session
-                .status,
-            SessionStatus::Stopped
-        );
-        let error = sessions
-            .prompt(held_prompt(&session_id))
-            .await
-            .err()
-            .ok_or("cancelled node accepted another prompt")?;
-        assert_eq!(
-            error.public_error(),
-            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
-        );
-        drop(load);
-        Ok(())
-    })
+            assert_eq!(
+                sessions.list(ListSessionsRequest {})?,
+                ListSessionsResponse {
+                    sessions: Vec::new()
+                }
+            );
+            let response = runs
+                .cancel(CancelWorkflowRunRequest {
+                    run_id: run.id.clone(),
+                })
+                .await?;
+            assert_eq!(response.run.status, WorkflowRunStatus::Cancelled);
+            assert_eq!(
+                sessions
+                    .get(GetSessionRequest {
+                        session_id: session_id.clone()
+                    })?
+                    .session
+                    .status,
+                SessionStatus::Stopped
+            );
+            let error = sessions
+                .prompt(held_prompt(&session_id))
+                .await
+                .err()
+                .ok_or("cancelled node accepted another prompt")?;
+            assert_eq!(
+                error.public_error(),
+                &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
+            );
+            drop(load);
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
 /// Confirmed cancellation restores durable workflow state before returning and preserves other
 /// consumers; a later drop still provides best-effort cleanup before manual completion.
 #[test]
 fn confirmed_and_dropped_workflow_follow_ups_restore_awaiting_status() -> TestResult {
-    run_case(async {
-        let (setup, backend, workspace_id) = fixture()?;
-        let run = start_interactive_workflow(&backend, workspace_id, "Settle the first turn")?;
-        let runs = backend.workflow_runs();
-        let sessions = backend.sessions();
-        let session_id = loop {
-            let detail = runs.get(GetWorkflowRunRequest {
-                run_id: run.id.clone(),
-            })?;
-            if detail.run.status == WorkflowRunStatus::AwaitingInput {
-                break detail
+    for inactivity_policy in [
+        PromptInactivityPolicy::Timeout,
+        PromptInactivityPolicy::Wait,
+    ] {
+        run_case(async {
+            let (setup, backend, workspace_id) = fixture()?;
+            let run = start_interactive_workflow(
+                &backend,
+                workspace_id,
+                "Settle the first turn",
+                inactivity_policy,
+            )?;
+            let runs = backend.workflow_runs();
+            let sessions = backend.sessions();
+            let session_id = loop {
+                let detail = runs.get(GetWorkflowRunRequest {
+                    run_id: run.id.clone(),
+                })?;
+                if detail.run.status == WorkflowRunStatus::AwaitingInput {
+                    break detail
+                        .nodes
+                        .into_iter()
+                        .find_map(|node| node.session_id)
+                        .ok_or("awaiting node has no session")?;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            };
+            let mut stream = sessions.prompt(held_prompt(&session_id)).await?;
+            first_update(&mut stream).await?;
+            assert_eq!(
+                runs.get(GetWorkflowRunRequest {
+                    run_id: run.id.clone()
+                })?
+                .run
+                .status,
+                WorkflowRunStatus::Running
+            );
+            // A load owns only its relay. Confirming its cancellation must leave the prompt active.
+            let mut follower = sessions
+                .load(LoadSessionRequest {
+                    session_id: session_id.clone(),
+                })
+                .await?;
+            follower.cancel_and_wait().await?;
+            assert_eq!(
+                runs.get(GetWorkflowRunRequest {
+                    run_id: run.id.clone()
+                })?
+                .run
+                .status,
+                WorkflowRunStatus::Running
+            );
+
+            stream.cancel_and_wait().await?;
+            stream.cancel_and_wait().await?;
+            // No polling here: success itself certifies the database transition has completed.
+            assert_eq!(
+                runs.get(GetWorkflowRunRequest {
+                    run_id: run.id.clone()
+                })?
+                .run
+                .status,
+                WorkflowRunStatus::AwaitingInput
+            );
+            let mut stream = sessions.prompt(held_prompt(&session_id)).await?;
+            first_update(&mut stream).await?;
+            drop(stream);
+            let history_root = setup.backend_paths().app_data_directory.join("sessions");
+            cancelled_history(&history_root, &session_id).await?;
+            loop {
+                if runs
+                    .get(GetWorkflowRunRequest {
+                        run_id: run.id.clone(),
+                    })?
+                    .run
+                    .status
+                    == WorkflowRunStatus::AwaitingInput
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let completed = runs
+                .complete_node(CompleteWorkflowNodeRequest {
+                    run_id: run.id,
+                    node_id: "agent".to_string(),
+                    requester: Some(NodeCompletionRequester::Human),
+                })
+                .await?;
+            assert_eq!(completed.run.status, WorkflowRunStatus::Succeeded);
+            assert_eq!(
+                sessions
+                    .get(GetSessionRequest { session_id })?
+                    .session
+                    .status,
+                SessionStatus::Stopped
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A real-time silence boundary detects policy lost between workflow admission and the actor;
+/// the provider journal proves neither the first turn nor a human follow-up was re-sent.
+/// See specs/test-cases/desktop/core/workflow/prompt-inactivity.md#every-workflow-turn-uses-the-frozen-inactivity-policy.
+#[test]
+fn workflow_first_and_follow_up_turns_keep_waiting_past_the_default_window() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            tokio::time::timeout(Duration::from_secs(75), async {
+                let (setup, backend, workspace_id) = fixture()?;
+                let first_run = start_interactive_workflow(
+                    &backend,
+                    workspace_id.clone(),
+                    "[hold-for-cancel]",
+                    PromptInactivityPolicy::Wait,
+                )?;
+                let follow_up_run = start_interactive_workflow(
+                    &backend,
+                    workspace_id,
+                    "Settle the first turn",
+                    PromptInactivityPolicy::Wait,
+                )?;
+                let runs = backend.workflow_runs();
+                super::workflow_resume::wait_run_status(
+                    &runs,
+                    &follow_up_run.id,
+                    WorkflowRunStatus::AwaitingInput,
+                )
+                .await?;
+                let follow_up_session = runs
+                    .get(GetWorkflowRunRequest {
+                        run_id: follow_up_run.id.clone(),
+                    })?
                     .nodes
                     .into_iter()
                     .find_map(|node| node.session_id)
                     .ok_or("awaiting node has no session")?;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        };
-        let mut stream = sessions.prompt(held_prompt(&session_id)).await?;
-        first_update(&mut stream).await?;
-        assert_eq!(
-            runs.get(GetWorkflowRunRequest {
-                run_id: run.id.clone()
-            })?
-            .run
-            .status,
-            WorkflowRunStatus::Running
-        );
-        // A load owns only its relay. Confirming its cancellation must leave the prompt active.
-        let mut follower = sessions
-            .load(LoadSessionRequest {
-                session_id: session_id.clone(),
-            })
-            .await?;
-        follower.cancel_and_wait().await?;
-        assert_eq!(
-            runs.get(GetWorkflowRunRequest {
-                run_id: run.id.clone()
-            })?
-            .run
-            .status,
-            WorkflowRunStatus::Running
-        );
+                let first_session = loop {
+                    if let Some(session_id) = runs
+                        .get(GetWorkflowRunRequest {
+                            run_id: first_run.id.clone(),
+                        })?
+                        .nodes
+                        .into_iter()
+                        .find_map(|node| node.session_id)
+                    {
+                        break session_id;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                };
+                let sessions = backend.sessions();
+                let mut first = sessions
+                    .load(LoadSessionRequest {
+                        session_id: first_session,
+                    })
+                    .await?;
+                loop {
+                    let event = first
+                        .recv()
+                        .await
+                        .transpose()?
+                        .ok_or("first turn ended early")?;
+                    if matches!(
+                        event,
+                        LoadSessionEvent::SessionUpdate {
+                            update: SessionUpdate::AgentMessageChunk(_),
+                            ..
+                        }
+                    ) {
+                        break;
+                    }
+                }
+                let mut follow_up = sessions.prompt(held_prompt(&follow_up_session)).await?;
+                first_update(&mut follow_up).await?;
+                let package_root = setup
+                    .backend_paths()
+                    .home_directory
+                    .join("plugins")
+                    .join("installed")
+                    .join(super::AGENT_NAMESPACE)
+                    .join(super::AGENT_NAME)
+                    .join("1.0.0");
+                let served = super::workflow_retry::prompted_sessions(&package_root);
+                assert_eq!(served.len(), 3);
 
-        stream.cancel_and_wait().await?;
-        stream.cancel_and_wait().await?;
-        // No polling here: success itself certifies the database transition has completed.
-        assert_eq!(
-            runs.get(GetWorkflowRunRequest {
-                run_id: run.id.clone()
-            })?
-            .run
-            .status,
-            WorkflowRunStatus::AwaitingInput
-        );
-        let mut stream = sessions.prompt(held_prompt(&session_id)).await?;
-        first_update(&mut stream).await?;
-        drop(stream);
-        let history_root = setup.backend_paths().app_data_directory.join("sessions");
-        cancelled_history(&history_root, &session_id).await?;
-        loop {
-            if runs
-                .get(GetWorkflowRunRequest {
-                    run_id: run.id.clone(),
-                })?
-                .run
-                .status
-                == WorkflowRunStatus::AwaitingInput
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let completed = runs
-            .complete_node(CompleteWorkflowNodeRequest {
-                run_id: run.id,
-                node_id: "agent".to_string(),
-                requester: Some(NodeCompletionRequester::Human),
+                // This is the behavior under test, rather than a flush or a scheduling delay:
+                // the external provider stays silent past Ora's first 45-second watchdog.
+                tokio::time::sleep(Duration::from_secs(50)).await;
+                assert_eq!(
+                    super::workflow_retry::prompted_sessions(&package_root),
+                    served
+                );
+                for run_id in [&first_run.id, &follow_up_run.id] {
+                    let detail = runs.get(GetWorkflowRunRequest {
+                        run_id: run_id.clone(),
+                    })?;
+                    assert_eq!(
+                        (
+                            detail.run.status,
+                            detail
+                                .nodes
+                                .into_iter()
+                                .filter(|node| node.session_id.is_some())
+                                .map(|node| node.status)
+                                .collect::<Vec<_>>()
+                        ),
+                        (
+                            WorkflowRunStatus::Running,
+                            vec![WorkflowNodeStatus::Running]
+                        ),
+                    );
+                }
+                follow_up.cancel_and_wait().await?;
+                for run in [first_run, follow_up_run] {
+                    assert_eq!(
+                        runs.cancel(CancelWorkflowRunRequest { run_id: run.id })
+                            .await?
+                            .run
+                            .status,
+                        WorkflowRunStatus::Cancelled
+                    );
+                }
+                drop(first);
+                Ok(())
             })
-            .await?;
-        assert_eq!(completed.run.status, WorkflowRunStatus::Succeeded);
-        assert_eq!(
-            sessions
-                .get(GetSessionRequest { session_id })?
-                .session
-                .status,
-            SessionStatus::Stopped
-        );
-        Ok(())
+            .await?
+        })
     })
 }
 
@@ -352,18 +504,19 @@ fn start_interactive_workflow(
     backend: &Backend,
     workspace_id: String,
     prompt: &str,
+    inactivity_policy: PromptInactivityPolicy,
 ) -> Result<WorkflowRun, Box<dyn std::error::Error>> {
     let graph = serde_json::json!({"nodes":[
         {"id":"start","data":{"kind":"start"}},
         {"id":"agent","data":{"kind":"agent","agentConfig":{
             "executor":{"agentCli":agent_ref(),"modelId":"anthropic/claude-sonnet-4"},
-            "interactive":true,"prompt":prompt
+            "interactive":true,"prompt":prompt,"promptInactivity":inactivity_policy
         }}}
     ],"edges":[{"source":"start","target":"agent"}]});
     let workflow = backend
         .workflows()
         .create(CreateWorkflowRequest {
-            name: "Held workflow".to_string(),
+            name: format!("Held workflow: {prompt}"),
             graph: Some(graph.to_string()),
         })?
         .workflow;

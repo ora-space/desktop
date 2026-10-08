@@ -1,9 +1,3 @@
 {
-  "modules": {
-    "crates/agent-runtime/src/lib.rs": {
-      "owner": "ora-agent-runtime",
-      "lines": 821,
-      "split_plan": "Extract runtime command admission from manager ownership. Preserve the single scheduler, supervisor map and session actors; move the corresponding lifecycle tests with each responsibility. Session creation lives in start.rs, durable record ownership in record.rs, load/attach in load.rs and attach.rs, and replaced-agent repair in replaced.rs."
-    }
-  }
+  "modules": {}
 }

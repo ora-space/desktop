@@ -160,6 +160,9 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
     ) &&
     new Set(config.mcps.map((mcp) => mcp.mcpId)).size === config.mcps.length &&
     typeof config.prompt === "string" &&
+    (config.promptInactivity == null ||
+      config.promptInactivity === "timeout" ||
+      config.promptInactivity === "wait") &&
     validateWorkflowAgentRetry(config.retry).length === 0
   );
 }

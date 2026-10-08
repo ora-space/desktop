@@ -7,8 +7,9 @@ This module adapts workflow-run application use cases to the production backend 
 - `api.rs` composes workflow-run CRUD handlers and worktree provisioning.
 - `engine.rs` builds the production run engine, attaches callbacks, and resumes recoverable runs.
 - `executor.rs` drives agent nodes through Ora sessions, publishes each session only after its
-  owning prompt is admitted, freezes the node's enabled MCP bindings as the Session's explicit
-  permission set, and records node outputs and file changes.
+  owning prompt is admitted, carries the prompt inactivity policy from the frozen node configuration
+  through retries and every composite or interactive turn, freezes the node's enabled MCP bindings
+  as the Session's explicit permission set, and records node outputs and file changes.
 - `prerequisites.rs` resolves roles and freezes required-skill paths through an injected Agent
   delivery-capability provider. Effect owns physical Skill materialization. Skill resolution is
   origin-aware: a local skill resolves through its formal catalog directory and a plugin-imported

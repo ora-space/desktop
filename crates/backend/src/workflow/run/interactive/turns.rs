@@ -1,12 +1,14 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
 use super::CompletingNodeRuns;
+use super::session::HumanTurnAdmission;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
 use ora_contracts::{PromptSessionEvent, PromptSessionRequest};
 use ora_db::RepositoryPool;
+use ora_domain::PromptInactivityPolicy;
 use std::sync::Arc;
 
 /// Grants only human-turn coordination to Sessions, not workflow scheduling or completion control.
@@ -43,7 +45,7 @@ impl WorkflowSessionTurns {
         agent_runtime: &AgentRuntimeManager,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
-        let node_run_id = crate::workflow::run::interactive::begin_human_turn(
+        let admission = crate::workflow::run::interactive::begin_human_turn(
             &self.pool,
             &self.run_locks,
             &self.completing_node_runs,
@@ -51,11 +53,20 @@ impl WorkflowSessionTurns {
             &request.session_id,
         )
         .await?;
-        let stream = match agent_runtime.prompt_session(request).await {
+        let prompt_inactivity = match &admission {
+            HumanTurnAdmission::Ordinary => PromptInactivityPolicy::Timeout,
+            HumanTurnAdmission::Workflow {
+                prompt_inactivity, ..
+            } => *prompt_inactivity,
+        };
+        let stream = match agent_runtime
+            .prompt_session_with_inactivity_policy(request, prompt_inactivity)
+            .await
+        {
             Ok(stream) => SessionEventStream::from(stream),
             Err(error) => {
                 // The turn never started; put the awaiting node back where it was.
-                if let Some(node_run_id) = node_run_id.as_ref() {
+                if let HumanTurnAdmission::Workflow { node_run_id, .. } = &admission {
                     crate::workflow::run::interactive::end_human_turn(
                         &self.transitions,
                         node_run_id,
@@ -65,7 +76,7 @@ impl WorkflowSessionTurns {
                 return Err(error.into());
             }
         };
-        let Some(node_run_id) = node_run_id else {
+        let HumanTurnAdmission::Workflow { node_run_id, .. } = admission else {
             return Ok(stream);
         };
         let transitions = self.transitions.clone();

@@ -8,6 +8,7 @@
 mod actor;
 mod attach;
 mod clock;
+mod command;
 mod connection;
 mod error;
 mod events;
@@ -71,6 +72,7 @@ pub use stream::SessionEventStream;
 
 use attach::RebuiltBinding;
 use clock::SystemClock;
+use command::RuntimeCommand;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
@@ -81,7 +83,6 @@ use title_acquisition::TitleAcquisition;
 
 use agent_client_protocol_schema::v1::{
     ContentBlock, MessageId, SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
-    SessionUpdate,
 };
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_contracts::{
@@ -93,8 +94,8 @@ use ora_contracts::{
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{
-    AgentRef, HistoryState, Session, SessionId, SessionMcpSelection, SessionStatus, SessionTitle,
-    WorkspaceId,
+    AgentRef, HistoryState, PromptInactivityPolicy, Session, SessionId, SessionMcpSelection,
+    SessionStatus, SessionTitle, WorkspaceId,
 };
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
@@ -139,65 +140,6 @@ struct ManagerInner<H: AgentRuntimeHost> {
 #[derive(Clone)]
 struct RuntimeActorHandle {
     commands: mpsc::UnboundedSender<RuntimeCommand>,
-}
-
-pub(crate) enum RuntimeCommand {
-    /// The agent's process was replaced, so every provider-side session it held is gone.
-    ///
-    /// Broadcast rather than addressed, because the actor registry is keyed by Ora session and one
-    /// agent's connection is shared by every Workspace; each actor decides whether it is bound to
-    /// the replaced agent.
-    AgentProcessReplaced {
-        agent: AgentRef,
-    },
-    McpDesiredMaybeChanged,
-    Load {
-        cleanup: oneshot::Sender<Result<(), RuntimeError>>,
-        operation_id: u64,
-        events: mpsc::Sender<Result<LoadSessionEvent, RuntimeError>>,
-        accepted: oneshot::Sender<Result<(), RuntimeError>>,
-    },
-    Prompt {
-        operation_id: u64,
-        prompt: Vec<ContentBlock>,
-        record_prompt: RecordedTurn,
-        /// Applied by the attach this prompt performs, and ignored when none is needed.
-        model: Option<String>,
-        events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
-        accepted: oneshot::Sender<Result<(), RuntimeError>>,
-    },
-    RespondToPermission {
-        request: RespondToPermissionRequest,
-        response: oneshot::Sender<Result<RespondToPermissionResponse, RuntimeError>>,
-    },
-    Stop {
-        response: oneshot::Sender<Result<StopSessionResponse, RuntimeError>>,
-    },
-    CancelActivePrompt,
-    Cancel {
-        operation_id: u64,
-        completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,
-    },
-    /// A caller outside the actor is about to address this session's provider directly.
-    ///
-    /// Answers with the provider session it must address. That is not always the binding in the
-    /// row: a session rebuilt to replace one that could not be restored is only persisted once the
-    /// prompt carrying the transcript is accepted, so until then the actor is the only holder of
-    /// the identity the agent actually answers to. Standing down title polling comes with it,
-    /// because the reply is the point at which the caller starts using that identity.
-    ClaimDirectProviderCall {
-        response: oneshot::Sender<String>,
-    },
-    AdoptUserTitle {
-        title: SessionTitle,
-        response: oneshot::Sender<()>,
-    },
-    TitlePoll {
-        attempt: title_acquisition::PollAttempt,
-    },
-    TitleUpdate {
-        update: Box<SessionUpdate>,
-    },
 }
 
 struct RuntimeActor<H: AgentRuntimeHost> {

@@ -125,6 +125,16 @@ Ordinary chats keep automatic discovery. Package and configuration updates for s
 still use the existing safe refresh boundary; no credentials are persisted in the graph. See
 [Session MCP](session-mcp.md) for runtime delivery and refresh behavior.
 
+## Agent-node prompt inactivity
+
+The Agent inspector's **When no progress is reported** setting is independent of **Automatic retry after failure**. **Use default timeout handling** preserves the runtime's 45/60/90/120-second inactivity windows. **Keep waiting** is intended for long-running work whose subagent progress is not reported on the parent session: silence alone does not cancel, re-send, or fail that prompt. A stuck execution may need to be stopped manually; real session errors still follow the node's failure retry policy.
+
+The optional graph field is `agentConfig.promptInactivity: "timeout" | "wait"`. Missing or `null` uses `"timeout"`; other values are rejected for executable nodes. Opening an old graph or changing another setting does not add this field. Save, publish, duplicate, and import/export preserve an explicit value without a schema-version or database migration.
+
+The run's frozen graph supplies the policy for every prompt, including node retries, Loop and Iteration rounds, and follow-up messages on interactive nodes. The read-only run inspector shows that frozen policy. Draft edits affect later runs only. A waiting prompt remains running; it is not a node waiting for a retry or an interactive node awaiting human input. Manual stop, owning-stream cleanup, provider exit, connection failure, and application shutdown still terminate or clean up the prompt. MCP/session setup and configuration deadlines remain active; ordinary chat keeps default timeout handling. See [Agent runtime](agent-runtime.md#prompt-inactivity-and-retries).
+
+To apply this setting to an existing workflow such as `ora-cdase`, set the long-running Agent node to **Keep waiting**, save and publish a new snapshot, and start a new run. Existing runs keep their original frozen configuration.
+
 ## Variable Aggregator
 
 The aggregator is a swift control node that collapses mutually exclusive branch outputs into one
@@ -411,7 +421,7 @@ of the same `(node_id, iteration)` already recovered from, even after a resume o
 cleared that attempt, so the next Loop round (or a Loop restarted from round 1) does not inherit
 a failure that was already retried away. It also ignores rows that never started (a waiting row
 that a restart failed), so the attempt that really failed is the one injected. The prompt stall resend inside one session is a
-separate mechanism and is unchanged.
+separate mechanism controlled by the node's prompt inactivity policy; `"wait"` disables only that silence-triggered resend, not retry after a real node failure.
 
 The retries a row has used ride on `payload.auto_retry = {retry, max_retries}`. Rows without it
 — a first attempt, a manually resumed attempt, an attempt after a restart — start a fresh

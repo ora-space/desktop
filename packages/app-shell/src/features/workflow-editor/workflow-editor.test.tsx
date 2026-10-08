@@ -23,6 +23,7 @@ import {
   type DemoWorkflow,
 } from "@ora/workflow-mock";
 import {
+  parseWorkflowGraph,
   serializeWorkflowGraph,
   type WorkflowDefinitionEdge,
   type WorkflowDefinitionNode,
@@ -2180,6 +2181,7 @@ describe("WorkflowEditor", () => {
     }
     agent.data.agentConfig = {
       ...agent.data.agentConfig,
+      promptInactivity: "wait",
       mcps: [{ mcpId: "acme/missing-mcp", enabled: true }],
       skills: [{ skillId: "openspec-explore", enabled: true }],
     };
@@ -2251,6 +2253,11 @@ describe("WorkflowEditor", () => {
       expect(record?.published.map((snapshot) => snapshot.version)).toEqual([
         "v9",
       ]);
+      expect(
+        parseWorkflowGraph(record!.published[0]!.graph).nodes.find(
+          (node) => node.id === agent.id,
+        )?.data.agentConfig,
+      ).toEqual(agent.data.agentConfig);
     });
     expect(await screen.findByDisplayValue("导入的审查")).toBeInTheDocument();
     expect(screen.getByText("新导入")).toBeInTheDocument();

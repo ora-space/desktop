@@ -10,6 +10,7 @@ use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, RequestId, StopReason};
 use ora_contracts::PromptSessionEvent;
+use ora_domain::PromptInactivityPolicy;
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -40,7 +41,17 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     permissions: &mut HashMap<String, (RequestId, Vec<String>)>,
     request: &PromptRequest,
 ) -> StalledPrompt {
-    ora_warn!(session_id = %actor.session.id, "prompt inactive; cancelling stalled attempt");
+    let snapshot = liveness.snapshot();
+    ora_warn!(
+        session_id = %actor.session.id,
+        policy = ?PromptInactivityPolicy::Timeout,
+        attempt = snapshot.attempt,
+        window_ms = snapshot.window.as_secs_f64() * 1000.0,
+        silent_elapsed_ms = snapshot.silent_elapsed.as_secs_f64() * 1000.0,
+        running_tools = snapshot.running_tools,
+        pending_tools = snapshot.pending_tools,
+        "prompt inactive; cancelling stalled attempt"
+    );
     let client = channel.connection.client.clone();
     actor.cancel(&client, permissions).await;
     let settled = timeout(
@@ -48,6 +59,20 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         settle_cancelled_prompt(actor, channel, &client, pending, events),
     )
     .await;
+    let (cancellation_result, stop_reason) = match &settled {
+        Ok(Some(Ok(response))) => ("response", Some(response.stop_reason)),
+        Ok(Some(Err(_))) => ("request_error", None),
+        Ok(None) => ("channel_closed", None),
+        Err(_) => ("grace_expired", None),
+    };
+    ora_warn!(
+        session_id = %actor.session.id,
+        policy = ?PromptInactivityPolicy::Timeout,
+        attempt = snapshot.attempt,
+        cancellation_result,
+        stop_reason = ?stop_reason,
+        "inactive prompt cancellation settled"
+    );
     // Only a cancellation the agent itself confirmed leaves the provider session in a
     // state a new prompt can share. A response with another stop reason means the
     // agent finished the turn at the boundary, and a late or missing fence means it

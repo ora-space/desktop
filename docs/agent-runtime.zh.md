@@ -90,28 +90,32 @@ history replay 是唯一主动施加背压而非快速失败的 stream，因为�
 
 ## 超时与限制
 
-| 边界                                  | 值                                                                     |
-| ------------------------------------- | ---------------------------------------------------------------------- |
-| `initialize` 握手                     | 15 秒                                                                  |
-| 插件模型发现                          | 60 秒                                                                  |
-| Session setup/load inactivity         | 30 秒；携带 MCP 服务时为 120 秒；每条 setup 或 session update 都会重置 |
-| Prompt meaningful-activity inactivity | 首次 45 秒，之后每次重试 60/90/120 秒；工具运行和权限等待期间暂停      |
-| Prompt 停滞重试                       | 每个 prompt 最多重发 3 次，同一 provider session                       |
-| 取消收敛 grace                        | 5 秒                                                                   |
-| 连接重试退避                          | 250 ms 起，倍增至 30 秒上限                                            |
-| 连接失败熔断                          | 1 分钟内超过 3 次失败                                                  |
-| Session 标题 list 请求                | 每次 5 秒                                                              |
-| 首标题 fallback                       | 首个符合条件 prompt 后 3 秒和 10 秒                                    |
-| Session update/event 队列             | 256 项                                                                 |
-| JSON-RPC frame                        | 8 MiB                                                                  |
-| 序列化 structured prompt              | 16 MiB                                                                 |
-| handoff transcript                    | 无上限                                                                 |
+| 边界                                  | 值                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------- |
+| `initialize` 握手                     | 15 秒                                                                               |
+| 插件模型发现                          | 60 秒                                                                               |
+| Session setup/load inactivity         | 30 秒；携带 MCP 服务时为 120 秒；每条 setup 或 session update 都会重置              |
+| Prompt meaningful-activity inactivity | 默认首次 45 秒，重试 60/90/120 秒；工具运行和权限等待期间暂停；工作流节点可持续等待 |
+| Prompt 停滞重试                       | 每个 prompt 最多重发 3 次，同一 provider session                                    |
+| 取消收敛 grace                        | 5 秒                                                                                |
+| 连接重试退避                          | 250 ms 起，倍增至 30 秒上限                                                         |
+| 连接失败熔断                          | 1 分钟内超过 3 次失败                                                               |
+| Session 标题 list 请求                | 每次 5 秒                                                                           |
+| 首标题 fallback                       | 首个符合条件 prompt 后 3 秒和 10 秒                                                 |
+| Session update/event 队列             | 256 项                                                                              |
+| JSON-RPC frame                        | 8 MiB                                                                               |
+| 序列化 structured prompt              | 16 MiB                                                                              |
+| handoff transcript                    | 无上限                                                                              |
 
 ### Session setup 非活跃窗口
 
 `session/new` 与 `session/load` 等待的是非活跃 deadline，而不是总时长预算。携带 MCP 服务时，窗口放宽到 120 秒：ACP 的 session-setup 时序要求 Agent 在响应前先连接投递的 MCP 服务，而真实的 MCP 初始化——冷启动的 stdio 包、远程 HTTP 握手——动辄数十秒，固定 30 秒会把“慢但正确”的 Agent 在连接中途判死。不携带服务的请求保持 30 秒窗口，因为此时 Agent 没有任何必须连接的工作。Agent 在 provider session id 揭晓前发出的通知会重置 deadline——该信号是连接级的，因为响应到达前无法得知这个 id——因此持续上报进度的 Agent 不会被时钟切断，而沉默超过窗口的 Agent 以 `agent_timed_out` 失败。
 
 ### Prompt 无活动与重试
+
+每个 prompt 都有 `PromptInactivityPolicy`：`Timeout` 使用下文的默认无活动与重试规则，`Wait` 持续等待，不会仅因静默而取消、重发或失败该 prompt。普通聊天和未显式配置的工作流使用 `Timeout`。工作流 Agent 节点可设置 `agentConfig.promptInactivity: "wait"`，其冻结配置覆盖首轮、节点重试、Loop 与 Iteration 执行，以及交互节点的后续人工消息。公共聊天请求不暴露该策略，修改草稿不会改变正在运行的策略。
+
+`Wait` 无法区分仍在工作的隐藏子代理和卡住的 provider，用户可能需要手动停止执行。正常响应、provider 错误、断连、队列溢出、显式取消、owning stream 清理和运行时关闭仍照常处理。Session setup、MCP 初始化、配置交换的 deadline，以及 5 秒取消收敛 grace 仍然有效。其他 provider session 的进展不会保活当前 prompt；`SessionFollowers` 向其他界面广播同一会话，并不跟踪子代理。
 
 Prompt deadline 是 inactivity timer，不是总预算。Agent message、thought、plan 和 tool lifecycle update 会证明 prompt 前进并重置窗口。`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update` 属于 session chrome：即使 prompt 卡住也可能继续出现，因此不刷新 deadline。
 
@@ -120,6 +124,8 @@ Prompt deadline 是 inactivity timer，不是总预算。Agent message、thought
 窗口到期时 runtime 不会立刻放弃这个 prompt。它先发送 `session/cancel`，在 5 秒 grace 内等待停滞的那次 `session/prompt` 请求返回响应；如果响应带着 `stop_reason: cancelled` 到达，且重试计划还有剩余窗口，就在同一个 provider session 上重发相同的 prompt block，并先在 owning stream 上发出 `retrying { retry, maxRetries }`，让客户端能把后续输出归属到这次重试。窗口按尝试次数逐级放宽（首次 45 秒，三次重试分别 60、90、120 秒）：熬过第一个窗口的停滞更可能是上游变慢而不是偶发抖动，而每次重试都是一次新的 LLM turn。响应栅栏是硬条件：ACP update 不带 request id，只有 Agent 亲自确认停滞的 turn 已结束，才能证明它残留的在途输出不会被误认为重试的输出。栅栏迟到或缺失、响应带其他 stop reason、或重试计划用尽，都会以 `agent_timed_out` 失败该 prompt 并只隔离该 Session，与不重试的超时行为一致。
 
 重试不会调用 `session/close`，也不会重复记录 prompt：turn 只保留一条用户消息，工具计时覆盖整个 turn，prompt 携带的 transcript handoff 在第一次被接受的发送时即已结清。停滞尝试在取消前已经产出的内容仍保留在记录和界面上；重试会重新回答同一个 prompt，因此已经开始作答的 Agent 可能重复自己。Session follower 看到的是一个连续的 turn；只有 owning prompt stream 收到 `retrying` 标记，重新加载的 transcript 不携带该标记。
+
+Prompt 的结构化诊断记录实际策略；无活动取消还记录当前尝试与窗口、静默时长、运行中和 pending 工具数量，以及取消响应结果。无需收集模型内容或工具参数，就能区分 prompt 停滞与 setup 超时。
 
 Prompt 以有序 ACP `ContentBlock` 传递，包括文本、图片、音频、resource link 和 embedded resource。空列表、纯空白文本会被拒绝，16 MiB 限制在发送到 provider 前按序列化 JSON 计算。
 

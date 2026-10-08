@@ -1,4 +1,5 @@
 use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus};
+use ora_domain::PromptInactivityPolicy;
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -16,6 +17,7 @@ pub(super) struct PromptLiveness {
     deadline: Instant,
     running_tools: HashSet<ToolCallId>,
     pending_tools: HashSet<ToolCallId>,
+    seen_pending_tools: HashSet<ToolCallId>,
 }
 
 /// Identifies one automatic re-send of a stalled prompt, counted from the first retry.
@@ -23,6 +25,16 @@ pub(super) struct PromptLiveness {
 pub(super) struct PromptRetry {
     pub(super) retry: u32,
     pub(super) max_retries: u32,
+}
+
+/// Bounded, content-free evidence explaining an inactivity decision for the current attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PromptLivenessSnapshot {
+    pub(super) attempt: usize,
+    pub(super) window: Duration,
+    pub(super) silent_elapsed: Duration,
+    pub(super) running_tools: usize,
+    pub(super) pending_tools: usize,
 }
 
 impl PromptLiveness {
@@ -40,6 +52,7 @@ impl PromptLiveness {
             deadline: now,
             running_tools: HashSet::new(),
             pending_tools: HashSet::new(),
+            seen_pending_tools: HashSet::new(),
         };
         liveness.reset_at(now);
         liveness
@@ -50,11 +63,27 @@ impl PromptLiveness {
         self.running_tools.is_empty().then_some(self.deadline)
     }
 
-    /// Waits until the active deadline, or forever while a running tool pauses it.
-    pub(super) async fn wait(&self) {
-        match self.deadline() {
-            Some(deadline) => tokio::time::sleep_until(deadline).await,
-            None => std::future::pending().await,
+    /// Captures the exact window and tool ownership used by an inactivity decision.
+    pub(super) fn snapshot(&self) -> PromptLivenessSnapshot {
+        let window = self.windows[self.attempt];
+        PromptLivenessSnapshot {
+            attempt: self.attempt + 1,
+            window,
+            silent_elapsed: Instant::now().saturating_duration_since(self.deadline - window),
+            running_tools: self.running_tools.len(),
+            pending_tools: self.pending_tools.len(),
+        }
+    }
+
+    /// Waits only for an enabled deadline; tools and an explicit wait policy keep other actor
+    /// inputs responsive without treating silence as permission to cancel the prompt.
+    pub(super) async fn wait(&self, policy: PromptInactivityPolicy) {
+        match policy {
+            PromptInactivityPolicy::Timeout => match self.deadline() {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            },
+            PromptInactivityPolicy::Wait => std::future::pending().await,
         }
     }
 
@@ -75,6 +104,7 @@ impl PromptLiveness {
         self.attempt += 1;
         self.running_tools.clear();
         self.pending_tools.clear();
+        self.seen_pending_tools.clear();
         self.reset_at(now);
         Some(PromptRetry {
             retry: u32::try_from(self.attempt).unwrap_or(u32::MAX),
@@ -116,14 +146,17 @@ impl PromptLiveness {
     fn observe_tool(&mut self, id: &ToolCallId, status: Option<ToolCallStatus>, now: Instant) {
         match status {
             Some(ToolCallStatus::Pending) => {
-                if self.pending_tools.insert(id.clone()) {
+                self.pending_tools.insert(id.clone());
+                if self.seen_pending_tools.insert(id.clone()) {
                     self.reset_at(now);
                 }
             }
             Some(ToolCallStatus::InProgress) => {
+                self.pending_tools.remove(id);
                 self.running_tools.insert(id.clone());
             }
             Some(ToolCallStatus::Completed | ToolCallStatus::Failed) => {
+                self.pending_tools.remove(id);
                 self.running_tools.remove(id);
                 if self.running_tools.is_empty() {
                     self.reset_at(now);
@@ -140,7 +173,7 @@ impl PromptLiveness {
 
 #[cfg(test)]
 mod tests {
-    use super::{PromptLiveness, PromptRetry};
+    use super::{PromptLiveness, PromptLivenessSnapshot, PromptRetry};
     use agent_client_protocol_schema::v1::{
         Plan, SessionUpdate, ToolCall, ToolCallStatus, UsageUpdate,
     };
@@ -154,6 +187,72 @@ mod tests {
         Duration::from_secs(60),
         Duration::from_secs(90),
     ];
+
+    /// Diagnostics distinguish currently pending work from ids remembered for rearm deduplication.
+    #[tokio::test(start_paused = true)]
+    async fn snapshots_track_current_tools_and_the_attempt_window() {
+        let mut liveness = PromptLiveness::new(&WIDENING_WINDOWS);
+        let pending = SessionUpdate::ToolCall(
+            ToolCall::new("delegate", "Explore").status(ToolCallStatus::Pending),
+        );
+        liveness.observe(&pending);
+        tokio::time::advance(Duration::from_secs(10)).await;
+        liveness.observe(&pending);
+        assert_eq!(
+            liveness.snapshot(),
+            PromptLivenessSnapshot {
+                attempt: 1,
+                window: Duration::from_secs(45),
+                silent_elapsed: Duration::from_secs(10),
+                running_tools: 0,
+                pending_tools: 1,
+            }
+        );
+        liveness.observe(&SessionUpdate::ToolCall(
+            ToolCall::new("delegate", "Explore").status(ToolCallStatus::InProgress),
+        ));
+        assert_eq!(
+            liveness.snapshot(),
+            PromptLivenessSnapshot {
+                attempt: 1,
+                window: Duration::from_secs(45),
+                silent_elapsed: Duration::from_secs(10),
+                running_tools: 1,
+                pending_tools: 0,
+            }
+        );
+        liveness.observe(&SessionUpdate::ToolCall(
+            ToolCall::new("delegate", "Explore").status(ToolCallStatus::Completed),
+        ));
+        liveness.observe(&SessionUpdate::ToolCall(
+            ToolCall::new("rejected", "Rejected").status(ToolCallStatus::Pending),
+        ));
+        liveness.observe(&SessionUpdate::ToolCall(
+            ToolCall::new("rejected", "Rejected").status(ToolCallStatus::Failed),
+        ));
+        assert_eq!(
+            liveness.snapshot(),
+            PromptLivenessSnapshot {
+                attempt: 1,
+                window: Duration::from_secs(45),
+                silent_elapsed: Duration::ZERO,
+                running_tools: 0,
+                pending_tools: 0,
+            }
+        );
+        liveness.next_attempt();
+        liveness.observe(&pending);
+        assert_eq!(
+            liveness.snapshot(),
+            PromptLivenessSnapshot {
+                attempt: 2,
+                window: Duration::from_secs(60),
+                silent_elapsed: Duration::ZERO,
+                running_tools: 0,
+                pending_tools: 1,
+            }
+        );
+    }
 
     #[test]
     fn meaningful_activity_rearms_but_session_chrome_does_not() {
