@@ -153,7 +153,7 @@ fn stopped_node_settles_its_interrupted_clone_before_exit() {
 #[test]
 fn command_deadline_settles_clone_as_interrupted() {
     ora_logging::with_trace_logging(|| {
-        let fixture = Fixture::new();
+        let fixture = Fixture::for_command_deadline();
         fixture.git(&["update-server-info"]);
         let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
         server.paused.store(true, Ordering::SeqCst);

@@ -15,9 +15,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Each fixture starts several native processes. Bound fixture concurrency independently of
+// libtest's CPU-count default, while preserving concurrency exercised inside each test.
+const CONCURRENT_PROCESS_FIXTURES: u32 = 4;
+static PROCESS_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(CONCURRENT_PROCESS_FIXTURES as usize);
+
 pub struct Fixture {
     directory: tempfile::TempDir,
     host: ChildGuard,
+    // Release only after the fixture's children and directory have been torn down.
+    _process_slots: tokio::sync::SemaphorePermit<'static>,
 }
 pub struct ChildGuard(pub Child);
 impl ChildGuard {
@@ -57,6 +65,23 @@ impl WriteGuard for BeforeMutation {
 impl Fixture {
     /// Deploys unique trusted binaries and explicitly separate Node, host, repository and HOME paths.
     pub fn new() -> Self {
+        Self::with_process_slots(/*slots*/ 1)
+    }
+
+    /// Isolates the command-deadline precondition from unrelated fixture process startup.
+    pub fn for_command_deadline() -> Self {
+        Self::with_process_slots(CONCURRENT_PROCESS_FIXTURES)
+    }
+
+    /// Keeps normal fixtures concurrent while giving deadline tests an explicit scheduling boundary.
+    fn with_process_slots(slots: u32) -> Self {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // The fair semaphore lets the deadline fixture reserve the whole budget before
+        // bootstrap. Its unchanged 500ms deadline then tests running Git, not admission delay.
+        let process_slots = rt.block_on(PROCESS_SLOTS.acquire_many(slots)).unwrap();
         ora_logging::initialize_test_clock();
         let parent = PathBuf::from(std::env::var_os("HOME").unwrap())
             .canonicalize()
@@ -93,11 +118,11 @@ impl Fixture {
                 .spawn()
                 .unwrap(),
         );
-        let mut fixture = Self { directory, host };
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+        let mut fixture = Self {
+            directory,
+            host,
+            _process_slots: process_slots,
+        };
         let client = ProcessHost::new(fixture.path().join("host"), fixture.uid());
         until(|| {
             assert!(fixture.host.0.try_wait().unwrap().is_none());
