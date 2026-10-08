@@ -147,6 +147,11 @@ does: its Git work, or a proxy it opts into that is absent or unusable. Only fai
 own state — the proxy settings, the configured sources, their namespace bindings — fails the whole
 refresh.
 
+Each source's proxy switch alone decides how its Git work connects. Ora pins the route as
+command-scoped Git config for the source's origin and full URL, which outranks the user's
+`http.proxy`, URL-scoped `http.<url>.proxy` entries and `*_proxy` environment variables: a source
+that opts in always uses Ora's proxy, and one that opts out always connects directly.
+
 The failures travel with the cached index and are returned by both `list_available_plugins` and
 `sync_available_plugins`, so the shell names the sources whose listings are stale instead of
 presenting a partly stale catalog as freshly synced. Each failure carries only Git's own

@@ -42,25 +42,37 @@ pub(crate) fn download_proxy(
     }))
 }
 
-/// Builds the environment used by Git network commands when a source opts into proxying.
+/// Selects how Git reaches one remote, independent of the user's own Git proxy configuration.
+pub(crate) enum GitProxyRoute<'a> {
+    /// Connect without any proxy, even if Git config or the environment names one.
+    Direct,
+    /// Connect through the proxy Ora is configured with.
+    Proxy(&'a NetworkProxySettings),
+}
+
+/// Builds the environment that pins Git's proxy for `remote_url` to `route`.
+///
+/// Git prefers `http.<url>.proxy` over `http.proxy`, and either over the `*_proxy` environment
+/// variables, so the route is written as config for both the remote's origin and its full URL:
+/// the origin entry outranks a user's host-wide entry and still applies when the checkout's
+/// recorded remote is spelled differently, while the full-URL entry outranks a user's path-scoped
+/// entry. An empty value disables proxying outright, which is what keeps a direct source direct.
 pub(crate) fn git_proxy_env(
-    settings: Option<&NetworkProxySettings>,
-) -> Result<Option<GitEnv>, BackendError> {
-    let Some(settings) = settings else {
-        return Ok(None);
+    remote_url: &str,
+    route: GitProxyRoute<'_>,
+) -> Result<GitEnv, BackendError> {
+    let origin = Url::parse(remote_url)
+        .map_err(|error| BackendError::internal("marketplace source URL is invalid", error))?
+        .origin()
+        .ascii_serialization();
+    let proxy_url = match route {
+        GitProxyRoute::Direct => String::new(),
+        GitProxyRoute::Proxy(settings) => proxy_endpoint_with_credentials(settings)?.into(),
     };
-    let proxy_url = proxy_endpoint_with_credentials(settings)?;
-    let proxy_url = proxy_url.as_str();
 
-    let env = GitEnv::automation_defaults()
-        .with_variable("http_proxy", proxy_url)
-        .with_variable("HTTP_PROXY", proxy_url)
-        .with_variable("https_proxy", proxy_url)
-        .with_variable("HTTPS_PROXY", proxy_url)
-        .with_variable("all_proxy", proxy_url)
-        .with_variable("ALL_PROXY", proxy_url);
-
-    Ok(Some(env))
+    Ok(GitEnv::automation_defaults()
+        .with_config(format!("http.{origin}.proxy"), proxy_url.as_str())
+        .with_config(format!("http.{remote_url}.proxy"), proxy_url))
 }
 
 /// Returns the plain endpoint URL from user-provided proxy settings.
@@ -144,5 +156,108 @@ pub(crate) async fn check_proxy(
         Err(error) => Ok(CheckProxySettingsResponse::Unreachable {
             message: error.to_string(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gitlancer::{CliGitRunner, GitCommand, GitExecError, GitIntent, GitRunner};
+    use pretty_assertions::assert_eq;
+    use std::path::Path;
+
+    /// Remote that never resolves, so every probe fails offline with a message naming its route.
+    const REMOTE_URL: &str = "https://example.invalid/org/marketplace.git";
+
+    /// User Git config that proxies the remote at every scope Git lets a user pick.
+    const USER_PROXY_CONFIG: &str = "[http]\n\tproxy = http://user-proxy.invalid:1\n\
+        [http \"https://example.invalid\"]\n\tproxy = http://user-proxy.invalid:1\n\
+        [http \"https://example.invalid/org\"]\n\tproxy = http://user-proxy.invalid:1\n";
+
+    /// Returns proxy settings that point at a host which never resolves.
+    fn ora_proxy_settings() -> NetworkProxySettings {
+        NetworkProxySettings {
+            host: "ora-proxy.invalid".to_owned(),
+            port: 8080,
+            username: Some("user".to_owned()),
+            password: Some("secret".to_owned()),
+        }
+    }
+
+    /// Runs `git ls-remote` for the remote under `env` with `global_config` as the user's Git
+    /// config, returning stderr so the caller can see which route Git took.
+    fn ls_remote_stderr(env: GitEnv, global_config: &Path) -> String {
+        let command = GitCommand::new(
+            global_config.parent().expect("config parent").to_path_buf(),
+            vec!["ls-remote".to_owned(), REMOTE_URL.to_owned()],
+            env.with_variable("GIT_CONFIG_GLOBAL", global_config.to_string_lossy())
+                .with_variable("GIT_CONFIG_NOSYSTEM", "1"),
+            GitIntent::Network,
+        );
+        match CliGitRunner.run(&command) {
+            Err(GitExecError::NonZeroExit { stderr, .. }) => stderr,
+            other => panic!("expected ls-remote to fail, got {other:?}"),
+        }
+    }
+
+    /// Verifies both routes pin the remote's origin and full URL, with credentials embedded only
+    /// when proxying.
+    #[test]
+    fn git_proxy_env_pins_origin_and_full_url() {
+        let settings = ora_proxy_settings();
+
+        assert_eq!(
+            (
+                git_proxy_env(REMOTE_URL, GitProxyRoute::Direct).expect("direct env"),
+                git_proxy_env(REMOTE_URL, GitProxyRoute::Proxy(&settings)).expect("proxy env"),
+            ),
+            (
+                GitEnv::automation_defaults()
+                    .with_config("http.https://example.invalid.proxy", "")
+                    .with_config(format!("http.{REMOTE_URL}.proxy"), ""),
+                GitEnv::automation_defaults()
+                    .with_config(
+                        "http.https://example.invalid.proxy",
+                        "http://user:secret@ora-proxy.invalid:8080/",
+                    )
+                    .with_config(
+                        format!("http.{REMOTE_URL}.proxy"),
+                        "http://user:secret@ora-proxy.invalid:8080/",
+                    ),
+            )
+        );
+    }
+
+    /// Verifies a direct route bypasses every proxy the user's Git config names.
+    #[test]
+    fn direct_route_overrides_user_git_proxy() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let config = temp.path().join("gitconfig");
+        std::fs::write(&config, USER_PROXY_CONFIG).expect("write user config");
+        let env = git_proxy_env(REMOTE_URL, GitProxyRoute::Direct).expect("direct env");
+
+        let stderr = ls_remote_stderr(env, &config);
+
+        assert!(
+            stderr.contains("Could not resolve host: example.invalid"),
+            "{stderr}"
+        );
+    }
+
+    /// Verifies a proxied route uses Ora's proxy over every proxy the user's Git config names.
+    #[test]
+    fn proxy_route_overrides_user_git_proxy() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let config = temp.path().join("gitconfig");
+        std::fs::write(&config, USER_PROXY_CONFIG).expect("write user config");
+        let settings = ora_proxy_settings();
+        let env = git_proxy_env(REMOTE_URL, GitProxyRoute::Proxy(&settings)).expect("proxy env");
+
+        let stderr = ls_remote_stderr(env, &config);
+
+        assert!(
+            stderr.contains("Could not resolve proxy: ora-proxy.invalid"),
+            "{stderr}"
+        );
     }
 }
