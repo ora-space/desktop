@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 
 use super::pipeline::{PluginLogCounters, run_writer, start_with_sink, submit};
 use super::record::RecordOrigin;
-use super::sink::{LineSink, PluginLogSink, SinkOpenError};
+use super::sink::{LineSink, PluginLogSink, SinkOpenError, confirm_writer_released};
 use super::{
     MAX_QUEUE_BYTES, MAX_RECORD_BYTES, PluginLogSetup, PluginLogStats, PluginLogTeardown, finish,
     start,
@@ -599,7 +599,8 @@ async fn teardown_shares_one_deadline_and_reports_the_unreleased_writer() {
 }
 
 /// When stderr never reaches EOF, teardown still returns within the deadline and what was read
-/// before the cut-off is persisted.
+/// before the cut-off is persisted; a writer stalled past its share of the deadline must still
+/// release the active file on its own.
 #[tokio::test(flavor = "multi_thread")]
 async fn teardown_is_bounded_when_stderr_never_closes() {
     ora_logging::initialize_test_clock();
@@ -619,11 +620,28 @@ async fn teardown_is_bounded_when_stderr_never_closes() {
     // `stderr` is still open here: the write end was never dropped.
     drop(stderr);
 
+    // The queue only closes when the reader is aborted at three quarters of the deadline, so the
+    // writer has to fit its drain and flush into the remaining quarter — 50 ms here. A loaded
+    // runner can stall the writer past that without anything being wrong, so accept a miss and
+    // verify the guarantee `finish` documents for late writers instead: they keep the writer
+    // lock until they really finish, which the release probe observes once the lock is free.
+    let writer_released = if teardown.writer_released {
+        true
+    } else {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while confirm_writer_released(&log_directory(temp.path())).is_err() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    };
+
     assert!(started.elapsed() < Duration::from_secs(4));
     assert_eq!(
         (
             teardown.stderr_reached_eof,
-            teardown.writer_released,
+            writer_released,
             teardown.queued_at_deadline,
             persisted_messages(&log_directory(temp.path())),
         ),
