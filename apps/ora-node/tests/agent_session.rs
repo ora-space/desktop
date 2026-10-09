@@ -485,3 +485,52 @@ async fn failed_command_settlement_never_runs_the_queued_turn() {
     );
     sessions.shutdown().await;
 }
+
+/// With a separate workload the agent runs from the session's package view with the session's
+/// own home, and the session directory is gone once the session ended.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_separate_workload_runs_the_agent_from_its_session_directory() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions_with(PLUGIN_VERSION, fixture.separate_workload());
+    fixture.start(&sessions, PLUGIN_VERSION, "[env]");
+    let answer = until(|| {
+        fixture.ledger.events().iter().find_map(|event| {
+            (field(&event.record, &["update", "sessionUpdate"]) == "agent_message_chunk")
+                .then(|| field(&event.record, &["update", "content", "text"]))
+        })
+    })
+    .await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    let ended = fixture.ended().await;
+
+    let name = ora_utils::hash::sha256_hex(EXECUTION.as_bytes());
+    // The working directory is reported resolved; HOME is passed exactly as configured.
+    let resolved = fixture
+        .workload_directory()
+        .canonicalize()
+        .unwrap()
+        .join(&name);
+    let session = fixture.workload_directory().join(&name);
+    assert_eq!(
+        (
+            answer,
+            ended.reason,
+            std::fs::read_dir(fixture.workload_directory())
+                .unwrap()
+                .count(),
+        ),
+        (
+            format!(
+                "cwd={} home={}",
+                resolved.join("package").display(),
+                session.join("home").display()
+            ),
+            AgentSessionEndReason::UserEnded,
+            0,
+        ),
+    );
+}

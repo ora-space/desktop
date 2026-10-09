@@ -7,6 +7,7 @@
 //! - `[commit]` asks the host to run `git commit --allow-empty` in the session's directory through
 //!   `ora/childprocess/spawn`, and completes when that process exits;
 //! - `[commit-direct]` runs the same commit as its own child process, inheriting its environment;
+//! - `[env]` answers with its working directory and `HOME`, showing where and as what it runs;
 //! - `[large]` answers with a message larger than one Thread record may be.
 //!
 //! On start it appends its process id to `echo-agent.pids` in its working directory, the package

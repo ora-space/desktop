@@ -3,7 +3,8 @@
 # in ORA_NODE_CONFIG and mounts the Workspace volume that holds every state path it names.
 #
 # The root management process owns protected configuration, Node and process-host journals.
-# Git workloads run as UID/GID 1000 through the scoped process boundary. Stop order matters:
+# Git workloads run as UID/GID 1000 through the scoped process boundary, and so do Agent plugins
+# and the processes they start when the configuration names an agent workload directory. Stop order matters:
 # the Node stops first so it can close its managed scopes
 # through a live host, and only then is the host stopped. Guardians outlive both by design; their
 # journals stay on the volume and the next container recovers them.
@@ -28,6 +29,13 @@ prepare() {
   repository_root=$(printf '%s' "$ORA_NODE_CONFIG" | jq -er '.clone.repository_root')
   if [ ! -d "$repository_root" ]; then
     install -d -o root -g root -m 0755 "$repository_root"
+  fi
+  # Agents running as the workload user get per-session directories under this root-owned
+  # directory; the Node validates it and never creates it. 0711 lets the workload user reach its
+  # own session directory by name without listing or replacing the others.
+  workload_directory=$(printf '%s' "$ORA_NODE_CONFIG" | jq -r '.agent.workload_directory // empty')
+  if [ -n "$workload_directory" ]; then
+    install -d -o root -g root -m 0711 "$workload_directory"
   fi
   umask 077
   printf '%s' "$ORA_NODE_CONFIG" | jq -e . >"$config_file"

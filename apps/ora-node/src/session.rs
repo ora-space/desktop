@@ -12,11 +12,14 @@ mod ledger;
 mod ports;
 mod queue;
 mod thread;
+mod workload;
 
 pub use ports::{
     CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, QueuedCommand,
     SessionCommand, SessionHost, SessionLedger,
 };
+pub use workload::SessionWorkload;
+pub(crate) use workload::purge_workload_directory;
 
 use chrono_tz::Tz;
 use ora_node_protocol::{
@@ -40,6 +43,8 @@ pub struct SessionConfig {
     pub timezone: Tz,
     /// How long a session waits for its agent to become ready before it ends as failed.
     pub agent_ready_timeout: Duration,
+    /// Which OS identity agents run as, and where their per-session directories live.
+    pub workload: SessionWorkload,
 }
 
 /// State shared by every session execution of one Node.
