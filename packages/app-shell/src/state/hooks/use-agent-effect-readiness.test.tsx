@@ -115,11 +115,7 @@ describe("useAgentEffectReadiness", () => {
   it("polls every second until Target status is ready, then stops", async () => {
     expect(effectTargetStatusPollInterval(undefined)).toBe(1_000);
     expect(effectTargetStatusPollInterval(null)).toBe(1_000);
-    const ready = await readyEffectHandlers().getEffectTargetStatus({
-      selector: "workspace_agent",
-      workspaceId: "workspace-1",
-      agentPluginId: AGENT_REF.claude,
-    });
+    const ready = await readyEffectHandlers().getEffectTargetStatus();
     expect(effectTargetStatusPollInterval(ready.status)).toBe(false);
   });
 });
