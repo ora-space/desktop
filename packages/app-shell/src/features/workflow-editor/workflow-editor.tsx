@@ -2150,10 +2150,12 @@ function WorkflowEditorContent({
     if (appliedChanges.length === 0) {
       return;
     }
-    // While the pointer is down, React Flow already moves nodes in its store.
-    // Pushing every tick through setWorkflow rebuilds controlled `nodes` and the
-    // whole editor — the main source of top-level drag jitter. Keep authored
-    // geometry on workflowRef only; commit React state on drop / other edits.
+    // In this controlled setup React Flow does NOT move nodes by itself during
+    // a drag — it only reports position changes, and the canvas mirrors them
+    // into a canvas-local overlay so cards track the pointer. Pushing every
+    // tick through setWorkflow would rebuild the whole editor (the historical
+    // top-level drag jitter), so authored geometry stays on workflowRef
+    // mid-drag; React state commits on drop / other edits.
     if (isNodeDragGestureActive(appliedChanges)) {
       const current = workflowRef.current ?? workflow;
       if (current === null || previewedVersion !== null) {

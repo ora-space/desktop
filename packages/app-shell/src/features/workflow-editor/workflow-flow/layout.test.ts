@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Edge, Node } from "@xyflow/react";
+import { Position, type Edge, type Node, type NodeHandle } from "@xyflow/react";
 import {
   WORKFLOW_ITERATION_ENTRY_HANDLE_Y,
   WORKFLOW_ITERATION_MEMBER_LEFT,
@@ -18,6 +18,7 @@ import {
   iterationFrameSizesEqual,
   nodePositionAt,
   organizeWorkflowNodes,
+  preserveLiveMeasurements,
   shouldPersistWorkflowNodeChanges,
   snapNodePosition,
   withoutExtentClampPositions,
@@ -38,6 +39,42 @@ function workflowNode(
 }
 
 describe("workflow-flow layout", () => {
+  it("carries live measured sizes and drops static handles on rebuilt nodes", () => {
+    const node = {
+      ...workflowNode("gate", 0, 0),
+      handles: [
+        {
+          type: "source",
+          position: Position.Right,
+          x: 0,
+          y: 0,
+        },
+      ] satisfies NodeHandle[],
+    };
+    const measured = { width: 240, height: 120 };
+
+    const [result] = preserveLiveMeasurements([node], (id) =>
+      id === "gate" ? { measured } : undefined,
+    );
+
+    expect(result?.measured).toEqual(measured);
+    // Static handles are removed so React Flow keeps the measured handle
+    // bounds instead of resetting edges to the initial anchors mid-drag.
+    expect(result?.handles).toBeUndefined();
+    expect(result?.position).toEqual({ x: 0, y: 0 });
+    // The authored input node object stays untouched.
+    expect(node.measured).toBeUndefined();
+    expect(node.handles).toHaveLength(1);
+  });
+
+  it("keeps the authored node as-is when React Flow has not measured it", () => {
+    const node = workflowNode("gate", 0, 0);
+
+    const [result] = preserveLiveMeasurements([node], () => undefined);
+
+    expect(result).toBe(node);
+  });
+
   it("centers a dropped card around the pointer at handle height", () => {
     expect(nodePositionAt({ x: 400, y: 300 })).toEqual({
       x: 400 - WORKFLOW_NODE_WIDTH / 2,

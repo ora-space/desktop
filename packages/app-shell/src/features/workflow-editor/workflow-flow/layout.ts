@@ -53,6 +53,32 @@ export function shouldPersistWorkflowNodeChanges(
   );
 }
 
+/**
+ * Carries React Flow's live measurements into the drag overlay's base nodes.
+ * Authored nodes drop `measured` before persistence, so a controlled rebuild
+ * would otherwise reset the internal node to unmeasured mid-drag: React Flow
+ * warns (error015), extent clamping loses the card size, and edges fall back
+ * to the initial static handle anchors — hiding edges whose handles only
+ * exist in the measured bounds (e.g. condition branches). Dropping the static
+ * `handles` declaration lets `adoptUserNodes` reuse the live measured bounds.
+ */
+export function preserveLiveMeasurements<TNode extends Node>(
+  nodes: readonly TNode[],
+  getInternalNode: (
+    id: string,
+  ) => { measured?: { width?: number; height?: number } } | undefined,
+): TNode[] {
+  return nodes.map((node) => {
+    const measured = getInternalNode(node.id)?.measured;
+    if (measured === undefined) {
+      return node;
+    }
+    const projected = { ...node, measured };
+    delete projected.handles;
+    return projected;
+  });
+}
+
 /** True when every change is a plain React Flow size probe (no resize gesture). */
 export function isPlainMeasurementOnly(
   changes: readonly NodeChange[],

@@ -348,7 +348,7 @@ function windowedMouseEvent(
  * authored geometry: the iteration frame reports its rendered style size and
  * members report the standard card box. Other elements keep jsdom's zero layout.
  */
-function stubNodeWrapperOffsetSize(): void {
+function stubNodeWrapperOffsetSize(): () => void {
   const sizeOf = (element: HTMLElement): { width: number; height: number } => {
     if (!element.hasAttribute("data-id")) {
       return { width: 0, height: 0 };
@@ -367,6 +367,17 @@ function stubNodeWrapperOffsetSize(): void {
     }
     return { width: WORKFLOW_NODE_WIDTH, height: WORKFLOW_NODE_INITIAL_HEIGHT };
   };
+  // Capture jsdom's native descriptors up front: deleting the stub afterwards
+  // would drop them entirely and leak `undefined` offset reads into later
+  // tests sharing this worker (e.g. cmdk's deferred list measurement).
+  const originalWidth = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "offsetWidth",
+  );
+  const originalHeight = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "offsetHeight",
+  );
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
     configurable: true,
     get() {
@@ -379,6 +390,22 @@ function stubNodeWrapperOffsetSize(): void {
       return sizeOf(this as HTMLElement).height;
     },
   });
+  return () => {
+    if (originalWidth !== undefined) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "offsetWidth",
+        originalWidth,
+      );
+    }
+    if (originalHeight !== undefined) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "offsetHeight",
+        originalHeight,
+      );
+    }
+  };
 }
 
 /** Seeds a dedicated iteration showcase workflow the editor can open directly. */
@@ -440,6 +467,100 @@ function seedIterationShowcase(state: FixtureState): void {
         source: "iter",
         sourceHandle: "iteration-entry",
         target: "member",
+        type: "workflow",
+      },
+    ],
+  };
+  const now = BigInt(Date.parse(showcase.updatedAt));
+  state.workflows.push({
+    workflow: {
+      id: showcase.id,
+      namespace: "local",
+      name: showcase.name,
+      publishedSnapshotId: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    draft: {
+      id: `snap-${showcase.id}`,
+      workflowId: showcase.id,
+      version: "draft",
+      graph: serializeWorkflowGraph({
+        nodes: showcase.nodes as unknown as WorkflowDefinitionNode[],
+        edges: showcase.edges as unknown as WorkflowDefinitionEdge[],
+        viewport: showcase.viewport,
+        annotations: [],
+        globalVariables: [],
+        description: showcase.description,
+      }),
+      createdAt: now,
+      updatedAt: now,
+    },
+    published: [],
+  });
+}
+
+/** Seeds a small workflow whose condition branch edge carries a sourceHandle. */
+function seedConditionDragWorkflow(state: FixtureState): void {
+  const showcase: DemoWorkflow = {
+    id: "condition-drag",
+    name: "条件拖拽",
+    description: "验证条件节点拖拽中的分支边锚点。",
+    updatedAt: "2026-10-08T10:00:00+08:00",
+    viewport: { x: 32, y: 32, zoom: 1 },
+    nodes: [
+      {
+        id: "start",
+        type: "workflow",
+        deletable: false,
+        position: { x: 72, y: 286 },
+        data: {
+          kind: "start",
+          title: "开始",
+          description: "",
+          input: "",
+          inputVariables: [],
+        },
+      },
+      {
+        id: "gate",
+        type: "workflow",
+        position: { x: 356, y: 188 },
+        initialWidth: 320,
+        initialHeight: WORKFLOW_NODE_INITIAL_HEIGHT,
+        data: {
+          kind: "condition",
+          title: "门禁",
+          description: "",
+          conditionBranches: [
+            {
+              conditions: [
+                { variable: "改动类型", operator: "contains", value: "源代码" },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        id: "worker",
+        type: "workflow",
+        position: { x: 760, y: 188 },
+        initialWidth: WORKFLOW_NODE_WIDTH,
+        initialHeight: WORKFLOW_NODE_INITIAL_HEIGHT,
+        data: {
+          kind: "agent",
+          title: "执行",
+          description: "",
+        },
+      },
+    ],
+    edges: [
+      { id: "e-start-gate", source: "start", target: "gate", type: "workflow" },
+      {
+        id: "e-gate-worker",
+        source: "gate",
+        sourceHandle: "case-1",
+        target: "worker",
         type: "workflow",
       },
     ],
@@ -907,6 +1028,150 @@ describe("WorkflowEditor", () => {
       x: "356px",
       y: "188px",
     });
+  });
+
+  it("tracks the pointer live while dragging a node and commits once on drop", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    const card = await screen.findByLabelText("Agent节点: 理解改动");
+    const flowNode = card.closest<HTMLElement>(".react-flow__node");
+    expect(flowNode).not.toBeNull();
+    expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
+      x: "356px",
+      y: "188px",
+    });
+
+    await act(async () => {
+      flowNode!.dispatchEvent(
+        windowedMouseEvent("mousedown", {
+          button: 0,
+          clientX: 400,
+          clientY: 250,
+        }),
+      );
+    });
+    // The first move starts the gesture and re-snaps the card to the grid.
+    // Mid-gesture the card must already track the pointer, before any drop
+    // commit reaches editor state.
+    await act(async () => {
+      window.dispatchEvent(
+        windowedMouseEvent("mousemove", {
+          button: 0,
+          clientX: 410,
+          clientY: 255,
+        }),
+      );
+    });
+    expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
+      x: "360px",
+      y: "180px",
+    });
+    // Zoom 1 keeps screen deltas 1:1 in graph space; positions snap to 20px.
+    await act(async () => {
+      window.dispatchEvent(
+        windowedMouseEvent("mousemove", {
+          button: 0,
+          clientX: 510,
+          clientY: 315,
+        }),
+      );
+    });
+    expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
+      x: "460px",
+      y: "240px",
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        windowedMouseEvent("mouseup", {
+          button: 0,
+          clientX: 510,
+          clientY: 315,
+        }),
+      );
+    });
+    // The drop commits the same geometry the pointer previewed.
+    expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
+      x: "460px",
+      y: "240px",
+    });
+
+    // The whole gesture is exactly one undoable history step.
+    await user.click(screen.getByRole("button", { name: "撤销" }));
+    await waitFor(() => {
+      expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
+        x: "356px",
+        y: "188px",
+      });
+    });
+  });
+
+  it("keeps condition branch edges attached while dragging the condition node", async () => {
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedConditionDragWorkflow(state);
+    useWorkflowEditorStore.setState({ selectedWorkflowId: "condition-drag" });
+    const restoreOffsetSize = stubNodeWrapperOffsetSize();
+    renderEditor(undefined, state, undefined, false);
+
+    try {
+      const card = await screen.findByLabelText("条件分支节点: 门禁");
+      const flowNode = card.closest<HTMLElement>(".react-flow__node");
+      expect(flowNode).not.toBeNull();
+      // The branch edge anchors on a measured handle id (case-1) that the
+      // initial static handle declaration does not contain.
+      expect(
+        await screen.findByTestId("rf__edge-e-gate-worker"),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        flowNode!.dispatchEvent(
+          windowedMouseEvent("mousedown", {
+            button: 0,
+            clientX: 400,
+            clientY: 250,
+          }),
+        );
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          windowedMouseEvent("mousemove", {
+            button: 0,
+            clientX: 410,
+            clientY: 255,
+          }),
+        );
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          windowedMouseEvent("mousemove", {
+            button: 0,
+            clientX: 520,
+            clientY: 330,
+          }),
+        );
+      });
+
+      // Mid-drag the branch edge must stay attached to its measured handle.
+      expect(screen.getByTestId("rf__edge-e-gate-worker")).toBeInTheDocument();
+      expect(nodeGraphPosition("条件分支节点: 门禁")).not.toEqual({
+        x: "356px",
+        y: "188px",
+      });
+
+      await act(async () => {
+        window.dispatchEvent(
+          windowedMouseEvent("mouseup", {
+            button: 0,
+            clientX: 520,
+            clientY: 330,
+          }),
+        );
+      });
+      expect(screen.getByTestId("rf__edge-e-gate-worker")).toBeInTheDocument();
+    } finally {
+      restoreOffsetSize();
+    }
   });
 
   it("keeps each workflow port independently visible without node-wide hover styles", async () => {
@@ -2442,7 +2707,7 @@ describe("useDeleteWorkflow", () => {
     useWorkflowEditorStore.setState({
       selectedWorkflowId: "iteration-showcase",
     });
-    stubNodeWrapperOffsetSize();
+    const restoreOffsetSize = stubNodeWrapperOffsetSize();
     renderEditor(undefined, state, undefined, false);
 
     try {
@@ -2510,8 +2775,7 @@ describe("useDeleteWorkflow", () => {
         });
       });
     } finally {
-      Reflect.deleteProperty(HTMLElement.prototype, "offsetWidth");
-      Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
+      restoreOffsetSize();
     }
   }, 20_000);
 

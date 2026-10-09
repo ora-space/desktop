@@ -71,11 +71,20 @@ React Flow–based canvas for the workspace workflow editor.
   that same gesture. In both modes, a drag that starts on a node moves the node.
 - Node drag does not auto-pan the viewport. Growing iteration frames is deferred
   until drag-stop so `extent: "parent"` clamp bounds stay still under the pointer.
-  Mid-drag position ticks update `workflowRef` only (no `setWorkflow` / autosave);
-  the post-render workflowRef sync skips while a drag transaction is open.
-  React state and draft persistence commit once on drop. Undragged canvas node
-  objects keep identity so memoized card views stay cheap if a controlled update
-  does run.
+  This is a controlled React Flow setup, so a dragged card only moves on screen
+  when position changes are applied back to the `nodes` prop. Mid-drag position
+  ticks are therefore mirrored into a canvas-local overlay (`liveDragNodes`) so
+  cards track the pointer at full frame rate, while the editor records the same
+  ticks on `workflowRef` only (no top-level `setWorkflow` / autosave); the
+  post-render workflowRef sync skips while a drag transaction is open. The
+  overlay seeds from nodes that carry React Flow's live `measured` sizes and
+  drop the static initial `handles`, so rebuilt internal nodes keep their
+  measured handle bounds and condition-branch edges stay attached mid-drag.
+  React state and draft persistence commit once on drop, and the overlay is
+  discarded on the drop tick / drag-stop / aborted gesture. Canvas callbacks
+  passed to React Flow stay referentially stable so its memoized graph
+  internals skip re-rendering mid-drag. Undragged canvas node objects keep
+  identity so memoized card views stay cheap if a controlled update does run.
 - An annotation behaves like a regular draggable node in its reading state,
   including the grab cursor. A click enters text editing, while a pointer drag
   continues to move the annotation; blur or Escape returns it to dragging.
