@@ -114,7 +114,7 @@ The explicit maintenance script previews repairs by default and requires a datab
 `--apply` first creates a complete SQLite backup including committed WAL content, then updates
 eligible active drafts in one transaction. Published or run-referenced snapshots are excluded;
 invalid/ambiguous ownership is reported instead of changing execution semantics. Correct such
-configuration in a draft and publish a new version. The qualification suite analyzes all 101
+configuration in a draft and publish a new version. The qualification suite analyzes all 112
 generated graphs before execution, targets an explicit disposable isolated workspace, cancels
 timed-out runs, and reports failed/incomplete or unmeasured checks honestly without publishing.
 
