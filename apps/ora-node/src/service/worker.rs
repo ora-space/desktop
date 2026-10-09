@@ -357,6 +357,7 @@ fn handle(
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
             | ControllerToNodeMessage::DeliverRevision(_)
+            | ControllerToNodeMessage::ControlledDeliverRevision(_)
             | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
