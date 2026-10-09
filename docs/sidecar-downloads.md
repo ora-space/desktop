@@ -11,9 +11,11 @@ from the checked-out Rust source by `task build:desktop`.
 `scripts/sidecar-checksums.json` is the reviewed trust source for downloads. Its
 keys bind exact official GitHub release URLs to archive and executable SHA-256
 values. The initial pins cover Deno 2.9.5 and ripgrep 15.2.0 on Linux x64, macOS
-arm64/x64, and Windows x64. Archive hashes were checked against the official
-GitHub release asset `digest` fields; executable hashes were calculated from
-those verified archives:
+arm64/x64, and Windows x64. Deno 2.9.5 on Linux arm64 is pinned too: the Node
+container image (`docker/Dockerfile`) installs Deno from these pins on both Linux
+architectures. Archive hashes were checked against the official GitHub release
+asset `digest` fields; executable hashes were calculated from those verified
+archives:
 
 - [Deno release](https://github.com/denoland/deno/releases/tag/v2.9.5)
 - [ripgrep release](https://github.com/BurntSushi/ripgrep/releases/tag/15.2.0)

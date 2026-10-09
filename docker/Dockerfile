@@ -22,6 +22,29 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/ora-node target/release/ora-process-host \
        target/release/ora-process-guardian target/release/ora-controller /out/
 
+# Deno runs every plugin on the Node. The version is .deno-version and the archive and executable
+# digests come from scripts/sidecar-checksums.json, the same reviewed pins the desktop sidecars use;
+# an architecture without a pin fails the build instead of downloading something unverified.
+FROM debian:bookworm-slim AS deno
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl jq unzip && \
+    rm -rf /var/lib/apt/lists/*
+COPY .deno-version scripts/sidecar-checksums.json /pins/
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; \
+      *) echo "no Deno pin for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    version=$(tr -d '[:space:]' < /pins/.deno-version); \
+    url="https://github.com/denoland/deno/releases/download/v$version/deno-$arch-unknown-linux-gnu.zip"; \
+    archive=$(jq -er --arg url "$url" '.[$url].archiveSha256' /pins/sidecar-checksums.json); \
+    executable=$(jq -er --arg url "$url" '.[$url].executableSha256' /pins/sidecar-checksums.json); \
+    curl --fail --silent --show-error --location --retry 3 "$url" -o /tmp/deno.zip; \
+    echo "$archive  /tmp/deno.zip" | sha256sum -c -; \
+    unzip -q /tmp/deno.zip -d /out; \
+    echo "$executable  /out/deno" | sha256sum -c -; \
+    /out/deno --version | grep -q "^deno $version "
+
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates tzdata && \
@@ -41,6 +64,7 @@ RUN apt-get update && \
 # the Node refuses a writable clone Git configuration in release builds. The parent directories exist
 # before these COPYs because `--chmod` would otherwise also apply to the directories it creates.
 COPY --from=build --chmod=0755 /out/ora-node /out/ora-process-host /out/ora-process-guardian /opt/ora/bin/
+COPY --from=deno --chmod=0755 /out/deno /opt/ora/bin/deno
 COPY --chmod=0644 docker/clone.gitconfig /etc/ora/clone.gitconfig
 COPY --chmod=0755 docker/node-entrypoint.sh /opt/ora/bin/node-entrypoint.sh
 VOLUME /var/lib/ora
