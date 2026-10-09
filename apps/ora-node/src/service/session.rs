@@ -339,6 +339,12 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 ControllerToNodeMessage::Heartbeat(_) => continue,
                 _ => {}
             }
+            // Grants are memory-only and need no durable admission; holding them back behind Git
+            // in the worker would only let them expire.
+            if let ControllerToNodeMessage::UploadGrant(grant) = message {
+                info.grants.offer(grant);
+                continue;
+            }
             let Ok(permit) = unanswered.clone().try_acquire_owned() else {
                 // The Controller polls status on a timer without waiting for replies, so a long
                 // Git pass fills the pipeline with queries. Shedding the excess is safe because
@@ -412,11 +418,31 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         #[allow(unreachable_code)]
         Ok::<(), Failure>(())
     };
+    // Grant requests are unsolicited and not durable: a request missed while disconnected is
+    // repeated by the waiting upload, so a lagging receiver simply skips ahead.
+    let mut grant_requests = info.grants.subscribe();
     let write = async {
+        // A restarted Controller remembers no grant request, so every waiting upload asks again
+        // as soon as a Controller connects instead of after its periodic re-send.
+        for request in info.grants.pending() {
+            timeout(
+                deadline,
+                transmit(writer, &NodeToControllerMessage::UploadGrantNeeded(request)),
+            )
+            .await
+            .map_err(|_| Failure::silent())??;
+        }
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
             let message = tokio::select! {
                 message = messages.recv() => { let Some(message) = message else { return Ok::<(), Failure>(()); }; message }
+                request = grant_requests.recv() => match request {
+                    Ok(request) => NodeToControllerMessage::UploadGrantNeeded(request),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err(Failure::local(CloseReason::InternalError, "grant requests closed"));
+                    }
+                },
                 _ = tick.tick() => NodeToControllerMessage::Heartbeat(HeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: Heartbeat { node: info.identity.clone() } }),
             };
             timeout(deadline, transmit(writer, &message))

@@ -35,6 +35,8 @@ pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
+mod revision;
+#[cfg(target_os = "linux")]
 mod service;
 #[cfg(target_os = "linux")]
 mod session;

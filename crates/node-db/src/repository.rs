@@ -318,6 +318,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             Some("agent_session") => Ok(self
                 .find_session(operation, execution)?
                 .map_or(ExecutionState::Unknown, |r| r.state)),
+            Some("deliver_revision") => Ok(self
+                .find_delivery(operation, execution)?
+                .map_or(ExecutionState::Unknown, |r| r.progress.state())),
             None => Ok(ExecutionState::Unknown),
             Some(_) => Err(Error::InvalidSchema),
         }

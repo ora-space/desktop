@@ -37,6 +37,25 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         Ok(())
     }
 
+    /// Revision delivery runs Git in the checkouts clone created, so it inherits clone's hardened
+    /// environment and per-command settings; without clone configuration there is no checkout.
+    pub(crate) fn delivery_git_policy(&self) -> Result<Option<crate::revision::GitPolicy>, Error> {
+        let Some(config) = &self.repository_config else {
+            return Ok(None);
+        };
+        let mut probe = gitlancer::GitCommand::new(
+            std::path::PathBuf::new(),
+            Vec::new(),
+            gitlancer::GitEnv::default(),
+            gitlancer::GitIntent::Mutating,
+        );
+        config.constrain(&mut probe);
+        Ok(Some(crate::revision::GitPolicy {
+            env: config.environment()?,
+            config_args: probe.args,
+        }))
+    }
+
     /// Deduplicates before reading configuration; every new side effect follows durable acceptance.
     pub fn submit_clone(
         &mut self,

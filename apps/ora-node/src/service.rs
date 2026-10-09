@@ -5,6 +5,7 @@ mod clones;
 mod delivery;
 mod executor;
 mod plugins;
+mod revisions;
 mod session;
 mod worker;
 use crate::{CloneConfig, NodeConfig, ProcessConfig, Shutdown};
@@ -115,6 +116,8 @@ struct Rejection {
 #[derive(Clone)]
 struct SessionInfo {
     agents: Option<agents::SessionHost>,
+    /// Upload grants bypass admission and land here; grant requests leave through the session.
+    grants: crate::revision::GrantStore,
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,

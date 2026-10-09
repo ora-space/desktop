@@ -22,10 +22,10 @@ pub(crate) enum AttemptSettlement {
 /// away from the thread that owns SQLite. Every Run it touches was recorded before it was handed
 /// over, which lets a restart settle the same Run without anything this value remembered.
 pub(crate) struct CloneHost {
-    config: ProcessConfig,
-    shutdown: Shutdown,
+    pub(super) config: ProcessConfig,
+    pub(super) shutdown: Shutdown,
     owner: RunLifetime,
-    runtime: tokio::runtime::Runtime,
+    pub(super) runtime: tokio::runtime::Runtime,
 }
 
 impl CloneHost {
@@ -123,7 +123,7 @@ impl CloneHost {
     }
 
     /// Intentionally does not copy the Worktree deployment environment, which may contain secrets.
-    fn spec(&self, command: &GitCommand, output: OutputPolicy) -> RunSpec {
+    pub(super) fn spec(&self, command: &GitCommand, output: OutputPolicy) -> RunSpec {
         let mut spec = RunSpec::new(
             self.config.git_program.as_os_str(),
             &command.cwd,

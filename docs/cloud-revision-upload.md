@@ -8,7 +8,7 @@ The uploader computes the object checksum, requests a capability for its Cloud-c
 
 Every PUT, including a legacy grant, signs `If-None-Match: *` so an unexpired capability cannot overwrite an object after Cloud verifies it. A retry returning 412 preserves the first object; the uploader submits its original metadata declaration for Cloud verification. The status alone does not prove matching bytes. A Controller cancellation leaves the execution replayable instead of persisting `upload_failed`.
 
-Each execution must durably freeze object bytes and metadata before its first PUT. Restart after a partial upload reuses the original snapshot and bundle with fresh grants; changed content requires a new Cloud work item and object keys. The Cloud Go doubles cover this recovery boundary; production Rust support remains C's responsibility.
+Each execution must durably freeze object bytes and metadata before its first PUT. Restart after a partial upload reuses the original snapshot and bundle with fresh grants; changed content requires a new Cloud work item and object keys. The Cloud Go doubles cover this recovery boundary; the production Rust Node implements it as described in [Revision delivery](node/revision-delivery.md).
 
 Cloud verifies existence, size and stored SHA-256 outside SQL, rechecks the lease and live execution bindings, then atomically records Node evidence, receipt, Revision and the business hook. Definitive object failures preserve raw Node evidence with a separate failed verdict; network failure gives no ACK and permits replay. Committed replay does not upload or verify again.
 

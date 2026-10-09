@@ -5,6 +5,7 @@ mod plugin;
 mod process;
 mod repository;
 mod repository_migration;
+mod revision;
 mod session;
 
 /// Reopening preserves identity, while one live owner excludes all other connections.
@@ -361,8 +362,26 @@ fn remove_plugin_schema(path: &std::path::Path) {
         .unwrap();
 }
 
+/// Reconstructs v8 exactly so the v9 migration exercises the old identity constraint and data.
+fn remove_revision_schema(path: &std::path::Path) {
+    let connection = Connection::open(path).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_revision; DROP TABLE revision_outbox; DROP TABLE revision_deliveries; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
+    let definition = include_str!("session.sql")
+        .split("CREATE TABLE execution_identities")
+        .nth(1)
+        .unwrap()
+        .split("INSERT INTO execution_identities")
+        .next()
+        .unwrap();
+    connection
+        .execute_batch(&format!("CREATE TABLE execution_identities{definition}"))
+        .unwrap();
+    connection.execute_batch("INSERT INTO execution_identities SELECT * FROM old_ids; DROP TABLE old_ids; PRAGMA user_version=8;").unwrap();
+}
+
 /// Reconstructs v7 exactly so migrations exercise the old identity constraint and data.
 fn remove_session_schema(path: &std::path::Path) {
+    remove_revision_schema(path);
     let connection = Connection::open(path).unwrap();
     connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_session; DROP TABLE session_commands; DROP TABLE execution_events; DROP TABLE node_executions; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
     let sql = include_str!("plugin.sql");
