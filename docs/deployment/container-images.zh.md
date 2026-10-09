@@ -34,6 +34,9 @@ docker build -f docker/Dockerfile --target controller -t ora-controller:local .
 `shutdown_grace_ms + cleanup_timeout_ms`。Node 自行退出时同样停止 host，容器以 Node 的退出码退出。
 
 可执行文件位于属主为 root 的 `/opt/ora/bin`，release 构建的 host 要求 guardian 位于这样的目录。
+镜像同时提供所有插件运行所需的 `/opt/ora/bin/deno`：版本取自 `.deno-version`，构建时按
+`scripts/sidecar-checksums.json` 中的固定摘要（Linux x64 与 arm64）校验压缩包与可执行文件，没有固定摘要的
+架构直接构建失败。Node 配置的 `agent.deno_path` 指向它后，Agent 会话即使用它。
 
 ## Controller 镜像
 
