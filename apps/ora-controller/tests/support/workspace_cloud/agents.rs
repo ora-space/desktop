@@ -5,15 +5,16 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub(super) struct AgentState {
-    work: Vec<proto::WorkItem>,
+    pub(super) work: Vec<proto::WorkItem>,
     commands: Vec<proto::ThreadCommand>,
     delivered: HashSet<String>,
     events: HashMap<String, Vec<proto::ThreadEvent>>,
     terminal: HashMap<String, proto::TakeOverNodeEventRequest>,
-    blocked: HashSet<String>,
+    pub(super) blocked: HashSet<String>,
     fail_once: Option<tonic::Code>,
     lose_reply: bool,
     pub(super) input_closed: bool,
+    pub(super) deliveries: super::deliveries::DeliveryState,
 }
 impl WorkspaceCloud {
     /// Changes current permission without changing the historical registered dispatch.
@@ -152,7 +153,8 @@ impl WorkspaceCloud {
             }));
         }
     }
-    /// Returns the first unregistered work item without consuming it.
+    /// Returns the first unregistered work item without consuming it. A run's session and its
+    /// later delivery are distinct items, told apart by their frozen input.
     pub(super) fn agent_work(&self) -> Option<proto::WorkItem> {
         let state = self.lock();
         state
@@ -163,7 +165,7 @@ impl WorkspaceCloud {
                 !state
                     .clones
                     .iter()
-                    .any(|r| r.operation_id == w.operation_id)
+                    .any(|r| r.operation_id == w.operation_id && r.input == w.input)
             })
             .cloned()
     }
@@ -177,7 +179,7 @@ impl WorkspaceCloud {
             .agents
             .work
             .iter()
-            .find(|w| w.operation_id == message.operation_id)
+            .find(|w| w.operation_id == message.operation_id && w.input == message.input)
             .ok_or_else(|| conflict("missing_work"))?;
         if message.epoch != EPOCH
             || work.input != message.input
@@ -201,9 +203,17 @@ impl WorkspaceCloud {
             state.clones.push(record.clone());
         }
         drop(state);
-        self.timeline.push(Event::AgentRegistered {
-            run: message.operation_id.clone(),
-        });
+        let run = message.operation_id.clone();
+        self.timeline.push(
+            if matches!(
+                message.input.as_ref().and_then(|i| i.spec.as_ref()),
+                Some(proto::execution_input::Spec::DeliverRevision(_))
+            ) {
+                Event::DeliveryRegistered { run }
+            } else {
+                Event::AgentRegistered { run }
+            },
+        );
         Ok(Response::new(proto::RecordDispatchResponse {
             record: Some(record),
         }))
@@ -349,8 +359,8 @@ impl AgentRunService for WorkspaceCloud {
     }
     async fn grant_revision_upload(
         &self,
-        _: Request<proto::GrantRevisionUploadRequest>,
+        request: Request<proto::GrantRevisionUploadRequest>,
     ) -> Result<Response<proto::GrantRevisionUploadResponse>, Status> {
-        Err(Status::unimplemented("delivery is a later slice"))
+        self.grant(request.into_inner())
     }
 }

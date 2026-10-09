@@ -14,4 +14,4 @@ Cloud 在 SQL 事务外检查对象存在、大小和存储 SHA-256，重查租�
 
 `crates/controller-proto/tests/upload_checksum.rs` 覆盖旧 wire 样本解码/原样重编码、新 map 往返与旧解码器兼容、checksum 与条件写入签名头完整保留。协议 crate 测试与 clippy 通过；`ora-controller`、`ora-node` 均用新生成绑定构建。Node/process 公开协议无变化。
 
-此配套仅同步生成协议消费。生产 Rust Controller/Node 交付 relay、授权刷新、日志/ACK 和重启验收仍属于 C/D。真实 PostgreSQL/Git/RustFS 的交付验收目前使用 Cloud Go Controller/Node 替身，证明 A，不代表生产 C/D 或 B 界面已完成。
+此配套仅同步生成协议消费。生产 Rust Controller 已按 [Agent 中继](controller/agent-relay.zh.md) 转交交付与摘要绑定授权；生产 Node 交付、其账本/日志卫生与端到端重启验收仍属于 C/D。真实 PostgreSQL/Git/RustFS 的交付验收目前使用 Cloud Go Controller/Node 替身，证明 A，不代表生产 C/D 或 B 界面已完成。

@@ -37,7 +37,7 @@ pub use session::{
 pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
-pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome};
+pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome, GrantOutcome, GrantRequest};
 
 /// Persistence failures never authorize dispatch or acknowledgement. The classes an adapter must
 /// distinguish are fixed here: a conflict is never retried as-is, an unavailable authority means
