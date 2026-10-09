@@ -1,5 +1,6 @@
-//! CoordinationStore adaptation delegates session, plugin and runtime-control rules to their owners.
-use super::{CloudStore, agents, coordinate, fault, mapping, plugins};
+//! CoordinationStore adaptation delegates session, delivery, plugin and runtime-control rules to
+//! their owners.
+use super::{CloudStore, agents, coordinate, deliveries, fault, mapping, plugins};
 use crate::*;
 use ora_controller_proto::v1 as proto;
 use std::io;
@@ -85,6 +86,43 @@ impl CoordinationStore for CloudStore {
         event: &AgentSessionEndedMessage,
     ) -> Result<(), Error> {
         self.agent_end(session, event).await
+    }
+    async fn pending_deliveries(
+        &self,
+        node: &NodeId,
+    ) -> Result<Vec<DeliverRevisionMessage>, Error> {
+        self.delivery_pending(node).await
+    }
+    async fn original_delivery_dispatch(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+    ) -> Result<Option<DeliverRevisionMessage>, Error> {
+        self.delivery_command(session, operation, execution).await
+    }
+    async fn dispatch_delivery(
+        &self,
+        command: DeliverRevisionMessage,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        self.controlled_delivery(command).await
+    }
+    async fn take_over_revision(
+        &self,
+        session: &NodeRuntimeIdentity,
+        event: &RevisionResultMessage,
+    ) -> Result<(), Error> {
+        self.revision_event(session, event).await
+    }
+    async fn grant_upload(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+        request: GrantRequest,
+    ) -> Result<GrantOutcome, Error> {
+        self.upload_grants(session, operation, execution, request)
+            .await
     }
     async fn wait_agent_command_hint(&self) {
         self.inner.command_hint.notified().await;
@@ -223,8 +261,11 @@ impl CoordinationStore for CloudStore {
         response
             .records
             .iter()
+            // Every other family has its own pending list; only clones remain here.
             .filter(|record| {
-                !plugins::mapping::is_plugin(record) && !agents::mapping::is_agent(record)
+                !plugins::mapping::is_plugin(record)
+                    && !agents::mapping::is_agent(record)
+                    && !deliveries::mapping::is_delivery(record)
             })
             .map(|record| mapping::command(record, node))
             .collect()

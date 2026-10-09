@@ -23,6 +23,7 @@ impl Control {
         period: Duration,
         capabilities: Vec<NodeCapability>,
         commands: mpsc::Sender<commands::Reply>,
+        grants: mpsc::Sender<grants::Request>,
     ) -> Self {
         let (input, receive) = mpsc::channel(256);
         let (output, outgoing) = mpsc::channel(256);
@@ -31,7 +32,10 @@ impl Control {
             store.clone(),
             identity.node_id.clone(),
             period,
-            capabilities.contains(&NodeCapability::AgentSession),
+            Polled {
+                agents: capabilities.contains(&NodeCapability::AgentSession),
+                deliveries: capabilities.contains(&NodeCapability::RevisionDelivery),
+            },
             output.clone(),
         ));
         tasks.spawn(reconcile(
@@ -39,7 +43,7 @@ impl Control {
             identity,
             capabilities,
             receive,
-            commands,
+            Workers { commands, grants },
             output,
         ));
         Self {
@@ -50,12 +54,24 @@ impl Control {
     }
 }
 
+/// Which optional execution families the Node negotiated and therefore may be polled.
+struct Polled {
+    agents: bool,
+    deliveries: bool,
+}
+
+/// The connection's other workers that learn from validated status replies.
+struct Workers {
+    commands: mpsc::Sender<commands::Reply>,
+    grants: mpsc::Sender<grants::Request>,
+}
+
 /// Queries one execution per tick; bindings precede any execution that may need their authority.
 async fn poll<S: CoordinationStore>(
     store: S,
     node: NodeId,
     period: Duration,
-    agent_capable: bool,
+    polled: Polled,
     output: mpsc::Sender<Action>,
 ) -> Result<(), Error> {
     let mut tick = interval(period);
@@ -87,10 +103,19 @@ async fn poll<S: CoordinationStore>(
                 .into_iter()
                 .map(|c| (c.operation_id().clone(), c.execution_id().clone())),
         );
-        if agent_capable {
+        if polled.agents {
             commands.extend(
                 store
                     .pending_agents(&node)
+                    .await?
+                    .into_iter()
+                    .map(|c| (c.operation_id, c.execution_id)),
+            );
+        }
+        if polled.deliveries {
+            commands.extend(
+                store
+                    .pending_deliveries(&node)
                     .await?
                     .into_iter()
                     .map(|c| (c.operation_id, c.execution_id)),
@@ -120,10 +145,11 @@ async fn reconcile<S: CoordinationStore>(
     identity: NodeRuntimeIdentity,
     capabilities: Vec<NodeCapability>,
     mut input: mpsc::Receiver<NodeToControllerMessage>,
-    commands: mpsc::Sender<commands::Reply>,
+    workers: Workers,
     output: mpsc::Sender<Action>,
 ) -> Result<(), Error> {
     let agent_capable = capabilities.contains(&NodeCapability::AgentSession);
+    let delivery_capable = capabilities.contains(&NodeCapability::RevisionDelivery);
     let plugin_capable = capabilities.contains(&NodeCapability::PluginInstall);
     let mut retransmitted = std::collections::HashSet::new();
     while let Some(message) = input.recv().await {
@@ -132,8 +158,31 @@ async fn reconcile<S: CoordinationStore>(
             && let NodeToControllerMessage::ExecutionStatus(status) = &message
             && status.payload.state != ExecutionState::Unknown
         {
-            commands
+            workers
+                .commands
                 .try_send(commands::Reply::Ready(status.execution_id.clone()))
+                .map_err(|_| Error::Conflict)?;
+        }
+        // A running delivery found by this connection may have lost its grants with the previous
+        // one; the grant worker decides whether a refresh is possible and dedups repeated polls.
+        // The hint is advisory: while a slow grant call fills the queue the next poll repeats it,
+        // and a closed queue means the worker already ended the connection.
+        if delivery_capable
+            && let NodeToControllerMessage::ExecutionStatus(status) = &message
+            && matches!(
+                status.payload.state,
+                ExecutionState::Accepted | ExecutionState::Running
+            )
+        {
+            let _ = workers.grants.try_send(grants::Request::Running {
+                operation: status.operation_id.clone(),
+                execution: status.execution_id.clone(),
+            });
+        }
+        if let NodeToControllerMessage::RevisionResult(event) = &message {
+            output
+                .send(Action::Answered(event.execution_id.clone()))
+                .await
                 .map_err(|_| Error::Conflict)?;
         }
         if let NodeToControllerMessage::PluginsResult(event) = &message {
@@ -169,6 +218,19 @@ async fn reconcile<S: CoordinationStore>(
                 {
                     if agent_capable {
                         store.dispatch_agent(agent).await?
+                    } else {
+                        None
+                    }
+                } else if let Some(delivery) = store
+                    .original_delivery_dispatch(
+                        &identity,
+                        &status.operation_id,
+                        &status.execution_id,
+                    )
+                    .await?
+                {
+                    if delivery_capable {
+                        store.dispatch_delivery(delivery).await?
                     } else {
                         None
                     }

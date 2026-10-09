@@ -341,9 +341,14 @@ impl Round<'_> {
                 .await?;
             let plugin_pending = self.store.pending_plugins(&sandbox.binding.node_id).await?;
             let agent_pending = self.store.pending_agents(&sandbox.binding.node_id).await?;
+            let delivery_pending = self
+                .store
+                .pending_deliveries(&sandbox.binding.node_id)
+                .await?;
             let idle = pending.is_empty()
                 && plugin_pending.is_empty()
                 && agent_pending.is_empty()
+                && delivery_pending.is_empty()
                 && !sandbox.any_unresolved();
             let accepted = reports::idle(
                 self.store,

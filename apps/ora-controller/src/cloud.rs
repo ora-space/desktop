@@ -5,6 +5,7 @@
 mod agents;
 mod claim;
 mod coordinate;
+mod deliveries;
 mod fault;
 mod fleet;
 mod force_stop;
@@ -27,6 +28,7 @@ use ora_controller_proto::v1::{
     execution_service_client::ExecutionServiceClient,
 };
 use std::{
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -85,6 +87,10 @@ struct Inner {
     lease: Mutex<Option<i64>>,
     /// How often to claim while no `Watch` stream is live.
     claim_interval: Duration,
+    /// The SHA-256 digests each running delivery's Node last reported, so a reconnect can refresh
+    /// checksum-bound grants. Process memory only: digests are not credentials, and the grants
+    /// issued for them are never kept here.
+    upload_checksums: Mutex<HashMap<ExecutionId, BTreeMap<ObjectKey, Sha256Digest>>>,
 }
 
 impl CloudStore {
@@ -172,6 +178,7 @@ impl CloudStore {
                 holder,
                 lease: Mutex::new(None),
                 claim_interval: Duration::from_millis(*claim_interval_ms),
+                upload_checksums: Mutex::default(),
             }),
         })
     }

@@ -26,6 +26,7 @@ libc.workspace = true
 clap.workspace = true
 prost.workspace = true
 prost-types.workspace = true
+time.workspace = true
 # The Substrate effects interface is plain HTTP+JSON; the workspace client already carries rustls.
 reqwest = { workspace = true, features = ["json"] }
 tonic = {workspace=true,features=["tls-ring"]}
@@ -35,6 +36,7 @@ rcgen.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Serves the in-process Substrate effects stub in unit tests.
