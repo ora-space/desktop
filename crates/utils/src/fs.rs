@@ -9,6 +9,7 @@
 //! [`refuse_final_link`] opens a hostile path without following a link at its last component,
 //! [`ExclusiveFileLock`] serializes writers across processes through a sidecar lock file, and
 //! [`classify_line_tail`] tells an appender whether a line-oriented file ends mid-line.
+//! [`own_tree_no_follow`] hands a directory tree to one owner without following links.
 //!
 //! On Linux, `LinuxFileLock` supplies transferable advisory ownership of an already opened file.
 //! Trusted path resolution and persistent filesystem layout remain the caller's responsibility.
@@ -22,6 +23,8 @@ mod linux_file_lock;
 #[cfg(target_os = "linux")]
 mod linux_filesystem;
 mod no_follow;
+#[cfg(unix)]
+mod owned_tree;
 mod trailing_newline;
 mod unique_path;
 
@@ -32,5 +35,7 @@ pub use linux_file_lock::LinuxFileLock;
 #[cfg(target_os = "linux")]
 pub use linux_filesystem::LinuxFilesystem;
 pub use no_follow::refuse_final_link;
+#[cfg(unix)]
+pub use owned_tree::own_tree_no_follow;
 pub use trailing_newline::{LineTail, classify_line_tail};
 pub use unique_path::next_available_file_name;

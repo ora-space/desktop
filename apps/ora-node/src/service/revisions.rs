@@ -311,6 +311,7 @@ fn inputs(
         history,
         author: session_spec.git_identity,
         node: node.identity().clone(),
+        owner: node.git.runner().process_config().workload_uid,
     })))
 }
 

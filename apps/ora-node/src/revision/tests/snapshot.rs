@@ -70,6 +70,11 @@ impl Fixture {
                 node_id: NodeId::new("node"),
                 incarnation_id: NodeIncarnationId::new("first"),
             },
+            // Unprivileged tests can only hand the tree to themselves; that still runs the
+            // no-follow ownership walk on every preparation, as production does.
+            owner: Some(std::os::unix::fs::MetadataExt::uid(
+                &std::fs::metadata(self.checkout()).expect("checkout metadata"),
+            )),
         }
     }
 

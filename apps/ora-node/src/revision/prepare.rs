@@ -22,6 +22,8 @@ pub(crate) struct Preparation {
     /// The incarnation that prepares the bytes is the one the declaration names, even when a
     /// later incarnation finishes the upload.
     pub(crate) node: NodeRuntimeIdentity,
+    /// The workload user delivery Git runs as, when the deployment separates it from the Node.
+    pub(crate) owner: Option<u32>,
 }
 
 /// The per-execution directory name: execution IDs are opaque protocol text, so the name is
@@ -66,6 +68,15 @@ fn freeze<R: GitRunner>(
     let history_path = frozen.join(HISTORY_FILE);
     copy_synced(&job.history, &history_path)
         .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
+    // The agent plugin runs outside the workload user (it is not under process-host scopes yet),
+    // so files it created can belong to the Node user with owner-only modes, which delivery Git —
+    // running as the workload user like clone — could not read. The session has ended, so nothing
+    // writes the checkout now; hand it back to the workload user without following links, so a
+    // link the agent left cannot redirect this privileged change outside the checkout.
+    if let Some(owner) = job.owner {
+        ora_utils::fs::own_tree_no_follow(&job.checkout, owner, owner)
+            .map_err(|error| local(error, RevisionFailureCode::SnapshotFailed))?;
+    }
     let snapshot = git
         .snapshot(&SnapshotRequest {
             checkout: &job.checkout,
