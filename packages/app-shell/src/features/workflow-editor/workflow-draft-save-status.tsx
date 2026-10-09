@@ -12,8 +12,8 @@ type WorkflowDraftSaveStatusProps = {
 /**
  * Surfaces autosave progress next to the workflow title without introducing a
  * manual Save control. Keeps the last live-saved timestamp visible while edits
- * are still inside the debounce window so the header does not flicker to
- * "unsaved" on every keystroke.
+ * are dirty or the quiet-period write is in flight so the header does not
+ * flicker through "unsaved" / "saving" on every drag commit.
  */
 export function WorkflowDraftSaveStatusLabel({
   status,
@@ -23,12 +23,12 @@ export function WorkflowDraftSaveStatusLabel({
   const { t } = useTranslation();
 
   let label: string;
-  if (status === "saving") {
-    label = t("settings.workflow.saving");
-  } else if (status === "error") {
+  if (status === "error") {
     label = t("settings.workflow.saveError");
   } else if (draftUpdatedAt !== undefined) {
     label = t("settings.workflow.liveSaved", { time: draftUpdatedAt });
+  } else if (status === "saving") {
+    label = t("settings.workflow.saving");
   } else if (status === "dirty") {
     label = t("settings.workflow.unsaved");
   } else {
@@ -39,7 +39,7 @@ export function WorkflowDraftSaveStatusLabel({
     <p
       aria-live="polite"
       className={cn(
-        "max-w-56 shrink-0 truncate text-right text-[10px] leading-4 text-muted-foreground",
+        "max-w-56 shrink-0 truncate text-right text-[10px] leading-4 text-muted-foreground tabular-nums",
         status === "error" && "text-destructive",
         className,
       )}
