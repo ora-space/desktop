@@ -7,7 +7,7 @@ use tonic::transport::Channel;
 
 impl CloudStore {
     /// Uses the existing management channel and holder metadata for the AgentRun contract.
-    fn agents(&self) -> AgentRunServiceClient<Channel> {
+    pub(super) fn agents(&self) -> AgentRunServiceClient<Channel> {
         AgentRunServiceClient::new(self.inner.channel.clone())
     }
 
@@ -213,50 +213,5 @@ impl CloudStore {
         .await
         .map(drop)
         .map_err(|v| self.settle(v))
-    }
-
-    /// Freezes the Cloud input before any Node frame; a lost registration reply reuses its UUID.
-    pub(super) async fn record_agent(
-        &self,
-        epoch: i64,
-        item: &proto::WorkItem,
-        node: &NodeId,
-    ) -> Result<(), Error> {
-        let execution = uuid::Uuid::new_v4().to_string();
-        let preview = proto::ExecutionRecord {
-            operation_id: item.operation_id.clone(),
-            node_operation_id: item.operation_id.clone(),
-            execution_id: execution.clone(),
-            node_id: node.as_str().into(),
-            input: item.input.clone(),
-            result: None,
-        };
-        mapping::start(&preview, node)?;
-        let response = fault::write(|submission_id| {
-            let request = proto::RecordDispatchRequest {
-                submission_id,
-                epoch,
-                operation_id: item.operation_id.clone(),
-                execution_id: execution.clone(),
-                node_id: node.as_str().into(),
-                input: item.input.clone(),
-            };
-            async move {
-                self.executions()
-                    .record_dispatch(self.request(request))
-                    .await
-            }
-        })
-        .await
-        .map_err(|v| self.settle(v))?;
-        let record = response.record.ok_or(Error::Conflict)?;
-        if record.operation_id != item.operation_id
-            || record.execution_id != execution
-            || record.input != item.input
-        {
-            return Err(Error::Conflict);
-        }
-        mapping::start(&record, node)?;
-        Ok(())
     }
 }

@@ -85,8 +85,9 @@ pub(super) fn outcome(result: proto::ExecutionResult) -> Result<ExecutionOutcome
             failure: failure(failed.reason)?,
             retained_path: failed.retained_path.map(NodePath::new),
         },
-        // This Controller registers clones only, so no record it reads back can hold another
-        // execution family.
+        // This projection serves the clone family only. Session, delivery and plugin records are
+        // resolved through their own families before any caller reads a clone outcome, so reaching
+        // one here is a disagreement with the authority.
         proto::execution_result::Outcome::PluginsResult(_)
         | proto::execution_result::Outcome::PluginsFailed(_)
         | proto::execution_result::Outcome::AgentSessionEnded(_)

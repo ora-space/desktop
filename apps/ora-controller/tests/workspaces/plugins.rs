@@ -21,6 +21,9 @@ pub(super) fn capabilities(node: &Node) -> Vec<NodeCapability> {
     if node.agents.enabled.load(Ordering::SeqCst) {
         capabilities.push(NodeCapability::AgentSession);
     }
+    if node.deliveries.enabled.load(Ordering::SeqCst) {
+        capabilities.push(NodeCapability::RevisionDelivery);
+    }
     capabilities
 }
 

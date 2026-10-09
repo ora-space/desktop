@@ -170,7 +170,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
 
     /// Lists unfinished sessions for interrupted settlement, never for automatic Agent restart.
     pub fn recoverable_sessions(&self) -> Result<Vec<SessionExecution>, Error> {
-        self.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions WHERE state<>'completed' ORDER BY rowid")?
+        self.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions WHERE kind='agent_session' AND state<>'completed' ORDER BY rowid")?
             .query_map([], row)?.map(|r| decode(r?)).collect()
     }
 }

@@ -9,6 +9,8 @@
 
 #[path = "workspaces/agents.rs"]
 mod agents;
+#[path = "workspaces/deliveries.rs"]
+mod deliveries;
 #[path = "workspaces/plugins.rs"]
 mod plugins;
 #[path = "support/workspace_cloud.rs"]
@@ -112,6 +114,9 @@ struct Node {
     completes: Arc<AtomicBool>,
     plugin_capable: Arc<AtomicBool>,
     agents: agents::AgentNode,
+    deliveries: deliveries::DeliveryNode,
+    /// Ends the current session once, as a dropped connection would.
+    disconnect: Arc<AtomicBool>,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
     timeline: Timeline,
 }
@@ -145,9 +150,18 @@ impl Node {
         let mut sequence = 0;
         let mut greeted = false;
         let mut agent_sent = std::collections::HashSet::new();
+        let mut delivery_sent = std::collections::HashSet::new();
         let mut beat = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
         loop {
-            while greeted && let Some(event) = self.agents.next(&mut agent_sent) {
+            if self.disconnect.swap(false, Ordering::SeqCst) {
+                return;
+            }
+            while greeted
+                && let Some(event) = self
+                    .agents
+                    .next(&mut agent_sent)
+                    .or_else(|| self.deliveries.next(&mut delivery_sent))
+            {
                 if sender
                     .send(encode_node_frame(&event).unwrap())
                     .await
@@ -176,7 +190,7 @@ impl Node {
                             execution_id: query.execution_id.clone(),
                             payload: ExecutionStatus {
                                 node: identity.clone(),
-                                state: self.agents.status(&query.execution_id).unwrap_or_else(|| results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone()))),
+                                state: self.agents.status(&query.execution_id).or_else(|| self.deliveries.status(&query.execution_id)).unwrap_or_else(|| results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone()))),
                             },
                         })),
                         ControllerToNodeMessage::ControlledClone(ControlledClone { command, .. }) if self.completes.load(Ordering::SeqCst) => {
@@ -201,7 +215,9 @@ impl Node {
                         ControllerToNodeMessage::ControlledStartAgentSession(envelope) => { self.agents.start(*envelope, &self.timeline); None }
                         ControllerToNodeMessage::SubmitUserTurn(command) => self.agents.command(AgentCommand::Submit(command), &self.timeline),
                         ControllerToNodeMessage::EndSession(command) => self.agents.command(AgentCommand::End(command), &self.timeline),
-                        ControllerToNodeMessage::EventAck(ack) => { self.agents.ack(&ack, &self.timeline); None }
+                        ControllerToNodeMessage::EventAck(ack) => { self.agents.ack(&ack, &self.timeline); self.deliveries.ack(&ack, &self.timeline); None }
+                        ControllerToNodeMessage::ControlledDeliverRevision(envelope) => { self.deliveries.start(*envelope, &self.timeline); None }
+                        ControllerToNodeMessage::UploadGrant(grant) => { self.deliveries.grant(grant, &self.timeline); None }
                         ControllerToNodeMessage::ControlledPlugins(envelope) => {
                             let event = plugins::complete(self, &envelope, &identity);
                             results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
@@ -284,78 +300,84 @@ impl World {
 
 /// Runs `test` against a Controller with a Substrate and no static Node.
 fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(World) -> Fut) {
-    ora_logging::with_trace_logging(|| {
-        let root = tempfile::Builder::new()
-            .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
-            .tempdir_in(std::env::var_os("HOME").unwrap())
-            .unwrap();
-        let home = root.path().join("controller");
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let timeline = Timeline::default();
-                let cloud = WorkspaceCloud::new(timeline.clone(), requested_ref);
-                let served = cloud.serve().await;
-                let substrate = Substrate {
-                    journal: Arc::default(),
-                    timeline: timeline.clone(),
-                };
-                let app = Router::new()
-                    .route("/effects/{id}", any(effects))
-                    .with_state(substrate);
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let effects_url = format!("http://{}", listener.local_addr().unwrap());
-                tokio::spawn(async move { axum::serve(listener, app).await });
-                let node = Node {
-                    completes: Arc::new(AtomicBool::new(true)),
-                    plugin_capable: Arc::new(AtomicBool::new(true)),
-                    agents: agents::AgentNode::default(),
-                    plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
-                    timeline: timeline.clone(),
-                };
-                let router_url = node.clone().serve().await;
-                let config = RuntimeConfig {
-                    management_tls: None,
-                    home_directory: home,
-                    persistence: Persistence::Cloud {
-                        endpoint: served.endpoint.clone(),
-                        claim_interval_ms: 100,
-                        substrate: Some(SubstrateConfig {
-                            direct_node_port: None,
-                            effects_url,
-                            router_url,
-                            atespace: "local".into(),
-                            request_timeout_ms: 2_000,
-                        }),
-                    },
-                    protected_state_directories: Vec::new(),
-                    controller_id: ControllerId::new("owner"),
-                    nodes: Vec::new(),
-                    session: SessionConfig {
-                        io_timeout_ms: 1_000,
-                        query_interval_ms: 20,
-                    },
-                    reconnect_ms: 50,
-                    timezone: "Asia/Shanghai".into(),
-                };
-                let controller = Controller {
-                    config,
-                    running: Arc::default(),
-                };
-                controller.start().await;
-                test(World {
-                    cloud,
-                    node,
-                    timeline,
-                    controller: controller.clone(),
-                })
-                .await;
-                controller.stop().await;
-                drop(served);
-            });
-    });
+    ora_logging::with_trace_logging(|| run_scenario(requested_ref, test));
+}
+
+/// The scenario body; the caller installs the test-scoped subscriber around it, so every task of
+/// the current-thread runtime logs under that subscriber.
+fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(World) -> Fut) {
+    let root = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+        .tempdir_in(std::env::var_os("HOME").unwrap())
+        .unwrap();
+    let home = root.path().join("controller");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let timeline = Timeline::default();
+            let cloud = WorkspaceCloud::new(timeline.clone(), requested_ref);
+            let served = cloud.serve().await;
+            let substrate = Substrate {
+                journal: Arc::default(),
+                timeline: timeline.clone(),
+            };
+            let app = Router::new()
+                .route("/effects/{id}", any(effects))
+                .with_state(substrate);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let effects_url = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(listener, app).await });
+            let node = Node {
+                completes: Arc::new(AtomicBool::new(true)),
+                plugin_capable: Arc::new(AtomicBool::new(true)),
+                agents: agents::AgentNode::default(),
+                deliveries: deliveries::DeliveryNode::default(),
+                disconnect: Arc::new(AtomicBool::new(false)),
+                plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
+                timeline: timeline.clone(),
+            };
+            let router_url = node.clone().serve().await;
+            let config = RuntimeConfig {
+                management_tls: None,
+                home_directory: home,
+                persistence: Persistence::Cloud {
+                    endpoint: served.endpoint.clone(),
+                    claim_interval_ms: 100,
+                    substrate: Some(SubstrateConfig {
+                        direct_node_port: None,
+                        effects_url,
+                        router_url,
+                        atespace: "local".into(),
+                        request_timeout_ms: 2_000,
+                    }),
+                },
+                protected_state_directories: Vec::new(),
+                controller_id: ControllerId::new("owner"),
+                nodes: Vec::new(),
+                session: SessionConfig {
+                    io_timeout_ms: 1_000,
+                    query_interval_ms: 20,
+                },
+                reconnect_ms: 50,
+                timezone: "Asia/Shanghai".into(),
+            };
+            let controller = Controller {
+                config,
+                running: Arc::default(),
+            };
+            controller.start().await;
+            test(World {
+                cloud,
+                node,
+                timeline,
+                controller: controller.clone(),
+            })
+            .await;
+            controller.stop().await;
+            drop(served);
+        });
 }
 
 /// Waits until the operation reaches `state`.

@@ -1,4 +1,5 @@
 //! Node-owned Git execution association; process facts remain owned by host and guardian.
+mod delivery;
 mod repository;
 mod transport;
 pub(crate) use repository::{AttemptSettlement, CloneHost};

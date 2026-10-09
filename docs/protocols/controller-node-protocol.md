@@ -108,7 +108,9 @@ wired to these messages.
   two distinct normalized object keys. `revision_unchanged` requires the final commit to equal the base;
   `revision_delivered` requires it to differ.
 - `upload_grant` and `upload_grant_needed` are memory-only: no sequence, no acknowledgement, never
-  persisted or logged. `PresignedUrl` redacts itself in `Debug`.
+  persisted or logged. `PresignedUrl` redacts itself in `Debug`. `upload_grant_needed` names every
+  object still to upload with its frozen SHA-256; the Node's side is described in
+  [Revision delivery](../node/revision-delivery.md).
 
 The new result families use disjoint `kind` tags inside the untagged `ExecutionResult`; the Revision
 family is boxed to keep `ExecutionState` small.

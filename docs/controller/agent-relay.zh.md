@@ -2,8 +2,9 @@
 
 [English](agent-relay.md) | 中文
 
-Cloud 模式下，`ora-controller` 在 Cloud 与 Workspace 的 Node 之间转交 Agent 会话执行和命令。
-IssueRun 阶段与持久回执由 Cloud 所有；Controller 只维护连接内的队列。SQLite 本地模式仍只承担 clone。
+Cloud 模式下，`ora-controller` 在 Cloud 与 Workspace 的 Node 之间转交 Agent 会话执行、命令、Revision
+交付及其上传授权。IssueRun 阶段与持久回执由 Cloud 所有；Controller 只维护连接内的队列。SQLite 本地模式
+仍只承担 clone。
 
 ## 派发与权限
 
@@ -14,6 +15,35 @@ Node operation ID 从登记回包读取，不假设它等于 IssueRun ID。
 已登记执行通过状态查询恢复。同一连接收到 `Unknown` 后最多重发一次原始命令，重新取得执行许可，发送
 `ControlledStartAgentSession`。许可缺失或关闭时不能启动。quiesce 判断沙盒是否 idle 时，将未结束的
 Agent 会话计入未完成责任。
+
+## Revision 交付
+
+`DeliverRevision` 工作项沿用同一领取—登记—派发路径。登记要求目标 Node 完成身份匹配的握手并声明
+`revision_delivery` 能力；未声明的 Node 让工作项留在 Cloud 队列中。登记输入在重建时补上目标 Node
+（Cloud 的 spec 不含 Node），并且只在取得新的执行许可后以 `ControlledDeliverRevision` 发送。每类执行
+有独立的待处理列表，交付记录不会进入 clone 轮询或 clone 协调；未结束的交付使 quiesce 不报告 idle。
+
+终态 `RevisionResult` 经 `TakeOverNodeEvent` 接管，Cloud 提交后才 ACK；Cloud 在该接管内校验声明的
+对象。Completed 状态查询不结算交付：Cloud 只接受附带 Node 有序回执的交付结果，Node 会持续重放终态
+envelope 直到收到 ACK。Controller 自己从不写 `RevisionFailed`，也不报告只由 Cloud 记录的
+`VERIFICATION_FAILED`。停机、租约丢失或连接断开都让已登记交付保持无结果；新进程通过状态查询以及
+`Unknown` 时重发原始命令继续它。
+
+## 上传授权
+
+`GrantRevisionUpload` 只携带 Node 固定的 SHA-256 摘要申请，Cloud 因此把 `x-amz-checksum-sha256` 与
+`If-None-Match: *` 一起签入：
+
+- Node 发送 `UploadGrantNeeded` 时，原样转交其 checksum map。
+- 新连接首次看到交付处于 `Accepted` 或 `Running` 时，用该 Node 最近向本进程报告的摘要再次申请，覆盖
+  重连场景。
+- 派发后不立即申请：此时 Node 尚未固定对象，授权无法绑定摘要，而 Node 需要时会立即请求。同理，
+  重启后的 Controller 不知道摘要，等待 Node 的请求。
+
+返回的授权以 `UploadGrant` 转交，头与过期时间原样保留，且只接受申请过的键。Cloud 不可用或租约丢失时
+保留请求稍后重试；`CONFLICT`（交付已有结果或运行不再处于交付阶段）丢弃请求，不让交付或连接失败。
+授权只在转交途中存在于内存，不持久化、不写日志，消息帧也不会被格式化进诊断信息。进程内存只保留摘要，
+摘要不是凭据。
 
 ## 事件与恢复
 
@@ -38,11 +68,13 @@ Controller 重启后重新领取 Cloud 中未确认的队首命令，Node 按 ID
 
 ## 验证与剩余工作
 
-`cargo test -p ora-controller --lib --tests` 包含 `tests/workspaces/agents.rs` 中的测试：使用真实生成的
-gRPC 与 WebSocket 接口，Cloud 和 Node 采用内存替身，覆盖有序接管、慢执行隔离、不可用／冲突／回复丢失
-恢复、Controller 重启、命令重试／顺序／拒绝、能力门槛、大记录分批和 quiesce 责任。
-这些测试不证明真实 PostgreSQL、生产 Node 或浏览器 Thread 联调完成。
+`cargo test -p ora-controller --lib --tests` 包含 `tests/workspaces/agents.rs` 与
+`tests/workspaces/deliveries.rs` 中的测试：使用真实生成的 gRPC 与 WebSocket 接口，Cloud 和 Node 采用
+内存替身，覆盖有序接管、慢执行隔离、不可用／冲突／回复丢失恢复、Controller 重启、命令重试／顺序／拒绝、
+能力门槛、大记录分批、quiesce 责任、受许可约束的交付派发、头原样保留的摘要绑定授权转交、重连刷新授权、
+授权被拒、提交后 ACK，以及日志中不出现授权 URL 与签名。这些测试不证明真实 PostgreSQL、对象存储、
+生产 Node 或浏览器 Thread 联调完成。
 
 Controller session ADR 仍为 `proposed`。本次提供可评审的实现行为，不代表设计已获批准，也不更新已批准
-核心用例的证据。Revision 交付与上传授权中继留待后续开发。Node 进程 scope 管理，以及完整 M2 的
-Compose／页面验收仍需各自的验证证据。
+核心用例的证据。Node 进程 scope 管理、生产 Node 交付，以及完整 M2／M3 的 Compose／页面验收仍需各自的
+验证证据。

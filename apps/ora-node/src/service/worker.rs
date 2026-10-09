@@ -1,4 +1,4 @@
-use super::{clones::Clones, plugins::Plugins, *};
+use super::{clones::Clones, plugins::Plugins, revisions::Revisions, *};
 use crate::{ManagedNode, Node};
 use ora_node_db::Error as StorageError;
 use ora_node_transport::CloseReason;
@@ -61,6 +61,9 @@ pub(super) fn run(
         }
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
         let plugins = Plugins::start(&node).map_err(|e| e.to_string())?;
+        let grants = crate::revision::GrantStore::new();
+        let revisions =
+            Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
         let agents = agents::open(
             &mut node,
             config.agent.as_ref(),
@@ -68,15 +71,16 @@ pub(super) fn run(
             plugins.catalog.clone(),
         )
         .map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones, plugins, agents))
+        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions))
     })();
-    let (mut node, controller, mut clones, mut plugins, agents) = match initialized {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = ready.send(Err(error.clone()));
-            return Err(error);
-        }
-    };
+    let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions) =
+        match initialized {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = ready.send(Err(error.clone()));
+                return Err(error);
+            }
+        };
     let mut capabilities = vec![
         NodeCapability::RepositoryClone,
         NodeCapability::PluginInstall,
@@ -85,8 +89,12 @@ pub(super) fn run(
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
     }
+    if revisions.is_some() {
+        capabilities.push(NodeCapability::RevisionDelivery);
+    }
     let info = SessionInfo {
         agents: agents.clone(),
+        grants,
         identity: node.identity().clone(),
         controller: controller.clone(),
         capabilities,
@@ -96,6 +104,9 @@ pub(super) fn run(
             tokio::runtime::Handle::current().block_on(agents.shutdown());
         }
         plugins.finish(&mut node).map_err(|e| e.to_string())?;
+        if let Some(revisions) = revisions {
+            revisions.finish(&mut node).map_err(|e| e.to_string())?;
+        }
         clones.drain(&mut node, Duration::ZERO)?;
         return node.shutdown().map_err(|e| e.to_string());
     }
@@ -117,6 +128,7 @@ pub(super) fn run(
                             &mut node,
                             &mut clones,
                             agents.as_ref(),
+                            revisions.is_some(),
                             &controller,
                             controlled,
                             target.as_ref(),
@@ -147,6 +159,11 @@ pub(super) fn run(
             }
             clones.advance(&mut node)?;
             plugins.advance(&mut node).map_err(|e| e.to_string())?;
+            if let Some(revisions) = revisions.as_mut() {
+                revisions
+                    .advance(&mut node, agents.as_ref())
+                    .map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     })();
@@ -154,6 +171,9 @@ pub(super) fn run(
         tokio::runtime::Handle::current().block_on(agents.shutdown());
     }
     let plugins_finished = plugins.finish(&mut node).map_err(|e| e.to_string());
+    let revisions_finished = revisions
+        .map_or(Ok(()), |revisions| revisions.finish(&mut node))
+        .map_err(|e| e.to_string());
     let agents_finished = if agents.as_ref().is_some_and(agents::SessionHost::failed) {
         Err("Agent terminal persistence failed".to_owned())
     } else {
@@ -164,6 +184,7 @@ pub(super) fn run(
     result
         .and(drained)
         .and(plugins_finished)
+        .and(revisions_finished)
         .and(agents_finished)
 }
 
@@ -195,10 +216,12 @@ fn close_reason(error: &crate::Error) -> CloseReason {
 }
 
 /// Ownership checks precede each read, acknowledgement or new durable admission.
+#[allow(clippy::too_many_arguments)]
 fn handle(
     node: &mut ManagedNode,
     clones: &mut Clones,
     agents: Option<&agents::SessionHost>,
+    deliveries: bool,
     controller: &ControllerId,
     controlled: bool,
     target: Option<&RuntimeScope>,
@@ -348,15 +371,42 @@ fn handle(
             node.acknowledge(&ack)?;
             Ok(vec![])
         }
-        // The session read loop consumes Controller heartbeats; they never reach admission.
-        // Worktree and delivery executions are refused until this service implements them;
-        // it does not advertise their capabilities, so a conforming Controller never sends them.
+        Request::Message(ControllerToNodeMessage::DeliverRevision(command)) => {
+            if controlled || !deliveries {
+                return Err(crate::Error::UnsupportedMessage);
+            }
+            node.database.check_controller_execution(
+                controller,
+                &command.operation_id,
+                &command.execution_id,
+            )?;
+            let record = node.database.accept_delivery(&command)?;
+            Ok(delivery_status(node, record))
+        }
+        Request::Message(ControllerToNodeMessage::ControlledDeliverRevision(envelope)) => {
+            if !deliveries {
+                return Err(crate::Error::UnsupportedMessage);
+            }
+            envelope.validate()?;
+            if envelope.binding.node_incarnation_id != node.identity().incarnation_id.as_str() {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            node.database.check_controller_execution(
+                controller,
+                &envelope.command.operation_id,
+                &envelope.command.execution_id,
+            )?;
+            let record = node.database.accept_controlled_delivery(&envelope)?;
+            Ok(delivery_status(node, record))
+        }
+        // The session read loop consumes Controller heartbeats and upload grants; they never
+        // reach admission. Worktree executions are refused until this service implements them;
+        // it does not advertise their capability, so a conforming Controller never sends them.
         Request::Message(
             ControllerToNodeMessage::Hello(_)
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
-            | ControllerToNodeMessage::DeliverRevision(_)
             | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
@@ -394,6 +444,24 @@ fn plugin_status(
             payload: ExecutionStatus {
                 node: node.identity().clone(),
                 state: record.state,
+            },
+        },
+    )]
+}
+
+/// Admission reports the durable state; the delivery executor picks the execution up on its own.
+fn delivery_status(
+    node: &ManagedNode,
+    record: ora_node_db::RevisionDelivery,
+) -> Vec<NodeToControllerMessage> {
+    vec![NodeToControllerMessage::ExecutionStatus(
+        ExecutionStatusMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: record.command.operation_id.clone(),
+            execution_id: record.command.execution_id.clone(),
+            payload: ExecutionStatus {
+                node: node.identity().clone(),
+                state: record.progress.state(),
             },
         },
     )]

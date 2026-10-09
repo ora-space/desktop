@@ -6,10 +6,11 @@
 
 use super::validation::{validate_execution_ids, validate_identity, validate_protocol_version};
 use crate::{
-    DeliverRevisionSpec, ExecutionId, MessageValidationError, NodeId, ObjectUploadGrant,
-    OperationId, ProtocolVersion, RevisionExecutionResult, Sequence, ValidateMessage,
+    DeliverRevisionSpec, ExecutionId, MessageValidationError, NodeId, ObjectKey, ObjectUploadGrant,
+    OperationId, ProtocolVersion, RevisionExecutionResult, Sequence, Sha256Digest, ValidateMessage,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Saves an ended session's Workspace and history.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -26,10 +27,15 @@ pub struct UploadGrant {
 }
 
 /// The Node must upload but holds no valid grant (never received, expired, or lost on restart).
+///
+/// `checksums` names every object the Node still has to upload with the SHA-256 it froze before
+/// the first PUT, so the Controller can ask Cloud for checksum-bound grants
+/// (`GrantRevisionUploadRequest.checksums`): the store then refuses any other bytes under the key.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UploadGrantNeeded {
     pub node_id: NodeId,
+    pub checksums: BTreeMap<ObjectKey, Sha256Digest>,
 }
 
 /// Correlates a delivery with its IssueRun and durable execution identity.
@@ -103,10 +109,18 @@ impl ValidateMessage for UploadGrantMessage {
 }
 
 impl ValidateMessage for UploadGrantNeededMessage {
-    /// Requires the requesting Node.
+    /// Requires the requesting Node and at least one object, each with a valid key and canonical
+    /// digest; a delivery that needs a grant always has an object left to upload.
     fn validate(&self) -> Result<(), MessageValidationError> {
         validate_protocol_version(self.protocol_version)?;
         validate_execution_ids(&self.operation_id, &self.execution_id)?;
-        validate_identity(self.payload.node_id.is_empty(), "node_id")
+        validate_identity(self.payload.node_id.is_empty(), "node_id")?;
+        if self.payload.checksums.is_empty() {
+            return Err(MessageValidationError::EmptyUploadGrant);
+        }
+        self.payload.checksums.iter().try_for_each(|(key, digest)| {
+            key.validate()?;
+            digest.validate()
+        })
     }
 }

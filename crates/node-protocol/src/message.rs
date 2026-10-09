@@ -29,8 +29,8 @@ pub use revision::{
     UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage,
 };
 pub use runtime_control::{
-    ControlledClone, ControlledPlugins, ControlledStartAgentSession, RuntimeBinding,
-    RuntimeControlState,
+    ControlledClone, ControlledDeliverRevision, ControlledPlugins, ControlledStartAgentSession,
+    RuntimeBinding, RuntimeControlState,
 };
 use serde::{Deserialize, Serialize};
 pub use session::{
@@ -58,6 +58,7 @@ pub enum ControllerToNodeMessage {
     ControlledClone(ControlledClone),
     ControlledPlugins(ControlledPlugins),
     ControlledStartAgentSession(Box<ControlledStartAgentSession>),
+    ControlledDeliverRevision(Box<ControlledDeliverRevision>),
     EnsureWorktree(EnsureWorktreeMessage),
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
@@ -83,6 +84,7 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::ControlledClone(message) => message.validate(),
             Self::ControlledPlugins(message) => message.validate(),
             Self::ControlledStartAgentSession(message) => message.validate(),
+            Self::ControlledDeliverRevision(message) => message.validate(),
             Self::EnsureWorktree(message) => message.validate(),
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),

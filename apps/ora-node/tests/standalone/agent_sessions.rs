@@ -3,6 +3,8 @@ use super::*;
 use pretty_assertions::assert_eq;
 #[path = "agent_sessions/authority.rs"]
 mod authority;
+#[path = "agent_sessions/delivery.rs"]
+mod delivery;
 #[path = "agent_sessions/recovery.rs"]
 mod recovery;
 #[path = "agent_sessions/support.rs"]

@@ -110,7 +110,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
 
     /// Reports every unresolved local liability, including historical unbound executions.
     pub fn unfinished_runtime_executions(&self) -> Result<Vec<String>, Error> {
-        self.connection.prepare("SELECT execution FROM clone_executions WHERE state<>'completed' UNION SELECT execution FROM executions WHERE state<>'completed' UNION SELECT execution FROM plugin_executions WHERE state<>'completed' UNION SELECT execution FROM node_executions WHERE state<>'completed' UNION SELECT execution FROM process_attempts WHERE cleaned=0 ORDER BY execution")?
+        self.connection.prepare("SELECT execution FROM clone_executions WHERE state<>'completed' UNION SELECT execution FROM executions WHERE state<>'completed' UNION SELECT execution FROM plugin_executions WHERE state<>'completed' UNION SELECT execution FROM node_executions WHERE state<>'completed' UNION SELECT execution FROM revision_deliveries WHERE state<>'completed' UNION SELECT execution FROM process_attempts WHERE cleaned=0 ORDER BY execution")?
             .query_map([], |r| r.get(0))?.collect::<Result<Vec<_>,_>>().map_err(Error::from)
     }
 

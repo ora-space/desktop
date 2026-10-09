@@ -24,7 +24,10 @@ impl WorkspaceCloud {
                 .filter(|r| {
                     matches!(
                         r.input.as_ref().and_then(|i| i.spec.as_ref()),
-                        Some(proto::execution_input::Spec::AgentSession(_))
+                        Some(
+                            proto::execution_input::Spec::AgentSession(_)
+                                | proto::execution_input::Spec::DeliverRevision(_)
+                        )
                     )
                 })
                 .map(|r| r.operation_id.clone()),

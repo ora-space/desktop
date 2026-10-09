@@ -1,5 +1,5 @@
 use crate::*;
-use std::{future::Future, io};
+use std::{collections::BTreeMap, future::Future, io};
 
 /// The durable coordination boundary between clone coordination logic and whichever authority
 /// persists it: the local SQLite adapter or the Cloud RPC adapter of a cloud deployment.
@@ -104,6 +104,52 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), Error>> + Send {
         async { Err(Error::Conflict) }
     }
+    /// Cloud Revision deliveries dispatched to this Node that have no terminal result yet.
+    fn pending_deliveries(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<DeliverRevisionMessage>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// Resolves delivery ownership without treating another known execution family as a delivery.
+    fn original_delivery_dispatch(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+    ) -> impl Future<Output = Result<Option<DeliverRevisionMessage>, Error>> + Send {
+        async { Ok(None) }
+    }
+    /// Obtains fresh runtime authority for a registered delivery; `None` means not permitted now.
+    fn dispatch_delivery(
+        &self,
+        _command: DeliverRevisionMessage,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+    /// Durably takes over an actual delivery terminal event and its receipt before an
+    /// acknowledgement. A queried Completed delivery has no such hook: Cloud accepts a delivery
+    /// result only together with the Node's sequenced receipt, so the session waits for the event.
+    fn take_over_revision(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _event: &RevisionResultMessage,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+    /// Asks the authority for fresh upload grants of a running delivery. Grants are bearer
+    /// credentials: implementations keep them in memory, never persist or log them, and a refusal
+    /// is never turned into a delivery failure.
+    fn grant_upload(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+        _request: GrantRequest,
+    ) -> impl Future<Output = Result<GrantOutcome, Error>> + Send {
+        async { Ok(GrantOutcome::NotGrantable) }
+    }
+
     /// An advisory wake-up; periodic polling remains authoritative if a hint is missed.
     fn wait_agent_command_hint(&self) -> impl Future<Output = ()> + Send {
         std::future::pending()
@@ -266,4 +312,27 @@ impl From<&CloneExecutionResult> for ExecutionOutcome {
             },
         }
     }
+}
+
+/// Why a Node session asks for upload grants of one delivery execution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GrantRequest {
+    /// The Node reported that it holds no valid grant for these objects, each with the SHA-256 it
+    /// froze before its first PUT; the grants are bound to exactly these digests.
+    Needed(BTreeMap<ObjectKey, Sha256Digest>),
+    /// A new connection found the delivery still running. Only digests the Node already reported
+    /// to this process can be reused; without them the Node asks again itself.
+    Resumed,
+}
+
+/// What a grant request produced. Deliberately not `Debug`: an issued grant carries signed headers
+/// that must not reach diagnostics.
+pub enum GrantOutcome {
+    /// Fresh grants for the Node, to be sent and then forgotten.
+    Issued(UploadGrantMessage),
+    /// The delivery is no longer grantable (it has a result, its run stopped delivering, or the
+    /// request named foreign objects). This is never a delivery failure; Cloud settles the run.
+    NotGrantable,
+    /// No checksums are known for a resumed delivery; the Node's `UploadGrantNeeded` will carry them.
+    AwaitNode,
 }

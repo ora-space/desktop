@@ -122,6 +122,13 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
             .capabilities
             .contains(&NodeCapability::AgentSession)
     );
+    // Delivery runs Git in the checkouts clone created, so clone configuration enables it.
+    assert!(
+        hello
+            .payload
+            .capabilities
+            .contains(&NodeCapability::RevisionDelivery)
+    );
     (stream, hello.payload.node)
 }
 

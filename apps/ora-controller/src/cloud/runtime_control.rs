@@ -142,6 +142,27 @@ impl CloudStore {
         Ok(Some(message))
     }
 
+    /// A delivery reads the Workspace and uploads its content, so it needs the same exact permit.
+    pub(super) async fn controlled_delivery(
+        &self,
+        command: DeliverRevisionMessage,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        let Some(permit) = self
+            .execution_permit(&command.execution_id, &command.payload.spec.node_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let message = ControllerToNodeMessage::ControlledDeliverRevision(Box::new(
+            ControlledDeliverRevision {
+                binding: permit,
+                command,
+            },
+        ));
+        message.validate()?;
+        Ok(Some(message))
+    }
+
     /// Registration proves historical responsibility, not current permission to start work.
     async fn execution_permit(
         &self,
