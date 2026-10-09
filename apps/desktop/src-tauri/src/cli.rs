@@ -67,15 +67,22 @@ pub(crate) fn print_version() {
     write_parent_console(&format!("ora-desktop {}", env!("CARGO_PKG_VERSION")));
 }
 
-/// Writes one message where a parent terminal can read it.
+/// Writes one message where the caller can read it.
 ///
 /// Release builds use the Windows GUI subsystem, so the process has no console
-/// of its own. Attaching the parent console is what makes `ora-desktop --version`
-/// visible to the program that spawned it. A double-clicked launch has no parent
-/// console; the message is discarded and the process still exits.
+/// of its own. When the launcher already provided a stdout — an inherited console
+/// buffer, a pipe, or a redirected file — that handle is where the answer belongs:
+/// attaching the parent console would bypass it and leave `ora-desktop --version |
+/// grep` reading an empty pipe. Only a launch without any stdout falls back to
+/// attaching the parent console and writing `CONOUT$`. A double-clicked launch has
+/// neither; the message is discarded and the process still exits.
 fn write_parent_console(text: &str) {
     #[cfg(windows)]
     {
+        if has_stdout_handle() {
+            println!("{text}");
+            return;
+        }
         const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
         unsafe extern "system" {
             fn AttachConsole(dw_process_id: u32) -> i32;
@@ -89,6 +96,24 @@ fn write_parent_console(text: &str) {
         }
     }
     println!("{text}");
+}
+
+/// Whether this process was given a standard-output handle at creation.
+///
+/// `STD_OUTPUT_HANDLE` is `(DWORD)-11`, not `11`; passing the wrong constant makes
+/// `GetStdHandle` fail and would send every launch down the parent-console path. A
+/// GUI-subsystem launch without redirection gets either `NULL` or the invalid-handle
+/// sentinel, and `println!` is a safe no-op in that case, so callers can always fall
+/// back to it.
+#[cfg(windows)]
+fn has_stdout_handle() -> bool {
+    use std::ffi::c_void;
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
+    unsafe extern "system" {
+        fn GetStdHandle(n_std_handle: u32) -> *mut c_void;
+    }
+    let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } as usize;
+    handle != 0 && handle != usize::MAX
 }
 
 #[cfg(test)]
