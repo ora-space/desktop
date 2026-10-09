@@ -1,6 +1,8 @@
+mod cli;
 mod commands;
 mod diagnostic_logs;
 mod error;
+mod instance;
 mod marketplace_sync;
 mod open_external;
 mod open_location;
@@ -44,6 +46,20 @@ const ORA_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Help and version must not build a window or open the database. A second
+    // `ora-desktop --version` used to boot the whole application and mark live
+    // workflow runs as interrupted by a restart.
+    match cli::classify_args(std::env::args_os()) {
+        cli::CliAction::Help => {
+            cli::print_help();
+            std::process::exit(0);
+        }
+        cli::CliAction::Version => {
+            cli::print_version();
+            std::process::exit(0);
+        }
+        cli::CliAction::Run => {}
+    }
     let builder = surface::register_workbench_protocol(tauri::Builder::default())
         // Reveal the main window only once its splash has painted, so the logo is
         // centered from the moment the interface opens instead of showing a blank
@@ -54,6 +70,16 @@ pub fn run() {
             }
         });
     let run_result = builder
+        // The plugin exits a second process during its own setup, before this
+        // process reaches backend bootstrap. The callback runs in the process
+        // that already owns the window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -115,6 +141,21 @@ fn bootstrap_desktop(
     app: &tauri::AppHandle,
 ) -> Result<(DesktopState, DesktopRuntimeGuard), DesktopBootstrapError> {
     let app_data_directory = desktop_data_directory(app)?;
+    // Take the instance lock before logging, plugins, or SQLite. The boot sweep
+    // inside Backend::open assumes the previous process is dead; the lock is that
+    // proof. A busy lock means a live owner, so this process must not open the
+    // database or mark its runs interrupted.
+    let instance_lock = match instance::acquire_desktop_instance(&app_data_directory) {
+        Ok(instance::DesktopInstance::Acquired(lock)) => lock,
+        Ok(instance::DesktopInstance::AlreadyRunning { path }) => {
+            eprintln!(
+                "Ora Desktop is already running (lock {}); this process will exit without opening the database.",
+                path.display()
+            );
+            std::process::exit(0);
+        }
+        Err(error) => return Err(DesktopBootstrapError::InstanceLock(error)),
+    };
     let user_home_directory = app
         .path()
         .home_dir()
@@ -216,6 +257,7 @@ fn bootstrap_desktop(
         DesktopRuntimeGuard {
             _logging: logging_guard,
             _marketplace_sync: marketplace_sync,
+            _instance_lock: instance_lock,
         },
     ))
 }

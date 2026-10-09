@@ -320,17 +320,31 @@ pub struct AnalyzeWorkflowRequest {
     pub graph: String,
 }
 
+/// A node whose kind string is not registered by this version of the canvas or the engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow.ts")]
+pub struct UnrecognizedWorkflowNode {
+    pub node_id: String,
+    pub kind: String,
+}
+
 /// Participation is derived from the submitted document, never persisted on nodes.
+///
+/// `unused_node_ids` are known kinds left off the execution path on purpose.
+/// `unrecognized_nodes` are kinds this version will drop on load; they are not spare nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow.ts")]
 pub struct AnalyzeWorkflowResponse {
     pub unused_node_ids: Vec<String>,
+    pub unrecognized_nodes: Vec<UnrecognizedWorkflowNode>,
 }
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AnalyzeWorkflowRequest::export(config)?;
+    UnrecognizedWorkflowNode::export(config)?;
     AnalyzeWorkflowResponse::export(config)?;
     Workflow::export(config)?;
     WorkflowSnapshot::export(config)?;

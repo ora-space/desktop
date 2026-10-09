@@ -2,6 +2,8 @@
 
 `ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff, opening http(s)/mailto URLs in the host browser, and plugin surface WebViews.
 
+`--help` / `-h` and `--version` / `-V` print to the parent terminal and exit before a window, the database, or the plugin runtime is opened. Release builds on Windows have no console of their own, so those flags attach the parent console first. Any other argument is a normal graphical launch. A second launch while one instance already holds the data directory focuses the existing window and exits. Before the backend opens, Desktop takes an exclusive `instance.lock` in the application data directory and keeps it until the process exits. The operating system releases that lock on exit or crash. The workflow boot sweep runs only after the lock is acquired, so a live second process cannot mark in-progress runs as interrupted by a restart.
+
 Prompt-box `open_external_url` rejects disallowed schemes as `InvalidRequest` and reports OS launch failures as `Internal`, matching `open_location`. On Windows it calls `ShellExecuteW` on the async runtime thread because that API returns after handing the URL to the protocol handler; `open` / `xdg-open` on other hosts still run through `spawn_blocking`.
 
 File-manager handoff lives in `src/open_location.rs`. Explorer reveals files in the **system** file manager (`explorer /select,` on Windows, `open -R` on macOS) instead of opening them with the default editor. Directories still open as folder windows.

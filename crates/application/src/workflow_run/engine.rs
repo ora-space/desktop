@@ -38,6 +38,7 @@ mod variable_value;
 
 pub use agent_config::AgentMcp;
 pub use engine::WorkflowRunEngine;
+pub use execution_document::{AuthoringParticipation, UnrecognizedAuthoringNode};
 pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};
 pub use graph::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError,

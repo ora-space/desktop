@@ -67,6 +67,12 @@ category.
   edge elevation React Flow computes, otherwise the edge hit target swallows their clicks. Deleting
   a non-empty frame confirms the member count and cascades through members and incident edges as
   one undoable edit. The authoritative execution validation remains in the Rust graph parser.
+  Draft autosave still stores an unfinished graph. Publish runs that same parse on the
+  entry-reachable subgraph and fails with `workflow_run_graph_parse` without creating a
+  snapshot when a reachable node is not executable. Spare nodes with incomplete
+  configuration do not block publish. Analysis separates those spare nodes from
+  unrecognized kinds: the count line is only the spare set, and unrecognized kinds get
+  their own status line while still being badged as excluded from execution.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - The + beside the library title opens a menu with New workflow (Ctrl/Cmd+N still opens it

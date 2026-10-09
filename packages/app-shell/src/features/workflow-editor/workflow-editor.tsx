@@ -815,6 +815,19 @@ function WorkflowEditorContent({
     });
   }, [displayedWorkflow]);
   const analysis = useWorkflowAnalysis(resolvedWorkflowId ?? "", analysisGraph);
+  const unusedNodeIds = analysis.data?.unusedNodeIds ?? [];
+  const unrecognizedNodes = analysis.data?.unrecognizedNodes ?? [];
+  // Unreachable unrecognized kinds are omitted from unusedNodeIds. The badge
+  // still has to mark them excluded; the status line explains they are not spares.
+  const excludedNodeIds = [
+    ...unusedNodeIds,
+    ...unrecognizedNodes
+      .map((node) => node.nodeId)
+      .filter((nodeId) => !unusedNodeIds.includes(nodeId)),
+  ];
+  const unrecognizedKinds = [
+    ...new Set(unrecognizedNodes.map((node) => node.kind)),
+  ].join(", ");
   const loadCause =
     library.error ?? (resolvedWorkflowId !== null ? draftQuery.error : null);
   const selectedNode = useMemo(
@@ -2543,16 +2556,25 @@ function WorkflowEditorContent({
             minSize={MIN_WORKFLOW_CANVAS_WIDTH}
           >
             {displayedWorkflow !== null ? (
-              <WorkflowMembershipProvider
-                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
-              >
-                {(analysis.data?.unusedNodeIds.length ?? 0) > 0 && (
+              <WorkflowMembershipProvider unusedNodeIds={excludedNodeIds}>
+                {unusedNodeIds.length > 0 && (
                   <p
                     role="status"
                     className="px-3 py-1 text-xs text-muted-foreground"
                   >
                     {t("workflowNode.unusedCount", {
-                      count: analysis.data?.unusedNodeIds.length,
+                      count: unusedNodeIds.length,
+                    })}
+                  </p>
+                )}
+                {unrecognizedNodes.length > 0 && (
+                  <p
+                    role="status"
+                    className="px-3 py-1 text-xs text-muted-foreground"
+                  >
+                    {t("workflowNode.unrecognizedCount", {
+                      count: unrecognizedNodes.length,
+                      kinds: unrecognizedKinds,
                     })}
                   </p>
                 )}

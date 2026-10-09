@@ -11,6 +11,8 @@ pub enum DesktopBootstrapError {
     AppDataDirectory(#[source] tauri::Error),
     #[error("failed to resolve the Ora home directory")]
     OraHomeDirectory(#[source] tauri::Error),
+    #[error("failed to acquire the desktop instance lock")]
+    InstanceLock(#[source] ora_utils::fs::ExclusiveLockError),
     #[error(transparent)]
     Logging(#[from] ora_logging::LoggingInitError),
     #[error("failed to apply the persisted Desktop log level")]

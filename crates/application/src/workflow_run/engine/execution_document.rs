@@ -4,8 +4,10 @@
 //! Agent or container must not require executable configuration or installed dependencies.
 
 use super::graph::{GraphError, WorkflowGraph};
+use super::node_type::NodeType;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::str::FromStr;
 
 struct Node<'a> {
     id: &'a str,
@@ -13,16 +15,59 @@ struct Node<'a> {
     owner: Option<&'a str>,
 }
 
+/// A node whose `data.kind` is not a kind this version can execute or keep as a spare.
+///
+/// Spare nodes are reachable-set leftovers with a known kind. An unrecognized kind is a
+/// different fact: the canvas drops it on load, and analyze must not describe that drop as
+/// an author choosing to leave a node off the execution path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrecognizedAuthoringNode {
+    pub node_id: String,
+    pub kind: String,
+}
+
+/// Participation split for editor and run-overview analysis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthoringParticipation {
+    /// Known kinds that are outside the entry-reachable execution subgraph.
+    pub unused_node_ids: Vec<String>,
+    /// Nodes whose kind string is not registered, whether or not an edge reaches them.
+    pub unrecognized_nodes: Vec<UnrecognizedAuthoringNode>,
+}
+
 /// A deterministic projection; the original JSON is never rewritten in persistence.
 pub(super) struct ExecutionDocument {
     pub graph: Value,
     pub unused_node_ids: Vec<String>,
+    unrecognized_nodes: Vec<UnrecognizedAuthoringNode>,
 }
 
 impl WorkflowGraph {
     /// Returns unused authoring nodes without requiring executable node configuration.
+    ///
+    /// The list includes unrecognized kinds that are also unreachable. Execution uses that
+    /// combined set so a reference to a dropped node still fails closed. Callers that must
+    /// tell a spare node from an unrecognized kind use [`Self::authoring_participation`].
     pub fn unused_node_ids(source: &str) -> Result<Vec<String>, GraphError> {
         Ok(project(source)?.unused_node_ids)
+    }
+
+    /// Splits spare nodes from kinds this version does not register.
+    pub fn authoring_participation(source: &str) -> Result<AuthoringParticipation, GraphError> {
+        let document = project(source)?;
+        let unrecognized_ids: HashSet<&str> = document
+            .unrecognized_nodes
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect();
+        Ok(AuthoringParticipation {
+            unused_node_ids: document
+                .unused_node_ids
+                .into_iter()
+                .filter(|id| !unrecognized_ids.contains(id.as_str()))
+                .collect(),
+            unrecognized_nodes: document.unrecognized_nodes,
+        })
     }
 }
 
@@ -40,9 +85,18 @@ pub(super) fn project(source: &str) -> Result<ExecutionDocument, GraphError> {
         .ok_or(GraphError::MissingEdges)?;
     let mut nodes = BTreeMap::new();
     let mut starts = HashMap::new();
+    let mut unrecognized_nodes = Vec::new();
     for raw in raw_nodes {
         let id = required_string(&raw["id"], "missing id")?;
         let kind = required_string(&raw["data"]["kind"], &format!("node {id} has no node type"))?;
+        // Known-but-unsupported kinds stay in the graph so parse can reject them by name.
+        // A string with no variant is not a spare node the author parked off to the side.
+        if NodeType::from_str(kind).is_err() {
+            unrecognized_nodes.push(UnrecognizedAuthoringNode {
+                node_id: id.to_string(),
+                kind: kind.to_string(),
+            });
+        }
         let container = raw["data"]
             .get("containerId")
             .map(|value| required_string(value, "containerId must be a non-empty string"))
@@ -119,6 +173,7 @@ pub(super) fn project(source: &str) -> Result<ExecutionDocument, GraphError> {
         return Ok(ExecutionDocument {
             graph: document,
             unused_node_ids: Vec::new(),
+            unrecognized_nodes,
         });
     }
     while let Some(id) = frontier.pop() {
@@ -159,6 +214,7 @@ pub(super) fn project(source: &str) -> Result<ExecutionDocument, GraphError> {
     Ok(ExecutionDocument {
         graph: document,
         unused_node_ids,
+        unrecognized_nodes,
     })
 }
 

@@ -87,7 +87,10 @@ fn terminates_on_first_or_last_round() {
 fn enforces_exact_round_limit() {
     assert_eq!(
         config().complete_round(/*round*/ 2, &pool()),
-        Err(LoopRoundError::LimitReached { max_iterations: 2 })
+        Err(LoopRoundError::LimitReached {
+            max_iterations: 2,
+            observed: "review.approved=false".to_string(),
+        })
     );
     for round in [0, 3] {
         assert_eq!(

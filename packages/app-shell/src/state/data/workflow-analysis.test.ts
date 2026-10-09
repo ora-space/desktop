@@ -32,12 +32,25 @@ describe("workflow execution analysis", () => {
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[0].signal?.aborted).toBe(true);
     expect(hook.result.current.data).toBeUndefined();
-    await act(async () => requests[1].resolve({ unusedNodeIds: ["current"] }));
-    await waitFor(() =>
-      expect(hook.result.current.data).toEqual({ unusedNodeIds: ["current"] }),
+    await act(async () =>
+      requests[1].resolve({
+        unusedNodeIds: ["current"],
+        unrecognizedNodes: [],
+      }),
     );
-    await act(async () => requests[0].resolve({ unusedNodeIds: ["stale"] }));
-    expect(hook.result.current.data).toEqual({ unusedNodeIds: ["current"] });
+    await waitFor(() =>
+      expect(hook.result.current.data).toEqual({
+        unusedNodeIds: ["current"],
+        unrecognizedNodes: [],
+      }),
+    );
+    await act(async () =>
+      requests[0].resolve({ unusedNodeIds: ["stale"], unrecognizedNodes: [] }),
+    );
+    expect(hook.result.current.data).toEqual({
+      unusedNodeIds: ["current"],
+      unrecognizedNodes: [],
+    });
     hook.unmount();
   });
 
