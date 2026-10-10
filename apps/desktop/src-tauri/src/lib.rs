@@ -91,7 +91,8 @@ pub fn run() {
             // gap before or after the logo either.
             let handle = app.handle().clone();
             std::thread::spawn(move || match bootstrap_desktop(&handle) {
-                Ok(DesktopBootstrap::Ready(state, guard)) => {
+                Ok(DesktopBootstrap::Ready(ready)) => {
+                    let (state, guard) = *ready;
                     ora_info!(
                         message = "bundled binary paths registered",
                         ripgrep_path = %state.binary_paths.ripgrep_path().display(),
@@ -145,9 +146,13 @@ pub fn run() {
 }
 
 /// Startup either owns the data directory or must leave because another process does.
+///
+/// `Ready` is boxed so the exit result is not the size of the whole desktop state.
+/// `AlreadyRunning` carries nothing, and the state is built only on the path that
+/// opens the backend.
 enum DesktopBootstrap {
     /// This process holds the instance lock and may serve the window.
-    Ready(DesktopState, DesktopRuntimeGuard),
+    Ready(Box<(DesktopState, DesktopRuntimeGuard)>),
     /// Another live process holds the lock. The database was not opened.
     AlreadyRunning,
 }
@@ -264,7 +269,7 @@ fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, Desktop
         backend.settings().preferred_log_level_store(),
         configured_log_level,
     );
-    Ok(DesktopBootstrap::Ready(
+    Ok(DesktopBootstrap::Ready(Box::new((
         DesktopState {
             backend,
             update,
@@ -279,7 +284,7 @@ fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, Desktop
             _marketplace_sync: marketplace_sync,
             _instance_lock: instance_lock,
         },
-    ))
+    ))))
 }
 
 /// Resolves the configured Desktop data root or falls back to Tauri's application data directory.
