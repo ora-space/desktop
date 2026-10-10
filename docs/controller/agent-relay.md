@@ -2,8 +2,8 @@
 
 English | [中文](agent-relay.zh.md)
 
-In Cloud mode, `ora-controller` carries Agent session work, commands, Revision deliveries and their
-upload grants between Cloud and the Workspace's Node. Cloud owns the IssueRun phase and durable
+In Cloud mode, `ora-controller` carries Agent session work, commands, Revision deliveries, their
+upload grants and the download grants of resumed sessions between Cloud and the Workspace's Node. Cloud owns the IssueRun phase and durable
 receipts; the Controller keeps only connection-local queues. Local SQLite mode remains clone-only.
 
 ## Dispatch and authority
@@ -55,6 +55,26 @@ delivery or the connection. Grants live only in the relay's memory on their way 
 they are not persisted or logged, and the frame is never formatted into diagnostics. The process
 memory keeps only the digests, which are not credentials.
 
+## Resumed sessions and download grants
+
+A session input with `prior_revision` resumes the Issue's latest Revision (restore contract
+`cloud/controller-integration/20261010-revision-restore-contract`). Its prior Revision maps into the
+Node session spec with its bundle object (an input without one is refused), and into the delivery
+spec without it (an input with one is refused). Such a session is registered only when the target
+Node's live handshake also advertised `revision_restore`; otherwise it stays queued in Cloud like
+any capability miss, so it never runs on a fresh clone of a Node that cannot restore. An unchanged
+delivery result is accepted when its final commit is the base or the input's prior final commit.
+
+The Node asks with `DownloadGrantNeeded` while its restore waits, and again on every new
+connection; the Controller asks `GrantRevisionDownload` only then and keeps nothing across
+connections. Repeated requests for one execution coalesce. The returned grant is relayed as
+`DownloadGrant{granted}` with headers and expiry verbatim, only as a `GET` of the session's own
+bundle key. `NOT_FOUND` and `ABORTED` (`CONFLICT`: the session has a result, its run stopped, or
+the input names no bundle) reach the Node as `DownloadGrant{refused}`, which fails its restore;
+an unavailable Cloud, a lost reply or a stale lease (`FAILED_PRECONDITION`) keeps the request and
+retries it, so an outage never fails a restore. Download grants, like upload grants, are never
+persisted or logged.
+
 ## Events and recovery
 
 Each execution has its own ordered takeover worker. Batches contain at most 64 records, wait at
@@ -84,12 +104,14 @@ payload. After restart, Cloud supplies the unconfirmed head again; Node performs
 ## Validation and remaining work
 
 `cargo test -p ora-controller --lib --tests` includes real generated gRPC and WebSocket transport
-tests with in-memory Cloud and Node fixtures in `tests/workspaces/agents.rs` and
-`tests/workspaces/deliveries.rs`. They exercise ordered takeover, independent slow executions,
+tests with in-memory Cloud and Node fixtures in `tests/workspaces/agents.rs`,
+`tests/workspaces/deliveries.rs` and `tests/workspaces/restores.rs`. They exercise ordered takeover, independent slow executions,
 outage/conflict/lost-response recovery, Controller restart, command retry/order/rejection,
 capability gating, large records, quiesce responsibility, permit-gated delivery dispatch,
 checksum-bound grant relay with verbatim headers, grant refresh on reconnect, refused grants,
-ACK after commit and the absence of grant URLs and signatures from logs. These tests do not
+ACK after commit, the `revision_restore` gate for resumed sessions, download grant relay,
+refusal and outage retry, re-requests after reconnect, and the absence of grant URLs and signatures
+from logs. These tests do not
 establish real PostgreSQL, object storage, production Node or browser Thread integration.
 
 The Controller session ADR is still `proposed`; this implementation supplies reviewable behavior
