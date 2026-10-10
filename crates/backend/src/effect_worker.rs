@@ -15,7 +15,7 @@ use ora_effect::{
     TargetProjection, WorkerIdentity,
 };
 use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
-use ora_logging::{ora_info, ora_warn};
+use ora_logging::{ErrorReport, ora_info, ora_warn};
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -274,10 +274,16 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
                 "Effect Target Resources were verified and finalized",
             ),
             Err(error) => {
+                // RepositoryError deliberately hides persistence details behind one Display
+                // string, so the full source chain is the only way to see which stage and
+                // database fact failed (issue #6).
+                let report = ErrorReport::from_error(&error);
                 ora_warn!(
                     operation = "effect_reconcile",
                     target = target.as_str(),
-                    error = %error,
+                    error.message = report.message(),
+                    error.chain = report.chain(),
+                    error.chain_depth = report.chain_depth(),
                     "Effect Target reconcile failed",
                 );
                 let now = LocalTimestamp::from_millis(self.clock.now_timestamp_millis());

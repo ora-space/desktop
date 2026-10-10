@@ -7,6 +7,7 @@ import { AGENT_REF } from "../../test/agent-identity";
 import { readyEffectHandlers } from "../../test/memory/effects";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import {
+  effectTargetFailureMessage,
   effectTargetStatusPollInterval,
   useAgentEffectReadiness,
 } from "./use-agent-effect-readiness";
@@ -25,7 +26,7 @@ async function readinessFor(agentRef: string) {
     createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
   );
   await waitFor(() => expect(getEffectTargetStatus).toHaveBeenCalledOnce());
-  expect(result.current).toBe("blocked");
+  expect(result.current).toEqual({ kind: "blocked" });
   return getEffectTargetStatus;
 }
 
@@ -63,7 +64,7 @@ describe("useAgentEffectReadiness", () => {
     );
 
     await waitFor(() => expect(getEffectTargetStatus).toHaveBeenCalledOnce());
-    expect(result.current).toBe("blocked");
+    expect(result.current).toEqual({ kind: "blocked" });
   });
 
   it("does not gate an agent missing from the local installed-plugin list", async () => {
@@ -74,7 +75,7 @@ describe("useAgentEffectReadiness", () => {
       createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
     );
 
-    await waitFor(() => expect(result.current).toBe("ready"));
+    await waitFor(() => expect(result.current).toEqual({ kind: "ready" }));
     expect(getEffectTargetStatus).not.toHaveBeenCalled();
   });
 
@@ -87,7 +88,7 @@ describe("useAgentEffectReadiness", () => {
     );
 
     await act(async () => {});
-    expect(result.current).toBe("blocked");
+    expect(result.current).toEqual({ kind: "blocked" });
   });
 
   it("stops polling after the Target is ready", async () => {
@@ -101,7 +102,7 @@ describe("useAgentEffectReadiness", () => {
       createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
     );
 
-    await waitFor(() => expect(result.current).toBe("ready"));
+    await waitFor(() => expect(result.current).toEqual({ kind: "ready" }));
     expect(getEffectTargetStatus).toHaveBeenCalledOnce();
 
     await act(async () => {
@@ -112,10 +113,78 @@ describe("useAgentEffectReadiness", () => {
     vi.useRealTimers();
   });
 
-  it("polls every second until Target status is ready, then stops", async () => {
+  it("polls every second while syncing, stops when ready, and backs off when failed", async () => {
     expect(effectTargetStatusPollInterval(undefined)).toBe(1_000);
     expect(effectTargetStatusPollInterval(null)).toBe(1_000);
     const ready = await readyEffectHandlers().getEffectTargetStatus();
     expect(effectTargetStatusPollInterval(ready.status)).toBe(false);
+
+    const recovering = {
+      ...ready.status!,
+      phase: "recovery_required" as const,
+    };
+    expect(effectTargetStatusPollInterval(recovering)).toBe(10_000);
+    expect(effectTargetFailureMessage(recovering)).toBe(
+      "Effect recovery is required.",
+    );
+  });
+
+  it("reports the manual blocking Condition as a failed gate with its reason", async () => {
+    const ready = await readyEffectHandlers().getEffectTargetStatus();
+    const drifted = {
+      ...ready.status!,
+      phase: "pending" as const,
+      conditions: [
+        {
+          id: "condition-1",
+          ownerKind: "resource",
+          ownerId: "resource-1",
+          subjectKind: "managed_item",
+          subjectId: "managed-1",
+          code: "managed_item_drift",
+          impact: "blocking" as const,
+          retry: "manual" as const,
+          generation: 1n,
+          message: "A Managed Item changed outside Ora.",
+          firstObservedAt: 1n,
+          lastObservedAt: 1n,
+        },
+      ],
+    };
+    expect(effectTargetFailureMessage(drifted)).toBe(
+      "A Managed Item changed outside Ora.",
+    );
+    expect(effectTargetStatusPollInterval(drifted)).toBe(10_000);
+
+    // A blocking Condition that can still resolve on its own stays a sync wait.
+    const waiting = {
+      ...drifted,
+      conditions: [{ ...drifted.conditions[0]!, retry: "on_change" as const }],
+    };
+    expect(effectTargetFailureMessage(waiting)).toBeNull();
+    expect(effectTargetStatusPollInterval(waiting)).toBe(1_000);
+  });
+
+  it("marks a Target in recovery as failed", async () => {
+    const status = await readyEffectHandlers().getEffectTargetStatus();
+    const getEffectTargetStatus = vi.fn(async () => ({
+      status: {
+        ...status.status!,
+        phase: "recovery_required" as const,
+        recoveryOperationId: "operation-1",
+      },
+    }));
+    const plugins = createPluginMemory();
+    const { result } = renderHookWithClient(
+      () => useAgentEffectReadiness("workspace-1", AGENT_REF.claude),
+      createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
+    );
+
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        kind: "failed",
+        message: "Effect recovery is required.",
+      }),
+    );
   });
 });

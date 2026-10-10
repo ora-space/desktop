@@ -1,5 +1,7 @@
+mod consumer_handover;
 mod declaration;
 mod scope_initialization;
+mod skill_republish;
 mod stale_status;
 mod time;
 mod time_migration;

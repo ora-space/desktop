@@ -486,6 +486,7 @@ pub enum WakeReason {
     ConsumerRevisionChanged,
     DeclarationChanged,
     ResourceChanged,
+    TopologyChanged,
     LeaseExpired,
     RetryDue,
     UserRequested,

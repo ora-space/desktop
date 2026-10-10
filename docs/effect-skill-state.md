@@ -40,6 +40,25 @@ status changes; every bound Resource additionally uses an independently monotoni
 before observation can support status or readiness. Wake reasons are diagnostic only, so a worker
 always reloads current Desired, declarations, statuses, and ledgers after acquiring authority.
 
+The Scope generation is the convergence epoch for every projection in that Scope: immutable
+projections are identified by `(target_id, generation, consumer_revision_id)`, so any change that
+alters what a Target projects at a given generation must open a new epoch. Desired State
+replacement advances it, and so does a Target topology change — retiring a Consumer (plugin
+uninstall) or replacing a Target's declaration (plugin update) advances the epoch of every affected
+Scope in the same transaction, records a `topology_changed` audit event, and wakes all Targets.
+Without that advance, a retiring Target's empty contribution would collide with the non-empty
+projection it persisted while active at the same identity, and neither the retirement nor a
+replacement Consumer sharing the same Resource could ever converge. Observation, retry,
+Condition, and runtime status changes still never advance the epoch.
+
+A retiring Target keeps its bindings and joins shared Resource merges with an empty Desired
+contribution; it is deleted only after that empty projection converges. A Resource whose
+workspace directory no longer exists observes as empty, so retirement can forget its ledger and
+finish when no surviving contributor still desires content on the shared Resource; mutation paths
+still refuse to recreate a Workspace root the user removed, so a deleted directory that a
+surviving successor still targets keeps both Targets failing until the workspace returns or the
+successor's intent is withdrawn (tracked for manual-recovery surfacing as issue #664).
+
 The reconciler follows this evidence chain:
 
 1. Reload the current Target declaration and claim every bound Resource in stable identity order.
@@ -55,7 +74,11 @@ The reconciler follows this evidence chain:
 
 An unchanged Consumer declaration does not touch Target status or requests. New Consumers are
 paired with existing Workspaces immediately, while every worker pass converges existing Consumer
-declarations into Workspaces created later.
+declarations into Workspaces created later. A changed Consumer declaration retires the previous
+Target and creates its replacement at the advanced epoch, so plugin updates converge like plugin
+uninstalls. Publishing a Skill source that was previously retired restores its Desired intent in
+every active Scope, so reinstalling one plugin revision reconverges instead of waiting for intent
+that never returns.
 
 ## Audit and business time
 

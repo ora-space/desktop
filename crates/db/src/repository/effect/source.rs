@@ -20,6 +20,13 @@ pub(crate) struct PublishedSkillRevision {
     pub package_root: PathBuf,
 }
 
+/// One source's storage identity together with the lifecycle observed before this publication.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExistingSource {
+    id: String,
+    retired: bool,
+}
+
 /// Publishes one immutable Skill revision and updates current Desired references in-place.
 pub(crate) fn publish_skill_revision(
     connection: &Connection,
@@ -30,6 +37,7 @@ pub(crate) fn publish_skill_revision(
     let existing_source = find_source(connection, &publication.source)?;
     let source_id = existing_source
         .clone()
+        .map(|source| source.id)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     connection.execute(
         "INSERT INTO effect_sources (
@@ -119,7 +127,10 @@ pub(crate) fn publish_skill_revision(
         params![&source_id, &revision_id, updated_at],
     )?;
 
-    if existing_source.is_none() {
+    if existing_source.as_ref().is_none_or(|source| source.retired) {
+        // A retired source's Desired intent was removed from every Scope at retirement, so
+        // republishing it (including the exact same revision when one plugin is reinstalled)
+        // must reinstall that intent; the in-place revision update below would find no rows.
         install_source_in_all_scopes(
             connection,
             &source_id,
@@ -187,9 +198,10 @@ pub(crate) fn retire_skill_source(
     updated_at: i64,
     changed_scopes: &mut BTreeSet<String>,
 ) -> Result<bool, DatabaseError> {
-    let Some(source_id) = find_source(connection, source)? else {
+    let Some(source) = find_source(connection, source)? else {
         return Ok(false);
     };
+    let source_id = source.id;
     collect_referencing_scopes(connection, &source_id, changed_scopes)?;
     connection.execute(
         "DELETE FROM effect_desired_effects
@@ -211,61 +223,138 @@ pub(crate) fn retire_skill_source(
     Ok(true)
 }
 
-/// Advances each changed complete Desired State exactly once and wakes every active Target.
+/// Why one Scope's convergence epoch advanced; recorded once per advance in the audit trail.
+#[derive(Clone, Copy)]
+pub(crate) enum ScopeEpochCause {
+    /// The complete Desired State was replaced by Skill publication or removal.
+    DesiredReplaced,
+    /// A Target retired or was replaced, changing what every Target must project.
+    TopologyChanged,
+}
+
+impl ScopeEpochCause {
+    /// Returns the append-only audit event kind for one epoch advance.
+    fn event_kind(self) -> &'static str {
+        match self {
+            Self::DesiredReplaced => "desired_replaced",
+            Self::TopologyChanged => "topology_changed",
+        }
+    }
+
+    /// Returns the audit subject whose convergence inputs changed.
+    fn subject_kind(self) -> &'static str {
+        match self {
+            Self::DesiredReplaced => "desired_state",
+            Self::TopologyChanged => "scope",
+        }
+    }
+
+    /// Returns the diagnostic wake reason every Target in the Scope receives.
+    fn wake_reason(self) -> &'static str {
+        match self {
+            Self::DesiredReplaced => "desired_changed",
+            Self::TopologyChanged => "topology_changed",
+        }
+    }
+}
+
+/// Advances each changed complete Desired State exactly once and wakes every Target.
 pub(crate) fn advance_changed_scopes(
     connection: &Connection,
     changed_scopes: &BTreeSet<String>,
     updated_at: i64,
 ) -> Result<(), DatabaseError> {
     for scope_id in changed_scopes {
-        let current = connection.query_row(
-            "SELECT generation FROM effect_scopes
-             WHERE id = ?1 AND lifecycle = 'active'",
-            params![scope_id],
-            |row| row.get::<_, i64>(0),
-        )?;
-        let generation = generation_from_sql(current)?
-            .next()
-            .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
-        let generation_sql = generation_to_sql(generation)?;
-        // Each affected row preserves its own audit lower bound in SQL. The Scope timestamp
-        // cannot bound a Target created or updated later by an independent transaction.
-        connection.execute(
-            "UPDATE effect_scopes SET generation = ?2, updated_at = MAX(updated_at, ?3) WHERE id = ?1",
-            params![scope_id, generation_sql, updated_at],
-        )?;
-        connection.execute(
-            "UPDATE effect_target_status
-             SET desired_generation = MAX(desired_generation, ?2),
-                 phase = CASE
-                     WHEN phase IN ('retiring', 'recovery_required') THEN phase ELSE 'pending' END,
-                 status_version = status_version + 1, updated_at = MAX(updated_at, ?3)
-             WHERE target_id IN (
-                 SELECT id FROM effect_targets WHERE scope_id = ?1 AND lifecycle = 'active'
-             )",
-            params![scope_id, generation_sql, updated_at],
-        )?;
-        wake_scope_targets(
+        advance_scope_epoch(
             connection,
             scope_id,
-            generation,
+            ScopeEpochCause::DesiredReplaced,
             updated_at,
-            "desired_changed",
-        )?;
-        connection.execute(
-            "INSERT INTO effect_audit_events (
-                 id, scope_id, subject_kind, subject_id, event_kind, generation,
-                 initiator_kind, initiator_id, payload_version, payload_json, occurred_at
-             ) VALUES (?1, ?2, 'desired_state', ?2, 'desired_replaced', ?3,
-                       'system', NULL, 1, '{}', ?4)",
-            params![
-                Uuid::new_v4().to_string(),
-                scope_id,
-                generation_sql,
-                updated_at,
-            ],
         )?;
     }
+    Ok(())
+}
+
+/// Advances each Scope whose Target topology changed so retirement can converge.
+///
+/// A lifecycle transition changes the projection content every Target produces at a given
+/// generation: the retiring Target's selected effects become empty while its immutable
+/// projection identity `(target_id, generation, consumer_revision_id)` keeps the content it
+/// persisted while active. Advancing the epoch opens a fresh identity for the empty retirement
+/// projection and re-wakes surviving Targets so their merged Resource projections converge
+/// without the retired contributor.
+pub(crate) fn advance_topology_epochs(
+    connection: &Connection,
+    changed_scopes: &BTreeSet<String>,
+    updated_at: i64,
+) -> Result<(), DatabaseError> {
+    for scope_id in changed_scopes {
+        advance_scope_epoch(
+            connection,
+            scope_id,
+            ScopeEpochCause::TopologyChanged,
+            updated_at,
+        )?;
+    }
+    Ok(())
+}
+
+/// Bumps one active Scope's generation once and wakes every Target that must re-converge.
+fn advance_scope_epoch(
+    connection: &Connection,
+    scope_id: &str,
+    cause: ScopeEpochCause,
+    updated_at: i64,
+) -> Result<(), DatabaseError> {
+    let current = connection.query_row(
+        "SELECT generation FROM effect_scopes
+         WHERE id = ?1 AND lifecycle = 'active'",
+        params![scope_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let generation = generation_from_sql(current)?
+        .next()
+        .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
+    let generation_sql = generation_to_sql(generation)?;
+    // Each affected row preserves its own audit lower bound in SQL. The Scope timestamp
+    // cannot bound a Target created or updated later by an independent transaction.
+    connection.execute(
+        "UPDATE effect_scopes SET generation = ?2, updated_at = MAX(updated_at, ?3) WHERE id = ?1",
+        params![scope_id, generation_sql, updated_at],
+    )?;
+    connection.execute(
+        "UPDATE effect_target_status
+         SET desired_generation = MAX(desired_generation, ?2),
+             phase = CASE
+                 WHEN phase IN ('retiring', 'recovery_required') THEN phase ELSE 'pending' END,
+             status_version = status_version + 1, updated_at = MAX(updated_at, ?3)
+         WHERE target_id IN (
+             SELECT id FROM effect_targets WHERE scope_id = ?1 AND lifecycle = 'active'
+         )",
+        params![scope_id, generation_sql, updated_at],
+    )?;
+    wake_scope_targets(
+        connection,
+        scope_id,
+        generation,
+        updated_at,
+        cause.wake_reason(),
+    )?;
+    connection.execute(
+        "INSERT INTO effect_audit_events (
+             id, scope_id, subject_kind, subject_id, event_kind, generation,
+             initiator_kind, initiator_id, payload_version, payload_json, occurred_at
+         ) VALUES (?1, ?2, ?3, ?2, ?4, ?5,
+                   'system', NULL, 1, '{}', ?6)",
+        params![
+            Uuid::new_v4().to_string(),
+            scope_id,
+            cause.subject_kind(),
+            cause.event_kind(),
+            generation_sql,
+            updated_at,
+        ],
+    )?;
     Ok(())
 }
 
@@ -334,10 +423,10 @@ pub(super) fn install_source_in_all_scopes(
 fn find_source(
     connection: &Connection,
     source: &SkillSourceKey,
-) -> Result<Option<String>, DatabaseError> {
+) -> Result<Option<ExistingSource>, DatabaseError> {
     connection
         .query_row(
-            "SELECT id FROM effect_sources
+            "SELECT id, lifecycle FROM effect_sources
              WHERE effect_kind = ?1 AND source_kind = ?2
                AND namespace = ?3 AND identifier = ?4",
             params![
@@ -346,7 +435,12 @@ fn find_source(
                 source.namespace.as_ref(),
                 source.name.canonical(),
             ],
-            |row| row.get(0),
+            |row| {
+                Ok(ExistingSource {
+                    id: row.get::<_, String>(0)?,
+                    retired: row.get::<_, String>(1)? == "retired",
+                })
+            },
         )
         .optional()
         .map_err(Into::into)

@@ -678,11 +678,15 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     // so the picker next to it can fix the state, and it only applies where the
     // whole-composer hint does not, so the two bubbles never compete.
     const sendDisabledHint =
-      canChat && agentEffectReadiness === "blocked"
-        ? t("chat.agentEffectsNotReady")
-        : canChat && targetAgentReadiness === "blocked"
-          ? t("chat.pickAvailableAgent")
-          : undefined;
+      canChat && agentEffectReadiness.kind === "failed"
+        ? t("chat.agentEffectsFailed", {
+            message: agentEffectReadiness.message,
+          })
+        : canChat && agentEffectReadiness.kind === "blocked"
+          ? t("chat.agentEffectsNotReady")
+          : canChat && targetAgentReadiness === "blocked"
+            ? t("chat.pickAvailableAgent")
+            : undefined;
     // A failed background session-create settles onto the draft conversation, so
     // the conversation error already covers the start-up failure path. A pending
     // send has no conversation to settle onto and carries its own.
