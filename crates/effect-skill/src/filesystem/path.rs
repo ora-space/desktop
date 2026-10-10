@@ -37,8 +37,11 @@ pub(super) fn resolve_declared_root(
     let root_metadata = match fs::symlink_metadata(workspace_root) {
         Ok(metadata) => metadata,
         // A deleted Worktree leaves nothing to observe. Reporting an empty Resource lets a
-        // retiring Target forget its ledger and finish retiring instead of failing forever
-        // (issue #6); mutation and preparation still refuse a Workspace root the user removed.
+        // retiring Target forget its ledger and finish retiring when no surviving contributor
+        // still desires content on the shared Resource (issue #6). Mutation and preparation
+        // still refuse a Workspace root the user removed, so a deleted Worktree with a
+        // surviving successor keeps both Targets failing until the workspace returns or the
+        // successor's intent is withdrawn — surfaced for manual recovery as issue #664.
         Err(error) if error.kind() == io::ErrorKind::NotFound && access == RootAccess::Observe => {
             return Ok(None);
         }

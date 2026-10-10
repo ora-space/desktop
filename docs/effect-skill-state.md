@@ -54,8 +54,10 @@ Condition, and runtime status changes still never advance the epoch.
 A retiring Target keeps its bindings and joins shared Resource merges with an empty Desired
 contribution; it is deleted only after that empty projection converges. A Resource whose
 workspace directory no longer exists observes as empty, so retirement can forget its ledger and
-finish instead of failing forever; mutation paths still refuse to recreate a Workspace root the
-user removed.
+finish when no surviving contributor still desires content on the shared Resource; mutation paths
+still refuse to recreate a Workspace root the user removed, so a deleted directory that a
+surviving successor still targets keeps both Targets failing until the workspace returns or the
+successor's intent is withdrawn (tracked for manual-recovery surfacing as issue #664).
 
 The reconciler follows this evidence chain:
 

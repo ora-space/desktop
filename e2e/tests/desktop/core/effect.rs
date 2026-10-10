@@ -310,7 +310,9 @@ mod tests {
                     })
             },
         )?;
-        // The retired local Target finished retiring: no active Target row remains for it.
+        // The WorkspaceAgent status API only reports active Target rows, so this proves the
+        // retired agent keeps no active row; deletion of the retiring row itself is asserted by
+        // the repository-level handover regression test.
         let retired =
             backend
                 .effects()
@@ -318,7 +320,10 @@ mod tests {
                     workspace_id: workspace_id.clone(),
                     agent_plugin_id: local_agent.clone(),
                 })?;
-        assert_eq!(retired.status, None, "the retired local Target is deleted");
+        assert_eq!(
+            retired.status, None,
+            "no active Target row remains for the retired agent"
+        );
         // The handover must not lose the materialized Skill the workspace still desires.
         assert!(
             materialized_skill.join("SKILL.md").is_file(),
