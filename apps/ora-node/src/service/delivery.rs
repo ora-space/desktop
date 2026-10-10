@@ -69,6 +69,7 @@ fn event_key(message: &NodeToControllerMessage) -> Option<(&ExecutionId, Sequenc
         | NodeToControllerMessage::RuntimeControlState(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)
         | NodeToControllerMessage::SessionCommandRejected(_)
-        | NodeToControllerMessage::UploadGrantNeeded(_) => None,
+        | NodeToControllerMessage::UploadGrantNeeded(_)
+        | NodeToControllerMessage::DownloadGrantNeeded(_) => None,
     }
 }

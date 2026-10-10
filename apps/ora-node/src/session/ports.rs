@@ -5,10 +5,11 @@
 //! in-memory ledger, and the ledger against a fake [`SessionHost`].
 
 use ora_node_protocol::{
-    AgentSessionEnded, AgentSessionSpec, CommandId, EndSessionReason, ExecutionId, PluginId,
-    PluginVersion, Sequence, ThreadEvent, UserTurn,
+    AgentSessionEnded, AgentSessionSpec, CommandId, CommitId, EndSessionReason, ExecutionId,
+    OperationId, PluginId, PluginVersion, PriorRevision, Sequence, ThreadEvent, UserTurn,
 };
 use std::error::Error;
+use std::future::Future;
 use std::path::PathBuf;
 
 /// One session command the protocol side accepted and persisted.
@@ -99,10 +100,85 @@ pub trait PluginCatalog: Send + Sync + 'static {
 #[error("session history is unavailable")]
 pub struct HistoryUnavailable;
 
+/// One prior Revision to restore into a session's checkout.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoreRequest {
+    /// The session's operation, which the download grant exchange is addressed by.
+    pub operation: OperationId,
+    pub execution: ExecutionId,
+    /// The checkout the session resolved; nothing has been handed to the workload user yet.
+    pub checkout: PathBuf,
+    pub prior: PriorRevision,
+}
+
+/// What a successful restore left: the checkout's branch at the prior final commit, clean.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Restored {
+    /// Every base commit of the prior Revision is still in `origin/<branch>`.
+    OnRemoteHistory,
+    /// The remote history was rewritten: `origin/<branch>` no longer contains `base_commit`, a
+    /// base of the restored `final_commit`.
+    Diverged {
+        final_commit: CommitId,
+        base_commit: CommitId,
+        branch: String,
+    },
+}
+
+/// Why a prior Revision could not be restored; the session ends `agent_failed` with this detail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RestoreFailure {
+    /// The bundle could not be obtained or verified, or does not hold the prior final commit.
+    /// Possibly transient: Cloud offers the same Revision to the next run.
+    #[error("prior Revision is unavailable")]
+    Unavailable,
+    /// A base commit the bundle needs is neither in the checkout nor fetchable from `origin`.
+    /// Only a rewritten remote history causes it, so Cloud stops offering this Revision.
+    #[error("the prior Revision's base commit is unavailable")]
+    BaseUnavailable,
+}
+
+impl RestoreFailure {
+    /// The bounded code the session end reports (restore contract D3).
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Unavailable => "prior_revision_unavailable",
+            Self::BaseUnavailable => "prior_revision_base_unavailable",
+        }
+    }
+}
+
+/// Restores the prior Revision a session resumes into its checkout before the agent starts.
+///
+/// The session driver calls it at most once per session, after resolving the checkout and before
+/// handing the checkout to the workload user or starting any plugin, and only when the session
+/// input names a prior Revision. Implementations obtain and verify the bundle, run Git with the
+/// deployment's hardened policy off the async workers, and leave nothing behind on failure but
+/// what Git itself wrote into the checkout; the driver ends the session on any failure.
+pub trait PriorRevisionRestore: Send + Sync + 'static {
+    /// Leaves the checkout's branch at the prior final commit, or says why it could not.
+    fn restore(
+        &self,
+        request: RestoreRequest,
+    ) -> impl Future<Output = Result<Restored, RestoreFailure>> + Send;
+}
+
+/// A Node without restore never advertises it, so the Controller sends it no resumed session;
+/// one that arrives anyway cannot be restored and ends as unavailable.
+impl<R: PriorRevisionRestore> PriorRevisionRestore for Option<R> {
+    /// Delegates to the configured restorer, if any.
+    async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
+        match self {
+            Some(restorer) => restorer.restore(request).await,
+            None => Err(RestoreFailure::Unavailable),
+        }
+    }
+}
+
 /// Session execution as the protocol and delivery sides call it.
 pub trait SessionHost {
     /// Starts a session whose input is already persisted and returns without waiting for it.
-    fn start(&self, execution: ExecutionId, spec: AgentSessionSpec);
+    fn start(&self, operation: OperationId, execution: ExecutionId, spec: AgentSessionSpec);
 
     /// Wakes the session to read its queued commands; a lost wake never loses a command.
     fn command_arrived(&self, execution: &ExecutionId);

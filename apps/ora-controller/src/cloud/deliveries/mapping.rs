@@ -39,12 +39,25 @@ pub(in crate::cloud) fn deliver(
                 revision_ref: RevisionRef::new(spec.revision_ref.clone()),
                 bundle_key: ObjectKey::new(spec.bundle_key.clone()),
                 history_key: ObjectKey::new(spec.history_key.clone()),
+                prior_revision: spec.prior_revision.as_ref().map(prior_commit).transpose()?,
             },
         },
     };
     // An input the Node protocol refuses is a disagreement with the authority, not a retry.
     command.validate()?;
     Ok(command)
+}
+
+/// A delivery only compares against the prior final commit; a bundle in its input would be a
+/// download the delivery never makes, so such an input is refused rather than silently narrowed.
+fn prior_commit(prior: &proto::PriorRevision) -> Result<PriorRevisionCommit, Error> {
+    if prior.bundle.is_some() {
+        return Err(Error::Conflict);
+    }
+    Ok(PriorRevisionCommit {
+        revision_id: RevisionId::new(prior.revision_id.clone()),
+        final_commit: CommitId::new(prior.final_commit.clone()),
+    })
 }
 
 /// The Node incarnation that produced a delivery result.
@@ -57,7 +70,9 @@ pub(in crate::cloud) fn producer(result: &RevisionExecutionResult) -> &NodeRunti
 }
 
 /// A successful result must describe the dispatched base, ref and object keys; a failure carries
-/// nothing to compare.
+/// nothing to compare. An unchanged result stops at the base or, for a resumed session, at the
+/// prior Revision's final commit: the Node codec cannot tell which, because only the input names
+/// the prior commit.
 pub(super) fn accepts(command: &DeliverRevisionMessage, result: &RevisionExecutionResult) -> bool {
     let spec = &command.payload.spec;
     match result {
@@ -71,6 +86,11 @@ pub(super) fn accepts(command: &DeliverRevisionMessage, result: &RevisionExecuti
             v.base_commit == spec.base_commit
                 && v.revision_ref == spec.revision_ref
                 && v.history.key == spec.history_key
+                && (v.final_commit == spec.base_commit
+                    || spec
+                        .prior_revision
+                        .as_ref()
+                        .is_some_and(|prior| prior.final_commit == v.final_commit))
         }
         RevisionExecutionResult::RevisionFailed(_) => true,
     }
@@ -160,15 +180,12 @@ pub(super) fn grants(
             if !requested.contains_key(&object_key) || grant.method != "PUT" {
                 return Err(Error::Conflict);
             }
-            let expires = grant.expires_at.ok_or(Error::Conflict)?;
-            let nanos = i128::from(expires.seconds) * 1_000_000_000 + i128::from(expires.nanos);
             Ok(ObjectUploadGrant {
                 object_key,
                 url: PresignedUrl::new(grant.url),
                 method: UploadMethod::Put,
                 headers: grant.headers.into_iter().collect(),
-                expires_at: time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
-                    .map_err(|_| Error::Conflict)?,
+                expires_at: super::super::mapping::expiry(grant.expires_at)?,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -207,6 +224,7 @@ mod tests {
                         revision_ref: "refs/ora/revisions/run".into(),
                         bundle_key: "runs/run/revision.bundle".into(),
                         history_key: "runs/run/history.jsonl".into(),
+                        prior_revision: None,
                     },
                 )),
             }),
@@ -249,6 +267,7 @@ mod tests {
                         revision_ref: RevisionRef::new("refs/ora/revisions/run"),
                         bundle_key: ObjectKey::new("runs/run/revision.bundle"),
                         history_key: ObjectKey::new("runs/run/history.jsonl"),
+                        prior_revision: None,
                     },
                 },
             }
@@ -428,5 +447,77 @@ mod tests {
             ),
             Err(Error::Validation(_))
         ));
+    }
+
+    /// A resumed delivery carries the prior final commit, and an unchanged result may stop there
+    /// or at the base, never at any other commit.
+    #[test]
+    fn resumed_deliveries_accept_an_unchanged_prior_final_commit() {
+        let node = NodeId::new("node");
+        let mut resumed = record();
+        let Some(proto::execution_input::Spec::DeliverRevision(spec)) =
+            resumed.input.as_mut().and_then(|i| i.spec.as_mut())
+        else {
+            unreachable!("the fixture is a delivery");
+        };
+        spec.prior_revision = Some(proto::PriorRevision {
+            revision_id: "revision-1".into(),
+            final_commit: FINAL.into(),
+            bundle: None,
+        });
+        let command = deliver(&resumed, &node).unwrap();
+        assert_eq!(
+            command.payload.spec.prior_revision,
+            Some(PriorRevisionCommit {
+                revision_id: RevisionId::new("revision-1"),
+                final_commit: CommitId::new(FINAL),
+            })
+        );
+        let unchanged = |final_commit: &str| {
+            RevisionExecutionResult::RevisionUnchanged(RevisionUnchanged {
+                node: identity(),
+                final_commit: CommitId::new(final_commit),
+                base_commit: CommitId::new(BASE),
+                revision_ref: RevisionRef::new("refs/ora/revisions/run"),
+                history: object("runs/run/history.jsonl"),
+            })
+        };
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        assert_eq!(
+            [BASE, FINAL, other].map(|commit| accepts(&command, &unchanged(commit))),
+            [true, true, false]
+        );
+        let fresh = deliver(&record(), &node).unwrap();
+        assert_eq!(
+            [BASE, FINAL].map(|commit| accepts(&fresh, &unchanged(commit))),
+            [true, false]
+        );
+        assert_eq!(
+            result(&unchanged(FINAL)).outcome,
+            Some(proto::execution_result::Outcome::RevisionUnchanged(
+                proto::RevisionUnchanged {
+                    final_commit: FINAL.into(),
+                    base_commit: BASE.into(),
+                    revision_ref: "refs/ora/revisions/run".into(),
+                    history: Some(proto::StoredObject {
+                        key: "runs/run/history.jsonl".into(),
+                        size: 7,
+                        sha256: DIGEST.into(),
+                    }),
+                }
+            ))
+        );
+        // The delivery never downloads the prior bundle, so an input naming one is refused.
+        if let Some(proto::execution_input::Spec::DeliverRevision(spec)) =
+            resumed.input.as_mut().and_then(|i| i.spec.as_mut())
+            && let Some(prior) = spec.prior_revision.as_mut()
+        {
+            prior.bundle = Some(proto::StoredObject {
+                key: "runs/prior/revision.bundle".into(),
+                size: 7,
+                sha256: DIGEST.into(),
+            });
+        }
+        assert!(matches!(deliver(&resumed, &node), Err(Error::Conflict)));
     }
 }

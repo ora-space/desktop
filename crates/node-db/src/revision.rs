@@ -180,11 +180,18 @@ impl<G: WriteGuard> NodeDatabase<G> {
                     && result.bundle.key == spec.bundle_key
                     && result.history.key == spec.history_key
             }
+            // Unchanged means no new commit beyond the base or, for a resumed session, beyond
+            // the prior Revision's final commit; any other commit would lose work unbundled.
             FrozenOutcome::Unchanged(result) => {
                 result.node.node_id == self.node_id
                     && result.base_commit == spec.base_commit
                     && result.revision_ref == spec.revision_ref
                     && result.history.key == spec.history_key
+                    && (result.final_commit == spec.base_commit
+                        || spec
+                            .prior_revision
+                            .as_ref()
+                            .is_some_and(|prior| prior.final_commit == result.final_commit))
             }
         };
         if !consistent

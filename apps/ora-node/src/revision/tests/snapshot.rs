@@ -59,6 +59,7 @@ impl Fixture {
                 revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
                 bundle_key: ObjectKey::new("runs/1/revision.bundle"),
                 history_key: ObjectKey::new("runs/1/history.jsonl"),
+                prior_revision: None,
             },
             checkout: self.checkout(),
             history: self.directory.path().join("history.jsonl"),
@@ -168,6 +169,58 @@ fn unchanged_checkout_freezes_only_the_history() {
             &["rev-parse", "refs/ora/revisions/run-1"]
         ),
         fixture.base.as_str()
+    );
+}
+
+/// A resumed session that added nothing stops at the prior Revision's final commit: the delivery
+/// is unchanged at that commit and freezes no bundle, since the prior bundle already holds it
+/// (restore ADR D5). Any further change is delivered as usual.
+#[test]
+fn resumed_delivery_stopping_at_the_prior_final_commit_is_unchanged() {
+    let fixture = Fixture::new();
+    let checkout = fixture.checkout();
+    fs::write(checkout.join("restored.txt"), "prior run\n").unwrap();
+    git(&checkout, &["add", "-A"]);
+    git(&checkout, &["commit", "-m", "prior run"]);
+    let prior_final = CommitId::new(git(&checkout, &["rev-parse", "HEAD"]));
+    let mut job = fixture.job();
+    job.spec.prior_revision = Some(PriorRevisionCommit {
+        revision_id: RevisionId::new("revision-1"),
+        final_commit: prior_final.clone(),
+    });
+    let plan = fixture.prepare(&job).unwrap();
+    let frozen = fixture.root().join(directory_name(&job.execution));
+    assert_eq!(
+        plan,
+        DeliveryPlan {
+            directory: directory_name(&job.execution),
+            outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
+                node: job.node.clone(),
+                final_commit: prior_final.clone(),
+                base_commit: fixture.base.clone(),
+                revision_ref: job.spec.revision_ref.clone(),
+                history: measured("runs/1/history.jsonl", &frozen.join("history.jsonl")),
+            }),
+        }
+    );
+    assert!(!frozen.join("revision.bundle").exists());
+
+    fs::write(checkout.join("more.txt"), "this run\n").unwrap();
+    let FrozenOutcome::Delivered(delivered) = fixture.prepare(&job).unwrap().outcome else {
+        panic!("new work after the prior final commit is delivered");
+    };
+    assert_eq!(
+        (
+            delivered.base_commit,
+            git(
+                &checkout,
+                &[
+                    "rev-parse",
+                    &format!("{}^", delivered.final_commit.as_str())
+                ]
+            )
+        ),
+        (fixture.base.clone(), prior_final.as_str().to_owned())
     );
 }
 

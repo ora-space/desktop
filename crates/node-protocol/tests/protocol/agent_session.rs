@@ -17,7 +17,7 @@ fn turn(turn_id: &str, text: &str) -> UserTurn {
 }
 
 /// A session start with its git identity and first turn, with independent JSON.
-fn start() -> Case {
+pub(super) fn start() -> Case {
     Case {
         message: Message::Controller(ControllerToNodeMessage::StartAgentSession(
             StartAgentSessionMessage {
@@ -35,6 +35,7 @@ fn start() -> Case {
                             email: "ada@example.com".to_owned(),
                         },
                         initial_turn: turn("turn-1", "Fix the failing login test."),
+                        prior_revision: None,
                     },
                 },
             },

@@ -15,6 +15,7 @@ pub(super) struct AgentState {
     lose_reply: bool,
     pub(super) input_closed: bool,
     pub(super) deliveries: super::deliveries::DeliveryState,
+    pub(super) restores: super::restores::RestoreState,
 }
 impl WorkspaceCloud {
     /// Changes current permission without changing the historical registered dispatch.
@@ -23,6 +24,10 @@ impl WorkspaceCloud {
     }
     /// Queues an exact session input against the current sandbox, without creating local paths.
     pub fn queue_agent(&self, run: &str) {
+        self.queue_session(run, None);
+    }
+    /// Queues a session input, resuming `prior` when given, and wakes the Controller.
+    pub(super) fn queue_session(&self, run: &str, prior: Option<proto::PriorRevision>) {
         let mut state = self.lock();
         let sandbox = state.sandboxes.last().unwrap();
         let node = state.nodes.last().unwrap().identity.as_ref().unwrap();
@@ -53,6 +58,7 @@ impl WorkspaceCloud {
                                 )),
                             }],
                         }),
+                        prior_revision: prior,
                     },
                 )),
             }),
@@ -362,5 +368,12 @@ impl AgentRunService for WorkspaceCloud {
         request: Request<proto::GrantRevisionUploadRequest>,
     ) -> Result<Response<proto::GrantRevisionUploadResponse>, Status> {
         self.grant(request.into_inner())
+    }
+    /// Signs a read of a resumed session's prior bundle.
+    async fn grant_revision_download(
+        &self,
+        request: Request<proto::GrantRevisionDownloadRequest>,
+    ) -> Result<Response<proto::GrantRevisionDownloadResponse>, Status> {
+        self.grant_download(request.into_inner())
     }
 }

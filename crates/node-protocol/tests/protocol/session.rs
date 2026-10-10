@@ -26,12 +26,14 @@ async fn accepts_independent_and_combined_execution_capabilities() -> Result<(),
                 NodeCapability::PluginInstall,
                 NodeCapability::AgentSession,
                 NodeCapability::RevisionDelivery,
+                NodeCapability::RevisionRestore,
             ],
             json!([
                 "repository_clone",
                 "plugin_install",
                 "agent_session",
-                "revision_delivery"
+                "revision_delivery",
+                "revision_restore"
             ]),
         ),
     ] {

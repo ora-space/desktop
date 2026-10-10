@@ -150,6 +150,26 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         async { Ok(GrantOutcome::NotGrantable) }
     }
 
+    /// Asks the authority for a fresh read grant of the prior bundle a restoring session needs.
+    /// The answer is either granted or refused; a refusal ends the Node's restore, so it is given
+    /// only when the authority definitively declines, never for an outage (an `Err` the caller
+    /// retries). Grants are bearer credentials: implementations keep them in memory and never
+    /// persist or log them. Authorities without sessions refuse.
+    fn grant_download(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+    ) -> impl Future<Output = Result<DownloadGrantMessage, Error>> + Send {
+        let refused = DownloadGrantMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: operation.clone(),
+            execution_id: execution.clone(),
+            payload: DownloadGrant::Refused {},
+        };
+        async move { Ok(refused) }
+    }
+
     /// An advisory wake-up; periodic polling remains authoritative if a hint is missed.
     fn wait_agent_command_hint(&self) -> impl Future<Output = ()> + Send {
         std::future::pending()

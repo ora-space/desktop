@@ -66,6 +66,10 @@ string_identity!(
 );
 string_identity!(WorkspaceId, "Identity of an Ora Workspace on the wire.");
 string_identity!(
+    RevisionId,
+    "Cloud identity of one registered Revision a session may resume from."
+);
+string_identity!(
     WorktreeId,
     "Identity of the task worktree managed by an execution."
 );

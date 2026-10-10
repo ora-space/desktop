@@ -1,13 +1,14 @@
 //! In-memory ledger, checkout and plugin catalog, plus a Node home with the echo agent installed.
 
 use ora_node::{
-    AgentSessions, CheckoutResolver, CommandSettlement, PluginCatalog, QueuedCommand,
-    SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
+    AgentSessions, CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore,
+    QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig,
+    SessionHost, SessionLedger, SessionWorkload,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, ExecutionId, GitIdentity, NodeId,
-    NodeIncarnationId, NodeRuntimeIdentity, PluginId, PluginVersion, Sequence, ThreadEvent, TurnId,
-    UserTurn,
+    NodeIncarnationId, NodeRuntimeIdentity, OperationId, PluginId, PluginVersion, PriorRevision,
+    Sequence, ThreadEvent, TurnId, UserTurn,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -21,6 +22,10 @@ pub const PLUGIN_ID: &str = "official/ora-space.echo";
 pub const PLUGIN_VERSION: &str = "1.0.0";
 pub const EXECUTION: &str = "8b0e5a52-6f1c-4c55-9d3e-2a7b1f0c9e41";
 pub const CHECKOUT_EXECUTION: &str = "clone-1";
+pub const OPERATION: &str = "run-1";
+
+/// Session execution as these tests compose it.
+pub type Sessions = AgentSessions<MemoryLedger, Checkouts, Catalog, Restorer>;
 
 /// The failure the in-memory ledger reports.
 #[derive(Debug, thiserror::Error)]
@@ -224,11 +229,33 @@ impl PluginCatalog for Catalog {
     }
 }
 
+/// Answers every restore with a scripted result and records the requests it saw.
+#[derive(Clone)]
+pub struct Restorer {
+    pub answer: Arc<Mutex<Result<Restored, RestoreFailure>>>,
+    pub requests: Arc<Mutex<Vec<RestoreRequest>>>,
+}
+
+impl PriorRevisionRestore for Restorer {
+    /// Records the request and answers as scripted.
+    async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(request);
+        self.answer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// A Node home with the echo agent installed and a Git checkout for it to work in.
 pub struct Fixture {
     root: tempfile::TempDir,
     pub ledger: MemoryLedger,
     pub leases: Arc<AtomicUsize>,
+    pub restorer: Restorer,
 }
 
 impl Fixture {
@@ -239,6 +266,10 @@ impl Fixture {
             root,
             ledger: MemoryLedger::default(),
             leases: Arc::new(AtomicUsize::new(0)),
+            restorer: Restorer {
+                answer: Arc::new(Mutex::new(Ok(Restored::OnRemoteHistory))),
+                requests: Arc::default(),
+            },
         };
         let package = fixture.package_root();
         std::fs::create_dir_all(&package).expect("create package root");
@@ -300,10 +331,7 @@ impl Fixture {
 
     /// Composes session execution over a catalog that reports `installed_version` as installed,
     /// in the directory the installer would give that version; only 1.0.0 is actually there.
-    pub fn sessions(
-        &self,
-        installed_version: &str,
-    ) -> AgentSessions<MemoryLedger, Checkouts, Catalog> {
+    pub fn sessions(&self, installed_version: &str) -> Sessions {
         self.sessions_with(installed_version, SessionWorkload::Shared)
     }
 
@@ -326,11 +354,7 @@ impl Fixture {
     }
 
     /// Composes session execution as [`Self::sessions`] does, running agents per `workload`.
-    pub fn sessions_with(
-        &self,
-        installed_version: &str,
-        workload: SessionWorkload,
-    ) -> AgentSessions<MemoryLedger, Checkouts, Catalog> {
+    pub fn sessions_with(&self, installed_version: &str, workload: SessionWorkload) -> Sessions {
         AgentSessions::new(
             SessionConfig {
                 home_directory: self.home(),
@@ -355,17 +379,25 @@ impl Fixture {
                 )]),
                 leases: Arc::clone(&self.leases),
             },
+            self.restorer.clone(),
         )
     }
 
     /// Starts the session execution with `initial` as its first turn.
-    pub fn start(
+    pub fn start(&self, sessions: &Sessions, version: &str, initial: &str) {
+        self.start_resuming(sessions, version, initial, None);
+    }
+
+    /// Starts the session execution with `initial` as its first turn, resuming `prior` if given.
+    pub fn start_resuming(
         &self,
-        sessions: &AgentSessions<MemoryLedger, Checkouts, Catalog>,
+        sessions: &Sessions,
         version: &str,
         initial: &str,
+        prior: Option<PriorRevision>,
     ) {
         sessions.start(
+            OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
                 node_id: NodeId::new("node-1"),
@@ -374,17 +406,13 @@ impl Fixture {
                 checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
+                prior_revision: prior,
             },
         );
     }
 
     /// Persists one command and wakes the session, as the protocol side does.
-    pub fn command(
-        &self,
-        sessions: &AgentSessions<MemoryLedger, Checkouts, Catalog>,
-        command_id: &str,
-        command: SessionCommand,
-    ) {
+    pub fn command(&self, sessions: &Sessions, command_id: &str, command: SessionCommand) {
         self.ledger.accept(command_id, command);
         sessions.command_arrived(&ExecutionId::new(EXECUTION));
     }

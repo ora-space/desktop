@@ -4,6 +4,7 @@ mod plugin;
 mod repository;
 mod repository_result;
 mod revision;
+mod revision_restore;
 mod worktree;
 
 pub use agent_session::{
@@ -26,5 +27,8 @@ pub use revision::{
     DeliverRevisionSpec, ObjectKey, ObjectUploadGrant, PresignedUrl, REVISION_REF_PREFIX,
     RevisionDelivered, RevisionExecutionResult, RevisionFailed, RevisionFailureCode, RevisionRef,
     RevisionUnchanged, StoredObject, UploadMethod,
+};
+pub use revision_restore::{
+    DownloadMethod, ObjectDownloadGrant, PriorRevision, PriorRevisionCommit,
 };
 pub use worktree::*;

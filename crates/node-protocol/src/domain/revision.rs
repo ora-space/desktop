@@ -2,7 +2,8 @@
 //! object store with Cloud-issued upload grants, and reports what was uploaded.
 
 use crate::{
-    CommitId, ExecutionId, MessageValidationError, NodeId, NodeRuntimeIdentity, Sha256Digest,
+    CommitId, ExecutionId, MessageValidationError, NodeId, NodeRuntimeIdentity,
+    PriorRevisionCommit, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,9 @@ pub struct DeliverRevisionSpec {
     pub revision_ref: RevisionRef,
     pub bundle_key: ObjectKey,
     pub history_key: ObjectKey,
+    /// The Revision the session resumed; a final commit equal to its final commit is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_revision: Option<PriorRevisionCommit>,
 }
 
 impl DeliverRevisionSpec {
@@ -112,6 +116,9 @@ impl DeliverRevisionSpec {
         if self.bundle_key == self.history_key {
             return Err(MessageValidationError::InvalidObjectKey);
         }
+        if let Some(prior) = &self.prior_revision {
+            prior.validate()?;
+        }
         Ok(())
     }
 }
@@ -127,7 +134,7 @@ pub struct StoredObject {
 
 impl StoredObject {
     /// Checks the key and canonical digest.
-    fn validate(&self) -> Result<(), MessageValidationError> {
+    pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         self.key.validate()?;
         self.sha256.validate()
     }
@@ -145,7 +152,8 @@ pub struct RevisionDelivered {
     pub history: StoredObject,
 }
 
-/// The final commit equals the base: only the history was uploaded.
+/// The final commit equals the base, or the final commit of the Revision the session resumed:
+/// only the history was uploaded.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionUnchanged {
@@ -185,8 +193,10 @@ pub enum RevisionExecutionResult {
 }
 
 impl RevisionExecutionResult {
-    /// Keeps "changed" and "unchanged" distinguishable by the commits themselves, so Cloud never
-    /// registers a bundle-less Revision whose final commit differs from its base.
+    /// Keeps a delivered result distinguishable from an unchanged one by its commits. An unchanged
+    /// result may name a final commit other than its base when the delivery resumed a prior
+    /// Revision; only the receiver, which holds the delivery input, can tell whether that commit is
+    /// the prior one, so the Controller checks it against the input before Cloud registers it.
     pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         self.node()
             .validate()
@@ -205,12 +215,9 @@ impl RevisionExecutionResult {
             }
             Self::RevisionUnchanged(result) => {
                 validate_commit(&result.final_commit)?;
+                validate_commit(&result.base_commit)?;
                 result.revision_ref.validate()?;
-                result.history.validate()?;
-                if result.final_commit != result.base_commit {
-                    return Err(MessageValidationError::RevisionCommitMismatch);
-                }
-                Ok(())
+                result.history.validate()
             }
             Self::RevisionFailed(_) => Ok(()),
         }
@@ -235,7 +242,7 @@ pub(crate) fn validate_commit(commit: &CommitId) -> Result<(), MessageValidation
     Err(MessageValidationError::InvalidCommit)
 }
 
-/// Presigned upload URL. It is a bearer credential, so `Debug` never prints it.
+/// Presigned upload or download URL. It is a bearer credential, so `Debug` never prints it.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct PresignedUrl(String);
@@ -245,9 +252,15 @@ impl PresignedUrl {
         Self(value.into())
     }
 
-    /// Exposes the URL only to the uploader that sends the request.
+    /// Exposes the URL only to the transfer that sends the request.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Whether the URL is absolute HTTP(S) with a host, the only form a grant may carry.
+    pub(crate) fn is_absolute_http(&self) -> bool {
+        url::Url::parse(&self.0)
+            .is_ok_and(|url| matches!(url.scheme(), "https" | "http") && url.host_str().is_some())
     }
 }
 
@@ -283,9 +296,7 @@ impl ObjectUploadGrant {
     /// Requires an absolute HTTP(S) URL and a valid key.
     pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         self.object_key.validate()?;
-        let url_ok = url::Url::parse(self.url.as_str())
-            .is_ok_and(|url| matches!(url.scheme(), "https" | "http") && url.host_str().is_some());
-        if url_ok {
+        if self.url.is_absolute_http() {
             return Ok(());
         }
         Err(MessageValidationError::InvalidUploadGrant)

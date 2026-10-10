@@ -1,4 +1,5 @@
 //! Cloud remains the only durable authority for session dispatches, Thread receipts and commands.
+mod downloads;
 pub(super) mod mapping;
 use super::{CloudStore, fault};
 use crate::*;

@@ -15,3 +15,5 @@ Cloud 在 SQL 事务外检查对象存在、大小和存储 SHA-256，重查租�
 `crates/controller-proto/tests/upload_checksum.rs` 覆盖旧 wire 样本解码/原样重编码、新 map 往返与旧解码器兼容、checksum 与条件写入签名头完整保留。协议 crate 测试与 clippy 通过；`ora-controller`、`ora-node` 均用新生成绑定构建。Node/process 公开协议无变化。
 
 此配套仅同步生成协议消费。生产 Rust Controller 已按 [Agent 中继](controller/agent-relay.zh.md) 转交交付与摘要绑定授权；生产 Node 交付、其账本/日志卫生与端到端重启验收仍属于 C/D。真实 PostgreSQL/Git/RustFS 的交付验收目前使用 Cloud Go Controller/Node 替身，证明 A，不代表生产 C/D 或 B 界面已完成。
+
+续接运行在不改变已发布字段的前提下扩展同一契约：`AgentSessionSpec.prior_revision`（field 6）指明前序 Revision 及其已校验的 bundle 对象，`DeliverRevisionSpec.prior_revision`（field 7）只带其最终提交，`RevisionUnchanged.final_commit` 可以等于该前序最终提交。`AgentRunService.GrantRevisionDownload` 为已登记且无结果的会话签发只读取该 bundle 的内存级 `GET` 授权。Controller 的转交见 [Agent 中继](controller/agent-relay.zh.md#续接会话与下载授权)，Node 的恢复见 [Revision 交付](node/revision-delivery.zh.md#续接前序-revision)。

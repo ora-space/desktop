@@ -65,7 +65,7 @@ version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型
 NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事件序号，也不会确认原事件。
 
 `HelloAccepted` 接受 `repository_clone`、`worktree_execution`、`plugin_install`、`agent_session`、
-`revision_delivery` 的任意组合，无重复且非空。
+`revision_delivery`、`revision_restore` 的任意组合，无重复且非空。
 这只验证声明自洽；会话所有者仍须在派发前匹配所选 Node 的能力。现有运行时不会声明未实现能力。
 
 ## Agent IssueRun 执行
@@ -74,11 +74,12 @@ NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事�
 proposed）。codec 定义并校验它们；目前没有运行中的 Node 声明这些能力，两端运行时都以“不支持”拒绝这些消息。
 Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实现，但尚未接入这些消息。
 
-| 能力                | Controller → Node                                        | Node → Controller                                                                                           |
-| ------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `plugin_install`    | `install_plugins`、`remove_plugins`                      | `plugins_result`（`plugins_completed` / `plugins_failed`）                                                  |
-| `agent_session`     | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected`               |
-| `revision_delivery` | `deliver_revision`、`upload_grant`                       | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
+| 能力                | Controller → Node                                              | Node → Controller                                                                                           |
+| ------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`、`remove_plugins`                            | `plugins_result`（`plugins_completed` / `plugins_failed`）                                                  |
+| `agent_session`     | `start_agent_session`、`submit_user_turn`、`end_session`       | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected`               |
+| `revision_delivery` | `deliver_revision`、`upload_grant`                             | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
+| `revision_restore`  | 带 `prior_revision` 的 `start_agent_session`、`download_grant` | `download_grant_needed`                                                                                     |
 
 - 插件输入中每个 canonical `<namespace>/<identifier>` 只出现一次，要么一个 universal HTTP(S) 下载，
   要么按 target 互不重复的下载，均带小写 SHA-256。单个插件的失败逐项报告；`plugins_failed` 表示整个执行无法运行。
@@ -88,7 +89,15 @@ Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实�
   共享执行内连续的序号空间；终态的 `detail` 是简短的 snake_case 代码。
 - `submit_user_turn` 与 `end_session` 带 `command_id`；它们的回复不带序号、不需要确认，回复丢失后重发命令即可。
 - 交付输入给出已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的 ref，以及两个互不相同的规范化
-  对象键。`revision_unchanged` 要求最终 commit 等于基础 commit，`revision_delivered` 要求二者不同。
+  对象键。`revision_delivered` 要求最终 commit 不同于基础 commit。`revision_unchanged` 在 wire 上只校验 commit
+  格式：其最终 commit 等于基础 commit，或在交付输入带 `prior_revision` 时等于该前序最终 commit，由接收方（Node
+  账本、Controller）对照输入检查。
+- 会话可带 `prior_revision{revision_id, final_commit, bundle{key, size, sha256}}`，即它续接的 Revision；只有声明
+  `revision_restore` 的 Node 会收到。交付可带不含 bundle 的 `prior_revision{revision_id, final_commit}`。恢复失败时
+  会话以 `agent_session_ended{agent_failed}` 结束，`detail` 为 `prior_revision_unavailable` 或
+  `prior_revision_base_unavailable`。
+- `download_grant_needed`（Node 发出，只带其 Node）与 `download_grant`（`granted` 带预签名 `GET` 授权，或
+  `refused`）与上传授权一样只存在于内存；Node 在每次新连接时重发请求。
 - `upload_grant` 与 `upload_grant_needed` 只存在于内存：没有序号、不需要确认、不持久化、不写日志。
   `upload_grant_needed` 给出每个待上传对象及其固定的 SHA-256；Node 侧行为见
   [Revision 交付](../node/revision-delivery.zh.md)。

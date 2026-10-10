@@ -9,6 +9,9 @@ mod agents;
 #[path = "workspace_cloud/deliveries.rs"]
 mod deliveries;
 pub use deliveries::{SIGNATURE, STORE_HOST};
+#[path = "workspace_cloud/restores.rs"]
+mod restores;
+pub use restores::{PRIOR_BUNDLE, PRIOR_FINAL};
 #[path = "workspace_cloud/plugins.rs"]
 mod plugins;
 #[path = "workspace_cloud/runtime_control.rs"]
@@ -102,6 +105,19 @@ pub enum Event {
     DeliveryAck {
         execution: String,
         sequence: u64,
+    },
+    /// Cloud signed a read of a resumed session's prior bundle.
+    DownloadIssued {
+        execution: String,
+    },
+    /// Cloud declined a download grant for a resumed session.
+    DownloadRefused {
+        execution: String,
+    },
+    /// The fake Node received a `DownloadGrant` frame, granted or refused.
+    DownloadReceived {
+        execution: String,
+        granted: bool,
     },
 
     Claimed {

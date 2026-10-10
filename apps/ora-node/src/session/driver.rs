@@ -1,11 +1,15 @@
 //! One session execution from start to its terminal result.
 
+use super::end::SessionEnd;
 use super::host::{
     CheckoutDirectory, IgnoredStatus, NodeRuntimeHost, SessionLauncher, SessionLifecycle,
     SessionPlugin, ThreadMirror,
 };
-use super::ports::{CheckoutResolver, CommandSettlement, PluginCatalog, SessionLedger};
+use super::ports::{
+    CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore, SessionLedger,
+};
 use super::queue::{Plan, plan};
+use super::resume;
 use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
@@ -17,8 +21,8 @@ use ora_contracts::{
 use ora_domain::{AgentRef, PluginId, SessionId};
 use ora_logging::ora_warn;
 use ora_node_protocol::{
-    AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock,
-    EndSessionReason, ExecutionId, UserTurn,
+    AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, EndSessionReason, ExecutionId,
+    OperationId, UserTurn,
 };
 use ora_plugin_lifecycle::{GenerationTaps, PluginLifecycle, PluginLifecycleConfig};
 use ora_plugin_manager::PluginContribution;
@@ -27,42 +31,14 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-/// Why a session execution ended, before the Node identity is attached.
-struct SessionEnd {
-    reason: AgentSessionEndReason,
-    /// A bounded code naming the cause of an `agent_failed` end.
-    detail: Option<&'static str>,
-}
-
-impl SessionEnd {
-    /// Ends the session because the agent could not be run or kept running.
-    fn agent_failed(detail: &'static str) -> Self {
-        Self {
-            reason: AgentSessionEndReason::AgentFailed,
-            detail: Some(detail),
-        }
-    }
-
-    /// Ends the session as the command asked.
-    fn requested(reason: EndSessionReason) -> Self {
-        Self {
-            reason: match reason {
-                EndSessionReason::UserEnded => AgentSessionEndReason::UserEnded,
-                EndSessionReason::IdleTimeout => AgentSessionEndReason::IdleTimeout,
-                EndSessionReason::Cancelled => AgentSessionEndReason::Cancelled,
-            },
-            detail: None,
-        }
-    }
-}
-
 /// Runs one session execution to its end and writes the terminal result.
 ///
 /// Commands still queued when the session ends are settled as discarded before the live entry
 /// is removed, and the terminal result is written last, so delivery can never observe an ended
 /// session whose history is still being written.
-pub(super) async fn run<L, C, P>(
-    shared: Arc<Shared<L, C, P>>,
+pub(super) async fn run<L, C, P, R>(
+    shared: Arc<Shared<L, C, P, R>>,
+    operation: OperationId,
     execution: ExecutionId,
     spec: AgentSessionSpec,
     wake: Arc<Notify>,
@@ -71,8 +47,9 @@ where
     L: SessionLedger,
     C: CheckoutResolver,
     P: PluginCatalog,
+    R: PriorRevisionRestore,
 {
-    let end = prepare_and_converse(&shared, &execution, spec, &wake).await;
+    let end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
             for queued in queued {
@@ -104,18 +81,22 @@ where
 
 /// Checks what the session needs, composes its runtime, converses, and tears everything down.
 ///
-/// Nothing is started before the checkout and the exact plugin version are known: a session whose
-/// plugin is missing or of another version ends without any plugin process having existed.
-async fn prepare_and_converse<L, C, P>(
-    shared: &Shared<L, C, P>,
+/// Nothing is started before the checkout and the exact plugin version are known, and before a
+/// prior Revision the session resumes is restored: a session whose plugin is missing, of another
+/// version, or whose prior Revision cannot be restored ends without any plugin process having
+/// existed.
+async fn prepare_and_converse<L, C, P, R>(
+    shared: &Shared<L, C, P, R>,
+    operation: &OperationId,
     execution: &ExecutionId,
-    spec: AgentSessionSpec,
+    mut spec: AgentSessionSpec,
     wake: &Arc<Notify>,
 ) -> SessionEnd
 where
     L: SessionLedger,
     C: CheckoutResolver,
     P: PluginCatalog,
+    R: PriorRevisionRestore,
 {
     let Some(checkout) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
         return SessionEnd::agent_failed("checkout_unavailable");
@@ -131,6 +112,19 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
+    // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
+    let stopping = shared.stopping.subscribe();
+    let restored = resume::restore_prior(
+        &shared.restorer,
+        operation,
+        execution,
+        &checkout,
+        &mut spec,
+        stopping,
+    );
+    if let Err(end) = restored.await {
+        return end;
+    }
     // Declared before the lifecycle so that, on every path, it is dropped (and its directory
     // removed) only after the lifecycle and the plugin it ran are gone.
     let placement = {
