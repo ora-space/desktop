@@ -124,6 +124,15 @@ impl CoordinationStore for CloudStore {
         self.upload_grants(session, operation, execution, request)
             .await
     }
+    /// Delegates to the session download relay of the AgentRun contract.
+    async fn grant_download(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+    ) -> Result<DownloadGrantMessage, Error> {
+        self.download_grants(session, operation, execution).await
+    }
     async fn wait_agent_command_hint(&self) {
         self.inner.command_hint.notified().await;
     }

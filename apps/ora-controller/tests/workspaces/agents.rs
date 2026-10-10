@@ -35,6 +35,10 @@ impl AgentNode {
             execution: command.execution_id.as_str().into(),
         });
     }
+    /// The start command the Node accepted for `execution`.
+    pub(super) fn started(&self, execution: &ExecutionId) -> StartAgentSessionMessage {
+        self.data.lock().unwrap().starts[execution].clone()
+    }
     /// Supplies a status without manufacturing a terminal event receipt.
     pub(super) fn status(&self, execution: &ExecutionId) -> Option<ExecutionState> {
         let data = self.data.lock().unwrap();

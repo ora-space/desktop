@@ -256,7 +256,7 @@ fn received(events: &[Event], execution: &ExecutionId) -> usize {
 
 /// Records every logged event and span field, as text, under the test-scoped subscriber.
 #[derive(Clone, Default)]
-struct Recorder(Arc<Mutex<Vec<String>>>);
+pub(super) struct Recorder(pub(super) Arc<Mutex<Vec<String>>>);
 
 /// Writes each visited field as `name=value`.
 struct Line<'a>(&'a mut String);
@@ -340,6 +340,7 @@ fn delivery_waits_for_its_permit_and_relays_checksum_bound_grants_unlogged() {
                             revision_ref: RevisionRef::new("refs/ora/revisions/run"),
                             bundle_key: ObjectKey::new("runs/run/revision.bundle"),
                             history_key: ObjectKey::new("runs/run/history.jsonl"),
+                            prior_revision: None,
                         },
                     },
                 }

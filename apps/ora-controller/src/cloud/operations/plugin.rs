@@ -25,7 +25,7 @@ impl Round<'_> {
         let Some(sandbox) = self.ready_node().await? else {
             return Ok(());
         };
-        if !sandbox.plugin_capable() {
+        if !sandbox.advertises(NodeCapability::PluginInstall) {
             return self
                 .defer(
                     proto::DeferState::Blocked,

@@ -119,6 +119,16 @@ pub(super) fn command(
     Ok(command)
 }
 
+/// Converts a grant's expiry; grants without one, or outside the representable range, are refused
+/// rather than treated as never expiring.
+pub(super) fn expiry(
+    timestamp: Option<prost_types::Timestamp>,
+) -> Result<time::OffsetDateTime, Error> {
+    let expires = timestamp.ok_or(Error::Conflict)?;
+    let nanos = i128::from(expires.seconds) * 1_000_000_000 + i128::from(expires.nanos);
+    time::OffsetDateTime::from_unix_timestamp_nanos(nanos).map_err(|_| Error::Conflict)
+}
+
 fn reason(failure: CloneFailureCode) -> proto::CloneFailureReason {
     match failure {
         CloneFailureCode::SourceUnavailable => proto::CloneFailureReason::SourceUnavailable,

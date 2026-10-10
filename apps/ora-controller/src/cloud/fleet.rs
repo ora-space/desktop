@@ -138,34 +138,16 @@ impl Sandbox {
         self.identity.borrow().clone()
     }
 
-    /// Only negotiated capabilities authorize new plugin registration.
-    pub(super) fn plugin_capable(&self) -> bool {
+    /// Only capabilities the live session negotiated authorize new registrations: plugin work
+    /// needs `plugin_install`, sessions `agent_session` (and `revision_restore` when they resume a
+    /// prior Revision), deliveries `revision_delivery`.
+    pub(super) fn advertises(&self, capability: NodeCapability) -> bool {
         self.connected()
             && self
                 .capabilities
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .contains(&NodeCapability::PluginInstall)
-    }
-
-    /// New session work requires a currently connected Node advertising Agent execution.
-    pub(super) fn agent_capable(&self) -> bool {
-        self.connected()
-            && self
-                .capabilities
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains(&NodeCapability::AgentSession)
-    }
-
-    /// New delivery work requires a currently connected Node advertising Revision delivery.
-    pub(super) fn delivery_capable(&self) -> bool {
-        self.connected()
-            && self
-                .capabilities
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains(&NodeCapability::RevisionDelivery)
+                .contains(&capability)
     }
 
     /// Whether a session is established right now.
