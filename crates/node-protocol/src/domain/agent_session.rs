@@ -3,7 +3,7 @@
 
 use crate::{
     ExecutionId, MessageValidationError, NodeId, NodeRuntimeIdentity, PluginId, PluginVersion,
-    TurnId,
+    PriorRevision, TurnId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -96,6 +96,10 @@ pub struct AgentSessionSpec {
     pub checkout_execution_id: ExecutionId,
     pub git_identity: GitIdentity,
     pub initial_turn: UserTurn,
+    /// The Revision this session resumes; the Node restores it into the checkout before the agent
+    /// starts, and only a Node advertising `revision_restore` is sent such a session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_revision: Option<PriorRevision>,
 }
 
 impl AgentSessionSpec {
@@ -116,7 +120,11 @@ impl AgentSessionSpec {
             });
         }
         self.git_identity.validate()?;
-        self.initial_turn.validate()
+        self.initial_turn.validate()?;
+        if let Some(prior) = &self.prior_revision {
+            prior.validate()?;
+        }
+        Ok(())
     }
 }
 

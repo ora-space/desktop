@@ -14,6 +14,8 @@ mod repository;
 mod repository_results;
 #[path = "protocol/revision.rs"]
 mod revision;
+#[path = "protocol/revision_restore.rs"]
+mod revision_restore;
 #[path = "protocol/session.rs"]
 mod session;
 #[path = "protocol/support.rs"]

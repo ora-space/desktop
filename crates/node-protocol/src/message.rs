@@ -3,6 +3,7 @@ mod execution;
 mod plugin;
 mod repository;
 mod revision;
+mod revision_restore;
 mod runtime_control;
 mod session;
 mod validation;
@@ -27,6 +28,9 @@ pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage
 pub use revision::{
     DeliverRevision, DeliverRevisionMessage, RevisionResultMessage, UploadGrant,
     UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage,
+};
+pub use revision_restore::{
+    DownloadGrant, DownloadGrantMessage, DownloadGrantNeeded, DownloadGrantNeededMessage,
 };
 pub use runtime_control::{
     ControlledClone, ControlledDeliverRevision, ControlledPlugins, ControlledStartAgentSession,
@@ -71,6 +75,8 @@ pub enum ControllerToNodeMessage {
     DeliverRevision(DeliverRevisionMessage),
     /// Memory-only: never persisted, logged, or acknowledged.
     UploadGrant(UploadGrantMessage),
+    /// Memory-only: never persisted, logged, or acknowledged.
+    DownloadGrant(DownloadGrantMessage),
 }
 
 impl ValidateMessage for ControllerToNodeMessage {
@@ -96,6 +102,7 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::EndSession(message) => message.validate(),
             Self::DeliverRevision(message) => message.validate(),
             Self::UploadGrant(message) => message.validate(),
+            Self::DownloadGrant(message) => message.validate(),
         }
     }
 }
@@ -120,6 +127,7 @@ pub enum NodeToControllerMessage {
     SessionCommandRejected(SessionCommandRejectedMessage),
     RevisionResult(RevisionResultMessage),
     UploadGrantNeeded(UploadGrantNeededMessage),
+    DownloadGrantNeeded(DownloadGrantNeededMessage),
 }
 
 impl ValidateMessage for NodeToControllerMessage {
@@ -142,6 +150,7 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::SessionCommandRejected(message) => message.validate(),
             Self::RevisionResult(message) => message.validate(),
             Self::UploadGrantNeeded(message) => message.validate(),
+            Self::DownloadGrantNeeded(message) => message.validate(),
         }
     }
 }

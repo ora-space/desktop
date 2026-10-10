@@ -64,6 +64,10 @@ pub enum MessageValidationError {
     InvalidUploadGrant,
     #[error("upload grant must carry at least one object")]
     EmptyUploadGrant,
+    #[error("download grant must carry an absolute HTTP(S) URL")]
+    InvalidDownloadGrant,
+    #[error("granted download must carry at least one object")]
+    EmptyDownloadGrant,
 }
 
 /// Centralizes wire invariants used identically for outbound and decoded messages.
