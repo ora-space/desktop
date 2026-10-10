@@ -90,6 +90,8 @@ Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实�
 - 交付输入给出已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的 ref，以及两个互不相同的规范化
   对象键。`revision_unchanged` 要求最终 commit 等于基础 commit，`revision_delivered` 要求二者不同。
 - `upload_grant` 与 `upload_grant_needed` 只存在于内存：没有序号、不需要确认、不持久化、不写日志。
+  `upload_grant_needed` 给出每个待上传对象及其固定的 SHA-256；Node 侧行为见
+  [Revision 交付](../node/revision-delivery.zh.md)。
   `PresignedUrl` 的 `Debug` 输出已脱敏。
 
 新的结果族在 untagged 的 `ExecutionResult` 中使用互不重叠的 `kind` 标签；Revision 结果装箱，

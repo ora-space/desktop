@@ -312,24 +312,106 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: UploadGrantNeeded {
                     node_id: NodeId::new("node-1"),
+                    checksums: [(ObjectKey::new(BUNDLE_KEY), Sha256Digest::new(DIGEST))].into(),
                 },
             },
         )),
         wire: json!({"message_type": "upload_grant_needed", "protocol_version": 1,
             "operation_id": OPERATION, "execution_id": EXECUTION,
-            "payload": {"node_id": "node-1"}}),
+            "payload": {"node_id": "node-1", "checksums": {BUNDLE_KEY: DIGEST}}}),
     };
     needed.assert_wire().await?;
     needed.assert_round_trip().await?;
     needed.assert_envelope_rejections().await?;
     needed
         .assert_fields(
-            &["/payload/node_id"],
+            &["/payload/node_id", "/payload/checksums"],
             &[
                 ("/operation_id", "operation_id"),
                 ("/execution_id", "execution_id"),
                 ("/payload/node_id", "node_id"),
             ],
         )
-        .await
+        .await?;
+    // A delivery asks for grants only while it still has an object to upload, and every digest is
+    // the canonical one it froze, so Cloud can bind the grant to exactly those bytes.
+    let mut wire = needed.wire.clone();
+    replace(&mut wire, "/payload/checksums", json!({}));
+    reject_semantics(
+        Peer::Node,
+        &wire,
+        "no objects",
+        MessageValidationError::EmptyUploadGrant,
+    )
+    .await?;
+    replace(
+        &mut wire,
+        "/payload/checksums",
+        json!({BUNDLE_KEY: DIGEST.to_uppercase()}),
+    );
+    reject_semantics(
+        Peer::Node,
+        &wire,
+        "uppercase digest",
+        MessageValidationError::InvalidSha256,
+    )
+    .await?;
+    replace(
+        &mut wire,
+        "/payload/checksums",
+        json!({"/absolute": DIGEST}),
+    );
+    reject_semantics(
+        Peer::Node,
+        &wire,
+        "absolute key",
+        MessageValidationError::InvalidObjectKey,
+    )
+    .await
+}
+
+/// A controlled delivery carries a runtime permit for exactly this execution, operation and Node.
+#[tokio::test]
+async fn controlled_delivery_requires_a_matching_runtime_permit() -> Result<(), TestError> {
+    let Message::Controller(ControllerToNodeMessage::DeliverRevision(command)) = deliver().message
+    else {
+        unreachable!("the delivery case is a controller DeliverRevision message");
+    };
+    let binding = RuntimeBinding {
+        tenant_id: "tenant".into(),
+        workspace_id: "workspace".into(),
+        sandbox_id: "sandbox".into(),
+        runtime_generation: 1,
+        node_id: command.payload.spec.node_id.as_str().into(),
+        node_incarnation_id: "incarnation".into(),
+        node_instance_id: "instance".into(),
+        controller_epoch: 1,
+        control_epoch: 1,
+        control_version: 1,
+        session_id: "session".into(),
+        actor_user_id: "actor".into(),
+        operation_id: String::new(),
+        execution_id: command.execution_id.as_str().into(),
+        node_operation_id: command.operation_id.as_str().into(),
+        input_closed: false,
+        issued_at_ms: 1000,
+        expires_at_ms: 31_000,
+    };
+    let envelope = ControlledDeliverRevision { binding, command };
+    let message = ControllerToNodeMessage::ControlledDeliverRevision(Box::new(envelope.clone()));
+    assert!(message.validate().is_ok());
+    pretty_assertions::assert_eq!(round_trip_controller(message.clone()).await?, message);
+    let mut changed = envelope.clone();
+    changed.binding.node_operation_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope.clone();
+    changed.binding.execution_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope.clone();
+    changed.binding.node_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope;
+    changed.binding.input_closed = true;
+    assert!(changed.validate().is_err());
+    Ok(())
 }

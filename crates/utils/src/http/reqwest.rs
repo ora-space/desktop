@@ -309,7 +309,7 @@ impl ReqwestDownloader {
 /// Copying native roots into a WebPKI store is insufficient on Windows because it bypasses the
 /// CryptoAPI chain engine, including enterprise policy and intermediate discovery. The explicit
 /// roots branch is test-only so HTTPS behavior can be exercised without modifying machine trust.
-fn platform_tls_config(
+pub(super) fn platform_tls_config(
     extra_roots: &[rustls::pki_types::CertificateDer<'static>],
 ) -> Result<rustls::ClientConfig, String> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -349,7 +349,7 @@ impl HttpDownload for ReqwestDownloader {
 }
 
 /// Converts a resolved `Proxy` into a reqwest proxy, applying any credentials.
-fn proxy_reqwest(proxy: Proxy) -> Result<reqwest::Proxy, DownloadError> {
+pub(super) fn proxy_reqwest(proxy: Proxy) -> Result<reqwest::Proxy, DownloadError> {
     let mut reqwest_proxy = reqwest::Proxy::all(proxy.endpoint.as_str())
         .map_err(|error| DownloadError::InvalidSource(error.to_string()))?;
     if let Some(auth) = proxy.auth {
@@ -377,7 +377,7 @@ fn network_error(url: &Url, error: reqwest::Error) -> DownloadError {
 /// url ..."), hiding the underlying cause (such as "invalid peer certificate: UnknownIssuer") in
 /// its `source()` chain. Joining every link with " <- " keeps that context without pulling in a
 /// logging dependency.
-fn flatten_reqwest_error(error: &reqwest::Error) -> String {
+pub(super) fn flatten_reqwest_error(error: &reqwest::Error) -> String {
     let mut links: Vec<String> = vec![error.to_string()];
     let mut current: Option<&(dyn StdError + 'static)> = error.source();
     while let Some(cause) = current {

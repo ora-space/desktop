@@ -6,6 +6,9 @@
 //! timeline the fake Substrate and fake Node share, so tests can assert ordering across all three.
 #[path = "workspace_cloud/agents.rs"]
 mod agents;
+#[path = "workspace_cloud/deliveries.rs"]
+mod deliveries;
+pub use deliveries::{SIGNATURE, STORE_HOST};
 #[path = "workspace_cloud/plugins.rs"]
 mod plugins;
 #[path = "workspace_cloud/runtime_control.rs"]
@@ -69,6 +72,36 @@ pub enum Event {
     },
     CommandReceived {
         id: String,
+    },
+    DeliveryRegistered {
+        run: String,
+    },
+    /// The fake Node accepted a controlled delivery envelope.
+    DeliveryStarted {
+        execution: String,
+    },
+    /// Cloud signed grants for exactly these requested checksums.
+    GrantIssued {
+        execution: String,
+        checksums: Vec<(String, String)>,
+    },
+    /// Cloud refused grants because the delivery is no longer grantable.
+    GrantRefused {
+        execution: String,
+    },
+    /// The fake Node received an `UploadGrant` frame.
+    GrantReceived {
+        execution: String,
+    },
+    RevisionTakeoverAttempt {
+        run: String,
+    },
+    RevisionTaken {
+        run: String,
+    },
+    DeliveryAck {
+        execution: String,
+        sequence: u64,
     },
 
     Claimed {
@@ -495,8 +528,8 @@ impl WorkspaceCloud {
             proto::OperationStep::Quiesce => {
                 let epoch = state.workspace.admission_epoch;
                 if Self::live_sandbox(state).is_some()
-                    && !Self::live_node(state)
-                        .is_some_and(|node| node.idle_admission_epoch == Some(epoch))
+                    && Self::live_node(state)
+                        .is_none_or(|node| node.idle_admission_epoch != Some(epoch))
                 {
                     return Err(conflict("idle_unconfirmed"));
                 }
@@ -1066,7 +1099,10 @@ impl ExecutionService for WorkspaceCloud {
         let message = request.into_inner();
         if matches!(
             message.input.as_ref().and_then(|i| i.spec.as_ref()),
-            Some(proto::execution_input::Spec::AgentSession(_))
+            Some(
+                proto::execution_input::Spec::AgentSession(_)
+                    | proto::execution_input::Spec::DeliverRevision(_)
+            )
         ) {
             return self.register_agent(&message);
         }
@@ -1115,11 +1151,16 @@ impl ExecutionService for WorkspaceCloud {
         request: Request<proto::TakeOverNodeEventRequest>,
     ) -> Result<Response<proto::TakeOverNodeEventResponse>, Status> {
         let message = request.into_inner();
-        if matches!(
-            message.result.as_ref().and_then(|r| r.outcome.as_ref()),
-            Some(proto::execution_result::Outcome::AgentSessionEnded(_))
-        ) {
-            return self.end_agent(message);
+        match message.result.as_ref().and_then(|r| r.outcome.as_ref()) {
+            Some(proto::execution_result::Outcome::AgentSessionEnded(_)) => {
+                return self.end_agent(message);
+            }
+            Some(
+                proto::execution_result::Outcome::RevisionDelivered(_)
+                | proto::execution_result::Outcome::RevisionUnchanged(_)
+                | proto::execution_result::Outcome::RevisionFailed(_),
+            ) => return self.take_over_revision(message).await,
+            _ => {}
         }
         self.store_result(&message.execution_id, message.result)
             .map(|record| {
@@ -1134,6 +1175,7 @@ impl ExecutionService for WorkspaceCloud {
         request: Request<proto::RecordQueriedResultRequest>,
     ) -> Result<Response<proto::RecordQueriedResultResponse>, Status> {
         let message = request.into_inner();
+        self.refuse_queried_revision(&message)?;
         self.store_result(&message.execution_id, message.result)
             .map(|record| {
                 Response::new(proto::RecordQueriedResultResponse {

@@ -3673,9 +3673,11 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tonic",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3898,6 +3900,7 @@ dependencies = [
  "ora-plugin-manager",
  "ora-plugin-protocol",
  "ora-plugin-registry",
+ "ora-process",
  "ora-process-client",
  "ora-process-protocol",
  "ora-scheduler",

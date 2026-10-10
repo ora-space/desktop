@@ -1,5 +1,6 @@
 mod commands;
 mod control;
+mod grants;
 mod relay;
 use super::*;
 use ora_node_transport::{
@@ -323,6 +324,10 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         .payload
         .capabilities
         .contains(&NodeCapability::AgentSession);
+    let delivery_capable = hello
+        .payload
+        .capabilities
+        .contains(&NodeCapability::RevisionDelivery);
     observer.capabilities(&hello.payload.capabilities);
     let capabilities = hello.payload.capabilities;
     let identity = hello.payload.node;
@@ -337,12 +342,14 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         Duration::from_millis(config.query_interval_ms),
         agent_capable,
     );
+    let mut grants = grants::Grants::new(store.clone(), identity.clone(), delivery_capable);
     let mut control = control::Control::new(
         store.clone(),
         identity.clone(),
         Duration::from_millis(config.query_interval_ms),
         capabilities,
         commands.input.clone(),
+        grants.input.clone(),
     );
     let mut settled = std::collections::HashSet::new();
     loop {
@@ -365,6 +372,11 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 }
                 Some(reply) = commands.outgoing.recv(), if agent_capable => {
                     bounded(deadline, transmit(writer, &reply)).await?;
+                }
+                result = grants.tasks.join_next(), if !grants.tasks.is_empty() => return Err(worker_failure(result)),
+                // Grants go to the wire and nowhere else; the frame is never logged.
+                Some(grant) = grants.outgoing.recv(), if delivery_capable => {
+                    bounded(deadline, transmit(writer, &grant)).await?;
                 }
                 result = control.tasks.join_next(), if !control.tasks.is_empty() => return Err(worker_failure(result)),
                 Some(action) = control.outgoing.recv() => match action {
@@ -408,6 +420,22 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                         command: reply.payload.command_id.clone(),
                     })
                     .map_err(|_| SessionError::Protocol("command reply queue overflow".into()))?;
+                continue;
+            }
+            NodeToControllerMessage::UploadGrantNeeded(need) if delivery_capable => {
+                if need.payload.node_id != identity.node_id {
+                    return Err(SessionError::Protocol(
+                        "grant request names another Node".into(),
+                    ));
+                }
+                grants
+                    .input
+                    .try_send(grants::Request::Needed {
+                        operation: need.operation_id.clone(),
+                        execution: need.execution_id.clone(),
+                        checksums: need.payload.checksums.clone(),
+                    })
+                    .map_err(|_| SessionError::Protocol("grant request queue overflow".into()))?;
                 continue;
             }
             NodeToControllerMessage::Heartbeat(heartbeat) if heartbeat.payload.node == identity => {

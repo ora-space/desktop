@@ -16,6 +16,7 @@ http-reqwest = [
     "dep:rustls",
     "dep:rustls-platform-verifier",
     "dep:tokio",
+    "tokio/fs",
     "dep:time",
 ]
 # Domain-free MCP client used for bounded health handshakes: newline JSON-RPC over stdio and

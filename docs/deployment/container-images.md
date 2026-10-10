@@ -40,6 +40,13 @@ the Node's `shutdown_grace_ms + cleanup_timeout_ms`. If the Node exits on its ow
 stopped too and the container exits with the Node's status.
 
 Binaries live under the root-owned `/opt/ora/bin`, which the release host requires for the guardian.
+The image also ships `/opt/ora/bin/deno`, the runtime every plugin runs on: its version is
+`.deno-version` and the build verifies the archive and the executable against the pins in
+`scripts/sidecar-checksums.json` (Linux x64 and arm64), failing on an architecture without a pin.
+Agent sessions use it once the Node configuration's `agent.deno_path` points there. When the
+configuration also names `agent.workload_directory`, the entrypoint creates it as root with mode
+`0711`; agents then run as the workload user from per-session directories inside it (see
+[Agent session](../node/agent-session.md#separate-workload-user)).
 
 ## Controller image
 

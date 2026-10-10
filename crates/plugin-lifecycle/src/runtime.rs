@@ -65,6 +65,9 @@ pub struct DenoPluginRuntimeLauncher<E: ChildProcessEnvironmentProvider = NoChil
 {
     timeouts: PluginRuntimeTimeouts,
     environment_provider: E,
+    /// Starts both the Deno process and every process it asks the host to spawn, so the plugin
+    /// and its agent CLI always share one OS identity.
+    spawner: TokioProcessSpawner,
 }
 
 impl DenoPluginRuntimeLauncher<NoChildProcessEnvironment> {
@@ -73,6 +76,7 @@ impl DenoPluginRuntimeLauncher<NoChildProcessEnvironment> {
         Self {
             timeouts,
             environment_provider: NoChildProcessEnvironment,
+            spawner: TokioProcessSpawner::new(),
         }
     }
 }
@@ -86,7 +90,15 @@ impl<E: ChildProcessEnvironmentProvider> DenoPluginRuntimeLauncher<E> {
         Self {
             timeouts,
             environment_provider,
+            spawner: TokioProcessSpawner::new(),
         }
+    }
+
+    /// Replaces the spawner, for a host that runs plugins under an identity other than its own
+    /// (see [`ora_process::ProcessIdentity`]).
+    pub fn with_spawner(mut self, spawner: TokioProcessSpawner) -> Self {
+        self.spawner = spawner;
+        self
     }
 }
 
@@ -122,6 +134,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
     {
         let timeouts = self.timeouts;
         let environment_provider = self.environment_provider.clone();
+        let spawner = self.spawner;
         async move {
             let permissions = request
                 .permissions
@@ -143,7 +156,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
                 PluginProcessHost::with_environment_provider(
                     request.plugin_id.to_string(),
                     request.package_root.clone(),
-                    TokioProcessSpawner::new(),
+                    spawner,
                     environment_provider,
                 )
             });
@@ -152,7 +165,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
                 processes: processes.clone(),
             };
             let (runtime, notifications) = ProcessPluginRuntime::launch(
-                &TokioProcessSpawner::new(),
+                &spawner,
                 PluginRuntimeConfig {
                     plugin_id: request.plugin_id.to_string(),
                     deno_path: request.deno_path,

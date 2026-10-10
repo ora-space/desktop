@@ -7,6 +7,7 @@
 
 use super::ports::SessionLedger;
 use super::thread::thread_event;
+use super::workload::PackageViewLauncher;
 use ora_agent_runtime::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, NoSessionMcp,
     RuntimeError, RuntimeEvents, WorkspaceDirectory,
@@ -36,11 +37,11 @@ use tokio::sync::Notify;
 const AGENT_ATTACH_WAIT: Duration = Duration::from_secs(15);
 
 /// The plugin lifecycle one session execution owns.
-pub(super) type SessionLifecycle = PluginLifecycle<
-    DenoPluginRuntimeLauncher<GitIdentityEnvironment>,
-    IgnoredStatus,
-    GenerationTaps,
->;
+pub(super) type SessionLifecycle = PluginLifecycle<SessionLauncher, IgnoredStatus, GenerationTaps>;
+
+/// Launches one session's plugin from its placement, with the session's environment.
+pub(super) type SessionLauncher =
+    PackageViewLauncher<DenoPluginRuntimeLauncher<SessionEnvironment>>;
 
 /// Names the Node's host composition for one session execution over ledger `L`.
 pub(super) struct NodeRuntimeHost<L>(PhantomData<L>);
@@ -55,17 +56,19 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
     type Directory = CheckoutDirectory;
 }
 
-/// Exports one commit identity to the agent plugin and to everything it runs.
+/// Exports one session's environment to the agent plugin and to everything it runs: the commit
+/// identity always, and in a separate workload placement the session's own home.
 ///
 /// Set on the plugin process, so a process the plugin spawns directly inherits it, and on every
 /// process the host spawns for the plugin, which inherits the host's environment instead. Nothing
-/// is written to a Git configuration.
+/// is written to a Git configuration. The rest of the host environment (model credentials, proxy
+/// settings) still reaches the agent: these variables are layered on top of it, never instead.
 #[derive(Clone, Debug)]
-pub(super) struct GitIdentityEnvironment {
+pub(super) struct SessionEnvironment {
     variables: BTreeMap<String, String>,
 }
 
-impl GitIdentityEnvironment {
+impl SessionEnvironment {
     pub(super) fn new(identity: &GitIdentity) -> Self {
         Self {
             variables: [
@@ -79,11 +82,36 @@ impl GitIdentityEnvironment {
             .collect(),
         }
     }
+
+    /// Points HOME and every per-user base directory at the session home.
+    ///
+    /// An agent running as the workload user must neither inherit the Node's HOME (unwritable to
+    /// it, and the Node's own) nor share caches and CLI state with another session; Deno keeps its
+    /// module cache there too, and must not try to update itself.
+    pub(super) fn with_home(mut self, home: &Path) -> Self {
+        let cache = home.join(".cache");
+        let local = home.join(".local");
+        let paths = [
+            ("HOME", home.to_path_buf()),
+            ("XDG_CONFIG_HOME", home.join(".config")),
+            ("XDG_DATA_HOME", local.join("share")),
+            ("XDG_STATE_HOME", local.join("state")),
+            ("DENO_DIR", cache.join("deno")),
+            ("XDG_CACHE_HOME", cache),
+        ];
+        for (key, path) in paths {
+            self.variables
+                .insert(key.to_string(), path.to_string_lossy().into_owned());
+        }
+        self.variables
+            .insert("DENO_NO_UPDATE_CHECK".to_string(), "1".to_string());
+        self
+    }
 }
 
-impl ChildProcessEnvironmentProvider for GitIdentityEnvironment {
+impl ChildProcessEnvironmentProvider for SessionEnvironment {
     /// The lifecycle behind it runs only this session's plugin in this session's checkout, so
-    /// every host-spawned process is one this identity belongs to.
+    /// every host-spawned process is one this environment belongs to.
     fn environment(
         &self,
         _plugin_id: &str,

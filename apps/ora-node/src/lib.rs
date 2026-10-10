@@ -35,6 +35,8 @@ pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
+mod revision;
+#[cfg(target_os = "linux")]
 mod service;
 #[cfg(target_os = "linux")]
 mod session;
@@ -45,7 +47,7 @@ pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, Servi
 #[cfg(target_os = "linux")]
 pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
-    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger,
+    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;

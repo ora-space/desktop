@@ -158,6 +158,16 @@ impl Sandbox {
                 .contains(&NodeCapability::AgentSession)
     }
 
+    /// New delivery work requires a currently connected Node advertising Revision delivery.
+    pub(super) fn delivery_capable(&self) -> bool {
+        self.connected()
+            && self
+                .capabilities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&NodeCapability::RevisionDelivery)
+    }
+
     /// Whether a session is established right now.
     pub(super) fn connected(&self) -> bool {
         self.identity.borrow().is_some()

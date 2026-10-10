@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 mod recovery;
 
 /// Supplies valid immutable input independently of the agent runtime.
-fn command() -> StartAgentSessionMessage {
+pub(super) fn command() -> StartAgentSessionMessage {
     StartAgentSessionMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: OperationId::new("session-op"),
@@ -56,7 +56,7 @@ fn event() -> ThreadEvent {
 }
 
 /// Interrupted recovery may seal both accepted and running sessions.
-fn ended() -> AgentSessionEnded {
+pub(super) fn ended() -> AgentSessionEnded {
     AgentSessionEnded {
         node: NodeRuntimeIdentity {
             node_id: NodeId::new("node"),

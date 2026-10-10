@@ -2,7 +2,7 @@
 //! a pure read; ownership is decided when `RecordDispatch` commits, so claiming more often than
 //! needed costs queries but never duplicates work.
 use super::{
-    CloudStore, fault,
+    CloudStore, agents, deliveries, fault,
     fleet::{Fleet, Gate},
     mapping,
 };
@@ -69,7 +69,19 @@ pub(super) async fn batch(
             else {
                 return Backlog::Settled;
             };
-            if sandbox.binding.node_id.as_str() != target.node_id || !sandbox.agent_capable() {
+            let Some(family) = Targeted::of(&item) else {
+                if refusals.last.as_deref() != Some(item.operation_id.as_str()) {
+                    ora_logging::ora_warn!(operation_id = %item.operation_id, "targeted work names no session or delivery input");
+                    refusals.last = Some(item.operation_id);
+                }
+                return Backlog::Settled;
+            };
+            let capable = match family {
+                Targeted::Session => sandbox.agent_capable(),
+                Targeted::Delivery => sandbox.delivery_capable(),
+            };
+            // A Node without the capability leaves the item queued in Cloud for a capable session.
+            if sandbox.binding.node_id.as_str() != target.node_id || !capable {
                 return Backlog::Settled;
             }
             // Quiesce cannot race a new registration into the supposedly idle sandbox.
@@ -79,11 +91,10 @@ pub(super) async fn batch(
             if *gate != Gate::Open {
                 return Backlog::Settled;
             }
-            if let Err(error) = store
-                .record_agent(epoch, &item, &sandbox.binding.node_id)
-                .await
+            if let Err(error) =
+                record_targeted(store, epoch, &item, family, &sandbox.binding.node_id).await
             {
-                ora_logging::ora_warn!(error = %error, "session work remains queued in Cloud");
+                ora_logging::ora_warn!(error = %error, operation_id = %item.operation_id, "targeted work remains queued in Cloud");
                 return Backlog::Settled;
             }
             continue;
@@ -168,4 +179,88 @@ pub(super) async fn record_dispatch(
         &response.record.ok_or(Error::Conflict)?,
         &command.payload.spec.node_id,
     )
+}
+
+/// The execution family of a work item that names its sandbox Node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Targeted {
+    Session,
+    Delivery,
+}
+
+impl Targeted {
+    /// Classifies by the frozen input; any other input cannot be targeted work.
+    fn of(item: &proto::WorkItem) -> Option<Self> {
+        match item.input.as_ref().and_then(|input| input.spec.as_ref())? {
+            proto::execution_input::Spec::AgentSession(_) => Some(Self::Session),
+            proto::execution_input::Spec::DeliverRevision(_) => Some(Self::Delivery),
+            proto::execution_input::Spec::Clone(_)
+            | proto::execution_input::Spec::InstallPlugins(_)
+            | proto::execution_input::Spec::RemovePlugins(_) => None,
+        }
+    }
+
+    /// Checks that a record of this family rebuilds into a valid Node command.
+    fn check(self, record: &proto::ExecutionRecord, node: &NodeId) -> Result<(), Error> {
+        match self {
+            Self::Session => agents::mapping::start(record, node).map(drop),
+            Self::Delivery => deliveries::mapping::deliver(record, node).map(drop),
+        }
+    }
+}
+
+/// Freezes the exact Cloud input of a session or delivery before any Node frame; a lost
+/// registration reply reuses its execution UUID. The Node session sends the command later, after
+/// obtaining a fresh execution permit.
+async fn record_targeted(
+    store: &CloudStore,
+    epoch: i64,
+    item: &proto::WorkItem,
+    family: Targeted,
+    node: &NodeId,
+) -> Result<(), Error> {
+    let execution = uuid::Uuid::new_v4().to_string();
+    let preview = proto::ExecutionRecord {
+        operation_id: item.operation_id.clone(),
+        node_operation_id: item.operation_id.clone(),
+        execution_id: execution.clone(),
+        node_id: node.as_str().into(),
+        input: item.input.clone(),
+        result: None,
+    };
+    // Nothing undispatchable is ever registered.
+    family.check(&preview, node)?;
+    let response = fault::write(|submission_id| {
+        let request = proto::RecordDispatchRequest {
+            submission_id,
+            epoch,
+            operation_id: item.operation_id.clone(),
+            execution_id: execution.clone(),
+            node_id: node.as_str().into(),
+            input: item.input.clone(),
+        };
+        async move {
+            store
+                .executions()
+                .record_dispatch(store.request(request))
+                .await
+        }
+    })
+    .await
+    .map_err(|v| store.settle(v))?;
+    let record = response.record.ok_or(Error::Conflict)?;
+    if record.operation_id != item.operation_id
+        || record.execution_id != execution
+        || record.input != item.input
+    {
+        return Err(Error::Conflict);
+    }
+    family.check(&record, node)?;
+    ora_logging::ora_info!(
+        operation_id = %record.operation_id,
+        execution_id = %record.execution_id,
+        family = ?family,
+        "targeted dispatch recorded with Cloud; the Node session delivers it"
+    );
+    Ok(())
 }

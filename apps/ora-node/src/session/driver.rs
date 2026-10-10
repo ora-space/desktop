@@ -1,11 +1,12 @@
 //! One session execution from start to its terminal result.
 
 use super::host::{
-    CheckoutDirectory, GitIdentityEnvironment, IgnoredStatus, NodeRuntimeHost, SessionLifecycle,
+    CheckoutDirectory, IgnoredStatus, NodeRuntimeHost, SessionLauncher, SessionLifecycle,
     SessionPlugin, ThreadMirror,
 };
 use super::ports::{CheckoutResolver, CommandSettlement, PluginCatalog, SessionLedger};
 use super::queue::{Plan, plan};
+use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
@@ -19,10 +20,7 @@ use ora_node_protocol::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock,
     EndSessionReason, ExecutionId, UserTurn,
 };
-use ora_plugin_lifecycle::{
-    DenoPluginRuntimeLauncher, GenerationTaps, PluginLifecycle, PluginLifecycleConfig,
-    PluginRuntimeTimeouts,
-};
+use ora_plugin_lifecycle::{GenerationTaps, PluginLifecycle, PluginLifecycleConfig};
 use ora_plugin_manager::PluginContribution;
 use ora_scheduler::Scheduler;
 use std::path::Path;
@@ -133,8 +131,29 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
+    // Declared before the lifecycle so that, on every path, it is dropped (and its directory
+    // removed) only after the lifecycle and the plugin it ran are gone.
+    let placement = {
+        let workload = shared.config.workload.clone();
+        let execution = execution.clone();
+        let package_root = package_root.clone();
+        tokio::task::spawn_blocking(move || {
+            SessionPlacement::prepare(&workload, &execution, &package_root, &checkout)
+                .map(|placement| (placement, checkout))
+        })
+        .await
+        .unwrap_or_else(|error| Err(std::io::Error::other(error)))
+    };
+    let (placement, checkout) = match placement {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            ora_warn!(execution_id = %execution, error = %error, "session workload could not be prepared");
+            return SessionEnd::agent_failed("agent_start_failed");
+        }
+    };
     let taps = GenerationTaps::default();
-    let lifecycle = match open_lifecycle(&shared.config, &spec, &taps) {
+    let launcher = placement.launcher(&spec.git_identity, &package_root);
+    let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
             ora_warn!(execution_id = %execution, error = %error, "plugin lifecycle could not open");
@@ -197,13 +216,15 @@ where
         ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
     }
     scheduler.shutdown().await;
+    // The plugin is gone, so nothing reads the package view or writes the session home anymore.
+    drop(placement);
     end
 }
 
-/// Opens a lifecycle over the Node's plugin root that launches with this session's identity.
+/// Opens a lifecycle over the Node's plugin root that launches with this session's placement.
 fn open_lifecycle(
     config: &SessionConfig,
-    spec: &AgentSessionSpec,
+    launcher: SessionLauncher,
     taps: &GenerationTaps,
 ) -> Result<SessionLifecycle, ora_plugin_lifecycle::PluginLifecycleError> {
     PluginLifecycle::open(
@@ -211,10 +232,7 @@ fn open_lifecycle(
             data_directory: config.home_directory.clone(),
             deno_path: config.deno_path.clone(),
         },
-        DenoPluginRuntimeLauncher::with_environment_provider(
-            PluginRuntimeTimeouts::default(),
-            GitIdentityEnvironment::new(&spec.git_identity),
-        ),
+        launcher,
         IgnoredStatus,
         taps.clone(),
     )

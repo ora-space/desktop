@@ -51,6 +51,37 @@ The Git identity is exported as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` both on the
 plugin process, which the processes it spawns directly inherit, and on every
 process the host spawns for the plugin through `ora/childprocess/spawn`, which
 inherits the Node's environment instead. The Node writes no Git configuration.
+These variables are layered on top of the inherited environment, so model
+credentials and proxy settings from the Node's environment still reach the
+agent.
+
+### Separate workload user
+
+When the deployment runs Git workloads as a separate user (`process.workload_uid`),
+agents run as that user too: the Deno plugin process and every process it asks
+the host to spawn drop to the workload UID (group equal to it, no supplementary
+groups, no capabilities, `no_new_privs`, umask `077`) before executing, and a
+spawn that cannot drop fails instead of running as the Node. The agent can then
+commit in the checkout the workload user owns, and cannot read the Node's data
+directory.
+
+Each session gets `<agent.workload_directory>/<sha256(execution_id)>/` (root,
+`0711`) holding:
+
+- `package/`: a hard-link view of the installed package in fresh `0755`
+  directories (copied with `0644`/`0755` modes across filesystems; links and
+  special files refuse the view). The plugin is launched from the view; the
+  lifecycle still discovers and verifies the installed package.
+- `home/`: `0700`, owned by the workload user. `HOME`, `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `DENO_DIR` (under the
+  cache) and `DENO_NO_UPDATE_CHECK=1` point there, on the plugin and on
+  host-spawned processes alike.
+
+Before launch the checkout is handed back to the workload user without
+following links, for checkouts a previous Node's root agent wrote in. The
+session directory is removed once the plugin stopped; opening the service
+removes every leftover one after interrupted sessions are settled. A failure to
+prepare ends the session as `agent_failed{agent_start_failed}`.
 
 ## How an Execution Runs
 
@@ -135,6 +166,11 @@ Add an `agent` section beside `node`, `process`, `clone` and `control` in the se
 ```json
 "agent": { "deno_path": "/usr/local/bin/deno", "ready_timeout_ms": 30000 }
 ```
+
+With a workload user, add `"workload_directory": "/var/lib/ora/agent"`. It is required exactly
+when `process.workload_uid` is set, must be an absolute UTF-8 path that already exists, owned by
+the Node's identity and writable by no one else, and must not overlap the Node home, the process
+host directory or the clone root. The Node never creates it; the sandbox entrypoint does.
 
 The Deno path must be absolute and the ready timeout positive. With this section the handshake
 advertises `AgentSession`; without it the service rejects new session work but still settles

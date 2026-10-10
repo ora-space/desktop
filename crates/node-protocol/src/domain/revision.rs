@@ -58,7 +58,7 @@ impl ObjectKey {
 
     /// Rejects keys that are empty, absolute-looking, or contain dot segments or control
     /// characters, which some stores and proxies normalize into a different object.
-    fn validate(&self) -> Result<(), MessageValidationError> {
+    pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         let valid = !self.0.is_empty()
             && self.0.len() <= 1024
             && !self.0.starts_with('/')
@@ -272,7 +272,8 @@ pub struct ObjectUploadGrant {
     pub object_key: ObjectKey,
     pub url: PresignedUrl,
     pub method: UploadMethod,
-    /// Headers the upload must carry unchanged; the Node adds `x-amz-checksum-sha256` itself.
+    /// Headers the upload must carry unchanged, including the signed `If-None-Match: *` and, for a
+    /// grant requested with the object's checksum, the signed `x-amz-checksum-sha256`.
     pub headers: BTreeMap<String, String>,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,

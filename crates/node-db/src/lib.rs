@@ -9,6 +9,7 @@ mod process;
 pub use plugin::PluginExecution;
 mod repository;
 mod repository_model;
+mod revision;
 mod runtime_control;
 mod schema;
 mod session;
@@ -16,6 +17,7 @@ pub use execution::owns;
 pub use model::*;
 pub use process::{ProcessAttempt, ProcessJournal};
 pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
+pub use revision::{DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery};
 pub use session::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
     SessionExecution, SessionJournal,

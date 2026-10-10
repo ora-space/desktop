@@ -42,6 +42,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
     config.agent = Some(ora_node::AgentConfig {
         deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
         ready_timeout_ms: 5000,
+        workload_directory: None,
     });
     config.control.as_mut().unwrap().heartbeat_ms = 20;
     fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
@@ -121,6 +122,13 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
             .payload
             .capabilities
             .contains(&NodeCapability::AgentSession)
+    );
+    // Delivery runs Git in the checkouts clone created, so clone configuration enables it.
+    assert!(
+        hello
+            .payload
+            .capabilities
+            .contains(&NodeCapability::RevisionDelivery)
     );
     (stream, hello.payload.node)
 }
