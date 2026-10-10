@@ -23,6 +23,11 @@ impl WorkspaceCloud {
     }
     /// Queues an exact session input against the current sandbox, without creating local paths.
     pub fn queue_agent(&self, run: &str) {
+        self.queue_bound_agent(run, "");
+    }
+
+    /// Freezes an opaque model reference in the same work input the real Cloud produces.
+    pub fn queue_bound_agent(&self, run: &str, binding: &str) {
         let mut state = self.lock();
         let sandbox = state.sandboxes.last().unwrap();
         let node = state.nodes.last().unwrap().identity.as_ref().unwrap();
@@ -39,6 +44,7 @@ impl WorkspaceCloud {
                         agent_plugin_id: "official/ora-space.echo".into(),
                         agent_plugin_version: "1.2.3".into(),
                         checkout_execution_id: state.clones[0].execution_id.clone(),
+                        model_binding_id: binding.into(),
                         git_identity: Some(proto::GitIdentity {
                             name: "User".into(),
                             email: "user@example.com".into(),

@@ -216,7 +216,10 @@ async fn reconcile<S: CoordinationStore>(
                     .original_agent_dispatch(&identity, &status.operation_id, &status.execution_id)
                     .await?
                 {
-                    if agent_capable {
+                    if agent_capable
+                        && (agent.payload.spec.model_binding_id.is_none()
+                            || capabilities.contains(&NodeCapability::ModelProxy))
+                    {
                         store.dispatch_agent(agent).await?
                     } else {
                         None

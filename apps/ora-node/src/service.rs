@@ -92,6 +92,9 @@ pub struct ServiceConfig {
 pub struct AgentConfig {
     pub deno_path: PathBuf,
     pub ready_timeout_ms: u64,
+    /// Dedicated client-authentication material, distinct from Node WSS server TLS.
+    #[serde(default)]
+    pub model_proxy: Option<crate::ModelProxyConfig>,
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
@@ -161,6 +164,13 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
         return Err(io::Error::other(
             "agent needs an absolute Deno path and a positive ready timeout",
         ));
+    }
+    if let Some(proxy) = config
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.model_proxy.as_ref())
+    {
+        proxy.validate().map_err(io::Error::other)?;
     }
     let control = config.control.clone();
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);

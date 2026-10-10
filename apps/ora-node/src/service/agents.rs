@@ -27,6 +27,7 @@ pub(super) fn open(
                     deno_path: config.deno_path.clone(),
                     timezone,
                     agent_ready_timeout: Duration::from_millis(config.ready_timeout_ms),
+                    model_proxy: config.model_proxy.clone(),
                 },
                 node.identity().clone(),
                 journal.clone(),
@@ -57,6 +58,9 @@ pub(super) fn start(
     input: &StartAgentSessionMessage,
     permit: Option<&RuntimeBinding>,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
+    if input.payload.spec.model_binding_id.is_some() && !host.model_capable() {
+        return Err(crate::Error::UnsupportedMessage);
+    }
     node.database.check_controller_execution(
         controller,
         &input.operation_id,

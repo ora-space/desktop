@@ -30,9 +30,9 @@ pub use frame::{
     read_node_message, write_controller_message, write_node_message,
 };
 pub use identity::{
-    CURRENT_PROTOCOL_VERSION, CommandId, ControllerId, ExecutionId, NodeId, NodeIncarnationId,
-    NodeRuntimeIdentity, OperationId, ProtocolVersion, RepositoryId, RequestId, Sequence, TurnId,
-    WorkspaceId, WorktreeId,
+    CURRENT_PROTOCOL_VERSION, CommandId, ControllerId, ExecutionId, ModelBindingId, NodeId,
+    NodeIncarnationId, NodeRuntimeIdentity, OperationId, ProtocolVersion, RepositoryId, RequestId,
+    Sequence, TurnId, WorkspaceId, WorktreeId,
 };
 pub use message::{
     AgentSessionEndedMessage, CloneRepository, CloneRepositoryMessage, CloneResultMessage,

@@ -171,3 +171,30 @@ reclamation. Process I/O containment remains a separate dependency.
 real clone and echo plugin: command deduplication, history equality, shared installation leases,
 runtime closure, graceful stop, SIGKILL recovery, window saturation and exact replay. Controller
 Cloud work-item relay remains outside this change.
+
+## Platform model access
+
+`AgentSessionSpec.model_binding_id` is an optional opaque Cloud reference. A configured deployment
+adds `agent.model_proxy` with `gateway_url`, `ca_cert`, `client_cert`, and `client_key`; all certificate
+paths are absolute. Its dedicated client-authentication certificate is issued for the runtime's
+tenant, Workspace and generation, separately from the Node WSS server certificate. The service validates
+this material before advertising `ModelProxy`. Controller registration and retransmission require
+that capability for a model-bound start; local Node admission enforces the same requirement.
+
+The Node requests `POST /internal/v1/model-grants` with only the binding and session execution IDs.
+The platform returns a frozen protocol/model and an in-memory temporary token, never an upstream
+API key. OpenCode uses one `ora-model` provider with the OpenAI-compatible or Anthropic SDK. Its
+config references `ORA_MODEL_ACCESS_TOKEN` through an environment placeholder, preserves slash-containing
+model IDs, uses the platform HTTPS data listener, and trusts the public CA through `NODE_EXTRA_CA_CERTS`.
+HOME, XDG directories and provider state live in a per-session temporary directory under the Node's
+`model-runtime/`, outside the checkout and Revision. Git identity still comes from the run.
+
+Renewal extends the existing grant before expiry without changing the token. Renewal denial cancels
+the conversation; normal termination stops renewal, revokes the grant and removes the temporary
+state before recording the terminal result. Cancellation also aborts renewal and revokes best effort.
+A crashed Node never resumes a session: Cloud terminal recovery and grant expiry revoke its authority.
+Without a model binding, the Echo session path does not request model access or alter its environment.
+A verified `model_session_ending` denial during grant creation or renewal stops model authority and
+waits at most 30 seconds for the durable EndSession command. Its explicit reason stays authoritative;
+ordinary revocation and unavailable-service failures never enter this grace. Ending before any agent
+starts seals an empty Ora history, allowing an unchanged Revision without inventing a provider session.

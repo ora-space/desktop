@@ -143,3 +143,23 @@ Cloud 受控启动使用 `ControlledStartAgentSession { binding, command }`，�
 `tests/standalone/agent_sessions.rs` 及子模块用生产 Node 可执行程序、真实 clone 和 echo 插件验证命令去重、
 历史记录一致、共享安装租约、runtime 关闭、正常停止、强杀恢复、窗口饱和与精确重放。Cloud 工作项的
 Controller 中继不属于本次变更。
+
+## 平台模型访问
+
+`AgentSessionSpec.model_binding_id` 是可选的 Cloud 不透明引用。部署在 `agent.model_proxy` 中配置
+`gateway_url`、`ca_cert`、`client_cert` 和 `client_key`，证书路径必须为绝对路径。专用客户端认证证书
+绑定 runtime 的租户、Workspace 和代次，与 Node WSS 服务端证书分开发放。服务在声明 `ModelProxy`
+能力前验证这些材料；Controller 注册、重发和 Node 本地受理均要求带模型绑定的启动具备此能力。
+
+Node 向 `POST /internal/v1/model-grants` 仅提交绑定和会话执行 ID。平台返回冻结的协议、模型及
+内存中的临时令牌，上游 API Key 从不进入 Node。OpenCode 使用单一 `ora-model` provider，分别使用
+OpenAI 兼容或 Anthropic SDK。配置以环境变量占位引用 `ORA_MODEL_ACCESS_TOKEN`，原样保留含斜线的模型 ID，
+访问平台 HTTPS 数据端点，通过 `NODE_EXTRA_CA_CERTS` 信任公开 CA。HOME、XDG 路径和 provider 状态位于
+Node `model-runtime/` 下独立的会话临时目录，与 checkout 及 Revision 隔离；Git 身份仍来自运行。
+
+续期在过期前延长同一授权，不更换令牌。续期被拒绝时取消对话；正常结束先停止续期、撤销授权、
+删除临时状态，再写入终态。任务取消也中止续期并尽力撤销。Node 崩溃后不恢复会话，Cloud 终态恢复
+及授权过期会撤销其权限。不带模型绑定的 Echo 会话保持既有环境，且不请求模型授权。
+授权创建或续期返回已验证的 `model_session_ending` 时，Node 停止模型权限，最多等待 30 秒接收
+已经持久化的 EndSession 命令，以保留其明确的结束原因。普通撤销和服务不可用不会进入等待。
+Agent 尚未启动就结束时，封存空的 Ora 历史文件，支持交付未改动的 Revision，不伪造 provider 会话。

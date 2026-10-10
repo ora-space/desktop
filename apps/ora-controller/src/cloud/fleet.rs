@@ -158,6 +158,19 @@ impl Sandbox {
                 .contains(&NodeCapability::AgentSession)
     }
 
+    /// Model-bound starts additionally require a provisioned platform gateway client.
+    pub(super) fn model_capable(&self) -> bool {
+        self.connected() && self.advertised_model_proxy()
+    }
+
+    /// Registration freezes the handshake fact even if the socket closes during the write.
+    pub(super) fn advertised_model_proxy(&self) -> bool {
+        self.capabilities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&NodeCapability::ModelProxy)
+    }
+
     /// New delivery work requires a currently connected Node advertising Revision delivery.
     pub(super) fn delivery_capable(&self) -> bool {
         self.connected()

@@ -2,8 +2,8 @@
 //! history records it streams as non-terminal Thread events.
 
 use crate::{
-    ExecutionId, MessageValidationError, NodeId, NodeRuntimeIdentity, PluginId, PluginVersion,
-    TurnId,
+    ExecutionId, MessageValidationError, ModelBindingId, NodeId, NodeRuntimeIdentity, PluginId,
+    PluginVersion, TurnId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -94,6 +94,9 @@ pub struct AgentSessionSpec {
     /// A successful clone execution on this Node; the Node resolves the checkout from its ledger,
     /// so no Node-local path crosses the protocol.
     pub checkout_execution_id: ExecutionId,
+    /// Only a binding reference crosses the control protocol; model credentials never do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_binding_id: Option<ModelBindingId>,
     pub git_identity: GitIdentity,
     pub initial_turn: UserTurn,
 }
@@ -116,6 +119,15 @@ impl AgentSessionSpec {
             });
         }
         self.git_identity.validate()?;
+        if self
+            .model_binding_id
+            .as_ref()
+            .is_some_and(ModelBindingId::is_empty)
+        {
+            return Err(MessageValidationError::EmptyField {
+                field: "model_binding_id",
+            });
+        }
         self.initial_turn.validate()
     }
 }

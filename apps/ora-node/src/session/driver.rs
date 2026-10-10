@@ -7,6 +7,7 @@ use super::host::{
 use super::ports::{CheckoutResolver, CommandSettlement, PluginCatalog, SessionLedger};
 use super::queue::{Plan, plan};
 use super::{SessionConfig, Shared};
+use crate::model_proxy::{ModelAccess, ModelAccessStatus};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
 use ora_contracts::{
@@ -133,20 +134,67 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
+    let mut model_access = match &spec.model_binding_id {
+        Some(binding) => {
+            let Some(config) = shared.config.model_proxy.clone() else {
+                return SessionEnd::agent_failed("model_proxy_unavailable");
+            };
+            match ModelAccess::open(config, binding, execution, &shared.config.home_directory).await
+            {
+                Ok(access) => Some(access),
+                Err(error) if error.0 == "model_session_ending" => {
+                    return match super::model::reconcile(
+                        &shared.ledger,
+                        execution,
+                        wake,
+                        shared.stopping.subscribe(),
+                        super::model::END_RECONCILE_WAIT,
+                    )
+                    .await
+                    {
+                        Ok(reason) => match super::model::seal_unstarted_history(
+                            &shared.sessions_root(),
+                            execution,
+                        ) {
+                            Ok(()) => SessionEnd::requested(reason),
+                            Err(detail) => SessionEnd::agent_failed(detail),
+                        },
+                        Err(detail) => SessionEnd::agent_failed(detail),
+                    };
+                }
+                Err(error) => return SessionEnd::agent_failed(error.0),
+            }
+        }
+        None => None,
+    };
+    let environment = model_access
+        .as_ref()
+        .map(|access| access.environment.clone())
+        .unwrap_or_default();
     let taps = GenerationTaps::default();
-    let lifecycle = match open_lifecycle(&shared.config, &spec, &taps) {
+    let lifecycle = match open_lifecycle(&shared.config, &spec, &taps, environment) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
             ora_warn!(execution_id = %execution, error = %error, "plugin lifecycle could not open");
+            if let Some(access) = &mut model_access {
+                access.close().await;
+            }
             return SessionEnd::agent_failed("agent_plugin_unavailable");
         }
     };
     if !runs_package(&lifecycle, &plugin_id, &package_root) {
+        if let Some(access) = &mut model_access {
+            access.close().await;
+        }
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     }
 
     let mirror = ThreadMirror::new(shared.ledger.clone(), execution.clone(), wake.clone());
     let scheduler = Scheduler::new(shared.config.timezone);
+    let agent_home = model_access.as_ref().map_or_else(
+        || checkout.clone(),
+        |access| std::path::PathBuf::from(&access.environment["HOME"]),
+    );
     let manager = AgentRuntimeManager::<NodeRuntimeHost<L>>::new(AgentRuntimeSetup {
         attach: Arc::new(SessionPlugin {
             lifecycle: lifecycle.clone(),
@@ -157,7 +205,7 @@ where
         directory: CheckoutDirectory(checkout.clone()),
         session_setup: NoSessionMcp::default(),
         events: mirror.clone(),
-        home_directory: checkout,
+        home_directory: agent_home,
         sessions_root: shared.sessions_root(),
         scheduler: scheduler.clone(),
     });
@@ -172,10 +220,33 @@ where
                 wake,
             };
             let mut stopping = shared.stopping.subscribe();
+            let mut model_status = model_access.as_ref().map(|access| access.status.clone());
             let agent_ref = AgentRef::for_plugin(&plugin_id);
             let end = tokio::select! {
                 biased;
                 _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
+                status = async {
+                    match &mut model_status {
+                        Some(status) => status.wait_for(|status| *status != ModelAccessStatus::Active).await
+                            .map_or(ModelAccessStatus::Revoked, |status| *status),
+                        None => std::future::pending::<ModelAccessStatus>().await,
+                    }
+                } => {
+                    let failed = conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await;
+                    match status {
+                        ModelAccessStatus::Ending => {
+                            if let Some(access) = &mut model_access {
+                                access.close().await;
+                            }
+                            match super::model::reconcile(&shared.ledger, execution, wake,
+                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT).await {
+                                Ok(reason) => SessionEnd::requested(reason),
+                                Err(detail) => SessionEnd::agent_failed(detail),
+                            }
+                        }
+                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => failed,
+                    }
+                },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
             };
             // Dropping the manager releases its connection supervisor, which stops reconnecting.
@@ -197,6 +268,9 @@ where
         ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
     }
     scheduler.shutdown().await;
+    if let Some(access) = &mut model_access {
+        access.close().await;
+    }
     end
 }
 
@@ -205,6 +279,7 @@ fn open_lifecycle(
     config: &SessionConfig,
     spec: &AgentSessionSpec,
     taps: &GenerationTaps,
+    environment: std::collections::BTreeMap<String, String>,
 ) -> Result<SessionLifecycle, ora_plugin_lifecycle::PluginLifecycleError> {
     PluginLifecycle::open(
         PluginLifecycleConfig {
@@ -213,7 +288,7 @@ fn open_lifecycle(
         },
         DenoPluginRuntimeLauncher::with_environment_provider(
             PluginRuntimeTimeouts::default(),
-            GitIdentityEnvironment::new(&spec.git_identity),
+            GitIdentityEnvironment::new(&spec.git_identity, environment),
         ),
         IgnoredStatus,
         taps.clone(),

@@ -9,6 +9,7 @@
 mod driver;
 mod host;
 mod ledger;
+mod model;
 mod ports;
 mod queue;
 mod thread;
@@ -40,6 +41,8 @@ pub struct SessionConfig {
     pub timezone: Tz,
     /// How long a session waits for its agent to become ready before it ends as failed.
     pub agent_ready_timeout: Duration,
+    /// Available only in deployments provisioned for platform model access.
+    pub model_proxy: Option<crate::ModelProxyConfig>,
 }
 
 /// State shared by every session execution of one Node.
@@ -125,6 +128,10 @@ where
 }
 
 impl<L, C, P> AgentSessions<L, C, P> {
+    /// Model-bound sessions require this additional negotiated capability.
+    pub(crate) fn model_capable(&self) -> bool {
+        self.shared.config.model_proxy.is_some()
+    }
     /// A lost actor or failed terminal write stops admission instead of stranding a Running row.
     pub(crate) fn failed(&self) -> bool {
         self.shared

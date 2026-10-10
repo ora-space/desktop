@@ -77,7 +77,12 @@ pub(super) async fn batch(
                 return Backlog::Settled;
             };
             let capable = match family {
-                Targeted::Session => sandbox.agent_capable(),
+                Targeted::Session => {
+                    sandbox.agent_capable()
+                        && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
+                        Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
+                            || sandbox.model_capable())
+                }
                 Targeted::Delivery => sandbox.delivery_capable(),
             };
             // A Node without the capability leaves the item queued in Cloud for a capable session.

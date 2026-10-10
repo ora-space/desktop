@@ -21,6 +21,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
                 agent_plugin_id: PluginId::new("official/ora-space.echo"),
                 agent_plugin_version: PluginVersion::new("1.0.0"),
                 checkout_execution_id: ExecutionId::new("clone-exec-agent"),
+                model_binding_id: None,
                 git_identity: GitIdentity {
                     name: "Test".into(),
                     email: "test@example.com".into(),
@@ -40,6 +41,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
     let mut config: ora_node::ServiceConfig =
         serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     config.agent = Some(ora_node::AgentConfig {
+        model_proxy: None,
         deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
         ready_timeout_ms: 5000,
     });

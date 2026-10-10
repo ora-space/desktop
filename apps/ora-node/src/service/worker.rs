@@ -89,6 +89,12 @@ pub(super) fn run(
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
     }
+    if agents
+        .as_ref()
+        .is_some_and(agents::SessionHost::model_capable)
+    {
+        capabilities.push(NodeCapability::ModelProxy);
+    }
     if revisions.is_some() {
         capabilities.push(NodeCapability::RevisionDelivery);
     }

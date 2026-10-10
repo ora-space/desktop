@@ -57,6 +57,10 @@ pub struct AgentSessionSpec {
     /// The prompt Cloud rendered from the Issue; later turns arrive as Thread commands.
     #[prost(message, optional, tag="5")]
     pub initial_turn: ::core::option::Option<UserTurn>,
+    /// Opaque personal-model snapshot reference. Empty for agents that do not use model-gateway.
+    /// No provider credential or temporary access token crosses this contract.
+    #[prost(string, tag="6")]
+    pub model_binding_id: ::prost::alloc::string::String,
 }
 /// The only terminal result of a session execution. It is taken over only after every Thread event
 /// before it, so the Thread's last entry lands before the session is known to have ended.
@@ -955,6 +959,9 @@ pub struct NodeRecord {
     /// Admission epoch of the latest accepted idle evidence.
     #[prost(int64, optional, tag="8")]
     pub idle_admission_epoch: ::core::option::Option<i64>,
+    /// Dedicated personal-model proxy access was advertised by this Node's handshake.
+    #[prost(bool, tag="9")]
+    pub model_proxy: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegisterNodeRequest {
@@ -971,6 +978,9 @@ pub struct RegisterNodeRequest {
     pub node: ::core::option::Option<NodeIdentity>,
     #[prost(uint32, tag="6")]
     pub protocol_version: u32,
+    /// False for older Nodes or Nodes without configured model-access mTLS credentials.
+    #[prost(bool, tag="7")]
+    pub model_proxy: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegisterNodeResponse {

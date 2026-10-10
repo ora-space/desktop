@@ -60,24 +60,26 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
 /// Set on the plugin process, so a process the plugin spawns directly inherits it, and on every
 /// process the host spawns for the plugin, which inherits the host's environment instead. Nothing
 /// is written to a Git configuration.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct GitIdentityEnvironment {
     variables: BTreeMap<String, String>,
 }
 
 impl GitIdentityEnvironment {
-    pub(super) fn new(identity: &GitIdentity) -> Self {
-        Self {
-            variables: [
+    /// Exports host-owned runtime variables with the authoritative commit identity.
+    pub(super) fn new(identity: &GitIdentity, runtime: BTreeMap<String, String>) -> Self {
+        let mut variables = runtime;
+        variables.extend(
+            [
                 ("GIT_AUTHOR_NAME", &identity.name),
                 ("GIT_AUTHOR_EMAIL", &identity.email),
                 ("GIT_COMMITTER_NAME", &identity.name),
                 ("GIT_COMMITTER_EMAIL", &identity.email),
             ]
             .into_iter()
-            .map(|(key, value)| (key.to_string(), value.clone()))
-            .collect(),
-        }
+            .map(|(key, value)| (key.to_string(), value.clone())),
+        );
+        Self { variables }
     }
 }
 

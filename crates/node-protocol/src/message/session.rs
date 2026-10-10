@@ -16,6 +16,8 @@ pub enum NodeCapability {
     PluginInstall,
     /// `StartAgentSession`, Thread events and session commands.
     AgentSession,
+    /// Scoped model access through the platform gateway; no direct upstream credentials.
+    ModelProxy,
     /// `DeliverRevision` and the upload grant exchange.
     RevisionDelivery,
 }

@@ -970,6 +970,7 @@ impl NodeReportService for WorkspaceCloud {
                     initialized: true,
                     version: 1,
                     idle_admission_epoch: None,
+                    model_proxy: message.model_proxy,
                 };
                 state.nodes.push(record.clone());
                 record

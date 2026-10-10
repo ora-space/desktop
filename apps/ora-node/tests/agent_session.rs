@@ -12,6 +12,41 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use support::*;
 
+/// A model-bound input never falls back to Echo or an inherited direct API connection.
+#[tokio::test]
+async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
+    use ora_node_protocol::{
+        AgentSessionSpec, ExecutionId, ModelBindingId, PluginId, PluginVersion,
+    };
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    sessions.start(
+        ExecutionId::new(EXECUTION),
+        AgentSessionSpec {
+            node_id: fixture.node().node_id,
+            agent_plugin_id: PluginId::new(PLUGIN_ID),
+            agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+            checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+            model_binding_id: Some(ModelBindingId::new("binding-1")),
+            git_identity: identity(),
+            initial_turn: turn("turn-1", "read the repository"),
+        },
+    );
+    assert_eq!(
+        fixture.ended().await,
+        AgentSessionEnded {
+            node: fixture.node(),
+            reason: AgentSessionEndReason::AgentFailed,
+            detail: Some("model_proxy_unavailable".into()),
+        }
+    );
+    assert_eq!(
+        (fixture.ledger.events(), fixture.plugin_pids()),
+        (Vec::new(), Vec::new())
+    );
+    sessions.shutdown().await;
+}
+
 /// Every Thread event is a line of the session history, in file order, attributed to the turn
 /// it belongs to; the user message itself carries its turn identity in the history.
 ///

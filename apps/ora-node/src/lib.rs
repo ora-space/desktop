@@ -35,6 +35,8 @@ pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
+mod model_proxy;
+#[cfg(target_os = "linux")]
 mod revision;
 #[cfg(target_os = "linux")]
 mod service;
@@ -42,6 +44,8 @@ mod service;
 mod session;
 #[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
+#[cfg(target_os = "linux")]
+pub use model_proxy::ModelProxyConfig;
 #[cfg(target_os = "linux")]
 pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, ServiceConfig, serve};
 #[cfg(target_os = "linux")]

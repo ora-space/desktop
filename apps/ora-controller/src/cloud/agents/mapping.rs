@@ -34,6 +34,8 @@ pub(in crate::cloud) fn start(
                 agent_plugin_id: PluginId::new(spec.agent_plugin_id.clone()),
                 agent_plugin_version: PluginVersion::new(spec.agent_plugin_version.clone()),
                 checkout_execution_id: ExecutionId::new(spec.checkout_execution_id.clone()),
+                model_binding_id: (!spec.model_binding_id.is_empty())
+                    .then(|| ModelBindingId::new(spec.model_binding_id.clone())),
                 git_identity: GitIdentity {
                     name: identity.name.clone(),
                     email: identity.email.clone(),
