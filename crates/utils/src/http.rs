@@ -1,5 +1,6 @@
 //! Generic, domain-free download capability shared by Ora crates that need to fetch remote or
-//! local release artifacts such as `.orax` packages, plus a single-request presigned file upload.
+//! local release artifacts such as `.orax` packages, plus single-request presigned file uploads and
+//! downloads.
 //!
 //! This module defines a transport-agnostic contract plus an offline `LocalFileDownloader` and a
 //! `reqwest`-backed network downloader behind its own feature. It deliberately carries no Ora
@@ -17,6 +18,8 @@ mod target;
 mod types;
 
 #[cfg(feature = "http-reqwest")]
+mod fetch;
+#[cfg(feature = "http-reqwest")]
 mod reqwest;
 #[cfg(feature = "http-reqwest")]
 mod upload;
@@ -26,6 +29,8 @@ mod tests;
 
 pub use cancel::CancelToken;
 pub use error::{DownloadError, TimeoutPhase};
+#[cfg(feature = "http-reqwest")]
+pub use fetch::{FetchError, FetchOptions, FetchOutcome, FileFetch, ReqwestFetcher};
 pub use local::LocalFileDownloader;
 pub use progress::Progress;
 pub use proxy::{Proxy, ProxyAuth, ProxyBypass, ProxyConfig, resolve_proxy};
