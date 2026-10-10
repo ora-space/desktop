@@ -9,6 +9,15 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 
 /// The ending path must return before plugin discovery or process launch.
 struct CheckoutPath(std::path::PathBuf);
+impl crate::PriorRevisionRestore for CheckoutPath {
+    /// Early-ending sessions have no prior input and must never reach restore work.
+    async fn restore(
+        &self,
+        _request: crate::RestoreRequest,
+    ) -> Result<crate::Restored, crate::RestoreFailure> {
+        panic!("an unstarted model session must not restore a prior Revision")
+    }
+}
 impl crate::CheckoutResolver for CheckoutPath {
     /// Resolves the isolated checkout without invoking Git for an unstarted session.
     fn checkout(&self, _execution: &ExecutionId) -> Option<std::path::PathBuf> {
@@ -202,8 +211,10 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ledger.clone(),
         CheckoutPath(root.path().into()),
         CheckoutPath(root.path().into()),
+        CheckoutPath(root.path().into()),
     );
     sessions.start(
+        ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
             node_id: node.node_id.clone(),
@@ -211,6 +222,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             agent_plugin_version: PluginVersion::new("1.0.0"),
             checkout_execution_id: ExecutionId::new("clone-1"),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
+            prior_revision: None,
             git_identity: GitIdentity {
                 name: "User".into(),
                 email: "user@example.com".into(),

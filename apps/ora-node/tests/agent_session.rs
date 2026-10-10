@@ -18,11 +18,12 @@ use support::*;
 #[tokio::test]
 async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
     use ora_node_protocol::{
-        AgentSessionSpec, ExecutionId, ModelBindingId, PluginId, PluginVersion,
+        AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
     };
     let fixture = Fixture::new();
     let sessions = fixture.sessions(PLUGIN_VERSION);
     sessions.start(
+        OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
             node_id: fixture.node().node_id,
@@ -30,6 +31,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
             agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
             checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
+            prior_revision: None,
             git_identity: identity(),
             initial_turn: turn("turn-1", "read the repository"),
         },
