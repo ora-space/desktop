@@ -207,7 +207,7 @@ iteration node's own row keeps `NULL`), so the same node holds one row per round
 first node-run rows, and each settled round's ledger entry commits with its continuation (next
 round, node completion, or node failure) in one transaction. The engine keeps no iteration
 state in memory: the current round is always re-derived from the region rows, so a crash
-recovery replays to the same point. The desktop host runs the boot sweep only after it acquires an exclusive instance lock for the application data directory. The operating system releases that lock when the holding process exits or crashes, so a successful acquire means the previous process is gone. A second launch focuses the existing window and exits without opening the database, and `--help` / `--version` print and exit before any of that startup. The sweep itself is region-aware — interrupted rows inside a
+recovery replays to the same point. The desktop host runs the boot sweep only after it acquires an exclusive instance lock for the application data directory. The operating system releases that lock when the holding process exits or crashes, so a successful acquire means the previous process is gone. A second launch focuses the existing window and exits without opening the database. When the instance lock is already held, that process writes why it is leaving on the same stdout or parent-console path as `--version`, then exits without opening the database. `--help` / `--version` print and exit before any of that startup. The sweep itself is region-aware — interrupted rows inside a
 still-running iteration fail as `interrupted_by_restart` while the composite row and the run
 survive, and the runtime settles the interrupted round as a failed ledger entry.
 

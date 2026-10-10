@@ -586,11 +586,8 @@ function w106() {
 // W107: retry-policy matrix — deep agents with varied retry configurations.
 // ---------------------------------------------------------------------------
 function w107() {
-  const withRetry = (id, title, stage, policy, retry) => {
-    const node = deepAgent(id, title, stage, { policy });
-    if (retry) node.data.agentConfig.retry = retry;
-    return node;
-  };
+  const withRetry = (id, title, stage, policy, retry) =>
+    deepAgent(id, title, stage, { policy, retry });
   const nodes = [
     ...prologueNodes(107, ["alpha", "beta", "gamma", "delta"], {
       branchA: 11,
@@ -969,7 +966,7 @@ function w111() {
 }
 
 // ---------------------------------------------------------------------------
-// W112: kitchen sink — 2 conditions, 2 aggregators, 2 iterations, 2 loops, wide+deep.
+// W112: kitchen sink — one condition, one aggregator, two iterations, two loops, wide+deep.
 // ---------------------------------------------------------------------------
 function w112() {
   const nodes = [
@@ -1033,8 +1030,8 @@ function w112() {
   return finalize(
     112,
     "wf-112-superlong-kitchen-sink",
-    "Super-Long: Kitchen Sink (2x each composite)",
-    "Two conditions, two aggregators, two iterations (continue+fail), two loops, parallel join, 12+ deep agents.",
+    "Super-Long: Kitchen Sink (2 iterations, 2 loops)",
+    "One condition, one aggregator, two iterations (continue+fail), two loops, parallel fan-out with join, 12+ deep agents.",
     { nodes, edges },
   );
 }

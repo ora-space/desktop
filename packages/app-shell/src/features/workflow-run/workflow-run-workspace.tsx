@@ -1,4 +1,8 @@
-import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import {
+  excludedWorkflowNodeIds,
+  unrecognizedWorkflowKinds,
+  useWorkflowAnalysis,
+} from "../../state/data/workflow-analysis";
 import { executableRun } from "./executable-run";
 import { isLoopHistoryNode } from "./loop-round-state";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
@@ -93,17 +97,14 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     runQuery.data?.snapshotGraph ?? '{"nodes":[],"edges":[]}';
   const analysis = useWorkflowAnalysis(runId, analysisGraph);
   const unrecognizedNodes = analysis.data?.unrecognizedNodes ?? [];
-  const excludedNodeIds = useMemo(() => {
-    const unused = analysis.data?.unusedNodeIds ?? [];
-    const unrecognized = analysis.data?.unrecognizedNodes ?? [];
-    const extra = unrecognized
-      .map((node) => node.nodeId)
-      .filter((nodeId) => !unused.includes(nodeId));
-    return [...unused, ...extra];
-  }, [analysis.data]);
-  const unrecognizedKinds = [
-    ...new Set(unrecognizedNodes.map((node) => node.kind)),
-  ].join(", ");
+  const excludedNodeIds = useMemo(
+    () => excludedWorkflowNodeIds(analysis.data),
+    [analysis.data],
+  );
+  const unrecognizedKinds = useMemo(
+    () => unrecognizedWorkflowKinds(analysis.data),
+    [analysis.data],
+  );
   const run = useMemo(
     () => (fullRun === null ? null : executableRun(fullRun, excludedNodeIds)),
     [fullRun, excludedNodeIds],

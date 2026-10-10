@@ -86,11 +86,14 @@ export async function main({
     for (const workflow of workflows) {
       if (signal?.aborted) throw new Error("Qualification interrupted.");
       log(`Running ${workflow.index}: ${workflow.name}`);
-      const execute = workflow.isStress
-        ? endurance
-        : workflow.isSuperLong
-          ? superLong
-          : scenario;
+      let execute;
+      if (workflow.isStress) {
+        execute = endurance;
+      } else if (workflow.isSuperLong) {
+        execute = superLong;
+      } else {
+        execute = scenario;
+      }
       const result = await execute(session, workflow, workspaceId, { signal });
       results.push(result);
       save();

@@ -72,7 +72,10 @@ category.
   snapshot when a reachable node is not executable. Spare nodes with incomplete
   configuration do not block publish. Analysis separates those spare nodes from
   unrecognized kinds: the count line is only the spare set, and unrecognized kinds get
-  their own status line while still being badged as excluded from execution.
+  their own status line while still being badged as excluded from execution. The editor
+  and the run workspace both take that excluded set from `excludedWorkflowNodeIds` in
+  `state/data/workflow-analysis`, memoized on the analysis result, so a later render does
+  not hand the membership context a new array.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - The + beside the library title opens a menu with New workflow (Ctrl/Cmd+N still opens it

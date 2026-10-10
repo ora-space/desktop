@@ -261,6 +261,44 @@ test("the super-long batch keeps the endurance class bars and required kinds", (
   }
 });
 
+test("W107 stores a passed retry policy on the deep agent and omits an absent one", () => {
+  const workflow = generateAllWorkflows().find((entry) => entry.index === 107);
+  assert.ok(workflow);
+  const byId = new Map(workflow.graph.nodes.map((node) => [node.id, node]));
+  assert.deepEqual(byId.get("r1").data.agentConfig.retry, {
+    enabled: false,
+    maxRetries: 0,
+    initialDelaySeconds: 5,
+  });
+  assert.equal(byId.get("r2").data.agentConfig.retry.maxRetries, 1);
+  assert.equal(byId.get("r5").data.agentConfig.retry, undefined);
+});
+
+test("W112's kitchen-sink label matches the composites in the graph", () => {
+  const workflow = generateAllWorkflows().find((entry) => entry.index === 112);
+  assert.ok(workflow);
+  const count = (kind) =>
+    workflow.graph.nodes.filter((node) => node.data.kind === kind).length;
+  assert.deepEqual(
+    {
+      condition: count("condition"),
+      aggregator: count("aggregator"),
+      iteration: count("iteration"),
+      loop: count("loop"),
+    },
+    { condition: 1, aggregator: 1, iteration: 2, loop: 2 },
+  );
+  assert.equal(
+    workflow.category,
+    "Super-Long: Kitchen Sink (2 iterations, 2 loops)",
+  );
+  assert.equal(
+    workflow.description,
+    "One condition, one aggregator, two iterations (continue+fail), two loops, parallel fan-out with join, 12+ deep agents.",
+  );
+  assert.ok(workflow.deepNodeCount >= 12);
+});
+
 test("Loop matrix prompts match the selected termination token and carried state", () => {
   const workflows = generateAllWorkflows();
   for (const index of [41, 42, 43, 44, 45, 46, 47, 48]) {

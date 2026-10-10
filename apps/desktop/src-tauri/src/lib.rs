@@ -91,7 +91,7 @@ pub fn run() {
             // gap before or after the logo either.
             let handle = app.handle().clone();
             std::thread::spawn(move || match bootstrap_desktop(&handle) {
-                Ok((state, guard)) => {
+                Ok(DesktopBootstrap::Ready(state, guard)) => {
                     ora_info!(
                         message = "bundled binary paths registered",
                         ripgrep_path = %state.binary_paths.ripgrep_path().display(),
@@ -102,6 +102,14 @@ pub fn run() {
                     handle.manage(state);
                     handle.manage(guard);
                     let _ = handle.emit_to("main", "ora-app-ready", ());
+                }
+                Ok(DesktopBootstrap::AlreadyRunning) => {
+                    // The database was not opened. Leave through Tauri so
+                    // RunEvent::Exit still runs. AppHandle::exit falls back to
+                    // process::exit when the runtime cannot accept the request,
+                    // which is what keeps this process from staying up with no
+                    // backend if the event loop is not ready yet.
+                    handle.exit(0);
                 }
                 Err(error) => {
                     ora_error!(
@@ -136,10 +144,19 @@ pub fn run() {
     run_result.expect("error while running tauri application");
 }
 
+/// Startup either owns the data directory or must leave because another process does.
+enum DesktopBootstrap {
+    /// This process holds the instance lock and may serve the window.
+    Ready(DesktopState, DesktopRuntimeGuard),
+    /// Another live process holds the lock. The database was not opened.
+    AlreadyRunning,
+}
+
 /// Resolves Desktop paths and constructs configuration, logging, and Backend state.
-fn bootstrap_desktop(
-    app: &tauri::AppHandle,
-) -> Result<(DesktopState, DesktopRuntimeGuard), DesktopBootstrapError> {
+///
+/// [`DesktopBootstrap::AlreadyRunning`] has not opened the database. The caller
+/// exits through Tauri instead of continuing into the boot sweep.
+fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, DesktopBootstrapError> {
     let app_data_directory = desktop_data_directory(app)?;
     // Take the instance lock before logging, plugins, or SQLite. The boot sweep
     // inside Backend::open assumes the previous process is dead; the lock is that
@@ -148,11 +165,14 @@ fn bootstrap_desktop(
     let instance_lock = match instance::acquire_desktop_instance(&app_data_directory) {
         Ok(instance::DesktopInstance::Acquired(lock)) => lock,
         Ok(instance::DesktopInstance::AlreadyRunning { path }) => {
-            eprintln!(
+            // A GUI-subsystem build has no stderr, so eprintln would vanish for a
+            // terminal launch. This is the same stdout / parent-console path as
+            // --version. Returning here must not open SQLite.
+            cli::write_parent_console(&format!(
                 "Ora Desktop is already running (lock {}); this process will exit without opening the database.",
                 path.display()
-            );
-            std::process::exit(0);
+            ));
+            return Ok(DesktopBootstrap::AlreadyRunning);
         }
         Err(error) => return Err(DesktopBootstrapError::InstanceLock(error)),
     };
@@ -244,7 +264,7 @@ fn bootstrap_desktop(
         backend.settings().preferred_log_level_store(),
         configured_log_level,
     );
-    Ok((
+    Ok(DesktopBootstrap::Ready(
         DesktopState {
             backend,
             update,

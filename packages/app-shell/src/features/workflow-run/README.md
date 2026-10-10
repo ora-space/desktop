@@ -28,6 +28,9 @@ Keep these stacks separate — shared chrome only where noted.
   Analysis of the frozen snapshot separates spare nodes from unrecognized
   kinds. Theater leaves both off the execution path. A status line names the
   unrecognized kinds; they are not described as spare nodes the author kept.
+  The excluded id set is `excludedWorkflowNodeIds` from
+  `state/data/workflow-analysis` — the same derivation the editor uses — and
+  it is memoized on the analysis result.
   - **Theater**: focused act stage + path rail. The path rail
     (and parallel act lists) use a derived order: topological constraints first,
     then canvas position (`x`, then `y`, then id) among concurrently ready

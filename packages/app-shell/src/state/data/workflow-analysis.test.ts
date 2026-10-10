@@ -4,7 +4,36 @@ import type { AnalyzeWorkflowResponse } from "@ora/contracts";
 import "../../i18n/i18n-instance";
 import { createTestClient } from "../../test/contracts-transport";
 import { renderHookWithClient } from "../../test/hook-harness";
-import { useWorkflowAnalysis } from "./workflow-analysis";
+import {
+  excludedWorkflowNodeIds,
+  unrecognizedWorkflowKinds,
+  useWorkflowAnalysis,
+} from "./workflow-analysis";
+
+describe("workflow execution membership", () => {
+  it("badges spare nodes and unrecognized kinds without listing an id twice", () => {
+    const analysis = {
+      unusedNodeIds: ["spare", "shared"],
+      unrecognizedNodes: [
+        { nodeId: "shared", kind: "hologram" },
+        { nodeId: "ghost", kind: "hologram" },
+        { nodeId: "other", kind: "portal" },
+      ],
+    };
+    expect(excludedWorkflowNodeIds(analysis)).toEqual([
+      "spare",
+      "shared",
+      "ghost",
+      "other",
+    ]);
+    expect(unrecognizedWorkflowKinds(analysis)).toBe("hologram, portal");
+  });
+
+  it("treats a missing analysis as nothing excluded", () => {
+    expect(excludedWorkflowNodeIds(undefined)).toEqual([]);
+    expect(unrecognizedWorkflowKinds(undefined)).toBe("");
+  });
+});
 
 describe("workflow execution analysis", () => {
   it("cancels superseded documents and ignores their late responses", async () => {

@@ -75,18 +75,17 @@ pub(crate) fn print_version() {
 /// attaching the parent console would bypass it and leave `ora-desktop --version |
 /// grep` reading an empty pipe. Only a launch without any stdout falls back to
 /// attaching the parent console and writing `CONOUT$`. A double-clicked launch has
-/// neither; the message is discarded and the process still exits.
-fn write_parent_console(text: &str) {
+/// neither; the message is discarded and the process still exits. Help, version,
+/// and the already-running notice share this path, because a GUI-subsystem process
+/// also has no stderr for `eprintln!`.
+pub(crate) fn write_parent_console(text: &str) {
     #[cfg(windows)]
     {
         if has_stdout_handle() {
-            println!("{text}");
+            write_stdout_line(text);
             return;
         }
-        const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
-        unsafe extern "system" {
-            fn AttachConsole(dw_process_id: u32) -> i32;
-        }
+        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
         let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
         if attached && let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$")
         {
@@ -95,30 +94,41 @@ fn write_parent_console(text: &str) {
             return;
         }
     }
-    println!("{text}");
+    write_stdout_line(text);
+}
+
+/// Writes one line without panicking when the handle is missing or closed.
+///
+/// `println!` panics on a failed write. On a GUI-subsystem launch that panic
+/// would skip the `process::exit` or Tauri exit that follows help, version, and
+/// the already-running notice, so the caller must get control back.
+fn write_stdout_line(text: &str) {
+    let mut stdout = std::io::stdout().lock();
+    write_line(&mut stdout, text);
+}
+
+/// Ignores a failed write. The message is optional; leaving the process is not.
+fn write_line(writer: &mut impl std::io::Write, text: &str) {
+    let _ = writeln!(writer, "{text}");
 }
 
 /// Whether this process was given a standard-output handle at creation.
 ///
-/// `STD_OUTPUT_HANDLE` is `(DWORD)-11`, not `11`; passing the wrong constant makes
-/// `GetStdHandle` fail and would send every launch down the parent-console path. A
-/// GUI-subsystem launch without redirection gets either `NULL` or the invalid-handle
-/// sentinel, and `println!` is a safe no-op in that case, so callers can always fall
-/// back to it.
+/// `STD_OUTPUT_HANDLE` is `(DWORD)-11`, not `11`. The `windows-sys` constant is
+/// that value; a hand-written `11` makes `GetStdHandle` fail and would send every
+/// launch down the parent-console path. A GUI-subsystem launch without redirection
+/// gets either `NULL` or `INVALID_HANDLE_VALUE`.
 #[cfg(windows)]
 fn has_stdout_handle() -> bool {
-    use std::ffi::c_void;
-    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
-    unsafe extern "system" {
-        fn GetStdHandle(n_std_handle: u32) -> *mut c_void;
-    }
-    let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } as usize;
-    handle != 0 && handle != usize::MAX
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_OUTPUT_HANDLE};
+    let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    !handle.is_null() && handle != INVALID_HANDLE_VALUE
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CliAction, classify_args};
+    use super::{CliAction, classify_args, write_line};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -135,5 +145,26 @@ mod tests {
             classify_args(["ora-desktop", "--not-a-known-flag"]),
             CliAction::Run
         );
+    }
+
+    /// A broken stdout must return. `println!` would panic and skip the exit.
+    #[test]
+    fn a_closed_output_does_not_panic() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "closed",
+                ))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "closed",
+                ))
+            }
+        }
+        write_line(&mut Closed, "ora-desktop already-running notice");
     }
 }

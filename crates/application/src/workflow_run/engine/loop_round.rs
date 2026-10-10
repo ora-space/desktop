@@ -48,7 +48,9 @@ pub enum LoopRoundError {
     InvalidRound { round: u32, max_iterations: u32 },
     /// `observed` is a short reading of the until-condition inputs from the last round.
     /// The match itself stays exact; the text only tells a person whether the model
-    /// missed the token or the loop logic never became true.
+    /// missed the token or the loop logic never became true. The run inspector shows
+    /// this failure line, and those inputs are already stored on the round, so the
+    /// reading stays here instead of a second diagnostic channel.
     #[error("Loop did not terminate within {max_iterations} rounds; last observed {observed}")]
     LimitReached {
         max_iterations: u32,
@@ -242,17 +244,22 @@ fn selector_label(selector: &super::variable_pool::VariableSelector) -> String {
 }
 
 /// Collapses whitespace and keeps the error line short enough to show in the run inspector.
+///
+/// One pass over the scalar values: counting a whole model reply and then copying
+/// the prefix would walk that reply twice on the failure path.
 fn summarize_observed_value(value: &Value) -> String {
     let raw = match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= OBSERVED_VALUE_LIMIT {
-        return collapsed;
+    let mut chars = collapsed.chars();
+    let truncated: String = chars.by_ref().take(OBSERVED_VALUE_LIMIT).collect();
+    if chars.next().is_none() {
+        truncated
+    } else {
+        format!("{truncated}…")
     }
-    let truncated: String = collapsed.chars().take(OBSERVED_VALUE_LIMIT).collect();
-    format!("{truncated}…")
 }
 
 /// An inactive branch's unset value is an error, never a previous round's implicit fallback.

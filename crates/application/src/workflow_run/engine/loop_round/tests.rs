@@ -214,3 +214,40 @@ fn round_pools_isolate_child_outputs_and_inherited_writers() {
         Err(LoopRoundError::InvalidCarriedVariables)
     );
 }
+
+/// A long model reply is shortened once; the cap error still names the until input.
+#[test]
+fn limit_error_keeps_a_short_reading_of_a_long_reply() {
+    let config = LoopConfig::parse(json!({
+        "maxIterations": 1,
+        "variables": [
+            {"name": "left", "valueType": "string", "initial": {"kind": "constant", "value": ""}, "feedback": ["loop", "left"]}
+        ],
+        "until": {"logic": "and", "conditions": [
+            {"variableSelector": ["review", "text"], "operator": "contains", "value": "DONE"}
+        ]},
+        "outputs": [{"name": "result", "variableSelector": ["review", "text"]}]
+    }))
+    .unwrap();
+    let mut pool = WorkflowVariablePool::default();
+    pool.declare("loop.left", "string", "loop");
+    pool.set("loop.left", "loop", json!("")).unwrap();
+    pool.declare("review.text", "string", "review");
+    let reply = format!("{}TAIL", "a".repeat(OBSERVED_VALUE_LIMIT));
+    pool.set("review.text", "review", json!(reply)).unwrap();
+    assert_eq!(
+        config.complete_round(/*round*/ 1, &pool),
+        Err(LoopRoundError::LimitReached {
+            max_iterations: 1,
+            observed: format!("review.text={}…", "a".repeat(OBSERVED_VALUE_LIMIT)),
+        })
+    );
+    assert_eq!(
+        summarize_observed_value(&json!("  line\n\tbreak  ")),
+        "line break"
+    );
+    assert_eq!(
+        summarize_observed_value(&Value::String("b".repeat(OBSERVED_VALUE_LIMIT))),
+        "b".repeat(OBSERVED_VALUE_LIMIT)
+    );
+}

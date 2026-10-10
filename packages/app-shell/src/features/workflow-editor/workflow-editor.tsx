@@ -1,6 +1,10 @@
 import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
 import { insertLoopMember } from "./workflow-loop-graph";
-import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import {
+  excludedWorkflowNodeIds,
+  unrecognizedWorkflowKinds,
+  useWorkflowAnalysis,
+} from "../../state/data/workflow-analysis";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
   useCallback,
@@ -817,17 +821,16 @@ function WorkflowEditorContent({
   const analysis = useWorkflowAnalysis(resolvedWorkflowId ?? "", analysisGraph);
   const unusedNodeIds = analysis.data?.unusedNodeIds ?? [];
   const unrecognizedNodes = analysis.data?.unrecognizedNodes ?? [];
-  // Unreachable unrecognized kinds are omitted from unusedNodeIds. The badge
-  // still has to mark them excluded; the status line explains they are not spares.
-  const excludedNodeIds = [
-    ...unusedNodeIds,
-    ...unrecognizedNodes
-      .map((node) => node.nodeId)
-      .filter((nodeId) => !unusedNodeIds.includes(nodeId)),
-  ];
-  const unrecognizedKinds = [
-    ...new Set(unrecognizedNodes.map((node) => node.kind)),
-  ].join(", ");
+  // The membership context compares this array by reference. A fresh array on
+  // every editor render would redraw every node badge.
+  const excludedNodeIds = useMemo(
+    () => excludedWorkflowNodeIds(analysis.data),
+    [analysis.data],
+  );
+  const unrecognizedKinds = useMemo(
+    () => unrecognizedWorkflowKinds(analysis.data),
+    [analysis.data],
+  );
   const loadCause =
     library.error ?? (resolvedWorkflowId !== null ? draftQuery.error : null);
   const selectedNode = useMemo(
