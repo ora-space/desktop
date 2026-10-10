@@ -5,6 +5,8 @@ import { appI18n } from "../../i18n/i18n-instance";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { WorkflowHeaderDescription } from "./workflow-header-description";
 
+void appI18n;
+
 describe("WorkflowHeaderDescription", () => {
   it("shows the truncated line and reveals the full copy on hover", async () => {
     const user = userEvent.setup();
