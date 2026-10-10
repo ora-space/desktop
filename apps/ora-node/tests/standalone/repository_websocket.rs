@@ -115,6 +115,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
     fs::write(
         &config,
         serde_json::to_vec(&ora_node::ServiceConfig {
+            plugins: Default::default(),
             agent: None,
             node: fixture.config(),
             process: fixture.process(),

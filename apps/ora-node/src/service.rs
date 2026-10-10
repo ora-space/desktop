@@ -73,6 +73,9 @@ pub enum ControlListen {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// Plugin transfer timing is selected by deployment and defaults to the original policy.
+    #[serde(default)]
+    pub plugins: crate::PluginConfig,
     /// Enables Agent sessions using the deployment-provided Deno executable.
     #[serde(default)]
     pub agent: Option<AgentConfig>,

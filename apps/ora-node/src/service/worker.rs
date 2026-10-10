@@ -60,7 +60,7 @@ pub(super) fn run(
                 .map_err(|e| e.to_string())?;
         }
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
-        let plugins = Plugins::start(&node).map_err(|e| e.to_string())?;
+        let plugins = Plugins::start(&node, config.plugins).map_err(|e| e.to_string())?;
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;

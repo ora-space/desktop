@@ -25,6 +25,21 @@ for transient failures. A valid exact version succeeds without downloading again
 retire old versions. Removing an absent plugin succeeds; removal preserves plugin data/config.
 Existing symlink directories are refused.
 
+Deployment can allow larger official packages to finish over slower connections by adding the
+following top-level field to the Node service JSON:
+
+```json
+"plugins": { "download_timeout_seconds": 600 }
+```
+
+Omitting `plugins` or its timeout keeps the existing 60-second per-attempt limit. The timeout must
+be an integer from 10 through 1200 seconds; invalid values fail startup during configuration parsing.
+The total download budget is three times this value plus 70 seconds, including retry overhead:
+the default remains 250 seconds, and 600 gives 1870 seconds. Connection establishment still has a
+10-second limit; transient failures still have at most two retries, and artifact size is limited to
+512 MiB. Failed attempts restart the transfer. This deployment policy does not change TLS validation,
+the frozen release URL, SHA-256 checks or test wait limits, and remote plugin commands cannot select it.
+
 `PluginInstaller::catalog()` supplies a `DirectoryPluginCatalog`. Session hosts must share this
 instance, acquire a use lease, then resolve the exact version. Replacement and removal return
 `plugin_in_use` while any session leases that plugin. This change supplies the catalogue and leases;
@@ -46,7 +61,8 @@ narrows the earlier ADR's unconditional restart-and-rerun rule.
 
 ## Verification
 
-Relevant interfaces are exercised by `apps/ora-node/tests/plugins.rs` (real archives and local HTTP),
+Relevant interfaces are exercised by `apps/ora-node/tests/plugins.rs` (deployment defaults, invalid
+timing rejection, configured policy reaching real archive installation, and local HTTP),
 `apps/ora-node/tests/standalone/repository_plugins.rs` (real Node process and IPC restart replay),
 `crates/node-db/src/tests/plugin.rs` (transactions, restart and authority), and
 `apps/ora-controller/tests/workspaces/plugins.rs` (operation driving through fake Cloud gRPC and Node
