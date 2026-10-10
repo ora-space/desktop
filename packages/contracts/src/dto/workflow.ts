@@ -20,8 +20,14 @@ export type AnalyzeWorkflowRequest = { graph: string };
 
 /**
  * Participation is derived from the submitted document, never persisted on nodes.
+ *
+ * `unused_node_ids` are known kinds left off the execution path on purpose.
+ * `unrecognized_nodes` are kinds this version will drop on load; they are not spare nodes.
  */
-export type AnalyzeWorkflowResponse = { unusedNodeIds: Array<string> };
+export type AnalyzeWorkflowResponse = {
+  unusedNodeIds: Array<string>;
+  unrecognizedNodes: Array<UnrecognizedWorkflowNode>;
+};
 
 /**
  * Carries the fields required to create a workflow with an optional initial graph.
@@ -145,6 +151,11 @@ export type RollbackWorkflowRequest = {
  * Returns the updated draft snapshot after rollback.
  */
 export type RollbackWorkflowResponse = { snapshot: WorkflowSnapshot };
+
+/**
+ * A node whose kind string is not registered by this version of the canvas or the engine.
+ */
+export type UnrecognizedWorkflowNode = { nodeId: string; kind: string };
 
 /**
  * Replaces the graph of the draft snapshot.

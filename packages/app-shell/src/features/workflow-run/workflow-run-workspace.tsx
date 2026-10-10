@@ -1,4 +1,8 @@
-import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import {
+  excludedWorkflowNodeIds,
+  unrecognizedWorkflowKinds,
+  useWorkflowAnalysis,
+} from "../../state/data/workflow-analysis";
 import { executableRun } from "./executable-run";
 import { isLoopHistoryNode } from "./loop-round-state";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
@@ -92,12 +96,18 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const analysisGraph =
     runQuery.data?.snapshotGraph ?? '{"nodes":[],"edges":[]}';
   const analysis = useWorkflowAnalysis(runId, analysisGraph);
+  const unrecognizedNodes = analysis.data?.unrecognizedNodes ?? [];
+  const excludedNodeIds = useMemo(
+    () => excludedWorkflowNodeIds(analysis.data),
+    [analysis.data],
+  );
+  const unrecognizedKinds = useMemo(
+    () => unrecognizedWorkflowKinds(analysis.data),
+    [analysis.data],
+  );
   const run = useMemo(
-    () =>
-      fullRun === null
-        ? null
-        : executableRun(fullRun, analysis.data?.unusedNodeIds ?? []),
-    [fullRun, analysis.data],
+    () => (fullRun === null ? null : executableRun(fullRun, excludedNodeIds)),
+    [fullRun, excludedNodeIds],
   );
   const workspaceId = runQuery.data?.workspaceId ?? null;
   // WorkflowRun is Workspace-owned and no longer creates an implicit Task
@@ -440,7 +450,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }
 
   function focusNodeFromOverview(nodeId: string): void {
-    if (analysis.data?.unusedNodeIds.includes(nodeId)) return;
+    if (excludedNodeIds.includes(nodeId)) return;
     setConversationNodeId(null);
     setFocusNodeId(nodeId);
     const waiting =
@@ -685,6 +695,17 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         <LocationActionsButton workspaceId={workspaceId} />
         <WindowControls />
       </header>
+      {unrecognizedNodes.length > 0 && (
+        <p
+          role="status"
+          className="border-b border-border px-3 py-1 text-xs text-muted-foreground"
+        >
+          {t("workflowRun.unrecognizedNodes", {
+            count: unrecognizedNodes.length,
+            kinds: unrecognizedKinds,
+          })}
+        </p>
+      )}
 
       {runQuery.isLoading && run === null ? (
         <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -730,9 +751,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
                 }}
               />
             ) : (
-              <WorkflowMembershipProvider
-                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
-              >
+              <WorkflowMembershipProvider unusedNodeIds={excludedNodeIds}>
                 <RunOverviewCanvas
                   run={fullRun ?? run}
                   focusedNodeId={stageFocusNodeId}

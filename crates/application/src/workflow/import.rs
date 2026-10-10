@@ -232,6 +232,7 @@ mod tests {
     #[derive(Debug, Default, Clone)]
     struct ImportRepository {
         created: Arc<Mutex<Vec<(String, Workflow)>>>,
+        drafts: Arc<Mutex<Vec<WorkflowSnapshot>>>,
         published: Arc<Mutex<Vec<(String, String)>>>,
     }
 
@@ -245,6 +246,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((workflow.name.to_ascii_lowercase(), workflow.clone()));
+            // Publish re-reads the frozen draft to run the same executable-graph parse as run
+            // creation, so the recording repository has to hand that draft back on request.
+            self.drafts.lock().unwrap().push(draft.clone());
             Ok(CreatedWorkflow { workflow, draft })
         }
 
@@ -321,10 +325,18 @@ mod tests {
 
         fn find_snapshot_by_version(
             &self,
-            _workflow_id: &WorkflowId,
-            _version: &str,
+            workflow_id: &WorkflowId,
+            version: &str,
         ) -> Result<Option<WorkflowSnapshot>, RepositoryError> {
-            unreachable!("import never looks up a snapshot by version")
+            // The publish half of import reads the draft back to validate it before freezing.
+            Ok(self
+                .drafts
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|draft| draft.workflow_id == *workflow_id && draft.version == version)
+                .cloned())
         }
 
         fn find_snapshot_by_id(

@@ -59,9 +59,19 @@ impl WorkflowApi {
         &self,
         request: ora_contracts::AnalyzeWorkflowRequest,
     ) -> Result<ora_contracts::AnalyzeWorkflowResponse, BackendError> {
-        let unused_node_ids = ora_application::WorkflowGraph::unused_node_ids(&request.graph)
+        let participation = ora_application::WorkflowGraph::authoring_participation(&request.graph)
             .map_err(ora_application::ApplicationError::WorkflowRunGraphParse)?;
-        Ok(ora_contracts::AnalyzeWorkflowResponse { unused_node_ids })
+        Ok(ora_contracts::AnalyzeWorkflowResponse {
+            unused_node_ids: participation.unused_node_ids,
+            unrecognized_nodes: participation
+                .unrecognized_nodes
+                .into_iter()
+                .map(|node| ora_contracts::UnrecognizedWorkflowNode {
+                    node_id: node.node_id,
+                    kind: node.kind,
+                })
+                .collect(),
+        })
     }
 
     /// Builds workflow handlers from the shared repository pool.

@@ -147,3 +147,28 @@ fn rejects_invalid_ownership_and_cross_scope_edges_on_spare_nodes() {
         }
     );
 }
+
+/// An unrecognized kind is not reported as a spare node the author chose to keep.
+#[test]
+fn unrecognized_kinds_are_separate_from_spare_nodes() {
+    let source = json!({"nodes":[
+        {"id":"start","data":{"kind":"start"}},
+        {"id":"spare","data":{"kind":"agent"}},
+        {"id":"weird","data":{"kind":"hologram"}}
+    ],"edges":[]});
+    assert_eq!(
+        WorkflowGraph::authoring_participation(&source.to_string()).unwrap(),
+        AuthoringParticipation {
+            unused_node_ids: vec!["spare".into()],
+            unrecognized_nodes: vec![UnrecognizedAuthoringNode {
+                node_id: "weird".into(),
+                kind: "hologram".into(),
+            }],
+        }
+    );
+    // Execution still treats the dropped kind as unused so a reference to it fails closed.
+    assert_eq!(
+        WorkflowGraph::unused_node_ids(&source.to_string()).unwrap(),
+        vec!["spare".to_string(), "weird".to_string()]
+    );
+}

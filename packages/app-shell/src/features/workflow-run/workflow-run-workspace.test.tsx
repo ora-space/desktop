@@ -196,7 +196,7 @@ describe("WorkflowRunWorkspace", () => {
       ...createFixtureHandlers(state),
       analyzeWorkflow: ({ graph }) => {
         analyzedGraphs.push(graph);
-        return { unusedNodeIds: [] };
+        return { unusedNodeIds: [], unrecognizedNodes: [] };
       },
     };
     const client = createTestClient(handlers);

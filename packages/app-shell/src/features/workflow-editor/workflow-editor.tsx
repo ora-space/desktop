@@ -1,6 +1,10 @@
 import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
 import { insertLoopMember } from "./workflow-loop-graph";
-import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import {
+  excludedWorkflowNodeIds,
+  unrecognizedWorkflowKinds,
+  useWorkflowAnalysis,
+} from "../../state/data/workflow-analysis";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
   useCallback,
@@ -815,6 +819,18 @@ function WorkflowEditorContent({
     });
   }, [displayedWorkflow]);
   const analysis = useWorkflowAnalysis(resolvedWorkflowId ?? "", analysisGraph);
+  const unusedNodeIds = analysis.data?.unusedNodeIds ?? [];
+  const unrecognizedNodes = analysis.data?.unrecognizedNodes ?? [];
+  // The membership context compares this array by reference. A fresh array on
+  // every editor render would redraw every node badge.
+  const excludedNodeIds = useMemo(
+    () => excludedWorkflowNodeIds(analysis.data),
+    [analysis.data],
+  );
+  const unrecognizedKinds = useMemo(
+    () => unrecognizedWorkflowKinds(analysis.data),
+    [analysis.data],
+  );
   const loadCause =
     library.error ?? (resolvedWorkflowId !== null ? draftQuery.error : null);
   const selectedNode = useMemo(
@@ -2545,16 +2561,25 @@ function WorkflowEditorContent({
             minSize={MIN_WORKFLOW_CANVAS_WIDTH}
           >
             {displayedWorkflow !== null ? (
-              <WorkflowMembershipProvider
-                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
-              >
-                {(analysis.data?.unusedNodeIds.length ?? 0) > 0 && (
+              <WorkflowMembershipProvider unusedNodeIds={excludedNodeIds}>
+                {unusedNodeIds.length > 0 && (
                   <p
                     role="status"
                     className="px-3 py-1 text-xs text-muted-foreground"
                   >
                     {t("workflowNode.unusedCount", {
-                      count: analysis.data?.unusedNodeIds.length,
+                      count: unusedNodeIds.length,
+                    })}
+                  </p>
+                )}
+                {unrecognizedNodes.length > 0 && (
+                  <p
+                    role="status"
+                    className="px-3 py-1 text-xs text-muted-foreground"
+                  >
+                    {t("workflowNode.unrecognizedCount", {
+                      count: unrecognizedNodes.length,
+                      kinds: unrecognizedKinds,
                     })}
                   </p>
                 )}

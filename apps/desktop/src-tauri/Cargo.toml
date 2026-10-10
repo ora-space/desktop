@@ -60,6 +60,10 @@ tracing = "0.1"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v5"] }
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 ora-fs = { workspace = true, features = ["test-support"] }

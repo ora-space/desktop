@@ -786,7 +786,11 @@ describe("WorkflowEditor", () => {
         };
         spareId =
           document.nodes.find((node) => node.data.kind === "agent")?.id ?? "";
-        return { unusedNodeIds: spareId === "" ? [] : [spareId] };
+        return {
+          unusedNodeIds: spareId === "" ? [] : [spareId],
+          unrecognizedNodes:
+            spareId === "" ? [] : [{ nodeId: "weird", kind: "hologram" }],
+        };
       };
       const update = handlers.updateDraft!;
       handlers.updateDraft = (request, options) => {
@@ -795,6 +799,9 @@ describe("WorkflowEditor", () => {
       };
     });
     await screen.findByText("有 1 个节点未参与运行");
+    expect(
+      screen.getByText(/有 1 个节点的类型无法识别（hologram）/),
+    ).toBeInTheDocument();
     expect(screen.getByText("未参与运行")).toHaveAttribute(
       "title",
       "此节点或所属容器未从作用域入口连通，不会参与运行。",

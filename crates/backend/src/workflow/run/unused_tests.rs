@@ -35,7 +35,8 @@ fn unused_agents_are_excluded_from_preparation_execution_and_restart() {
                 })
                 .unwrap(),
             ora_contracts::AnalyzeWorkflowResponse {
-                unused_node_ids: vec!["spare".into()]
+                unused_node_ids: vec!["spare".into()],
+                unrecognized_nodes: Vec::new(),
             }
         );
         let created = definitions

@@ -24,7 +24,7 @@ use crate::workflow::ports::{
     WorkflowRepository,
 };
 use crate::workflow::version::{DRAFT_VERSION, is_valid_user_version};
-use crate::{ApplicationError, Clock};
+use crate::{ApplicationError, Clock, WorkflowGraph};
 
 // Every valid workflow is created with its required Start node; the node catalog deliberately
 // hides the start kind, so the seed graph must carry one.
@@ -410,7 +410,7 @@ where
     IdGenerator: WorkflowIdGenerator,
     ClockSource: Clock,
 {
-    /// Publishes the draft, creating an immutable snapshot and activating it.
+    /// Publishes the draft after the executable subgraph parses, then activates that snapshot.
     pub fn handle(
         &self,
         request: PublishWorkflowRequest,
@@ -433,6 +433,18 @@ where
             }
             None => (format!("v{now}"), true),
         };
+
+        // Draft save stays permissive so an unfinished canvas can be kept. Publish is the
+        // point at which a version becomes the frozen document a run will execute, so it
+        // uses the same parse as run creation. Spare nodes are removed before configuration
+        // checks and do not block publish; a reachable node with invalid configuration does.
+        if let Some(draft) = self
+            .repository
+            .find_snapshot_by_version(&workflow_id, DRAFT_VERSION)
+            .map_err(ApplicationError::from_workflow_repository_error)?
+        {
+            WorkflowGraph::parse(&draft.graph).map_err(ApplicationError::WorkflowRunGraphParse)?;
+        }
 
         for collision_retry in 0..=MAX_AUTOMATIC_VERSION_COLLISION_RETRIES {
             let created = self

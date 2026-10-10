@@ -12,7 +12,7 @@ use super::{
     WorkflowIdGenerator, WorkflowRepository,
 };
 use crate::workflow::mapper::map_snapshot;
-use crate::{ApplicationError, Clock, RepositoryError};
+use crate::{ApplicationError, Clock, GraphError, RepositoryError};
 
 /// Verifies automatic versions derive from the injected clock used for snapshot timestamps.
 #[test]
@@ -36,7 +36,7 @@ fn publish_uses_the_injected_clock_for_automatic_versions() {
             id: "snapshot-1".to_string(),
             workflow_id: "workflow-1".to_string(),
             version: "v42".to_string(),
-            graph: "{\"nodes\":[]}".to_string(),
+            graph: EXECUTABLE_DRAFT_GRAPH.to_string(),
             created_at: 42,
             updated_at: None,
         }
@@ -68,7 +68,7 @@ fn publish_retries_automatic_versions_that_collide_at_the_same_clock_value() {
             id: "snapshot-1".to_string(),
             workflow_id: "workflow-1".to_string(),
             version: "v42-1".to_string(),
-            graph: "{\"nodes\":[]}".to_string(),
+            graph: EXECUTABLE_DRAFT_GRAPH.to_string(),
             created_at: 42,
             updated_at: None,
         }
@@ -258,17 +258,89 @@ impl WorkflowRepository for PublishRepository {
     }
 }
 
+/// A start node with no edges. Publish must accept it; configuration checks run on the
+/// reachable subgraph, and this graph has nothing else to reject.
+const EXECUTABLE_DRAFT_GRAPH: &str =
+    r#"{"nodes":[{"id":"start","data":{"kind":"start"}}],"edges":[]}"#;
+
 /// Returns the draft copied by publish-handler tests.
 fn draft_snapshot() -> WorkflowSnapshot {
+    draft_with_graph(EXECUTABLE_DRAFT_GRAPH)
+}
+
+/// Builds the same draft identity with a caller-supplied graph.
+fn draft_with_graph(graph: &str) -> WorkflowSnapshot {
     WorkflowSnapshot::new(
         WorkflowSnapshotId::new("draft-1"),
         WorkflowId::new("workflow-1"),
         "draft",
-        "{\"nodes\":[]}",
+        graph.to_string(),
         1,
         Some(1),
         /*is_deleted*/ false,
     )
+}
+
+/// A reachable agent with a configuration the run parser rejects cannot be published.
+#[test]
+fn publish_rejects_an_unexecutable_reachable_agent_configuration() {
+    let graph = r#"{"nodes":[
+        {"id":"start","data":{"kind":"start"}},
+        {"id":"agent","data":{"kind":"agent","agentConfig":{
+            "executor":{"agentCli":"c","modelId":"m"},
+            "roleId":"R","skills":[],"prompt":"p","promptInactivity":"bogus"
+        }}},
+        {"id":"out","data":{"kind":"output"}}
+    ],"edges":[
+        {"source":"start","target":"agent"},
+        {"source":"agent","target":"out"}
+    ]}"#;
+    let handler = PublishWorkflowHandler::new(
+        Arc::new(PublishRepository::new(draft_with_graph(graph), Vec::new())),
+        FixedWorkflowIdGenerator,
+        FixedClock(42),
+    );
+
+    let error = handler
+        .handle(ora_contracts::PublishWorkflowRequest {
+            workflow_id: "workflow-1".to_string(),
+            version: Some("v1".to_string()),
+        })
+        .unwrap_err();
+
+    match error {
+        ApplicationError::WorkflowRunGraphParse(GraphError::InvalidNode { reason }) => {
+            assert!(
+                reason.contains("promptInactivity"),
+                "the publish error should name the rejected field, got {reason}"
+            );
+        }
+        other => panic!("expected graph parse rejection, got {other:?}"),
+    }
+}
+
+/// The same invalid configuration on a node the entry cannot reach stays in the snapshot.
+#[test]
+fn publish_keeps_invalid_configuration_on_a_spare_node() {
+    let graph = r#"{"nodes":[
+        {"id":"start","data":{"kind":"start"}},
+        {"id":"out","data":{"kind":"output"}},
+        {"id":"spare","data":{"kind":"agent","agentConfig":{"promptInactivity":"bogus"}}}
+    ],"edges":[{"source":"start","target":"out"}]}"#;
+    let handler = PublishWorkflowHandler::new(
+        Arc::new(PublishRepository::new(draft_with_graph(graph), Vec::new())),
+        FixedWorkflowIdGenerator,
+        FixedClock(42),
+    );
+
+    let response = handler
+        .handle(ora_contracts::PublishWorkflowRequest {
+            workflow_id: "workflow-1".to_string(),
+            version: Some("v1".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(response.snapshot.graph, graph);
 }
 
 /// Produces deterministic identifiers for publish-handler tests.
