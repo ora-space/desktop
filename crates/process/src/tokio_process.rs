@@ -36,6 +36,9 @@ impl TokioProcessSpawner {
 /// entered with the parent's authority. Any failure aborts the exec and surfaces as the spawn's
 /// error, so no code ever runs with a partially dropped identity.
 fn configure_identity(command: &mut Command, identity: ProcessIdentity) {
+    // Other platforms retain inherited identity and therefore have no command customization.
+    #[cfg(not(target_os = "linux"))]
+    let _ = command;
     match identity {
         ProcessIdentity::Inherit => {}
         #[cfg(target_os = "linux")]
