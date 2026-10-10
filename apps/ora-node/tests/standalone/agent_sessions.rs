@@ -7,6 +7,8 @@ mod authority;
 mod delivery;
 #[path = "agent_sessions/recovery.rs"]
 mod recovery;
+#[path = "agent_sessions/resume.rs"]
+mod resume;
 #[path = "agent_sessions/support.rs"]
 mod support;
 #[path = "agent_sessions/window.rs"]

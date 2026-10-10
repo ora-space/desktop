@@ -341,10 +341,17 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             }
             // Grants are memory-only and need no durable admission; holding them back behind Git
             // in the worker would only let them expire.
-            if let ControllerToNodeMessage::UploadGrant(grant) = message {
-                info.grants.offer(grant);
-                continue;
-            }
+            let message = match message {
+                ControllerToNodeMessage::UploadGrant(grant) => {
+                    info.grants.offer(grant);
+                    continue;
+                }
+                ControllerToNodeMessage::DownloadGrant(answer) => {
+                    info.downloads.offer(answer);
+                    continue;
+                }
+                message => message,
+            };
             let Ok(permit) = unanswered.clone().try_acquire_owned() else {
                 // The Controller polls status on a timer without waiting for replies, so a long
                 // Git pass fills the pipeline with queries. Shedding the excess is safe because
@@ -421,16 +428,25 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     // Grant requests are unsolicited and not durable: a request missed while disconnected is
     // repeated by the waiting upload, so a lagging receiver simply skips ahead.
     let mut grant_requests = info.grants.subscribe();
+    let mut download_requests = info.downloads.subscribe();
     let write = async {
-        // A restarted Controller remembers no grant request, so every waiting upload asks again
-        // as soon as a Controller connects instead of after its periodic re-send.
-        for request in info.grants.pending() {
-            timeout(
-                deadline,
-                transmit(writer, &NodeToControllerMessage::UploadGrantNeeded(request)),
-            )
-            .await
-            .map_err(|_| Failure::silent())??;
+        // A restarted Controller remembers no grant request, so every waiting upload and restore
+        // asks again as soon as a Controller connects instead of after its periodic re-send.
+        let pending = info
+            .grants
+            .pending()
+            .into_iter()
+            .map(NodeToControllerMessage::UploadGrantNeeded)
+            .chain(
+                info.downloads
+                    .pending()
+                    .into_iter()
+                    .map(NodeToControllerMessage::DownloadGrantNeeded),
+            );
+        for request in pending {
+            timeout(deadline, transmit(writer, &request))
+                .await
+                .map_err(|_| Failure::silent())??;
         }
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
@@ -441,6 +457,13 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         return Err(Failure::local(CloseReason::InternalError, "grant requests closed"));
+                    }
+                },
+                request = download_requests.recv() => match request {
+                    Ok(request) => NodeToControllerMessage::DownloadGrantNeeded(request),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err(Failure::local(CloseReason::InternalError, "download grant requests closed"));
                     }
                 },
                 _ = tick.tick() => NodeToControllerMessage::Heartbeat(HeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: Heartbeat { node: info.identity.clone() } }),

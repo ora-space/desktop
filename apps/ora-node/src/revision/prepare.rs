@@ -83,6 +83,11 @@ fn freeze<R: GitRunner>(
             checkout: &job.checkout,
             revision_ref: &job.spec.revision_ref,
             base_commit: &job.spec.base_commit,
+            prior_final_commit: job
+                .spec
+                .prior_revision
+                .as_ref()
+                .map(|prior| &prior.final_commit),
             author: &job.author,
             scratch: directory,
         })

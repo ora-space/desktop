@@ -67,17 +67,23 @@ pub(super) fn run(
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
+        let downloads = crate::revision::DownloadGrants::new();
+        let restorer = agents::restorer(&node, config.agent.as_ref(), downloads.clone())
+            .map_err(|e| e.to_string())?;
         let agents = agents::open(
             &mut node,
             config.agent.as_ref(),
             workload,
             &config.timezone,
             plugins.catalog.clone(),
+            restorer,
         )
         .map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions))
+        Ok::<_, String>((
+            node, controller, clones, plugins, agents, grants, downloads, revisions,
+        ))
     })();
-    let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions) =
+    let (mut node, controller, mut clones, mut plugins, agents, grants, downloads, mut revisions) =
         match initialized {
             Ok(value) => value,
             Err(error) => {
@@ -96,9 +102,14 @@ pub(super) fn run(
     if revisions.is_some() {
         capabilities.push(NodeCapability::RevisionDelivery);
     }
+    // Restore runs Git in session checkouts with delivery's policy, so it needs both.
+    if agents.is_some() && revisions.is_some() {
+        capabilities.push(NodeCapability::RevisionRestore);
+    }
     let info = SessionInfo {
         agents: agents.clone(),
         grants,
+        downloads,
         identity: node.identity().clone(),
         controller: controller.clone(),
         capabilities,
@@ -403,7 +414,7 @@ fn handle(
             let record = node.database.accept_controlled_delivery(&envelope)?;
             Ok(delivery_status(node, record))
         }
-        // The session read loop consumes Controller heartbeats and upload grants; they never
+        // The session read loop consumes Controller heartbeats and transfer grants; they never
         // reach admission. Worktree executions are refused until this service implements them;
         // it does not advertise their capability, so a conforming Controller never sends them.
         Request::Message(
@@ -411,7 +422,8 @@ fn handle(
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
-            | ControllerToNodeMessage::UploadGrant(_),
+            | ControllerToNodeMessage::UploadGrant(_)
+            | ControllerToNodeMessage::DownloadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
 }

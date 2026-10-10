@@ -33,6 +33,7 @@ fn runtime_ports_use_durable_ledger() {
                     email: "user@example.com".into(),
                 },
                 initial_turn: turn.clone(),
+                prior_revision: None,
             },
         },
     };

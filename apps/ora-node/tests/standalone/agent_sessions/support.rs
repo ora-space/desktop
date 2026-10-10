@@ -29,6 +29,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
                     turn_id: TurnId::new("first"),
                     content: vec![ContentBlock::Text { text: text.into() }],
                 },
+                prior_revision: None,
             },
         },
     }
@@ -123,13 +124,14 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
             .capabilities
             .contains(&NodeCapability::AgentSession)
     );
-    // Delivery runs Git in the checkouts clone created, so clone configuration enables it.
-    assert!(
-        hello
-            .payload
-            .capabilities
-            .contains(&NodeCapability::RevisionDelivery)
-    );
+    // Delivery runs Git in the checkouts clone created, so clone configuration enables it, and
+    // restore, which runs delivery Git in session checkouts, needs both.
+    for capability in [
+        NodeCapability::RevisionDelivery,
+        NodeCapability::RevisionRestore,
+    ] {
+        assert!(hello.payload.capabilities.contains(&capability));
+    }
     (stream, hello.payload.node)
 }
 
@@ -221,4 +223,25 @@ pub(super) fn plugin(root: &Path) -> ora_utils::process::LinuxPidFd {
         &ora_utils::process::linux_process(pid).unwrap(),
     )
     .unwrap()
+}
+
+/// Reads the clone the session fixture ran in from the Node's own status answer.
+pub(super) fn checkout(fixture: &Fixture) -> CloneReady {
+    let node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+    let status = node
+        .status(&GetExecutionStatusMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: OperationId::new("clone-op-agent"),
+            execution_id: ExecutionId::new("clone-exec-agent"),
+            payload: GetExecutionStatus {
+                node_id: NodeId::new("test-node"),
+            },
+        })
+        .unwrap();
+    let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(ready))) =
+        status.payload.state
+    else {
+        panic!("the fixture clone is ready");
+    };
+    ready
 }

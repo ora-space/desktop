@@ -37,7 +37,8 @@ pub(crate) struct DeliveryGit<R> {
     policy: GitPolicy,
 }
 
-/// What the snapshot produced; a bundle exists exactly when the final commit is not the base.
+/// What the snapshot produced; a bundle exists exactly when the final commit is neither the base
+/// nor the final commit of the Revision the session resumed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Snapshot {
     Unchanged {
@@ -63,6 +64,9 @@ pub(crate) struct SnapshotRequest<'a> {
     pub(crate) checkout: &'a Path,
     pub(crate) revision_ref: &'a RevisionRef,
     pub(crate) base_commit: &'a CommitId,
+    /// The final commit of the Revision the session resumed, if it resumed one: stopping there
+    /// adds nothing the prior Revision's bundle does not already hold (restore ADR D5).
+    pub(crate) prior_final_commit: Option<&'a CommitId>,
     pub(crate) author: &'a GitIdentity,
     /// Unique per execution, so concurrent or leftover scratch files never collide.
     pub(crate) scratch: &'a str,
@@ -147,7 +151,8 @@ impl<R: GitRunner> DeliveryGit<R> {
         )
         .map_err(|error| log(error, SnapshotFailure::SnapshotFailed))?;
         let final_commit = CommitId::new(final_commit);
-        if final_commit == *request.base_commit {
+        if final_commit == *request.base_commit || request.prior_final_commit == Some(&final_commit)
+        {
             return Ok(Snapshot::Unchanged { final_commit });
         }
         let path = bundle
@@ -193,8 +198,9 @@ impl<R: GitRunner> DeliveryGit<R> {
         self.output(checkout, &["write-tree"], &scratch)
     }
 
-    /// Runs one hardened command in the checkout and returns its trimmed standard output.
-    fn output(
+    /// Runs one hardened command in the checkout and returns its trimmed standard output. Restore
+    /// runs its Git through here too, so both share one policy.
+    pub(super) fn output(
         &self,
         checkout: &Path,
         args: &[&str],
