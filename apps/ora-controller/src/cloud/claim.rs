@@ -78,14 +78,18 @@ pub(super) async fn batch(
             };
             let capable = match family {
                 Targeted::Session => {
-                    sandbox.agent_capable()
+                    sandbox.advertises(NodeCapability::AgentSession)
+                        && (!agents::mapping::resumes(item.input.as_ref())
+                            || sandbox.advertises(NodeCapability::RevisionRestore))
                         && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
                         Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
-                            || sandbox.model_capable())
+                            || sandbox.advertises(NodeCapability::ModelProxy))
                 }
-                Targeted::Delivery => sandbox.delivery_capable(),
+                Targeted::Delivery => sandbox.advertises(NodeCapability::RevisionDelivery),
             };
-            // A Node without the capability leaves the item queued in Cloud for a capable session.
+            // A Node without the capability leaves the item queued in Cloud for a capable session;
+            // a session resuming a prior Revision on a Node that cannot restore it would otherwise
+            // run on a fresh clone and later deliver a Revision without the prior work.
             if sandbox.binding.node_id.as_str() != target.node_id || !capable {
                 return Backlog::Settled;
             }

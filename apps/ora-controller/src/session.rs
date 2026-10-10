@@ -1,5 +1,6 @@
 mod commands;
 mod control;
+mod downloads;
 mod grants;
 mod relay;
 use super::*;
@@ -328,6 +329,10 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         .payload
         .capabilities
         .contains(&NodeCapability::RevisionDelivery);
+    let restore_capable = hello
+        .payload
+        .capabilities
+        .contains(&NodeCapability::RevisionRestore);
     observer.capabilities(&hello.payload.capabilities);
     let capabilities = hello.payload.capabilities;
     let identity = hello.payload.node;
@@ -343,6 +348,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         agent_capable,
     );
     let mut grants = grants::Grants::new(store.clone(), identity.clone(), delivery_capable);
+    let mut downloads = downloads::Downloads::new(store.clone(), identity.clone(), restore_capable);
     let mut control = control::Control::new(
         store.clone(),
         identity.clone(),
@@ -377,6 +383,11 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 // Grants go to the wire and nowhere else; the frame is never logged.
                 Some(grant) = grants.outgoing.recv(), if delivery_capable => {
                     bounded(deadline, transmit(writer, &grant)).await?;
+                }
+                result = downloads.tasks.join_next(), if !downloads.tasks.is_empty() => return Err(worker_failure(result)),
+                // Like upload grants, download answers go to the wire and nowhere else.
+                Some(answer) = downloads.outgoing.recv(), if restore_capable => {
+                    bounded(deadline, transmit(writer, &answer)).await?;
                 }
                 result = control.tasks.join_next(), if !control.tasks.is_empty() => return Err(worker_failure(result)),
                 Some(action) = control.outgoing.recv() => match action {
@@ -436,6 +447,23 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                         checksums: need.payload.checksums.clone(),
                     })
                     .map_err(|_| SessionError::Protocol("grant request queue overflow".into()))?;
+                continue;
+            }
+            NodeToControllerMessage::DownloadGrantNeeded(need) if restore_capable => {
+                if need.payload.node_id != identity.node_id {
+                    return Err(SessionError::Protocol(
+                        "download grant request names another Node".into(),
+                    ));
+                }
+                downloads
+                    .input
+                    .try_send(downloads::Request {
+                        operation: need.operation_id.clone(),
+                        execution: need.execution_id.clone(),
+                    })
+                    .map_err(|_| {
+                        SessionError::Protocol("download grant request queue overflow".into())
+                    })?;
                 continue;
             }
             NodeToControllerMessage::Heartbeat(heartbeat) if heartbeat.payload.node == identity => {

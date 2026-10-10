@@ -129,6 +129,8 @@ struct SessionInfo {
     agents: Option<agents::SessionHost>,
     /// Upload grants bypass admission and land here; grant requests leave through the session.
     grants: crate::revision::GrantStore,
+    /// Download grants of restoring sessions, handled like upload grants.
+    downloads: crate::revision::DownloadGrants,
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,

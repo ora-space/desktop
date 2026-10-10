@@ -12,7 +12,7 @@ const BUNDLE_KEY: &str = "revisions/tenant-1/run-1/execution-delivery/revision.b
 const HISTORY_KEY: &str = "revisions/tenant-1/run-1/execution-delivery/session.jsonl";
 
 /// A delivery command with independent JSON.
-fn deliver() -> Case {
+pub(super) fn deliver() -> Case {
     Case {
         message: Message::Controller(ControllerToNodeMessage::DeliverRevision(
             DeliverRevisionMessage {
@@ -28,6 +28,7 @@ fn deliver() -> Case {
                         revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
                         bundle_key: ObjectKey::new(BUNDLE_KEY),
                         history_key: ObjectKey::new(HISTORY_KEY),
+                        prior_revision: None,
                     },
                 },
             },
@@ -222,14 +223,27 @@ async fn revision_results_round_trip_and_keep_commits_consistent() -> Result<(),
     let mut rejected = results();
     let (unchanged, unchanged_wire) = rejected.remove(1);
     let (delivered, delivered_wire) = rejected.remove(0);
-    let [unchanged_event, _] = result_cases(unchanged, unchanged_wire);
-    let mut wire = unchanged_event.wire;
-    replace(&mut wire, "/payload/result/final_commit", json!(FINAL));
+    // An unchanged result may name the final commit of the Revision its session resumed; only
+    // the Controller holds the delivery input that says whether it does.
+    let RevisionExecutionResult::RevisionUnchanged(mut resumed) = unchanged else {
+        unreachable!("the second fixture result is unchanged");
+    };
+    resumed.final_commit = CommitId::new(FINAL);
+    let mut resumed_wire = unchanged_wire;
+    replace(&mut resumed_wire, "/result/final_commit", json!(FINAL));
+    let [resumed_event, _] = result_cases(
+        RevisionExecutionResult::RevisionUnchanged(resumed),
+        resumed_wire,
+    );
+    resumed_event.assert_wire().await?;
+    resumed_event.assert_round_trip().await?;
+    let mut wire = resumed_event.wire;
+    replace(&mut wire, "/payload/result/base_commit", json!("0123456"));
     reject_semantics(
         Peer::Node,
         &wire,
-        "unchanged with a new commit",
-        MessageValidationError::RevisionCommitMismatch,
+        "unchanged with a partial base",
+        MessageValidationError::InvalidCommit,
     )
     .await?;
     let [delivered_event, _] = result_cases(delivered, delivered_wire);

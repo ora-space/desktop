@@ -1,4 +1,5 @@
-//! Revision delivery: saves an ended session's checkout and history to Cloud's object store.
+//! Revision delivery: saves an ended session's checkout and history to Cloud's object store, and
+//! restores a prior Revision into the checkout of a session that resumes it.
 //!
 //! A delivery prepares once — an internal snapshot commit under the Revision ref, a bundle
 //! relative to the clone's base commit, and a copy of the sealed session JSONL — and freezes those
@@ -11,11 +12,16 @@
 
 mod grants;
 mod prepare;
+mod restore;
 mod snapshot;
 mod upload;
 
 pub(crate) use grants::GrantStore;
 pub(crate) use prepare::{Preparation, prepare};
+pub(crate) use restore::{
+    DownloadGrants, HttpDownloader, RESTORE_ROOT, RestorePolicy, RevisionRestorer,
+    purge as purge_restores,
+};
 pub(crate) use snapshot::{DeliveryGit, GitPolicy};
 pub(crate) use upload::{HttpUploader, ObjectUploader, RetryPolicy, UploadEnd, UploadJob, upload};
 

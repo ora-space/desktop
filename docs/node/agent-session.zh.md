@@ -15,12 +15,13 @@ Agent 会话执行：在一次 clone 留下的 checkout 中只启动该执行指
 
 ## 接口
 
-| trait              | 提供方     | 会话执行用它做什么                                                                           |
-| ------------------ | ---------- | -------------------------------------------------------------------------------------------- |
-| `SessionLedger`    | Node 账本  | 追加 Thread 事件、写入终态、读取排队命令（按受理顺序的全部）、结算命令                       |
-| `CheckoutResolver` | clone 账本 | 由 clone 执行 ID 解析 checkout；会话从不自行拼接路径                                         |
-| `PluginCatalog`    | 插件安装   | 取得使用租约，查询指定版本的安装目录                                                         |
-| `SessionHost`      | 会话执行   | 由 `AgentSessions` 实现：`start`、`command_arrived`、`recover_interrupted`、`sealed_history` |
+| trait                  | 提供方        | 会话执行用它做什么                                                                           |
+| ---------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| `SessionLedger`        | Node 账本     | 追加 Thread 事件、写入终态、读取排队命令（按受理顺序的全部）、结算命令                       |
+| `CheckoutResolver`     | clone 账本    | 由 clone 执行 ID 解析 checkout；会话从不自行拼接路径                                         |
+| `PluginCatalog`        | 插件安装      | 取得使用租约，查询指定版本的安装目录                                                         |
+| `PriorRevisionRestore` | Revision 恢复 | 在 agent 启动前把续接会话指定的前序 Revision 恢复进 checkout                                 |
+| `SessionHost`          | 会话执行      | 由 `AgentSessions` 实现：`start`、`command_arrived`、`recover_interrupted`、`sealed_history` |
 
 `queued_commands`
 返回全部排队命令而不是只有队首：轮次进行中必须能看见排在用户轮次之后的
@@ -71,20 +72,24 @@ Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
 2. 先取得插件租约，再查询指定版本。目录中没有该版本，或插件根里发现的包不在该版本目录、不是
    agent 时，以 `agent_failed{agent_plugin_unavailable}`
    结束，此时没有启动任何插件进程。租约持有到插件进程整树退出之后。
-3. 等待 agent 连接就绪（有上限，超时或监管放弃为
+3. 输入带 `prior_revision` 时，会话在把 checkout 交还工作负载用户、启动任何插件之前把它恢复进 checkout（见
+   [Revision 交付](revision-delivery.zh.md#续接前序-revision)）。恢复失败时以
+   `agent_failed{prior_revision_unavailable}` 或 `agent_failed{prior_revision_base_unavailable}`
+   结束，从未启动插件进程；恢复到被改写的远端历史之上时，在 `initial_turn` 末尾追加一段固定格式的英文说明。
+4. 等待 agent 连接就绪（有上限，超时或监管放弃为
    `agent_failed{agent_unavailable}`），以执行 ID 作为 Ora Session ID
    创建会话（失败为 `agent_failed{agent_start_failed}`），然后发送
    `initial_turn`。
-4. 轮次进行中定型的每一行 history 都以当前轮次的 `turn_id` 成为 Thread
+5. 轮次进行中定型的每一行 history 都以当前轮次的 `turn_id` 成为 Thread
    事件；用户消息在 JSONL 中也以 ACP `messageId` 带着同一个标识。超过 256 KiB
    的记录在 Thread 中只保留 `at`、`seq`、`type` 并标注 `truncated`，JSONL
    保留原文。
-5. `command_arrived` 唤醒会话读取队列。`SubmitUserTurn`
+6. `command_arrived` 唤醒会话读取队列。`SubmitUserTurn`
    在当前轮次结束后按受理顺序执行，开始执行时结算为
    `executed`；重复唤醒不会重复执行。`EndSession` 把排在它之前的用户轮次结算为
    `discarded`，停止会话（取消 进行中的轮次并记录 `TurnEnded{cancelled}`，支持时
    `session/close`），再结算自身为 `executed`。
-6. 结束时：停止会话，释放运行时（连接监管随之停止重连），停止插件并等待整树退出，释放租约；把仍排队的命令结算
+7. 结束时：停止会话，释放运行时（连接监管随之停止重连），停止插件并等待整树退出，释放租约；把仍排队的命令结算
    为
    `discarded`，写入终态后再移除存活记录；服务停止会等待该写入。交付看到会话结束时
    history 已不再被写入。

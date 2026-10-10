@@ -27,6 +27,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
                         text: "hello".into(),
                     }],
                 },
+                prior_revision: None,
             },
         },
     }

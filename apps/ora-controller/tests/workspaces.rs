@@ -13,6 +13,8 @@ mod agents;
 mod deliveries;
 #[path = "workspaces/plugins.rs"]
 mod plugins;
+#[path = "workspaces/restores.rs"]
+mod restores;
 #[path = "support/workspace_cloud.rs"]
 mod workspace_cloud;
 
@@ -115,6 +117,7 @@ struct Node {
     plugin_capable: Arc<AtomicBool>,
     agents: agents::AgentNode,
     deliveries: deliveries::DeliveryNode,
+    restores: restores::RestoreNode,
     /// Ends the current session once, as a dropped connection would.
     disconnect: Arc<AtomicBool>,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
@@ -161,6 +164,7 @@ impl Node {
                     .agents
                     .next(&mut agent_sent)
                     .or_else(|| self.deliveries.next(&mut delivery_sent))
+                    .or_else(|| self.restores.next())
             {
                 if sender
                     .send(encode_node_frame(&event).unwrap())
@@ -218,6 +222,7 @@ impl Node {
                         ControllerToNodeMessage::EventAck(ack) => { self.agents.ack(&ack, &self.timeline); self.deliveries.ack(&ack, &self.timeline); None }
                         ControllerToNodeMessage::ControlledDeliverRevision(envelope) => { self.deliveries.start(*envelope, &self.timeline); None }
                         ControllerToNodeMessage::UploadGrant(grant) => { self.deliveries.grant(grant, &self.timeline); None }
+                        ControllerToNodeMessage::DownloadGrant(answer) => { self.restores.answer(answer, &self.timeline); None }
                         ControllerToNodeMessage::ControlledPlugins(envelope) => {
                             let event = plugins::complete(self, &envelope, &identity);
                             results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
@@ -334,6 +339,7 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                 plugin_capable: Arc::new(AtomicBool::new(true)),
                 agents: agents::AgentNode::default(),
                 deliveries: deliveries::DeliveryNode::default(),
+                restores: restores::RestoreNode::default(),
                 disconnect: Arc::new(AtomicBool::new(false)),
                 plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
                 timeline: timeline.clone(),

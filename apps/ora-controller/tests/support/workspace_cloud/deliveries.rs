@@ -36,6 +36,7 @@ impl WorkspaceCloud {
                     revision_ref: format!("refs/ora/revisions/{run}"),
                     bundle_key: format!("runs/{run}/revision.bundle"),
                     history_key: format!("runs/{run}/history.jsonl"),
+                    prior_revision: None,
                 },
             )),
         };

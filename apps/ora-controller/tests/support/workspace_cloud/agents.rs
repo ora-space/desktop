@@ -15,6 +15,7 @@ pub(super) struct AgentState {
     lose_reply: bool,
     pub(super) input_closed: bool,
     pub(super) deliveries: super::deliveries::DeliveryState,
+    pub(super) restores: super::restores::RestoreState,
 }
 impl WorkspaceCloud {
     /// Changes current permission without changing the historical registered dispatch.
@@ -28,6 +29,20 @@ impl WorkspaceCloud {
 
     /// Freezes an opaque model reference in the same work input the real Cloud produces.
     pub fn queue_bound_agent(&self, run: &str, binding: &str) {
+        self.queue_session_with_model(run, /*prior*/ None, binding);
+    }
+    /// Queues a session input, resuming `prior` when given, and wakes the Controller.
+    pub(super) fn queue_session(&self, run: &str, prior: Option<proto::PriorRevision>) {
+        self.queue_session_with_model(run, prior, "");
+    }
+
+    /// Composes the independently frozen restore and model inputs into one test-authority record.
+    pub fn queue_session_with_model(
+        &self,
+        run: &str,
+        prior: Option<proto::PriorRevision>,
+        binding: &str,
+    ) {
         let mut state = self.lock();
         let sandbox = state.sandboxes.last().unwrap();
         let node = state.nodes.last().unwrap().identity.as_ref().unwrap();
@@ -59,6 +74,7 @@ impl WorkspaceCloud {
                                 )),
                             }],
                         }),
+                        prior_revision: prior,
                     },
                 )),
             }),
@@ -368,5 +384,12 @@ impl AgentRunService for WorkspaceCloud {
         request: Request<proto::GrantRevisionUploadRequest>,
     ) -> Result<Response<proto::GrantRevisionUploadResponse>, Status> {
         self.grant(request.into_inner())
+    }
+    /// Signs a read of a resumed session's prior bundle.
+    async fn grant_revision_download(
+        &self,
+        request: Request<proto::GrantRevisionDownloadRequest>,
+    ) -> Result<Response<proto::GrantRevisionDownloadResponse>, Status> {
+        self.grant_download(request.into_inner())
     }
 }

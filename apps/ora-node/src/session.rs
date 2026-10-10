@@ -7,17 +7,20 @@
 //! interrupted instead of resuming it.
 
 mod driver;
+mod end;
 mod host;
 mod ledger;
 mod model;
 mod ports;
 mod queue;
+mod resume;
 mod thread;
 mod workload;
 
 pub use ports::{
-    CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, QueuedCommand,
-    SessionCommand, SessionHost, SessionLedger,
+    CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
+    QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionHost,
+    SessionLedger,
 };
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;
@@ -25,6 +28,7 @@ pub(crate) use workload::purge_workload_directory;
 use chrono_tz::Tz;
 use ora_node_protocol::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, ExecutionId, NodeRuntimeIdentity,
+    OperationId,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -51,12 +55,14 @@ pub struct SessionConfig {
 }
 
 /// State shared by every session execution of one Node.
-pub(crate) struct Shared<L, C, P> {
+pub(crate) struct Shared<L, C, P, R> {
     config: SessionConfig,
     node: NodeRuntimeIdentity,
     ledger: L,
     checkouts: C,
     catalog: P,
+    /// Restores the prior Revision of a resumed session before its agent starts.
+    restorer: R,
     /// Wake handles of the sessions running in this process, by execution.
     live: Mutex<HashMap<ExecutionId, Arc<Notify>>>,
     stopping: tokio::sync::watch::Sender<bool>,
@@ -64,7 +70,7 @@ pub(crate) struct Shared<L, C, P> {
     failed: std::sync::atomic::AtomicBool,
 }
 
-impl<L, C, P> Shared<L, C, P> {
+impl<L, C, P, R> Shared<L, C, P, R> {
     /// Session histories live beside the plugin root in the Node data directory.
     fn sessions_root(&self) -> PathBuf {
         self.config.home_directory.join("sessions")
@@ -89,11 +95,11 @@ impl<L, C, P> Shared<L, C, P> {
 }
 
 /// Runs the Node's Agent session executions.
-pub struct AgentSessions<L, C, P> {
-    shared: Arc<Shared<L, C, P>>,
+pub struct AgentSessions<L, C, P, R> {
+    shared: Arc<Shared<L, C, P, R>>,
 }
 
-impl<L, C, P> Clone for AgentSessions<L, C, P> {
+impl<L, C, P, R> Clone for AgentSessions<L, C, P, R> {
     fn clone(&self) -> Self {
         Self {
             shared: Arc::clone(&self.shared),
@@ -101,20 +107,22 @@ impl<L, C, P> Clone for AgentSessions<L, C, P> {
     }
 }
 
-impl<L, C, P> AgentSessions<L, C, P>
+impl<L, C, P, R> AgentSessions<L, C, P, R>
 where
     L: SessionLedger,
     C: CheckoutResolver,
     P: PluginCatalog,
+    R: PriorRevisionRestore,
 {
-    /// Composes session execution over the ledger, clone bookkeeping and plugin catalog of the
-    /// Node incarnation `node`, which every terminal result reports.
+    /// Composes session execution over the ledger, clone bookkeeping, plugin catalog and prior
+    /// Revision restore of the Node incarnation `node`, which every terminal result reports.
     pub fn new(
         config: SessionConfig,
         node: NodeRuntimeIdentity,
         ledger: L,
         checkouts: C,
         catalog: P,
+        restorer: R,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
@@ -123,6 +131,7 @@ where
                 ledger,
                 checkouts,
                 catalog,
+                restorer,
                 live: Mutex::new(HashMap::new()),
                 stopping: tokio::sync::watch::channel(/*init*/ false).0,
                 finished: Notify::new(),
@@ -132,7 +141,7 @@ where
     }
 }
 
-impl<L, C, P> AgentSessions<L, C, P> {
+impl<L, C, P, R> AgentSessions<L, C, P, R> {
     /// Model-bound sessions require this additional negotiated capability.
     pub(crate) fn model_capable(&self) -> bool {
         self.shared.config.model_proxy.is_some()
@@ -165,15 +174,16 @@ impl<L, C, P> AgentSessions<L, C, P> {
     }
 }
 
-impl<L, C, P> SessionHost for AgentSessions<L, C, P>
+impl<L, C, P, R> SessionHost for AgentSessions<L, C, P, R>
 where
     L: SessionLedger,
     C: CheckoutResolver,
     P: PluginCatalog,
+    R: PriorRevisionRestore,
 {
     /// Spawns the session on the current Tokio runtime; a repeated start of a live execution is
     /// ignored, because its input is persisted once and the running session already owns it.
-    fn start(&self, execution: ExecutionId, spec: AgentSessionSpec) {
+    fn start(&self, operation: OperationId, execution: ExecutionId, spec: AgentSessionSpec) {
         let wake = Arc::new(Notify::new());
         {
             let mut live = self
@@ -192,8 +202,14 @@ where
             committed: false,
         };
         tokio::spawn(async move {
-            completion.committed =
-                driver::run(Arc::clone(&completion.shared), execution, spec, wake).await;
+            completion.committed = driver::run(
+                Arc::clone(&completion.shared),
+                operation,
+                execution,
+                spec,
+                wake,
+            )
+            .await;
             drop(completion);
         });
     }
@@ -239,12 +255,12 @@ where
 }
 
 /// Task cancellation and panic release waiters too; recovery, not a second actor, owns any missing terminal.
-struct Completion<L, C, P> {
-    shared: Arc<Shared<L, C, P>>,
+struct Completion<L, C, P, R> {
+    shared: Arc<Shared<L, C, P, R>>,
     execution: ExecutionId,
     committed: bool,
 }
-impl<L, C, P> Drop for Completion<L, C, P> {
+impl<L, C, P, R> Drop for Completion<L, C, P, R> {
     /// Runtime teardown must never leave the blocking service waiting for an aborted actor.
     fn drop(&mut self) {
         if !self.committed {

@@ -20,6 +20,9 @@ pub enum NodeCapability {
     ModelProxy,
     /// `DeliverRevision` and the upload grant exchange.
     RevisionDelivery,
+    /// Sessions with a prior Revision, restored before the agent starts, and the download grant
+    /// exchange; a delivery of such a session reports an unchanged prior final commit as unchanged.
+    RevisionRestore,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.

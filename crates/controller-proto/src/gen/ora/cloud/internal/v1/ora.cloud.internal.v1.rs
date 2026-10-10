@@ -42,6 +42,19 @@ pub struct UserTurn {
     #[prost(message, repeated, tag="2")]
     pub content: ::prost::alloc::vec::Vec<ContentBlock>,
 }
+/// The Revision a new run of the same Issue resumes from (IssueRun resume decision D1). On a session
+/// spec it names the verified object holding the bundle, which may belong to an earlier Revision the
+/// resumed one reused; on a delivery spec it carries only the identity and final commit.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PriorRevision {
+    #[prost(string, tag="1")]
+    pub revision_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub final_commit: ::prost::alloc::string::String,
+    /// Set on AgentSessionSpec only. The download grant covers exactly this object key.
+    #[prost(message, optional, tag="3")]
+    pub bundle: ::core::option::Option<StoredObject>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AgentSessionSpec {
     /// Canonical Plugin ID and exact version of the agent plugin installed in the Workspace.
@@ -57,9 +70,14 @@ pub struct AgentSessionSpec {
     /// The prompt Cloud rendered from the Issue; later turns arrive as Thread commands.
     #[prost(message, optional, tag="5")]
     pub initial_turn: ::core::option::Option<UserTurn>,
+    /// Set when the run resumes an earlier Revision of its Issue. The Node restores it into the checkout
+    /// before starting the agent and needs a Node capable of restore; if restore fails the session ends
+    /// AGENT_FAILED with detail `prior_revision_unavailable` or `prior_revision_base_unavailable`.
+    #[prost(message, optional, tag="6")]
+    pub prior_revision: ::core::option::Option<PriorRevision>,
     /// Opaque personal-model snapshot reference. Empty for agents that do not use model-gateway.
     /// No provider credential or temporary access token crosses this contract.
-    #[prost(string, tag="6")]
+    #[prost(string, tag="7")]
     pub model_binding_id: ::prost::alloc::string::String,
 }
 /// The only terminal result of a session execution. It is taken over only after every Thread event
@@ -90,6 +108,10 @@ pub struct DeliverRevisionSpec {
     pub bundle_key: ::prost::alloc::string::String,
     #[prost(string, tag="6")]
     pub history_key: ::prost::alloc::string::String,
+    /// The session's resumed Revision, without bundle. A final commit equal to its final commit is
+    /// reported as RevisionUnchanged.
+    #[prost(message, optional, tag="7")]
+    pub prior_revision: ::core::option::Option<PriorRevision>,
 }
 /// An object the Node uploaded, as the Node measured it; Cloud verifies it before registering.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -115,7 +137,8 @@ pub struct RevisionDelivered {
     #[prost(message, optional, tag="5")]
     pub history: ::core::option::Option<StoredObject>,
 }
-/// The final commit equals the base commit: no bundle, only the session history.
+/// The final commit equals the base commit, or the delivery spec's prior_revision final commit (a
+/// resumed run that added nothing): no bundle, only the session history.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevisionUnchanged {
     #[prost(string, tag="1")]
@@ -147,6 +170,23 @@ pub struct UploadGrant {
     /// A checksum-bound grant includes `x-amz-checksum-sha256`; legacy uploaders add that digest.
     /// On 412, preserve the existing object and submit the declaration for Cloud verification;
     /// neither the uploader nor Controller may treat 412 alone as proof that its bytes match.
+    #[prost(map="string, string", tag="4")]
+    pub headers: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    #[prost(message, optional, tag="5")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// A presigned single-object read of a prior Revision's bundle. Like UploadGrant it is a short-lived
+/// bearer credential kept in memory only and never logged.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DownloadGrant {
+    #[prost(string, tag="1")]
+    pub object_key: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub url: ::prost::alloc::string::String,
+    /// Always GET.
+    #[prost(string, tag="3")]
+    pub method: ::prost::alloc::string::String,
+    /// Headers the download must carry unchanged.
     #[prost(map="string, string", tag="4")]
     pub headers: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(message, optional, tag="5")]
@@ -801,6 +841,20 @@ pub struct GrantRevisionUploadResponse {
     /// One grant per requested checksum key, or both input keys for legacy requests.
     #[prost(message, repeated, tag="1")]
     pub grants: ::prost::alloc::vec::Vec<UploadGrant>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GrantRevisionDownloadRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+    /// A session execution registered through RecordDispatch whose input carries prior_revision.
+    #[prost(string, tag="2")]
+    pub execution_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GrantRevisionDownloadResponse {
+    /// Exactly one grant, for the input's prior_revision bundle key.
+    #[prost(message, repeated, tag="1")]
+    pub grants: ::prost::alloc::vec::Vec<DownloadGrant>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

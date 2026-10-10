@@ -18,12 +18,13 @@ session execution only through the interfaces below.
 
 ## Interfaces
 
-| Trait              | Provided by       | What session execution uses it for                                                                                        |
-| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `SessionLedger`    | Node ledger       | Append Thread events, write the terminal result, read queued commands (all of them, in acceptance order), settle commands |
-| `CheckoutResolver` | Clone bookkeeping | Resolve a clone execution ID to its checkout; a session never composes the path itself                                    |
-| `PluginCatalog`    | Plugin installer  | Take a use lease; look up the directory of an exact installed version                                                     |
-| `SessionHost`      | Session execution | Implemented by `AgentSessions`: `start`, `command_arrived`, `recover_interrupted`, `sealed_history`                       |
+| Trait                  | Provided by       | What session execution uses it for                                                                                        |
+| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SessionLedger`        | Node ledger       | Append Thread events, write the terminal result, read queued commands (all of them, in acceptance order), settle commands |
+| `CheckoutResolver`     | Clone bookkeeping | Resolve a clone execution ID to its checkout; a session never composes the path itself                                    |
+| `PluginCatalog`        | Plugin installer  | Take a use lease; look up the directory of an exact installed version                                                     |
+| `PriorRevisionRestore` | Revision restore  | Restore the prior Revision a resumed session names into its checkout before the agent starts                              |
+| `SessionHost`          | Session execution | Implemented by `AgentSessions`: `start`, `command_arrived`, `recover_interrupted`, `sealed_history`                       |
 
 `queued_commands` returns the whole queue rather than its head: while a turn
 runs, an `EndSession` accepted behind queued user turns must be visible so the
@@ -92,22 +93,28 @@ prepare ends the session as `agent_failed{agent_start_failed}`.
    version's directory or is not an agent, the session ends as
    `agent_failed{agent_plugin_unavailable}` with no plugin process ever started.
    The lease is held until the plugin's whole process tree has exited.
-3. It waits for the agent connection to be ready (bounded; a timeout or a
+3. When the input names a `prior_revision`, the session restores it into the checkout before the
+   checkout is handed to the workload user and before any plugin starts (see
+   [Revision delivery](revision-delivery.md#resuming-a-prior-revision)). A failed restore ends the
+   session as `agent_failed{prior_revision_unavailable}` or
+   `agent_failed{prior_revision_base_unavailable}` with no plugin process ever started; a restore
+   onto rewritten remote history appends one fixed English note to `initial_turn`.
+4. It waits for the agent connection to be ready (bounded; a timeout or a
    supervisor that gives up ends as `agent_failed{agent_unavailable}`), creates
    the session with the execution ID as its Ora Session ID
    (`agent_failed{agent_start_failed}` on failure), and sends `initial_turn`.
-4. Every history line settled while a turn runs becomes a Thread event carrying
+5. Every history line settled while a turn runs becomes a Thread event carrying
    that turn's `turn_id`; the user message also carries the same identity in the
    JSONL as its ACP `messageId`. A record over 256 KiB keeps only `at`, `seq`,
    and `type` in the Thread and is marked `truncated`; the JSONL keeps the
    original.
-5. `command_arrived` wakes the session to read its queue. A `SubmitUserTurn`
+6. `command_arrived` wakes the session to read its queue. A `SubmitUserTurn`
    runs after the current turn, in acceptance order, and is settled `executed`
    when it starts; repeated wakes never run it twice. An `EndSession` settles
    the user turns accepted before it as `discarded`, stops the session
    (cancelling a running turn and recording `TurnEnded{cancelled}`, with
    `session/close` when supported), then settles itself `executed`.
-6. At the end the session stops, releases its runtime (whose connection
+7. At the end the session stops, releases its runtime (whose connection
    supervisor then stops reconnecting), stops the plugin and waits for its whole
    tree to exit, releases the lease, settles any still-queued command as
    `discarded`, writes the terminal result, and then forgets the live session.

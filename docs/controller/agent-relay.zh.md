@@ -3,7 +3,7 @@
 [English](agent-relay.md) | 中文
 
 Cloud 模式下，`ora-controller` 在 Cloud 与 Workspace 的 Node 之间转交 Agent 会话执行、命令、Revision
-交付及其上传授权。IssueRun 阶段与持久回执由 Cloud 所有；Controller 只维护连接内的队列。SQLite 本地模式
+交付及其上传授权，以及续接会话的下载授权。IssueRun 阶段与持久回执由 Cloud 所有；Controller 只维护连接内的队列。SQLite 本地模式
 仍只承担 clone。
 
 ## 派发与权限
@@ -45,6 +45,21 @@ envelope 直到收到 ACK。Controller 自己从不写 `RevisionFailed`，也不
 授权只在转交途中存在于内存，不持久化、不写日志，消息帧也不会被格式化进诊断信息。进程内存只保留摘要，
 摘要不是凭据。
 
+## 续接会话与下载授权
+
+输入带 `prior_revision` 的会话续接该 Issue 最近的 Revision（恢复契约
+`cloud/controller-integration/20261010-revision-restore-contract`）。前序 Revision 映射进 Node 会话 spec 时带
+bundle 对象（不带则拒绝该输入），映射进交付 spec 时不带（带则拒绝）。这样的会话只在目标 Node 当前握手同时声明
+`revision_restore` 时登记；否则与其他能力缺失一样留在 Cloud 队列中，不会在不能恢复的 Node 上以全新 clone 运行。
+交付的 unchanged 结果在最终提交等于基础提交或输入中前序最终提交时被接受。
+
+Node 在恢复等待期间发送 `DownloadGrantNeeded`，每次新连接时再次发送；Controller 只在此时调用
+`GrantRevisionDownload`，不跨连接保留任何东西。同一执行的重复请求合并。返回的授权以 `DownloadGrant{granted}`
+转交，头与过期时间原样保留，且只接受对该会话自己 bundle 键的 `GET`。`NOT_FOUND` 与 `ABORTED`（`CONFLICT`：
+会话已有结果、运行已停止或输入不含 bundle）以 `DownloadGrant{refused}` 转告 Node，使其恢复失败；Cloud 不可用、
+回复丢失或租约过期（`FAILED_PRECONDITION`）时保留请求并重试，因此故障本身不会让恢复失败。下载授权与上传授权一样
+不持久化、不写日志。
+
 ## 事件与恢复
 
 每个执行拥有独立的有序接管任务。一批最多 64 条，从第一条起最多等待 100 ms；编码载荷累计约 1 MiB 时
@@ -68,11 +83,12 @@ Controller 重启后重新领取 Cloud 中未确认的队首命令，Node 按 ID
 
 ## 验证与剩余工作
 
-`cargo test -p ora-controller --lib --tests` 包含 `tests/workspaces/agents.rs` 与
-`tests/workspaces/deliveries.rs` 中的测试：使用真实生成的 gRPC 与 WebSocket 接口，Cloud 和 Node 采用
+`cargo test -p ora-controller --lib --tests` 包含 `tests/workspaces/agents.rs`、
+`tests/workspaces/deliveries.rs` 与 `tests/workspaces/restores.rs` 中的测试：使用真实生成的 gRPC 与 WebSocket 接口，Cloud 和 Node 采用
 内存替身，覆盖有序接管、慢执行隔离、不可用／冲突／回复丢失恢复、Controller 重启、命令重试／顺序／拒绝、
 能力门槛、大记录分批、quiesce 责任、受许可约束的交付派发、头原样保留的摘要绑定授权转交、重连刷新授权、
-授权被拒、提交后 ACK，以及日志中不出现授权 URL 与签名。这些测试不证明真实 PostgreSQL、对象存储、
+授权被拒、提交后 ACK、续接会话的 `revision_restore` 门槛、下载授权转交、拒绝与故障重试、重连后重新申请，以及
+日志中不出现授权 URL 与签名。这些测试不证明真实 PostgreSQL、对象存储、
 生产 Node 或浏览器 Thread 联调完成。
 
 Controller session ADR 仍为 `proposed`。本次提供可评审的实现行为，不代表设计已获批准，也不更新已批准

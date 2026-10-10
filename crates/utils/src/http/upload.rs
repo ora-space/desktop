@@ -77,14 +77,7 @@ impl ReqwestUploader {
         }
         let method = reqwest::Method::from_bytes(upload.method.as_bytes())
             .map_err(|_| UploadError::InvalidRequest("method"))?;
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (name, value) in upload.headers {
-            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| UploadError::InvalidRequest("header name"))?;
-            let value = reqwest::header::HeaderValue::from_str(value)
-                .map_err(|_| UploadError::InvalidRequest("header value"))?;
-            headers.append(name, value);
-        }
+        let mut headers = signed_headers(upload.headers).map_err(UploadError::InvalidRequest)?;
         let io_error = |source| UploadError::Io {
             path: upload.file.to_path_buf(),
             source,
@@ -96,7 +89,16 @@ impl ReqwestUploader {
         if !headers.contains_key(reqwest::header::CONTENT_LENGTH) {
             headers.insert(reqwest::header::CONTENT_LENGTH, length.into());
         }
-        let client = self.client(&url, options)?;
+        let client = signed_client(
+            &self.proxy_config,
+            &url,
+            options.connect_timeout,
+            options.total_timeout,
+        )
+        .map_err(|error| match error {
+            SignedClientError::Proxy => UploadError::InvalidRequest("proxy"),
+            SignedClientError::Build(message) => UploadError::Network(message),
+        })?;
         let request = client
             .request(method, url)
             .headers(headers)
@@ -113,23 +115,50 @@ impl ReqwestUploader {
             })?;
         Ok(response.status().as_u16())
     }
+}
 
-    /// Builds a client that keeps the signed request on its origin and honors proxy settings.
-    fn client(&self, url: &Url, options: UploadOptions) -> Result<reqwest::Client, UploadError> {
-        let tls = platform_tls_config(&[]).map_err(UploadError::Network)?;
-        let mut builder = reqwest::Client::builder()
-            .use_preconfigured_tls(tls)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(options.connect_timeout)
-            .timeout(options.total_timeout);
-        if let Some(proxy) = resolve_proxy(url, &self.proxy_config) {
-            builder = builder
-                .proxy(proxy_reqwest(proxy).map_err(|_| UploadError::InvalidRequest("proxy"))?);
-        }
-        builder
-            .build()
-            .map_err(|error| UploadError::Network(flatten_reqwest_error(&error.without_url())))
+/// Converts signed headers exactly as given; the error names which part was invalid.
+pub(super) fn signed_headers(
+    headers: &BTreeMap<String, String>,
+) -> Result<reqwest::header::HeaderMap, &'static str> {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        let name =
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| "header name")?;
+        let value = reqwest::header::HeaderValue::from_str(value).map_err(|_| "header value")?;
+        map.append(name, value);
     }
+    Ok(map)
+}
+
+/// Why a client for a signed request could not be built.
+pub(super) enum SignedClientError {
+    /// The configured proxy could not be applied.
+    Proxy,
+    /// TLS or client construction failed; the message never names the request URL.
+    Build(String),
+}
+
+/// Builds a client that keeps a signed request on its origin and honors proxy settings. Shared by
+/// presigned uploads and downloads, which follow the same bearer-credential rules.
+pub(super) fn signed_client(
+    proxy_config: &ProxyConfig,
+    url: &Url,
+    connect_timeout: Duration,
+    total_timeout: Duration,
+) -> Result<reqwest::Client, SignedClientError> {
+    let tls = platform_tls_config(&[]).map_err(SignedClientError::Build)?;
+    let mut builder = reqwest::Client::builder()
+        .use_preconfigured_tls(tls)
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(connect_timeout)
+        .timeout(total_timeout);
+    if let Some(proxy) = resolve_proxy(url, proxy_config) {
+        builder = builder.proxy(proxy_reqwest(proxy).map_err(|_| SignedClientError::Proxy)?);
+    }
+    builder
+        .build()
+        .map_err(|error| SignedClientError::Build(flatten_reqwest_error(&error.without_url())))
 }
 
 #[cfg(test)]

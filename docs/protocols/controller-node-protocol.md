@@ -75,7 +75,7 @@ the status reporter must match the result's persistent NodeId but may have a new
 Queries carry no event sequence and never acknowledge the retained event.
 
 `HelloAccepted` accepts any combination of `repository_clone`, `worktree_execution`, `plugin_install`,
-`agent_session` and `revision_delivery`, without duplicates.
+`agent_session`, `revision_delivery` and `revision_restore`, without duplicates.
 The set must be nonempty. This only validates a declaration: session owners must still match the
 selected Node's capability before dispatch. No unsupported capability is advertised by the existing runtime.
 
@@ -88,11 +88,12 @@ and both runtimes refuse their messages as unsupported. The Node's
 [session execution](../node/agent-session.md) exists behind its ledger interfaces but is not yet
 wired to these messages.
 
-| Capability          | Controller → Node                                        | Node → Controller                                                                                          |
-| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `plugin_install`    | `install_plugins`, `remove_plugins`                      | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
-| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
-| `revision_delivery` | `deliver_revision`, `upload_grant`                       | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
+| Capability          | Controller → Node                                             | Node → Controller                                                                                          |
+| ------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`, `remove_plugins`                           | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
+| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session`      | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
+| `revision_delivery` | `deliver_revision`, `upload_grant`                            | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
+| `revision_restore`  | `start_agent_session` with `prior_revision`, `download_grant` | `download_grant_needed`                                                                                    |
 
 - Plugin inputs name each canonical `<namespace>/<identifier>` once, with either one universal HTTP(S)
   download or distinct per-target downloads, each with a lowercase SHA-256. Item failures are reported
@@ -105,8 +106,18 @@ wired to these messages.
 - `submit_user_turn` and `end_session` carry a `command_id`; their replies carry no sequence and need no
   acknowledgement, and a lost reply is recovered by resending the command.
 - A delivery names the ended session, the clone, the base commit, a ref under `refs/ora/revisions/`, and
-  two distinct normalized object keys. `revision_unchanged` requires the final commit to equal the base;
-  `revision_delivered` requires it to differ.
+  two distinct normalized object keys. `revision_delivered` requires the final commit to differ from the
+  base. `revision_unchanged` validates only its commits on the wire: its final commit equals the base or,
+  when the delivery input carries `prior_revision`, that prior final commit, which the receiver (Node
+  ledger, Controller) checks against the input.
+- A session may carry `prior_revision{revision_id, final_commit, bundle{key, size, sha256}}`, the Revision
+  it resumes; only a Node advertising `revision_restore` receives one. A delivery may carry
+  `prior_revision{revision_id, final_commit}` without a bundle. A restore failure ends the session as
+  `agent_session_ended{agent_failed}` with `prior_revision_unavailable` or
+  `prior_revision_base_unavailable`.
+- `download_grant_needed` (Node, names only its Node) and `download_grant` (`granted` with presigned
+  `GET` grants, or `refused`) are memory-only like the upload pair; the Node repeats its request on
+  every new connection.
 - `upload_grant` and `upload_grant_needed` are memory-only: no sequence, no acknowledgement, never
   persisted or logged. `PresignedUrl` redacts itself in `Debug`. `upload_grant_needed` names every
   object still to upload with its frozen SHA-256; the Node's side is described in

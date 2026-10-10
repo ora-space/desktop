@@ -1,5 +1,10 @@
 //! Production composition and durable admission of Agent sessions.
 use super::{AgentConfig, ServiceConfig};
+use crate::managed::CloneHost;
+use crate::revision::{
+    DeliveryGit, DownloadGrants, HttpDownloader, RESTORE_ROOT, RestorePolicy, RevisionRestorer,
+    purge_restores,
+};
 use crate::{
     AgentSessions, DirectoryPluginCatalog, ManagedNode, ProcessConfig, SessionConfig,
     SessionHost as _, SessionWorkload,
@@ -7,13 +12,53 @@ use crate::{
 use ora_node_db::{CommandAdmission, SessionCommandInput, SessionJournal};
 use ora_node_protocol::*;
 use ora_process::ProcessIdentity;
+use ora_utils::http::{FetchOptions, ProxyConfig, ReqwestFetcher};
 use ora_utils::path::{TrustedPathKind, canonicalize_longest_existing_prefix, open_trusted_path};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::time::Duration;
 
-pub(super) type SessionHost = AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog>;
+/// Restores prior Revisions with delivery's Git and the presigned downloader.
+pub(super) type Restorer = RevisionRestorer<CloneHost, HttpDownloader>;
+
+pub(super) type SessionHost =
+    AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog, Option<Restorer>>;
+
+/// Bounds one bundle request; the restore deadline bounds the whole download anyway.
+const FETCH_OPTIONS: FetchOptions = FetchOptions {
+    connect_timeout: Duration::from_secs(/*secs*/ 30),
+    total_timeout: Duration::from_secs(/*secs*/ 5 * 60),
+};
+
+/// Clears what restores of a previous process left, then composes restore when this Node can run
+/// both sessions and delivery Git: restore runs Git in the checkouts clone created, with
+/// delivery's policy, so without clone configuration there is nothing to restore into.
+pub(super) fn restorer(
+    node: &ManagedNode,
+    agent: Option<&AgentConfig>,
+    downloads: DownloadGrants,
+) -> Result<Option<Restorer>, crate::Error> {
+    let root = node.home_directory().join(RESTORE_ROOT);
+    purge_restores(&root).map_err(ora_node_db::Error::from)?;
+    let (Some(_), Some(policy)) = (agent, node.delivery_git_policy()?) else {
+        return Ok(None);
+    };
+    let runner = node
+        .git
+        .runner()
+        .detached_clone_host()
+        .map_err(ora_node_db::Error::from)?;
+    Ok(Some(RevisionRestorer::new(
+        DeliveryGit::new(runner, policy),
+        HttpDownloader::new(ReqwestFetcher::new(ProxyConfig::default()), FETCH_OPTIONS),
+        downloads,
+        node.node_id().clone(),
+        root,
+        node.git.runner().process_config().workload_uid,
+        RestorePolicy::DEFAULT,
+    )))
+}
 
 /// Checks the Agent configuration before anything starts.
 ///
@@ -105,6 +150,7 @@ pub(super) fn open(
     workload: SessionWorkload,
     timezone: &str,
     catalog: DirectoryPluginCatalog,
+    restorer: Option<Restorer>,
 ) -> Result<Option<SessionHost>, crate::Error> {
     let journal = node.database.session_journal()?;
     let host = config
@@ -125,6 +171,7 @@ pub(super) fn open(
                 journal.clone(),
                 journal.clone(),
                 catalog,
+                restorer,
             ))
         })
         .transpose()?;
@@ -178,7 +225,11 @@ pub(super) fn start(
             .database
             .start_session(input, &node.identity().incarnation_id.clone())?
         {
-            host.start(input.execution_id.clone(), input.payload.spec.clone());
+            host.start(
+                input.operation_id.clone(),
+                input.execution_id.clone(),
+                input.payload.spec.clone(),
+            );
         } else {
             node.database.session_journal()?.end_session(
                 &input.execution_id,

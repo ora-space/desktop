@@ -97,30 +97,10 @@ fn deliver(base: &CommitId) -> DeliverRevisionMessage {
                 revision_ref: RevisionRef::new("refs/ora/revisions/e2e"),
                 bundle_key: ObjectKey::new(BUNDLE_KEY),
                 history_key: ObjectKey::new(HISTORY_KEY),
+                prior_revision: None,
             },
         },
     }
-}
-
-/// Reads the clone the session fixture ran in from the Node's own status answer.
-fn checkout(fixture: &Fixture) -> CloneReady {
-    let node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
-    let status = node
-        .status(&GetExecutionStatusMessage {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            operation_id: OperationId::new("clone-op-agent"),
-            execution_id: ExecutionId::new("clone-exec-agent"),
-            payload: GetExecutionStatus {
-                node_id: NodeId::new("test-node"),
-            },
-        })
-        .unwrap();
-    let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(ready))) =
-        status.payload.state
-    else {
-        panic!("the fixture clone is ready");
-    };
-    ready
 }
 
 /// An ended session's uncommitted file is delivered as a bundle plus the sealed history, using

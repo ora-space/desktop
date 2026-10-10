@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/resume.rs"]
+mod resume;
 #[path = "agent_session/support.rs"]
 mod support;
 
@@ -472,7 +474,7 @@ fn user_messages(fixture: &Fixture) -> Vec<(String, String)> {
 }
 
 /// Reads a string at `path` in a record, empty when absent.
-fn field(record: &serde_json::Map<String, Value>, path: &[&str]) -> String {
+pub(crate) fn field(record: &serde_json::Map<String, Value>, path: &[&str]) -> String {
     let mut value = record.get(path[0]);
     for key in &path[1..] {
         value = value.and_then(|value| value.get(key));

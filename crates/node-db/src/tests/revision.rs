@@ -22,6 +22,7 @@ fn deliver() -> DeliverRevisionMessage {
                 revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
                 bundle_key: ObjectKey::new("runs/1/revision.bundle"),
                 history_key: ObjectKey::new("runs/1/history.jsonl"),
+                prior_revision: None,
             },
         },
     }
@@ -198,6 +199,74 @@ fn freezing_requires_the_inputs_keys_ref_and_base() {
     )
     .unwrap();
     assert_eq!(db.recoverable_deliveries().unwrap(), vec![]);
+}
+
+/// An unchanged plan may stop at the base or, for a resumed session, at the prior Revision's final
+/// commit; any other commit would register work that no bundle carries.
+#[test]
+fn unchanged_plans_stop_at_the_base_or_the_prior_final_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = open(&dir.path().join("db"));
+    let unchanged = |final_commit: &str| {
+        let spec = deliver().payload.spec;
+        DeliveryPlan {
+            directory: "frozen".into(),
+            outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
+                node: node(),
+                final_commit: CommitId::new(final_commit),
+                base_commit: spec.base_commit,
+                revision_ref: spec.revision_ref,
+                history: StoredObject {
+                    key: spec.history_key,
+                    size: 0,
+                    sha256: Sha256Digest::new(DIGEST),
+                },
+            }),
+        }
+    };
+    let fresh = deliver();
+    db.accept_delivery(&fresh).unwrap();
+    assert!(matches!(
+        db.freeze_delivery(&fresh.execution_id, &unchanged(FINAL)),
+        Err(Error::IdentityConflict)
+    ));
+    db.freeze_delivery(&fresh.execution_id, &unchanged(BASE))
+        .unwrap();
+
+    let mut resumed = deliver();
+    resumed.operation_id = OperationId::new("resumed-op");
+    resumed.execution_id = ExecutionId::new("resumed-execution");
+    resumed.payload.spec.prior_revision = Some(PriorRevisionCommit {
+        revision_id: RevisionId::new("revision-1"),
+        final_commit: CommitId::new(FINAL),
+    });
+    db.accept_delivery(&resumed).unwrap();
+    let other = "fedcba9876543210fedcba9876543210fedcba98";
+    assert!(matches!(
+        db.freeze_delivery(&resumed.execution_id, &unchanged(other)),
+        Err(Error::IdentityConflict)
+    ));
+    db.freeze_delivery(&resumed.execution_id, &unchanged(FINAL))
+        .unwrap();
+    let frozen: Vec<_> = db
+        .recoverable_deliveries()
+        .unwrap()
+        .into_iter()
+        .map(|record| (record.command.execution_id, record.progress))
+        .collect();
+    assert_eq!(
+        frozen,
+        vec![
+            (
+                fresh.execution_id,
+                DeliveryProgress::Frozen(unchanged(BASE))
+            ),
+            (
+                resumed.execution_id,
+                DeliveryProgress::Frozen(unchanged(FINAL))
+            ),
+        ]
+    );
 }
 
 /// Session recovery ignores deliveries, and a delivery resolves its session and checkout only

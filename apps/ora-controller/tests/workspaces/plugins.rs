@@ -27,6 +27,9 @@ pub(super) fn capabilities(node: &Node) -> Vec<NodeCapability> {
     if node.deliveries.enabled.load(Ordering::SeqCst) {
         capabilities.push(NodeCapability::RevisionDelivery);
     }
+    if node.restores.enabled.load(Ordering::SeqCst) {
+        capabilities.push(NodeCapability::RevisionRestore);
+    }
     capabilities
 }
 
