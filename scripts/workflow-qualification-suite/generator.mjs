@@ -1,8 +1,11 @@
 import { layoutWorkflowGraph as layoutGraph } from "./graph-layout.mjs";
+import { generateSuperLongWorkflows } from "./super-long.mjs";
 export { layoutGraph };
 
 // scripts/workflow-qualification-suite/generator.mjs
-// Generates 101 Ora workflow definitions checked against the execution graph contract.
+// Generates the Ora workflow definitions checked against the execution graph contract:
+// 100 scenario workflows (W01-W100), one ultra endurance stress workflow (W101), and the
+// super-long batch (W102-W112) from ./super-long.mjs.
 // Every workflow is guaranteed to include:
 // 1. Condition (条件分支)
 // 2. Variable Aggregator (变量聚合节点)
@@ -14,7 +17,7 @@ const AGENT_CLI = "official/ora-space.opencode";
 const MODEL_ID = "bluezone/zhipu/glm-5.3";
 
 /** Creates complete authored Agent settings; layout repair must never synthesize them. */
-function agentConfiguration(prompt) {
+export function agentConfiguration(prompt) {
   return {
     schemaVersion: 3,
     executor: { agentCli: AGENT_CLI, modelId: MODEL_ID },
@@ -41,6 +44,13 @@ export function generateAllWorkflows() {
   const stress = generateStressWorkflow();
   stress.graph = layoutGraph(stress.graph);
   workflows.push(stress);
+
+  // Generate the super-long batch (W102 to W112): eleven long-running endurance workflows
+  // for batch long-run qualification. Each keeps the four required control kinds.
+  for (const workflow of generateSuperLongWorkflows()) {
+    workflow.graph = layoutGraph(workflow.graph);
+    workflows.push(workflow);
+  }
 
   return workflows;
 }
@@ -150,9 +160,9 @@ function generateScenarioWorkflow(index) {
     else if (index === 22) items = ["item-1", "item-2"];
     else if (index === 23) items = ["req-a", "req-b", "req-c"];
     else if (index === 24) items = ["step-1", "step-2", "step-3", "step-4"];
-    else if (index === 25)
+    else if (index === 25) {
       items = []; // empty array
-    else if (index === 26) items = ["alpha", "beta", "gamma"];
+    } else if (index === 26) items = ["alpha", "beta", "gamma"];
     else if (index === 27) items = ["x1", "x2"];
     else if (index === 28) items = ["unit-test-1", "unit-test-2"];
     else if (index === 29) items = ["index-probe-1", "index-probe-2"];
@@ -271,7 +281,9 @@ function generateScenarioWorkflow(index) {
       .slice(0, -1)
       .map(
         (state, round) =>
-          `If the state is ${JSON.stringify(state)}, reply ${JSON.stringify(loopStates[round + 1])}.`,
+          `If the state is ${JSON.stringify(state)}, reply ${JSON.stringify(
+            loopStates[round + 1],
+          )}.`,
       ),
   ].join(" ");
 

@@ -23,7 +23,10 @@ This module adapts workflow-run application use cases to the production backend 
   boundaries include explicit blank lines because Agent providers may concatenate ACP blocks
   without adding separators.
 - `interactive/` coordinates human turns and manual completion for interactive nodes.
-- `recovery.rs` runs the graph-aware boot sweep: interrupted rows inside a still-`Running`
+- `recovery.rs` runs the graph-aware boot sweep. Desktop calls it only after acquiring
+  the data-directory instance lock, which the operating system releases when the previous
+  process exits or crashes; a second live process does not open the database and therefore
+  does not sweep. Interrupted rows inside a still-`Running`
   iteration region fail as `interrupted_by_restart` while the composite row and its run survive,
   so the runtime settles the interrupted round as a failed ledger entry on the next advance
   (ADR "iteration composite runtime" D2); anything else keeps the pre-composite whole-run

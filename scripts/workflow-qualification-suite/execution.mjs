@@ -45,7 +45,9 @@ export async function runScenario(
   const {
     now = Date.now,
     sleep = defaultSleep,
-    timeoutMs = 180_000,
+    // 300 s keeps genuine model slowness distinguishable from an engine stall; the
+    // qualification bar still requires every scenario to finish well inside this ceiling.
+    timeoutMs = 300_000,
     pollIntervalMs = 1_000,
     cancelTimeoutMs = 30_000,
     signal,
@@ -55,8 +57,9 @@ export async function runScenario(
     pollIntervalMs,
     cancelTimeoutMs,
   })) {
-    if (!Number.isFinite(value) || value <= 0)
+    if (!Number.isFinite(value) || value <= 0) {
       throw new Error(`${name} must be positive.`);
+    }
   }
 
   const startTime = now();
@@ -129,12 +132,15 @@ export async function runScenario(
         timeoutMs: cancelTimeoutMs,
         pollIntervalMs,
       });
-      if (!terminalStatuses.has(settled.status))
+      if (!terminalStatuses.has(settled.status)) {
         throw new Error(`Cancellation did not settle run ${runId}.`);
+      }
       mayBeActive = false;
     } catch (failure) {
       cleanupErrors.push(
-        `Cancel ${runId}: ${failure instanceof Error ? failure.message : String(failure)}`,
+        `Cancel ${runId}: ${
+          failure instanceof Error ? failure.message : String(failure)
+        }`,
       );
     }
   }
@@ -145,7 +151,9 @@ export async function runScenario(
         await session.invoke("delete_workflow_run", { runId });
       } catch (failure) {
         cleanupErrors.push(
-          `Delete ${runId}: ${failure instanceof Error ? failure.message : String(failure)}`,
+          `Delete ${runId}: ${
+            failure instanceof Error ? failure.message : String(failure)
+          }`,
         );
       }
     }
@@ -154,7 +162,9 @@ export async function runScenario(
         await session.invoke("delete_workflow", { workflowId });
       } catch (failure) {
         cleanupErrors.push(
-          `Delete ${workflowId}: ${failure instanceof Error ? failure.message : String(failure)}`,
+          `Delete ${workflowId}: ${
+            failure instanceof Error ? failure.message : String(failure)
+          }`,
         );
       }
     }
@@ -214,5 +224,36 @@ export async function runEnduranceStress(
     meetsDuration,
     meetsNodeCount,
     qualified: result.qualified && meetsDuration && meetsNodeCount,
+  };
+}
+
+/**
+ * Qualifies one super-long workflow from the W102-W112 batch. The class bars keep the
+ * original stress vocabulary (>= 15 nodes, >= 10 deep nodes) and add a >= 15 minute
+ * measured duration so a super-long run cannot be a fast graph in disguise.
+ */
+export async function runSuperLong(
+  session,
+  workflow,
+  workspaceId,
+  options = {},
+) {
+  const result = await runScenario(session, workflow, workspaceId, {
+    timeoutMs: 100 * 60 * 1_000,
+    pollIntervalMs: 5_000,
+    ...options,
+  });
+  const meetsDuration = result.executionDurationMs >= 15 * 60 * 1_000;
+  const meetsNodeCount = result.definitionNodeCount >= 15;
+  const meetsDeepNodes = (workflow.deepNodeCount ?? 0) >= 10;
+  return {
+    ...result,
+    durationMinutes: (result.executionDurationMs / 60_000).toFixed(2),
+    deepNodeCount: workflow.deepNodeCount ?? null,
+    meetsDuration,
+    meetsNodeCount,
+    meetsDeepNodes,
+    qualified:
+      result.qualified && meetsDuration && meetsNodeCount && meetsDeepNodes,
   };
 }

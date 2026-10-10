@@ -1,6 +1,6 @@
 //! Pure round decisions, computed before a persistence adapter commits any advancement.
 
-use super::condition::{ConditionError, ELSE_BRANCH_ID, evaluate_condition};
+use super::condition::{ConditionConfig, ConditionError, ELSE_BRANCH_ID, evaluate_condition};
 use super::graph::WorkflowGraph;
 use super::loop_config::{LoopConfig, LoopInitialValue};
 use super::variable_pool::{VariableSelector, WorkflowVariablePool, WorkflowVariablePoolError};
@@ -46,8 +46,16 @@ pub enum LoopRoundError {
     InvalidCarriedVariables,
     #[error("invalid Loop round {round}; expected 1 through {max_iterations}")]
     InvalidRound { round: u32, max_iterations: u32 },
-    #[error("Loop did not terminate within {max_iterations} rounds")]
-    LimitReached { max_iterations: u32 },
+    /// `observed` is a short reading of the until-condition inputs from the last round.
+    /// The match itself stays exact; the text only tells a person whether the model
+    /// missed the token or the loop logic never became true. The run inspector shows
+    /// this failure line, and those inputs are already stored on the round, so the
+    /// reading stays here instead of a second diagnostic channel.
+    #[error("Loop did not terminate within {max_iterations} rounds; last observed {observed}")]
+    LimitReached {
+        max_iterations: u32,
+        observed: String,
+    },
     #[error("Loop variable {name} does not match declared type {value_type}")]
     TypeMismatch { name: String, value_type: String },
     #[error("Loop selector has no value in this round: {selector}")]
@@ -194,9 +202,63 @@ impl LoopConfig {
         if round == self.max_iterations {
             return Err(LoopRoundError::LimitReached {
                 max_iterations: self.max_iterations,
+                observed: observed_until_summary(&self.until, completed),
             });
         }
         Ok(LoopRoundDecision::Continue { carried })
+    }
+}
+
+/// One line a person can read on the failed run. Full model replies are not stored here.
+const OBSERVED_VALUE_LIMIT: usize = 160;
+
+/// Reads every until-condition input from the round that just failed the cap.
+fn observed_until_summary(until: &ConditionConfig, pool: &WorkflowVariablePool) -> String {
+    let mut parts = Vec::new();
+    for case in &until.cases {
+        for rule in &case.conditions {
+            let label = selector_label(&rule.variable_selector);
+            let shown = match pool.resolve(&rule.variable_selector) {
+                Ok(Some(value)) => summarize_observed_value(value),
+                Ok(None) => "unset".to_string(),
+                Err(_) => "unavailable".to_string(),
+            };
+            parts.push(format!("{label}={shown}"));
+        }
+    }
+    if parts.is_empty() {
+        "no until comparison".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// `{node.root}` plus any nested object path the condition actually compared.
+fn selector_label(selector: &super::variable_pool::VariableSelector) -> String {
+    let mut label = selector.qualified();
+    for segment in &selector.nested {
+        label.push('.');
+        label.push_str(segment);
+    }
+    label
+}
+
+/// Collapses whitespace and keeps the error line short enough to show in the run inspector.
+///
+/// One pass over the scalar values: counting a whole model reply and then copying
+/// the prefix would walk that reply twice on the failure path.
+fn summarize_observed_value(value: &Value) -> String {
+    let raw = match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = collapsed.chars();
+    let truncated: String = chars.by_ref().take(OBSERVED_VALUE_LIMIT).collect();
+    if chars.next().is_none() {
+        truncated
+    } else {
+        format!("{truncated}…")
     }
 }
 

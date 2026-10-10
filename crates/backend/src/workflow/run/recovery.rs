@@ -15,6 +15,13 @@ use std::sync::Arc;
 
 /// Fails runs interrupted by a previous process, then reconciles the survivors.
 ///
+/// The caller must invoke this only after proving no other live process is still executing
+/// these runs. Desktop does that by holding `instance.lock` in the application data directory
+/// for its whole lifetime: the operating system releases the lock when that process exits or
+/// crashes, so acquiring it means the previous owner is gone. A second live process must not
+/// call this sweep. A heartbeat or a stored process id is the wrong proof — a busy process can
+/// miss a heartbeat, and a process id can be reused by an unrelated program.
+///
 /// Runs that were `Running` or `Failed` when the process died have their interrupted node runs
 /// marked `Failed` with `interrupted_by_restart`. The sweep is graph-aware for composite
 /// regions (ADR "iteration composite runtime" D2): a `Running` iteration row is handed back to

@@ -34,11 +34,14 @@ impl TokioProcessSpawner {
 /// `pre_exec` closures run after std applies the working directory and the process group, so the
 /// child still leads its own group (tree kill keeps working) and its working directory was
 /// entered with the parent's authority. Any failure aborts the exec and surfaces as the spawn's
-/// error, so no code ever runs with a partially dropped identity.
-fn configure_identity(command: &mut Command, identity: ProcessIdentity) {
-    // Other platforms retain inherited identity and therefore have no command customization.
-    #[cfg(not(target_os = "linux"))]
-    let _ = command;
+/// error, so no code ever runs with a partially dropped identity. Only Linux has an identity to
+/// apply; other targets keep the argument so the call site stays the same, under a name the
+/// unused-variable lint accepts.
+fn configure_identity(
+    #[cfg(target_os = "linux")] command: &mut Command,
+    #[cfg(not(target_os = "linux"))] _command: &mut Command,
+    identity: ProcessIdentity,
+) {
     match identity {
         ProcessIdentity::Inherit => {}
         #[cfg(target_os = "linux")]

@@ -155,9 +155,9 @@ test("layout rejects malformed structure instead of changing execution ownership
   }
 });
 
-test("all 101 generated graphs have complete Agent contracts and legal scope boundaries", () => {
+test("all 112 generated graphs have complete Agent contracts and legal scope boundaries", () => {
   const workflows = generateAllWorkflows();
-  assert.equal(workflows.length, 101);
+  assert.equal(workflows.length, 112);
   assert.deepEqual(generateAllWorkflows(), workflows);
   for (const workflow of workflows) {
     const { graph } = workflow;
@@ -183,18 +183,42 @@ test("all 101 generated graphs have complete Agent contracts and legal scope bou
       }
       if (node.data.kind === "agent") {
         const config = node.data.agentConfig;
-        assert.deepEqual(config, {
-          schemaVersion: 3,
-          executor: {
+        if (workflow.isSuperLong) {
+          // Super-long agents extend the base contract with frozen execution policies.
+          assert.equal(config.schemaVersion, 3);
+          assert.deepEqual(config.executor, {
             agentCli: "official/ora-space.opencode",
             modelId: "bluezone/zhipu/glm-5.3",
-          },
-          roleId: "",
-          skills: [],
-          mcps: [],
-          prompt: config.prompt,
-          interactive: false,
-        });
+          });
+          assert.equal(config.roleId, "");
+          assert.deepEqual(config.skills, []);
+          assert.deepEqual(config.mcps, []);
+          assert.equal(config.interactive, false);
+          assert.ok(["wait", "timeout"].includes(config.promptInactivity));
+          if (config.retry) {
+            assert.deepEqual(Object.keys(config.retry).sort(), [
+              "enabled",
+              "initialDelaySeconds",
+              "maxRetries",
+            ]);
+          }
+          if (config.outputContract) {
+            assert.equal(config.outputContract.type, "structured");
+          }
+        } else {
+          assert.deepEqual(config, {
+            schemaVersion: 3,
+            executor: {
+              agentCli: "official/ora-space.opencode",
+              modelId: "bluezone/zhipu/glm-5.3",
+            },
+            roleId: "",
+            skills: [],
+            mcps: [],
+            prompt: config.prompt,
+            interactive: false,
+          });
+        }
         assert.equal(typeof config.prompt, "string");
       }
     }
@@ -212,6 +236,69 @@ test("all 101 generated graphs have complete Agent contracts and legal scope bou
   }
 });
 
+test("the super-long batch keeps the endurance class bars and required kinds", () => {
+  const workflows = generateAllWorkflows().filter(
+    (workflow) => workflow.isSuperLong,
+  );
+  assert.equal(workflows.length, 11);
+  for (const workflow of workflows) {
+    const kinds = new Set(workflow.graph.nodes.map((node) => node.data.kind));
+    for (const kind of ["condition", "aggregator", "iteration", "loop"]) {
+      assert.ok(kinds.has(kind), `${workflow.name} lacks ${kind}`);
+    }
+    assert.ok(
+      workflow.graph.nodes.length >= 15,
+      `${workflow.name} has fewer than 15 nodes`,
+    );
+    assert.ok(
+      workflow.deepNodeCount >= 10,
+      `${workflow.name} has fewer than 10 deep nodes`,
+    );
+    const deepPolicies = workflow.graph.nodes
+      .filter((node) => node.data.kind === "agent")
+      .map((node) => node.data.agentConfig.promptInactivity);
+    assert.ok(deepPolicies.every((policy) => policy !== undefined));
+  }
+});
+
+test("W107 stores a passed retry policy on the deep agent and omits an absent one", () => {
+  const workflow = generateAllWorkflows().find((entry) => entry.index === 107);
+  assert.ok(workflow);
+  const byId = new Map(workflow.graph.nodes.map((node) => [node.id, node]));
+  assert.deepEqual(byId.get("r1").data.agentConfig.retry, {
+    enabled: false,
+    maxRetries: 0,
+    initialDelaySeconds: 5,
+  });
+  assert.equal(byId.get("r2").data.agentConfig.retry.maxRetries, 1);
+  assert.equal(byId.get("r5").data.agentConfig.retry, undefined);
+});
+
+test("W112's kitchen-sink label matches the composites in the graph", () => {
+  const workflow = generateAllWorkflows().find((entry) => entry.index === 112);
+  assert.ok(workflow);
+  const count = (kind) =>
+    workflow.graph.nodes.filter((node) => node.data.kind === kind).length;
+  assert.deepEqual(
+    {
+      condition: count("condition"),
+      aggregator: count("aggregator"),
+      iteration: count("iteration"),
+      loop: count("loop"),
+    },
+    { condition: 1, aggregator: 1, iteration: 2, loop: 2 },
+  );
+  assert.equal(
+    workflow.category,
+    "Super-Long: Kitchen Sink (2 iterations, 2 loops)",
+  );
+  assert.equal(
+    workflow.description,
+    "One condition, one aggregator, two iterations (continue+fail), two loops, parallel fan-out with join, 12+ deep agents.",
+  );
+  assert.ok(workflow.deepNodeCount >= 12);
+});
+
 test("Loop matrix prompts match the selected termination token and carried state", () => {
   const workflows = generateAllWorkflows();
   for (const index of [41, 42, 43, 44, 45, 46, 47, 48]) {
@@ -219,8 +306,9 @@ test("Loop matrix prompts match the selected termination token and carried state
     const loop = workflow.graph.nodes.find((node) => node.id === "loop");
     const agent = workflow.graph.nodes.find((node) => node.id === "loop-agent");
     const condition = loop.data.loopConfig.until.conditions[0];
-    if (condition.value !== "")
+    if (condition.value !== "") {
       assert.ok(agent.data.agentConfig.prompt.includes(condition.value));
+    }
     if (loop.data.loopConfig.maxIterations > 1) {
       assert.ok(
         agent.data.agentConfig.prompt.includes("{{#loop.loop_state#}}"),

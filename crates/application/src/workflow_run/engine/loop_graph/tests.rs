@@ -263,12 +263,14 @@ fn qualification_generator_obeys_execution_graph_contract() {
         );
         let scenarios: Vec<Value> = serde_json::from_slice(&generated.stdout)
             .expect("fixture export returns the complete generated scenario array");
+        // 100 scenarios (W01-W100), the endurance stress workflow (W101), and the super-long
+        // endurance batch (W102-W112) all owe decoder-level compliance before any Agent runs.
         assert_eq!(
             scenarios
                 .iter()
                 .map(|scenario| scenario["index"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            (1..=101).collect::<Vec<_>>()
+            (1..=112).collect::<Vec<_>>()
         );
         for scenario in scenarios {
             let index = &scenario["index"];

@@ -2,6 +2,7 @@ use crate::surface::DesktopSurfaceService;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::{Backend, BackendPreferredLogLevelStore};
 use ora_runtime_settings::RuntimeLogLevelManager;
+use ora_utils::fs::ExclusiveFileLock;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
@@ -231,6 +232,9 @@ pub struct DesktopRuntimeGuard {
     pub _logging: ora_logging::LoggingGuard,
     /// Dropping this cancels the scheduled marketplace index refreshes.
     pub _marketplace_sync: crate::marketplace_sync::MarketplaceSyncService,
+    /// Exclusive ownership of this data directory. Dropping it, or crashing the
+    /// process, is what allows the next launch to recover interrupted runs.
+    pub _instance_lock: ExclusiveFileLock,
 }
 
 #[cfg(all(test, debug_assertions))]

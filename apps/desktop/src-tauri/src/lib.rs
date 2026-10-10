@@ -1,6 +1,8 @@
+mod cli;
 mod commands;
 mod diagnostic_logs;
 mod error;
+mod instance;
 mod marketplace_sync;
 mod open_external;
 mod open_location;
@@ -44,6 +46,20 @@ const ORA_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Help and version must not build a window or open the database. A second
+    // `ora-desktop --version` used to boot the whole application and mark live
+    // workflow runs as interrupted by a restart.
+    match cli::classify_args(std::env::args_os()) {
+        cli::CliAction::Help => {
+            cli::print_help();
+            std::process::exit(0);
+        }
+        cli::CliAction::Version => {
+            cli::print_version();
+            std::process::exit(0);
+        }
+        cli::CliAction::Run => {}
+    }
     let builder = surface::register_workbench_protocol(tauri::Builder::default())
         // Reveal the main window only once its splash has painted, so the logo is
         // centered from the moment the interface opens instead of showing a blank
@@ -54,6 +70,16 @@ pub fn run() {
             }
         });
     let run_result = builder
+        // The plugin exits a second process during its own setup, before this
+        // process reaches backend bootstrap. The callback runs in the process
+        // that already owns the window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -65,7 +91,8 @@ pub fn run() {
             // gap before or after the logo either.
             let handle = app.handle().clone();
             std::thread::spawn(move || match bootstrap_desktop(&handle) {
-                Ok((state, guard)) => {
+                Ok(DesktopBootstrap::Ready(ready)) => {
+                    let (state, guard) = *ready;
                     ora_info!(
                         message = "bundled binary paths registered",
                         ripgrep_path = %state.binary_paths.ripgrep_path().display(),
@@ -76,6 +103,14 @@ pub fn run() {
                     handle.manage(state);
                     handle.manage(guard);
                     let _ = handle.emit_to("main", "ora-app-ready", ());
+                }
+                Ok(DesktopBootstrap::AlreadyRunning) => {
+                    // The database was not opened. Leave through Tauri so
+                    // RunEvent::Exit still runs. AppHandle::exit falls back to
+                    // process::exit when the runtime cannot accept the request,
+                    // which is what keeps this process from staying up with no
+                    // backend if the event loop is not ready yet.
+                    handle.exit(0);
                 }
                 Err(error) => {
                     ora_error!(
@@ -110,11 +145,42 @@ pub fn run() {
     run_result.expect("error while running tauri application");
 }
 
+/// Startup either owns the data directory or must leave because another process does.
+///
+/// `Ready` is boxed so the exit result is not the size of the whole desktop state.
+/// `AlreadyRunning` carries nothing, and the state is built only on the path that
+/// opens the backend.
+enum DesktopBootstrap {
+    /// This process holds the instance lock and may serve the window.
+    Ready(Box<(DesktopState, DesktopRuntimeGuard)>),
+    /// Another live process holds the lock. The database was not opened.
+    AlreadyRunning,
+}
+
 /// Resolves Desktop paths and constructs configuration, logging, and Backend state.
-fn bootstrap_desktop(
-    app: &tauri::AppHandle,
-) -> Result<(DesktopState, DesktopRuntimeGuard), DesktopBootstrapError> {
+///
+/// [`DesktopBootstrap::AlreadyRunning`] has not opened the database. The caller
+/// exits through Tauri instead of continuing into the boot sweep.
+fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, DesktopBootstrapError> {
     let app_data_directory = desktop_data_directory(app)?;
+    // Take the instance lock before logging, plugins, or SQLite. The boot sweep
+    // inside Backend::open assumes the previous process is dead; the lock is that
+    // proof. A busy lock means a live owner, so this process must not open the
+    // database or mark its runs interrupted.
+    let instance_lock = match instance::acquire_desktop_instance(&app_data_directory) {
+        Ok(instance::DesktopInstance::Acquired(lock)) => lock,
+        Ok(instance::DesktopInstance::AlreadyRunning { path }) => {
+            // A GUI-subsystem build has no stderr, so eprintln would vanish for a
+            // terminal launch. This is the same stdout / parent-console path as
+            // --version. Returning here must not open SQLite.
+            cli::write_parent_console(&format!(
+                "Ora Desktop is already running (lock {}); this process will exit without opening the database.",
+                path.display()
+            ));
+            return Ok(DesktopBootstrap::AlreadyRunning);
+        }
+        Err(error) => return Err(DesktopBootstrapError::InstanceLock(error)),
+    };
     let user_home_directory = app
         .path()
         .home_dir()
@@ -203,7 +269,7 @@ fn bootstrap_desktop(
         backend.settings().preferred_log_level_store(),
         configured_log_level,
     );
-    Ok((
+    Ok(DesktopBootstrap::Ready(Box::new((
         DesktopState {
             backend,
             update,
@@ -216,8 +282,9 @@ fn bootstrap_desktop(
         DesktopRuntimeGuard {
             _logging: logging_guard,
             _marketplace_sync: marketplace_sync,
+            _instance_lock: instance_lock,
         },
-    ))
+    ))))
 }
 
 /// Resolves the configured Desktop data root or falls back to Tauri's application data directory.

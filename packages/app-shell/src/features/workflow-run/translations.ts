@@ -53,6 +53,8 @@ export const workflowRunTranslations = {
     "errors.workflow_node_not_diagnosable":
       "只有失败的智能体节点才能做 AI 分析。",
     "workflowRun.loading": "正在加载运行…",
+    "workflowRun.unrecognizedNodes":
+      "有 {{count}} 个节点的类型无法识别（{{kinds}}）。它们不是有意保留的备用节点，不会出现在执行路径里。",
     "workflowRun.placeholderTitle": "工作流运行台",
     "workflowRun.placeholderSubtitle": "运行工作区",
     "workflowRun.placeholderBody":
@@ -466,6 +468,8 @@ export const workflowRunTranslations = {
     "errors.workflow_node_not_diagnosable":
       "AI analysis is only available for a failed agent node.",
     "workflowRun.loading": "Loading run…",
+    "workflowRun.unrecognizedNodes":
+      "{{count}} nodes use an unrecognized type ({{kinds}}). They are not spare nodes kept on purpose and are left off the execution path.",
     "workflowRun.placeholderTitle": "Workflow run workspace",
     "workflowRun.placeholderSubtitle": "Run workspace",
     "workflowRun.placeholderBody":
