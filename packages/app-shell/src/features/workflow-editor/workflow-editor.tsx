@@ -132,6 +132,7 @@ import {
   useWorkflowVersions,
 } from "../../state/data/workflows";
 import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
+import { WorkflowHeaderDescription } from "./workflow-header-description";
 import {
   WorkflowImportDialog,
   type WorkflowImportChoices,
@@ -2446,7 +2447,7 @@ function WorkflowEditorContent({
         }
       }}
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
+      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border px-3 py-1.5">
         {sidebarCollapsed && (
           <>
             <Button
@@ -2477,8 +2478,8 @@ function WorkflowEditorContent({
             </h2>
           </DragRegion>
         ) : (
-          <>
-            <div className="min-w-0">
+          <div className="flex min-w-0 flex-1 items-center gap-2 self-stretch">
+            <div className="min-w-0 max-w-md">
               <Input
                 value={workflow.name}
                 disabled={previewedVersion !== null}
@@ -2502,13 +2503,11 @@ function WorkflowEditorContent({
                 className="h-7 max-w-72 border-transparent bg-transparent px-1 text-sm font-medium shadow-none hover:border-border focus-visible:border-border"
               />
               {workflow.description !== "" && (
-                <p className="truncate px-1 text-[11px] text-muted-foreground">
-                  {workflow.description}
-                </p>
+                <WorkflowHeaderDescription text={workflow.description} />
               )}
             </div>
             <DragRegion />
-          </>
+          </div>
         )}
         <div className="flex shrink-0 items-center gap-2">
           {workflow !== null && previewedVersion === null && (
