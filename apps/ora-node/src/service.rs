@@ -92,6 +92,11 @@ pub struct ServiceConfig {
 pub struct AgentConfig {
     pub deno_path: PathBuf,
     pub ready_timeout_ms: u64,
+    /// Root-owned directory holding one directory per running session when agents run as the
+    /// workload user; required exactly when `process.workload_uid` is set. The deployment creates
+    /// it; the Node only validates it and manages its children.
+    #[serde(default)]
+    pub workload_directory: Option<PathBuf>,
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
@@ -155,12 +160,8 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
             ));
         }
     }
-    if let Some(agent) = &config.agent
-        && (!agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0)
-    {
-        return Err(io::Error::other(
-            "agent needs an absolute Deno path and a positive ready timeout",
-        ));
+    if let Some(agent) = &config.agent {
+        agents::validate(agent, &config)?;
     }
     let control = config.control.clone();
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);

@@ -1,7 +1,7 @@
 use std::io;
 
 /// A non-root execution identity with no supplementary groups or inheritable capabilities.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinuxChildIdentity {
     uid: u32,
     gid: u32,

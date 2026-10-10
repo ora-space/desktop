@@ -2,7 +2,7 @@
 
 use ora_node::{
     AgentSessions, CheckoutResolver, CommandSettlement, PluginCatalog, QueuedCommand,
-    SessionCommand, SessionConfig, SessionHost, SessionLedger,
+    SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, ExecutionId, GitIdentity, NodeId,
@@ -304,12 +304,40 @@ impl Fixture {
         &self,
         installed_version: &str,
     ) -> AgentSessions<MemoryLedger, Checkouts, Catalog> {
+        self.sessions_with(installed_version, SessionWorkload::Shared)
+    }
+
+    /// Where a separate workload keeps its session directories.
+    pub fn workload_directory(&self) -> PathBuf {
+        self.root.path().join("agent")
+    }
+
+    /// A separate workload this unprivileged test can run: the test's own ids own the session
+    /// home and checkout, and the identity is inherited, since only root may take another.
+    pub fn separate_workload(&self) -> SessionWorkload {
+        std::fs::create_dir_all(self.workload_directory()).expect("create workload directory");
+        let metadata = std::fs::metadata(self.checkout()).expect("checkout metadata");
+        SessionWorkload::Separate {
+            directory: self.workload_directory(),
+            identity: ora_process::ProcessIdentity::Inherit,
+            uid: std::os::unix::fs::MetadataExt::uid(&metadata),
+            gid: std::os::unix::fs::MetadataExt::gid(&metadata),
+        }
+    }
+
+    /// Composes session execution as [`Self::sessions`] does, running agents per `workload`.
+    pub fn sessions_with(
+        &self,
+        installed_version: &str,
+        workload: SessionWorkload,
+    ) -> AgentSessions<MemoryLedger, Checkouts, Catalog> {
         AgentSessions::new(
             SessionConfig {
                 home_directory: self.home(),
                 deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
                 timezone: chrono_tz::UTC,
                 agent_ready_timeout: Duration::from_secs(30),
+                workload,
             },
             self.node(),
             self.ledger.clone(),

@@ -9,15 +9,49 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::spec::ReaperRegistration;
 use crate::tree::ProcessTree;
-use crate::{ManagedProcess, ProcessSpawner, ProcessSpec};
+use crate::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 
 /// Tokio-backed process spawner for real OS child processes.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TokioProcessSpawner;
+pub struct TokioProcessSpawner {
+    identity: ProcessIdentity,
+}
 
 impl TokioProcessSpawner {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Creates a spawner whose children run as `identity` instead of inheriting this process's
+    /// credentials. A child that cannot take the identity never executes: its spawn fails.
+    pub fn running_as(identity: ProcessIdentity) -> Self {
+        Self { identity }
+    }
+}
+
+/// Makes the child take `identity` between fork and exec.
+///
+/// `pre_exec` closures run after std applies the working directory and the process group, so the
+/// child still leads its own group (tree kill keeps working) and its working directory was
+/// entered with the parent's authority. Any failure aborts the exec and surfaces as the spawn's
+/// error, so no code ever runs with a partially dropped identity.
+fn configure_identity(command: &mut Command, identity: ProcessIdentity) {
+    match identity {
+        ProcessIdentity::Inherit => {}
+        #[cfg(target_os = "linux")]
+        ProcessIdentity::Linux(identity) => {
+            // SAFETY: the closure runs in the forked child before exec and calls only
+            // `enter_child`, which is documented as async-signal-safe for exactly this use, and
+            // `umask`, a plain syscall.
+            unsafe {
+                command.pre_exec(move || {
+                    identity.enter_child()?;
+                    // Files the workload creates stay private to it, like the Node's own state.
+                    libc::umask(0o077);
+                    Ok(())
+                });
+            }
+        }
     }
 }
 
@@ -47,6 +81,7 @@ impl ProcessSpawner for TokioProcessSpawner {
         command.stderr(spec.stderr_policy().as_stdio());
         command.kill_on_drop(spec.should_kill_on_drop());
         ProcessTree::configure_command(&mut command);
+        configure_identity(&mut command, self.identity);
 
         let mut child = command.spawn()?;
         let Some(process_id) = child.id() else {

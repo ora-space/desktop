@@ -68,11 +68,12 @@ fn freeze<R: GitRunner>(
     let history_path = frozen.join(HISTORY_FILE);
     copy_synced(&job.history, &history_path)
         .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
-    // The agent plugin runs outside the workload user (it is not under process-host scopes yet),
-    // so files it created can belong to the Node user with owner-only modes, which delivery Git —
-    // running as the workload user like clone — could not read. The session has ended, so nothing
-    // writes the checkout now; hand it back to the workload user without following links, so a
-    // link the agent left cannot redirect this privileged change outside the checkout.
+    // Agents now run as the workload user, but a checkout a session of an older Node worked in
+    // (when the agent ran as the Node user) can still hold files the Node user owns with
+    // owner-only modes, which delivery Git — running as the workload user like clone — could not
+    // read. The session has ended, so nothing writes the checkout now; hand it back to the
+    // workload user without following links, so a link the agent left cannot redirect this
+    // privileged change outside the checkout. A checkout that is already right costs only a walk.
     if let Some(owner) = job.owner {
         ora_utils::fs::own_tree_no_follow(&job.checkout, owner, owner)
             .map_err(|error| local(error, RevisionFailureCode::SnapshotFailed))?;

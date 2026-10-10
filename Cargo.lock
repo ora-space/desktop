@@ -3690,6 +3690,7 @@ dependencies = [
  "ora-plugin-manager",
  "ora-plugin-protocol",
  "ora-plugin-registry",
+ "ora-process",
  "ora-process-client",
  "ora-process-protocol",
  "ora-scheduler",
