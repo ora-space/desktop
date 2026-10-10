@@ -1,7 +1,7 @@
 use super::EffectWriteContext;
 use super::SqliteEffectRepository;
 use super::mapping::{effect_json, generation_from_sql, generation_to_sql};
-use super::source::{advance_changed_scopes, seed_scope_sources};
+use super::source::{advance_changed_scopes, advance_topology_epochs, seed_scope_sources};
 use crate::DatabaseError;
 use crate::TimestampSource;
 use ora_domain::{Workspace, WorkspaceLocation};
@@ -30,6 +30,7 @@ impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
             let (consumer_id, revision_id, revision_changed) =
                 upsert_consumer_revision(&transaction, declaration, written_at.millis())?;
             let mut changed_scopes = BTreeSet::new();
+            let mut topology_scopes = BTreeSet::new();
             for workspace in workspaces {
                 let WorkspaceLocation::LocalFilesystem { path } = &workspace.location else {
                     continue;
@@ -50,9 +51,15 @@ impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
                     declaration,
                     revision_changed,
                     written_at.millis(),
+                    &mut topology_scopes,
                 )?;
             }
             advance_changed_scopes(&transaction, &changed_scopes, written_at.millis())?;
+            // Replacing a Target's declaration retires the old Target in place. That topology
+            // change must advance the Scope epoch like a Consumer retirement so the retiring
+            // Target's empty projection does not collide with the projection it persisted
+            // while active at the same generation (issue #6).
+            advance_topology_epochs(&transaction, &topology_scopes, written_at.millis())?;
             transaction.commit()?;
             Ok(revision_id)
         })
@@ -90,6 +97,7 @@ impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             drop(statement);
+            let mut topology_scopes = BTreeSet::new();
             for (target_id, scope_id, generation) in targets {
                 transaction.execute(
                     "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = MAX(updated_at, ?2)
@@ -103,8 +111,14 @@ impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
                     params![&target_id, written_at.millis()],
                 )?;
                 upsert_target_wakeup(&transaction, &target_id, generation_from_sql(generation)?, written_at.millis(), "target_retiring", written_at.millis())?;
-                let _ = scope_id;
+                topology_scopes.insert(scope_id);
             }
+            // Retirement changes what every Target in these Scopes projects at the current
+            // generation. The epoch must advance so the retiring Target's empty projection
+            // lands on a fresh immutable identity instead of colliding with the projection it
+            // persisted while active, and so surviving Targets re-converge without the retired
+            // contributor (issue #6).
+            advance_topology_epochs(&transaction, &topology_scopes, written_at.millis())?;
             transaction.commit()?;
             Ok(true)
         })
@@ -181,6 +195,9 @@ fn upsert_consumer_revision(
 }
 
 /// Creates or replaces one `(Scope, Consumer)` active Target from the immutable declaration.
+///
+/// When the declaration change replaces an existing Target, the retired Target's Scope is
+/// added to `topology_scopes` so the caller can advance its convergence epoch once per commit.
 #[allow(clippy::too_many_arguments)]
 fn upsert_workspace_target(
     transaction: &Transaction<'_>,
@@ -191,6 +208,7 @@ fn upsert_workspace_target(
     declaration: &ConsumerDeclaration,
     revision_changed: bool,
     updated_at: i64,
+    topology_scopes: &mut BTreeSet<String>,
 ) -> Result<(), DatabaseError> {
     let scope_id = scope.storage_key();
     let generation = generation_from_sql(transaction.query_row(
@@ -220,6 +238,7 @@ fn upsert_workspace_target(
         }
         Some((target_id, _)) => {
             retire_target(transaction, &target_id, generation, updated_at)?;
+            topology_scopes.insert(scope.storage_key());
             EffectTargetId::random()
         }
         None => EffectTargetId::random(),

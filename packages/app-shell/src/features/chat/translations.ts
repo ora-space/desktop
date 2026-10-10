@@ -287,6 +287,7 @@ export const chatTranslations = {
     "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
     "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
     "chat.agentEffectsNotReady": "Agent 正在同步项目技能，完成后即可发送",
+    "chat.agentEffectsFailed": "Agent 技能同步失败，需要恢复：{{message}}",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",
@@ -645,6 +646,8 @@ export const chatTranslations = {
     "chat.pickAvailableAgent":
       "Pick an available agent and model before starting a chat",
     "chat.agentEffectsNotReady": "The agent is syncing project Skills",
+    "chat.agentEffectsFailed":
+      "Agent Skill sync failed and needs recovery: {{message}}",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",
     "chat.collapseCode": "Collapse code",

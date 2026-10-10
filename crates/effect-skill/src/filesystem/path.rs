@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Selects whether resolving a Resource path may create missing safe directories.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(super) enum RootAccess {
     Observe,
     Prepare,
@@ -34,12 +34,21 @@ pub(super) fn resolve_declared_root(
     relative_path: &ora_effect::ResourcePath,
     access: RootAccess,
 ) -> Result<Option<PathBuf>, SkillDirectoryError> {
-    let root_metadata = fs::symlink_metadata(workspace_root).map_err(|source| {
-        SkillDirectoryError::WorkspaceUnavailable {
-            path: workspace_root.to_path_buf(),
-            source,
+    let root_metadata = match fs::symlink_metadata(workspace_root) {
+        Ok(metadata) => metadata,
+        // A deleted Worktree leaves nothing to observe. Reporting an empty Resource lets a
+        // retiring Target forget its ledger and finish retiring instead of failing forever
+        // (issue #6); mutation and preparation still refuse a Workspace root the user removed.
+        Err(error) if error.kind() == io::ErrorKind::NotFound && access == RootAccess::Observe => {
+            return Ok(None);
         }
-    })?;
+        Err(source) => {
+            return Err(SkillDirectoryError::WorkspaceUnavailable {
+                path: workspace_root.to_path_buf(),
+                source,
+            });
+        }
+    };
     if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
         return Err(SkillDirectoryError::UnsafeResourcePath {
             path: workspace_root.to_path_buf(),
