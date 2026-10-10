@@ -226,6 +226,7 @@ mod tests {
             input: Some(proto::ExecutionInput {
                 spec: Some(proto::execution_input::Spec::AgentSession(
                     proto::AgentSessionSpec {
+                        model_binding_id: String::new(),
                         agent_plugin_id: "official/ora-space.echo".into(),
                         agent_plugin_version: "1.2.3".into(),
                         checkout_execution_id: "clone".into(),
