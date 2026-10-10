@@ -35,6 +35,9 @@ pub(super) fn run(
             .saturating_add(config.process.cleanup_timeout_ms),
     );
     let initialized = (|| {
+        // Read before the process configuration moves into the Node.
+        let workload =
+            agents::workload(config.agent.as_ref(), &config.process).map_err(|e| e.to_string())?;
         let mut node =
             Node::open(config.node, config.process, shutdown.clone()).map_err(|e| e.to_string())?;
         if controlled {
@@ -67,6 +70,7 @@ pub(super) fn run(
         let agents = agents::open(
             &mut node,
             config.agent.as_ref(),
+            workload,
             &config.timezone,
             plugins.catalog.clone(),
         )

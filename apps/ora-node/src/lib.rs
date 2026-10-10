@@ -51,7 +51,7 @@ pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, Servi
 #[cfg(target_os = "linux")]
 pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
-    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger,
+    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;

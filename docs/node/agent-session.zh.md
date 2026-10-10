@@ -45,7 +45,24 @@ Agent 会话执行：在一次 clone 留下的 checkout 中只启动该执行指
 Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
 同时设置在插件进程上（插件直接派生的进程继承它）和宿主经
 `ora/childprocess/spawn` 为插件派生的进程上（这些进程继承的是 Node
-的环境）。Node 不写任何 Git 配置。
+的环境）。Node 不写任何 Git 配置。这些变量叠加在继承的环境之上，Node 环境中的模型凭据和代理设置仍会到达 Agent。
+
+### 独立的工作负载用户
+
+部署以独立用户运行 Git 工作负载（`process.workload_uid`）时，Agent 也以该用户运行：Deno 插件进程以及它请宿主派生的每个进程
+在执行前降为工作负载 UID（组与之相同，无附加组、无 capability、`no_new_privs`、umask `077`），无法降权的派生直接失败，
+不会以 Node 身份运行。这样 Agent 能在工作负载用户拥有的 checkout 中提交，也读不到 Node 的数据目录。
+
+每个会话获得 `<agent.workload_directory>/<sha256(execution_id)>/`（root，`0711`），其中：
+
+- `package/`：已安装包的硬链接视图，目录为新建的 `0755`（跨文件系统时复制为 `0644`/`0755`；遇到链接或特殊文件则拒绝）。
+  插件从视图启动；生命周期仍发现并校验已安装的包。
+- `home/`：`0700`，属于工作负载用户。`HOME`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_STATE_HOME`、`XDG_CACHE_HOME`、
+  `DENO_DIR`（在 cache 下）以及 `DENO_NO_UPDATE_CHECK=1` 都指向这里，插件进程与宿主派生的进程一致。
+
+启动前 checkout 会在不跟随链接的前提下交还给工作负载用户，以处理旧版 Node 中以 root 运行的 Agent 写过的 checkout。
+插件停止后删除会话目录；服务打开时在结算中断会话之后删除所有遗留的会话目录。准备失败时会话以
+`agent_failed{agent_start_failed}` 结束。
 
 ## 执行过程
 
@@ -118,6 +135,10 @@ Node 重启后，没有终态的会话执行由 `recover_interrupted` 以 `inter
 "agent": { "deno_path": "/usr/local/bin/deno", "ready_timeout_ms": 30000 }
 ```
 
+有工作负载用户时再添加 `"workload_directory": "/var/lib/ora/agent"`。它在且仅在设置了 `process.workload_uid` 时必需，
+必须是已存在的绝对 UTF-8 路径，属于 Node 身份且其他人不可写，并且不能与 Node home、进程宿主目录或 clone 根目录重叠。
+Node 从不创建它，由沙箱入口脚本创建。
+
 Deno 路径必须为绝对路径，等待就绪的超时必须为正数。配置后握手声明 `AgentSession`；未配置时拒绝新会话工作，
 但启动时仍结算已有未终态会话。部署负责提供 Deno 和已安装插件包。服务为 `AgentSessions` 注入持久化账本、
 checkout 解析器以及插件执行所用的同一个 `PluginInstaller::catalog()`。插件恢复先于任何会话启动。
@@ -154,8 +175,11 @@ Controller 中继不属于本次变更。
 Node 向 `POST /internal/v1/model-grants` 仅提交绑定和会话执行 ID。平台返回冻结的协议、模型及
 内存中的临时令牌，上游 API Key 从不进入 Node。OpenCode 使用单一 `ora-model` provider，分别使用
 OpenAI 兼容或 Anthropic SDK。配置以环境变量占位引用 `ORA_MODEL_ACCESS_TOKEN`，原样保留含斜线的模型 ID，
-访问平台 HTTPS 数据端点，通过 `NODE_EXTRA_CA_CERTS` 信任公开 CA。HOME、XDG 路径和 provider 状态位于
-Node `model-runtime/` 下独立的会话临时目录，与 checkout 及 Revision 隔离；Git 身份仍来自运行。
+访问平台 HTTPS 数据端点，通过 `NODE_EXTRA_CA_CERTS` 信任公开 CA。使用独立工作负载身份时，HOME、XDG
+及 `OPENCODE_CONFIG_DIR` 指向该用户拥有的会话 home；Node 只在其旁发布 root 拥有、`0644` 的已验证公开
+CA 文件，使 CLI 能验证代理而无法读取管理目录或客户端私钥。共享身份部署沿用 Node `model-runtime/`
+下独立的会话临时目录。两种目录均与 checkout 及 Revision 隔离；临时令牌继续使用环境引用，不随公开
+CA 写入文件。Git 身份仍来自运行。
 
 续期在过期前延长同一授权，不更换令牌。续期被拒绝时取消对话；正常结束先停止续期、撤销授权、
 删除临时状态，再写入终态。任务取消也中止续期并尽力撤销。Node 崩溃后不恢复会话，Cloud 终态恢复

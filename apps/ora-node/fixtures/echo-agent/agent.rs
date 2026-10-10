@@ -215,7 +215,11 @@ impl EchoAgent {
             });
             return Ok(());
         }
-        let answer = if text.contains("[large]") {
+        let answer = if text.contains("[env]") {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("cwd={} home={home}", cwd.display())
+        } else if text.contains("[large]") {
             "x".repeat(LARGE_ANSWER_BYTES)
         } else {
             format!("echo: {text}")

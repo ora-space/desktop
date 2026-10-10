@@ -39,6 +39,7 @@ struct ModelClient {
     http: Client,
     gateway: Url,
     config: ModelProxyConfig,
+    public_ca: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -101,6 +102,13 @@ impl ModelClient {
         }
         let ca = std::fs::read(&config.ca_cert)
             .map_err(|_| ModelAccessError("model_proxy_tls_invalid"))?;
+        // This certificate may be published to the workload; a combined CA/key file must fail closed.
+        if ca
+            .windows(b"PRIVATE KEY".len())
+            .any(|part| part == b"PRIVATE KEY")
+        {
+            return Err(ModelAccessError("model_proxy_tls_invalid"));
+        }
         let mut identity = std::fs::read(&config.client_cert)
             .map_err(|_| ModelAccessError("model_proxy_tls_invalid"))?;
         identity.push(b'\n');
@@ -128,6 +136,7 @@ impl ModelClient {
             http,
             gateway,
             config,
+            public_ca: ca,
         })
     }
 
@@ -242,6 +251,32 @@ pub(super) struct ModelAccess {
 }
 
 impl ModelAccess {
+    /// Shares only the validated public trust root; credentials and the temporary token stay in memory.
+    pub(super) fn publish_ca(
+        &mut self,
+        destination: &std::path::Path,
+    ) -> Result<(), ModelAccessError> {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut certificate = std::fs::OpenOptions::new()
+            .write(/*write*/ true)
+            .create_new(/*create_new*/ true)
+            .open(destination)
+            .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))?;
+        certificate
+            .write_all(&self.client.public_ca)
+            .and_then(|()| certificate.sync_all())
+            .and_then(|()| {
+                certificate.set_permissions(std::fs::Permissions::from_mode(/*mode*/ 0o644))
+            })
+            .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))?;
+        self.environment.insert(
+            "NODE_EXTRA_CA_CERTS".into(),
+            destination.to_string_lossy().into_owned(),
+        );
+        Ok(())
+    }
+
     /// Creates ephemeral configuration outside the checkout, then renews its in-memory grant.
     pub(super) async fn open(
         config: ModelProxyConfig,

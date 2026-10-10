@@ -379,6 +379,19 @@ fn expired_and_excessive_grant_lifetimes_are_rejected() {
     );
 }
 
+/// A CA file published to a workload must not contain a combined private-key PEM block.
+#[test]
+fn public_ca_material_rejects_private_key_blocks_before_grant_creation() {
+    let root = tempfile::tempdir().unwrap();
+    let gateway = Gateway::new(root.path());
+    let mut combined = std::fs::read(&gateway.config.ca_cert).unwrap();
+    combined.extend(std::fs::read(&gateway.config.client_key).unwrap());
+    std::fs::write(&gateway.config.ca_cert, combined).unwrap();
+    let error = gateway.config.validate().unwrap_err();
+    assert_eq!(error.to_string(), "model_proxy_tls_invalid");
+    assert!(gateway.requests.lock().unwrap().is_empty());
+}
+
 #[test]
 fn runtime_state_refuses_existing_files_and_symlinks_without_changing_them() {
     use std::os::unix::fs::symlink;

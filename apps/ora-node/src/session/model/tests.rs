@@ -196,6 +196,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             timezone: chrono_tz::UTC,
             agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
             model_proxy: Some(gateway.config.clone()),
+            workload: crate::SessionWorkload::Shared,
         },
         node.clone(),
         ledger.clone(),

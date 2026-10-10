@@ -27,6 +27,12 @@ suggestions, URL path segments, or user input. Atomic whole-file replacement liv
 - `classify_line_tail(file)` reads only the final byte of a line-oriented file and reports whether
   it is empty, newline-terminated, or ends mid-line, so an appender can avoid joining its first
   record onto a fragment left by a crashed writer.
+- `link_tree_no_follow(source, destination)` (Unix) builds a fresh `destination` mirroring the
+  directory tree at `source`: directories are recreated with mode `0755` regardless of umask and
+  regular files are hard-linked, keeping their own inode, owner and mode; across filesystems a file
+  is copied with a fixed `0644`/`0755` mode carrying only its executability. A symbolic link or
+  special file anywhere in `source` fails the call instead of being followed or reproduced. It lets
+  another identity read a tree that sits behind owner-private directories.
 
 ## Extension convention
 

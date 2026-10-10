@@ -13,11 +13,14 @@ mod model;
 mod ports;
 mod queue;
 mod thread;
+mod workload;
 
 pub use ports::{
     CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, QueuedCommand,
     SessionCommand, SessionHost, SessionLedger,
 };
+pub use workload::SessionWorkload;
+pub(crate) use workload::purge_workload_directory;
 
 use chrono_tz::Tz;
 use ora_node_protocol::{
@@ -43,6 +46,8 @@ pub struct SessionConfig {
     pub agent_ready_timeout: Duration,
     /// Available only in deployments provisioned for platform model access.
     pub model_proxy: Option<crate::ModelProxyConfig>,
+    /// Which OS identity agents run as, and where their per-session directories live.
+    pub workload: SessionWorkload,
 }
 
 /// State shared by every session execution of one Node.
