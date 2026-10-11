@@ -48,7 +48,7 @@ fn upgraded_engine_preserves_committed_wal_data() -> Result<(), Box<dyn std::err
                 ))
             },
         )?;
-        assert_eq!(settings, ("wal".to_owned(), 1, 1));
+        assert_eq!(settings, ("wal".to_owned(), 2, 1));
         writer
             .execute_batch("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")?;
         let transaction = writer.transaction()?;
