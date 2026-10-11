@@ -2,6 +2,13 @@
 
 English | [中文](repository-clone.zh.md)
 
+`process.command_timeout_ms` bounds local Git commands. Network-intent clone/fetch/push use
+`process.network_timeout_ms`, defaulting to 600000 when absent and requiring 1..1200000 milliseconds.
+M4 keeps local commands at 30000 and network work at 600000. An expired network budget still closes
+the original Scope and requires host/guardian cleanup evidence before reporting Interrupted; it
+does not cancel fencing or permit a new attempt while the old Git may write. Cloud separately bounds
+Workspace clone attempts to three durable executions; Node never invents business retry policy.
+
 Linux Node exposes `configure_clone`, `submit_clone` and `recover_clones` to its embedding caller.
 The standalone executable accepts an optional `clone` deployment section and recovers already accepted
 clones. Optional [local IPC](local-ipc.md) accepts new clone commands; files and stdin are not command channels, and Backend is unchanged.

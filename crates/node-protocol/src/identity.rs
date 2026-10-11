@@ -64,6 +64,10 @@ string_identity!(
     CommandId,
     "Cloud-generated identity of one session command; a Node executes it at most once."
 );
+string_identity!(
+    ModelBindingId,
+    "Opaque Cloud-owned frozen model binding of one run."
+);
 string_identity!(WorkspaceId, "Identity of an Ora Workspace on the wire.");
 string_identity!(
     RevisionId,

@@ -181,8 +181,8 @@ fn a_shared_placement_touches_no_directory() {
 #[test]
 fn the_session_environment_reaches_the_plugin_and_its_host_spawned_processes() {
     let home = PathBuf::from("/var/lib/ora/agent/session/home");
-    let git_only = SessionEnvironment::new(&git_identity());
-    let with_home = SessionEnvironment::new(&git_identity()).with_home(&home);
+    let git_only = SessionEnvironment::new(&git_identity(), BTreeMap::new());
+    let with_home = SessionEnvironment::new(&git_identity(), BTreeMap::new()).with_home(&home);
     let git: BTreeMap<String, String> = [
         ("GIT_AUTHOR_NAME", "Ada Lovelace"),
         ("GIT_AUTHOR_EMAIL", "ada@example.com"),
@@ -225,6 +225,81 @@ fn the_session_environment_reaches_the_plugin_and_its_host_spawned_processes() {
         (both(&git_only), both(&with_home)),
         ((git.clone(), git), (separate.clone(), separate))
     );
+}
+
+/// A lowered-identity session can reach public trust and private CLI state without persisting authority.
+#[tokio::test]
+async fn model_runtime_uses_workload_home_and_only_publishes_public_trust() {
+    use crate::model_proxy::{ModelAccess, tests::Gateway};
+    use ora_node_protocol::ModelBindingId;
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::level_filters::LevelFilter::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    let layout = Layout::new();
+    let gateway = Gateway::new(layout._temp.path());
+    let mut access = ModelAccess::open(
+        gateway.config.clone(),
+        &ModelBindingId::new("binding-1"),
+        &execution(),
+        layout._temp.path(),
+    )
+    .await
+    .expect("grant");
+    let placement = SessionPlacement::prepare(
+        &layout.separate(),
+        &execution(),
+        &layout.package,
+        &layout.checkout,
+    )
+    .expect("workload");
+    placement
+        .publish_model_ca(&mut access)
+        .expect("public trust");
+    let home = placement.home_directory().expect("separate home");
+    let runtime =
+        SessionEnvironment::new(&git_identity(), access.environment.clone()).with_home(home);
+    let variables = runtime.plugin_environment("official/ora-space.opencode");
+    assert_eq!(
+        runtime
+            .environment("official/ora-space.opencode", &layout.checkout)
+            .expect("environment"),
+        variables
+    );
+    assert_eq!(
+        (
+            &variables["HOME"],
+            &variables["OPENCODE_CONFIG_DIR"],
+            &variables["ORA_MODEL_ACCESS_TOKEN"]
+        ),
+        (
+            &home.to_string_lossy().into_owned(),
+            &home.join(".config").to_string_lossy().into_owned(),
+            &"synthetic-temporary-token".to_string()
+        )
+    );
+    let ca = PathBuf::from(&variables["NODE_EXTRA_CA_CERTS"]);
+    assert_eq!(ca.parent(), home.parent());
+    let trust = fs::read(&ca).expect("public trust file");
+    assert_eq!(
+        trust,
+        fs::read(&gateway.config.ca_cert).expect("original public trust")
+    );
+    assert_eq!(mode_and_owner(&ca).0, 0o644);
+    assert_eq!(mode_and_owner(home).0, 0o700);
+    assert!(
+        !String::from_utf8(trust)
+            .expect("PEM")
+            .contains("PRIVATE KEY")
+    );
+    assert!(!variables["OPENCODE_CONFIG_CONTENT"].contains("synthetic-temporary-token"));
+    assert_eq!(fs::read_dir(home).expect("home").count(), 0);
+    access.close().await;
+    drop(placement);
+    assert!(!ca.exists());
+    assert_eq!(fs::read_dir(&layout.workload).expect("workload").count(), 0);
 }
 
 /// Records the request it is asked to launch and fails, standing in for Deno.

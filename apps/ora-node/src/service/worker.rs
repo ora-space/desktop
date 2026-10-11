@@ -63,7 +63,7 @@ pub(super) fn run(
                 .map_err(|e| e.to_string())?;
         }
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
-        let plugins = Plugins::start(&node).map_err(|e| e.to_string())?;
+        let plugins = Plugins::start(&node, config.plugins).map_err(|e| e.to_string())?;
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
@@ -98,6 +98,12 @@ pub(super) fn run(
     ];
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
+    }
+    if agents
+        .as_ref()
+        .is_some_and(agents::SessionHost::model_capable)
+    {
+        capabilities.push(NodeCapability::ModelProxy);
     }
     if revisions.is_some() {
         capabilities.push(NodeCapability::RevisionDelivery);

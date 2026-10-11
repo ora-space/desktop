@@ -179,6 +179,71 @@ fn resumed_sessions_wait_for_a_restore_capable_handshake() {
     });
 }
 
+/// Neither negotiated capability can substitute for the other when a session needs both snapshots.
+#[test]
+fn model_backed_resumes_require_both_capabilities_and_preserve_both_inputs() {
+    for (restore_enabled, model_enabled) in [(false, true), (true, false), (false, false)] {
+        scenario("main", |world| async move {
+            world.node.agents.enabled.store(true, Ordering::SeqCst);
+            world
+                .node
+                .restores
+                .enabled
+                .store(restore_enabled, Ordering::SeqCst);
+            world
+                .node
+                .agents
+                .model_proxy
+                .store(model_enabled, Ordering::SeqCst);
+            let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+            settled(&world, &create, proto::OperationState::Succeeded).await;
+            world.cloud.queue_session_with_model(
+                "run",
+                Some(workspace_cloud::WorkspaceCloud::prior_revision()),
+                "binding-1",
+            );
+            tokio::time::sleep(Duration::from_millis(/*millis*/ 300)).await;
+            assert_eq!(world.cloud.agent_records(), Vec::new());
+            world.node.restores.enabled.store(true, Ordering::SeqCst);
+            world.node.agents.model_proxy.store(true, Ordering::SeqCst);
+            world.restart().await;
+            world
+                .timeline
+                .until(|events| {
+                    events
+                        .iter()
+                        .any(|e| matches!(e, Event::AgentStarted { .. }))
+                })
+                .await;
+            let records = world.cloud.agent_records();
+            assert_eq!(records.len(), 1);
+            let start = world
+                .node
+                .agents
+                .started(&ExecutionId::new(records[0].execution_id.clone()));
+            let spec = start.payload.spec;
+            assert_eq!(
+                spec.model_binding_id,
+                Some(ModelBindingId::new("binding-1"))
+            );
+            assert_eq!(
+                spec.prior_revision,
+                Some(PriorRevision {
+                    revision_id: RevisionId::new("revision-1"),
+                    final_commit: CommitId::new(PRIOR_FINAL),
+                    bundle: StoredObject {
+                        key: ObjectKey::new(PRIOR_BUNDLE),
+                        size: 42,
+                        sha256: Sha256Digest::new(
+                            "3333333333333333333333333333333333333333333333333333333333333333"
+                        ),
+                    },
+                })
+            );
+        });
+    }
+}
+
 /// A download grant is requested only when the Node asks, reaches it verbatim, and a Cloud
 /// refusal is answered as refused; no log line ever carries the grant URL or signature.
 #[test]

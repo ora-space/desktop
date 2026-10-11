@@ -94,8 +94,8 @@ Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
    `discarded`，写入终态后再移除存活记录；服务停止会等待该写入。交付看到会话结束时
    history 已不再被写入。
 
-Agent 轮次失败或超时只记录 `TurnEnded`，会话保持。轮次无法被接纳（agent
-无法连接）时以 `agent_failed{agent_unavailable}` 结束。
+prompt 错误或事件流提前关闭以有限失败类别结束 Node 会话；成功完成后才受理下一条排队命令。
+轮次无法被接纳（agent 无法连接）时以 `agent_failed{agent_unavailable}` 结束。
 
 ## 记录顺序与崩溃
 
@@ -169,3 +169,35 @@ Cloud 受控启动使用 `ControlledStartAgentSession { binding, command }`，�
 `tests/standalone/agent_sessions.rs` 及子模块用生产 Node 可执行程序、真实 clone 和 echo 插件验证命令去重、
 历史记录一致、共享安装租约、runtime 关闭、正常停止、强杀恢复、窗口饱和与精确重放。Cloud 工作项的
 Controller 中继不属于本次变更。
+
+## 平台模型访问
+
+`AgentSessionSpec.model_binding_id` 是可选的 Cloud 不透明引用。部署在 `agent.model_proxy` 中配置
+`gateway_url`、`ca_cert`、`client_cert` 和 `client_key`，证书路径必须为绝对路径。专用客户端认证证书
+绑定 runtime 的租户、Workspace 和代次，与 Node WSS 服务端证书分开发放。服务在声明 `ModelProxy`
+能力前验证这些材料；Controller 注册、重发和 Node 本地受理均要求带模型绑定的启动具备此能力。
+
+Node 向 `POST /internal/v1/model-grants` 仅提交绑定和会话执行 ID。平台返回冻结的协议、模型及
+内存中的临时令牌，上游 API Key 从不进入 Node。OpenCode 使用单一 `ora-model` provider，分别使用
+OpenAI 兼容或 Anthropic SDK。配置以环境变量占位引用 `ORA_MODEL_ACCESS_TOKEN`，原样保留含斜线的模型 ID，
+访问平台 HTTPS 数据端点，通过 `NODE_EXTRA_CA_CERTS` 信任公开 CA。使用独立工作负载身份时，HOME、XDG
+及 `OPENCODE_CONFIG_DIR` 指向该用户拥有的会话 home；Node 只在其旁发布 root 拥有、`0644` 的已验证公开
+CA 文件，使 CLI 能验证代理而无法读取管理目录或客户端私钥。共享身份部署沿用 Node `model-runtime/`
+下独立的会话临时目录。两种目录均与 checkout 及 Revision 隔离；临时令牌继续使用环境引用，不随公开
+CA 写入文件。Git 身份仍来自运行。
+
+带模型绑定的 OpenCode 设置 `OPENCODE_DISABLE_PROJECT_CONFIG=true`，固定 CLI 不再发现 checkout 中的
+`.opencode` 或在其中安装依赖；HOME、配置、缓存和插件依赖留在会话私有目录，不进入 Revision。
+仓库的 OpenCode 配置有意忽略，因为本次运行的 provider 和模型已冻结。
+
+只有成功的 ACP 完成才接受下一轮。请求错误或流意外关闭以 `agent_failed` 结束 Node 会话，安全 detail 为
+`agent_turn_failed` 或 `agent_stream_closed`；关闭 provider/plugin、释放租约并撤销模型授权，不将供应商
+原始诊断写入历史或日志。已持久化的 EndSession 与错误同时到达时保留其明确原因。部分仓库成果仍按
+已有终态 Revision 流程交付；失败后重新发起运行，成功的多轮会话和 Echo 正常链路保持原行为。
+
+续期在过期前延长同一授权，不更换令牌。续期被拒绝时取消对话；正常结束先停止续期、撤销授权、
+删除临时状态，再写入终态。任务取消也中止续期并尽力撤销。Node 崩溃后不恢复会话，Cloud 终态恢复
+及授权过期会撤销其权限。不带模型绑定的 Echo 会话保持既有环境，且不请求模型授权。
+授权创建或续期返回已验证的 `model_session_ending` 时，Node 停止模型权限，最多等待 30 秒接收
+已经持久化的 EndSession 命令，以保留其明确的结束原因。普通撤销和服务不可用不会进入等待。
+Agent 尚未启动就结束时，封存空的 Ora 历史文件，支持交付未改动的 Revision，不伪造 provider 会话。

@@ -12,6 +12,7 @@ use super::queue::{Plan, plan};
 use super::resume;
 use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
+use crate::model_proxy::{ModelAccess, ModelAccessStatus};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
 use ora_contracts::{
@@ -145,21 +146,79 @@ where
             return SessionEnd::agent_failed("agent_start_failed");
         }
     };
+    let mut model_access = match &spec.model_binding_id {
+        Some(binding) => {
+            let Some(config) = shared.config.model_proxy.clone() else {
+                return SessionEnd::agent_failed("model_proxy_unavailable");
+            };
+            match ModelAccess::open(config, binding, execution, &shared.config.home_directory).await
+            {
+                Ok(access) => Some(access),
+                Err(error) if error.0 == "model_session_ending" => {
+                    return match super::model::reconcile(
+                        &shared.ledger,
+                        execution,
+                        wake,
+                        shared.stopping.subscribe(),
+                        super::model::END_RECONCILE_WAIT,
+                    )
+                    .await
+                    {
+                        Ok(reason) => match super::model::seal_unstarted_history(
+                            &shared.sessions_root(),
+                            execution,
+                        ) {
+                            Ok(()) => SessionEnd::requested(reason),
+                            Err(detail) => SessionEnd::agent_failed(detail),
+                        },
+                        Err(detail) => SessionEnd::agent_failed(detail),
+                    };
+                }
+                Err(error) => return SessionEnd::agent_failed(error.0),
+            }
+        }
+        None => None,
+    };
+    if let Some(access) = &mut model_access
+        && let Err(error) = placement.publish_model_ca(access)
+    {
+        access.close().await;
+        return SessionEnd::agent_failed(error.0);
+    }
+    let environment = model_access
+        .as_ref()
+        .map(|access| access.environment.clone())
+        .unwrap_or_default();
     let taps = GenerationTaps::default();
-    let launcher = placement.launcher(&spec.git_identity, &package_root);
+    let launcher = placement.launcher(&spec.git_identity, &package_root, environment);
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
             ora_warn!(execution_id = %execution, error = %error, "plugin lifecycle could not open");
+            if let Some(access) = &mut model_access {
+                access.close().await;
+            }
             return SessionEnd::agent_failed("agent_plugin_unavailable");
         }
     };
     if !runs_package(&lifecycle, &plugin_id, &package_root) {
+        if let Some(access) = &mut model_access {
+            access.close().await;
+        }
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     }
 
     let mirror = ThreadMirror::new(shared.ledger.clone(), execution.clone(), wake.clone());
     let scheduler = Scheduler::new(shared.config.timezone);
+    let agent_home = model_access.as_ref().map_or_else(
+        || checkout.clone(),
+        |access| {
+            placement.home_directory().map_or_else(
+                || std::path::PathBuf::from(&access.environment["HOME"]),
+                std::path::Path::to_path_buf,
+            )
+        },
+    );
     let manager = AgentRuntimeManager::<NodeRuntimeHost<L>>::new(AgentRuntimeSetup {
         attach: Arc::new(SessionPlugin {
             lifecycle: lifecycle.clone(),
@@ -170,7 +229,7 @@ where
         directory: CheckoutDirectory(checkout.clone()),
         session_setup: NoSessionMcp::default(),
         events: mirror.clone(),
-        home_directory: checkout,
+        home_directory: agent_home,
         sessions_root: shared.sessions_root(),
         scheduler: scheduler.clone(),
     });
@@ -185,10 +244,33 @@ where
                 wake,
             };
             let mut stopping = shared.stopping.subscribe();
+            let mut model_status = model_access.as_ref().map(|access| access.status.clone());
             let agent_ref = AgentRef::for_plugin(&plugin_id);
             let end = tokio::select! {
                 biased;
                 _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
+                status = async {
+                    match &mut model_status {
+                        Some(status) => status.wait_for(|status| *status != ModelAccessStatus::Active).await
+                            .map_or(ModelAccessStatus::Revoked, |status| *status),
+                        None => std::future::pending::<ModelAccessStatus>().await,
+                    }
+                } => {
+                    let failed = conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await;
+                    match status {
+                        ModelAccessStatus::Ending => {
+                            if let Some(access) = &mut model_access {
+                                access.close().await;
+                            }
+                            match super::model::reconcile(&shared.ledger, execution, wake,
+                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT).await {
+                                Ok(reason) => SessionEnd::requested(reason),
+                                Err(detail) => SessionEnd::agent_failed(detail),
+                            }
+                        }
+                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => failed,
+                    }
+                },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
             };
             // Dropping the manager releases its connection supervisor, which stops reconnecting.
@@ -210,6 +292,9 @@ where
         ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
     }
     scheduler.shutdown().await;
+    if let Some(access) = &mut model_access {
+        access.close().await;
+    }
     // The plugin is gone, so nothing reads the package view or writes the session home anymore.
     drop(placement);
     end
@@ -266,6 +351,7 @@ fn settle<L: SessionLedger>(
 /// How one running turn stopped.
 enum TurnOutcome {
     Finished,
+    Failed(&'static str),
     EndRequested {
         command_id: CommandId,
         reason: EndSessionReason,
@@ -359,6 +445,24 @@ impl<L: SessionLedger> Conversation<'_, L> {
             };
             match self.run_turn(turn).await {
                 Ok(TurnOutcome::Finished) => {}
+                Ok(TurnOutcome::Failed(code)) => {
+                    // A committed EndSession keeps its reason even if its wake-up races the ACP
+                    // result. Never replace a durable cancellation with a provider failure.
+                    return match self.ledger.queued_commands(self.execution).map(plan) {
+                        Ok(Plan::End {
+                            command_id,
+                            reason,
+                            discarded,
+                        }) => self.end_requested(command_id, reason, discarded).await,
+                        Ok(Plan::Turn { .. } | Plan::Wait) => {
+                            self.stop(SessionEnd::agent_failed(code)).await
+                        }
+                        Err(_) => {
+                            self.stop(SessionEnd::agent_failed("ledger_unavailable"))
+                                .await
+                        }
+                    };
+                }
                 Ok(TurnOutcome::EndRequested {
                     command_id,
                     reason,
@@ -415,9 +519,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let outcome = loop {
             tokio::select! {
                 event = stream.recv() => match event {
-                    Some(Ok(PromptSessionEvent::Completed { .. })) | Some(Err(_)) | None => {
-                        break TurnOutcome::Finished;
-                    }
+                    Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
+                    Some(Err(_)) => break TurnOutcome::Failed("agent_turn_failed"),
+                    None => break TurnOutcome::Failed("agent_stream_closed"),
                     Some(Ok(_)) => {}
                 },
                 () = self.wake.notified() => {
@@ -441,6 +545,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
             TurnOutcome::Finished => self.mirror.set_turn(None),
             // The turn is still running: stopping cancels it and records its end under this turn.
             TurnOutcome::EndRequested { .. }
+            | TurnOutcome::Failed(_)
             | TurnOutcome::ThreadBroken
             | TurnOutcome::LedgerUnavailable => {}
         }

@@ -20,6 +20,18 @@ Node 在受理和实际开始执行时检查许可，先持久化原始输入，
 升级成功后清理旧版本目录。移除不存在的插件成功，移除操作保留插件 data/config。
 既有目录含符号链接时拒绝跟随。
 
+部署者可以在 Node 服务 JSON 顶层加入以下配置，让较大的官方包在慢速连接上有足够时间完成下载：
+
+```json
+"plugins": { "download_timeout_seconds": 600 }
+```
+
+省略 `plugins` 或其中的时限时，单次请求仍限制为原来的 60 秒。配置必须为 10 至 1200 秒的整数；
+非法值在启动读取配置时拒绝。包含重试开销的总预算为单次时限的三倍加 70 秒：默认仍是 250 秒，
+配置 600 则为 1870 秒。建立连接仍限制为 10 秒，临时失败仍至多重试两次，包大小仍限制为 512 MiB；
+失败后从头重传。该部署策略保持 TLS 验证、冻结的下载地址、SHA-256 校验和测试等待时限，
+远程插件命令不能指定它。
+
 `PluginInstaller::catalog()` 返回 `DirectoryPluginCatalog`。会话宿主需复用这个实例，先获得 use lease，
 再查找精确版本。租约存在时，替换或移除该插件返回 `plugin_in_use`。本变更提供目录与租约实现；
 生产控制通道的 Agent session 执行接线属于任务 C 的后续部分。
@@ -37,7 +49,7 @@ SQLite schema v7 增加插件执行与 outbox，并保留旧 worktree/clone 的�
 
 ## 验证
 
-相关入口：`apps/ora-node/tests/plugins.rs`（真实包及本地 HTTP）、
+相关入口：`apps/ora-node/tests/plugins.rs`（部署默认值、非法时限拒绝、真实包安装收到配置的下载策略、本地 HTTP）、
 `apps/ora-node/tests/standalone/repository_plugins.rs`（实际 Node 进程和 IPC 重启重放）、
 `crates/node-db/src/tests/plugin.rs`（事务、重启、运行许可）、
 `apps/ora-controller/tests/workspaces/plugins.rs`（假 Cloud gRPC 与假 Node WebSocket 的步骤推进）。

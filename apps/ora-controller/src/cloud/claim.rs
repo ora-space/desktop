@@ -81,6 +81,9 @@ pub(super) async fn batch(
                     sandbox.advertises(NodeCapability::AgentSession)
                         && (!agents::mapping::resumes(item.input.as_ref())
                             || sandbox.advertises(NodeCapability::RevisionRestore))
+                        && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
+                        Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
+                            || sandbox.advertises(NodeCapability::ModelProxy))
                 }
                 Targeted::Delivery => sandbox.advertises(NodeCapability::RevisionDelivery),
             };

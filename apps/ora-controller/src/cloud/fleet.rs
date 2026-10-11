@@ -150,6 +150,14 @@ impl Sandbox {
                 .contains(&capability)
     }
 
+    /// Registration freezes the handshake fact even if the socket closes during the write.
+    pub(super) fn advertised_model_proxy(&self) -> bool {
+        self.capabilities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&NodeCapability::ModelProxy)
+    }
+
     /// Whether a session is established right now.
     pub(super) fn connected(&self) -> bool {
         self.identity.borrow().is_some()

@@ -4,7 +4,7 @@
 use ora_node::{PluginCatalog, PluginInstaller};
 use ora_node_protocol::*;
 use ora_utils::http::{
-    DownloadError, DownloadOutcome, DownloadRequest, DownloadSource, HttpDownload,
+    DownloadError, DownloadOptions, DownloadOutcome, DownloadRequest, DownloadSource, HttpDownload,
     LocalFileDownloader,
 };
 use pretty_assertions::assert_eq;
@@ -12,10 +12,131 @@ use std::{
     io::Write,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+/// Observes the request reaching the real archive/checksum installer rather than its config builder.
+struct PolicyDownload {
+    archive: PathBuf,
+    observed: Arc<Mutex<Vec<DownloadOptions>>>,
+}
+impl HttpDownload for PolicyDownload {
+    /// Keeps byte/checksum verification while capturing the composed download policy.
+    async fn download(
+        &self,
+        mut request: DownloadRequest,
+    ) -> Result<DownloadOutcome, DownloadError> {
+        self.observed.lock().unwrap().push(request.options);
+        request.source = DownloadSource::Local(self.archive.clone());
+        LocalFileDownloader.download(request).await
+    }
+}
+
+/// Uses the production deployment parser without opening a database or starting native processes.
+fn deployment_json() -> serde_json::Value {
+    serde_json::json!({
+        "node": {"home_directory": "/tmp/node", "identity": "Discover", "repositories": []},
+        "process": {
+            "host_directory": "/tmp/host", "expected_uid": 1000, "git_program": "/usr/bin/git",
+            "environment": {}, "command_timeout_ms": 1000, "cleanup_timeout_ms": 1000,
+            "shutdown_grace_ms": 100
+        },
+        "recovery_interval_ms": 50,
+        "timezone": "Asia/Shanghai"
+    })
+}
+
+/// Missing deployment fields preserve defaults; malformed or out-of-range values fail at parsing.
+#[test]
+fn deployment_plugin_timing_defaults_and_rejects_invalid_values() {
+    let omitted: ora_node::ServiceConfig = serde_json::from_value(deployment_json()).unwrap();
+    let mut empty = deployment_json();
+    empty["plugins"] = serde_json::json!({});
+    let empty: ora_node::ServiceConfig = serde_json::from_value(empty).unwrap();
+    assert_eq!(
+        (omitted.plugins, empty.plugins),
+        (Default::default(), Default::default())
+    );
+    assert_eq!(
+        serde_json::to_value(omitted.plugins).unwrap(),
+        serde_json::json!({"download_timeout_seconds": 60})
+    );
+    for invalid in [
+        serde_json::json!(0),
+        serde_json::json!(9),
+        serde_json::json!(1201),
+        serde_json::json!(u64::MAX),
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+        serde_json::json!("600"),
+        serde_json::Value::Null,
+    ] {
+        let mut value = deployment_json();
+        value["plugins"] = serde_json::json!({"download_timeout_seconds": invalid});
+        assert!(serde_json::from_value::<ora_node::ServiceConfig>(value).is_err());
+    }
+    for invalid in [serde_json::Value::Null, serde_json::json!({"timeout": 600})] {
+        let mut value = deployment_json();
+        value["plugins"] = invalid;
+        assert!(serde_json::from_value::<ora_node::ServiceConfig>(value).is_err());
+    }
+}
+
+/// The default and configured policy reach a real installation, preserving retry/size constraints.
+#[tokio::test]
+async fn deployment_plugin_timing_reaches_installer_download_request() {
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::level_filters::LevelFilter::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    for (plugins, attempt, total) in [
+        (serde_json::json!({}), 60, 250),
+        (serde_json::json!({"download_timeout_seconds": 10}), 10, 100),
+        (
+            serde_json::json!({"download_timeout_seconds": 600}),
+            600,
+            1870,
+        ),
+        (
+            serde_json::json!({"download_timeout_seconds": 1200}),
+            1200,
+            3670,
+        ),
+    ] {
+        let mut value = deployment_json();
+        value["plugins"] = plugins;
+        let config: ora_node::ServiceConfig = serde_json::from_value(value).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let source = archive(root.path(), "1.0.0");
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let installer = PluginInstaller::with_config(
+            root.path().join("home"),
+            PolicyDownload {
+                archive: source.clone(),
+                observed: observed.clone(),
+            },
+            /*host_target*/ None,
+            config.plugins,
+        );
+        assert_eq!(
+            installer.execute(&command(&source, "1.0.0"), &node()).await,
+            result(PluginItemOutcome::Installed {
+                version: PluginVersion::new("1.0.0")
+            })
+        );
+        let mut expected = DownloadOptions::default();
+        expected.connect_timeout = Some(std::time::Duration::from_secs(10));
+        expected.per_attempt_timeout = Some(std::time::Duration::from_secs(attempt));
+        expected.total_timeout = Some(std::time::Duration::from_secs(total));
+        expected.max_retries = 2;
+        expected.max_bytes = Some(512 * 1024 * 1024);
+        assert_eq!(*observed.lock().unwrap(), vec![expected]);
+    }
+}
 
 /// Supplies a real archive through the downloader boundary while counting duplicate transfers.
 struct ArchiveDownload {

@@ -33,6 +33,7 @@ fn config(
     .expect("service configuration");
     config.process.workload_uid = workload_uid;
     config.agent = Some(AgentConfig {
+        model_proxy: None,
         deno_path: PathBuf::from("/usr/bin/deno"),
         ready_timeout_ms: 1000,
         workload_directory,

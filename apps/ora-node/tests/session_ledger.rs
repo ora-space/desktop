@@ -28,6 +28,7 @@ fn runtime_ports_use_durable_ledger() {
                 agent_plugin_id: PluginId::new("official/agent"),
                 agent_plugin_version: PluginVersion::new("1.0.0"),
                 checkout_execution_id: ExecutionId::new("clone"),
+                model_binding_id: None,
                 git_identity: GitIdentity {
                     name: "User".into(),
                     email: "user@example.com".into(),

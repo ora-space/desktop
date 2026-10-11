@@ -19,11 +19,12 @@ pub(super) struct Plugins {
 
 impl Plugins {
     /// Starts a bounded executor which owns no database connection.
-    pub(super) fn start(node: &ManagedNode) -> std::io::Result<Self> {
-        let installer = PluginInstaller::new(
+    pub(super) fn start(node: &ManagedNode, config: crate::PluginConfig) -> std::io::Result<Self> {
+        let installer = PluginInstaller::with_config(
             node.home_directory().to_path_buf(),
             ReqwestDownloader::new(ProxyConfig::default()),
             ora_plugin_registry::current_host_target(),
+            config,
         );
         let catalog = installer.catalog();
         let recovered = installer.recover().is_ok();

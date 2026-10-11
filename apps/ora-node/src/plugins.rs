@@ -1,17 +1,20 @@
 //! Workspace-local plugin installation. Downloading never holds a session lease lock; publishing
 //! checks the lock again so a session started during the transfer cannot lose its executable.
 mod catalog;
+mod config;
 pub use catalog::{DirectoryPluginCatalog, PluginUseLease};
+pub use config::PluginConfig;
 use ora_node_protocol::*;
 use ora_plugin_manager::{InstallError, Installer, ResolvedReleaseSource};
 use ora_utils::http::{DownloadError, DownloadOptions, DownloadSource, HttpDownload};
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 /// Executes Cloud's exact plans without consulting a marketplace or activating a plugin.
 pub struct PluginInstaller<D> {
     installer: Installer<D>,
     catalog: DirectoryPluginCatalog,
     host_target: Option<ora_plugin_manager::HookTarget>,
+    download_options: DownloadOptions,
 }
 
 impl<D: HttpDownload> PluginInstaller<D> {
@@ -21,10 +24,21 @@ impl<D: HttpDownload> PluginInstaller<D> {
         downloader: D,
         host_target: Option<ora_plugin_manager::HookTarget>,
     ) -> Self {
+        Self::with_config(home, downloader, host_target, PluginConfig::default())
+    }
+
+    /// Uses deployment-selected timing without letting Cloud's plugin plan change transfer policy.
+    pub fn with_config(
+        home: PathBuf,
+        downloader: D,
+        host_target: Option<ora_plugin_manager::HookTarget>,
+        config: PluginConfig,
+    ) -> Self {
         Self {
             installer: Installer::new(downloader),
             catalog: DirectoryPluginCatalog::new(home),
             host_target,
+            download_options: config.download_options(),
         }
     }
 
@@ -149,16 +163,15 @@ impl<D: HttpDownload> PluginInstaller<D> {
             }
             None => ResolvedReleaseSource::universal(DownloadSource::Url(url), digest),
         };
-        let mut options = DownloadOptions::default();
-        options.connect_timeout = Some(Duration::from_secs(10));
-        options.per_attempt_timeout = Some(Duration::from_secs(60));
-        options.total_timeout = Some(Duration::from_secs(250));
-        // Two retries plus the initial request bound transient failures to three attempts.
-        options.max_retries = 2;
-        options.max_bytes = Some(512 * 1024 * 1024);
         let prepared = self
             .installer
-            .prepare_release(&id, &version, source, &self.catalog.staging_root(), options)
+            .prepare_release(
+                &id,
+                &version,
+                source,
+                &self.catalog.staging_root(),
+                self.download_options,
+            )
             .await
             .map_err(failure)?;
         self.catalog.publish(&id, &version, prepared)

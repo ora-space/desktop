@@ -29,6 +29,8 @@ tracing.workspace = true
 ora-utils = { workspace = true, features = ["http-reqwest"] }
 agent-client-protocol-schema.workspace = true
 chrono-tz.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+reqwest = { workspace = true, features = ["json"] }
 ora-agent-runtime.workspace = true
 ora-contracts.workspace = true
 ora-domain.workspace = true

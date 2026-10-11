@@ -73,6 +73,9 @@ pub enum ControlListen {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// Plugin transfer timing is selected by deployment and defaults to the original policy.
+    #[serde(default)]
+    pub plugins: crate::PluginConfig,
     /// Enables Agent sessions using the deployment-provided Deno executable.
     #[serde(default)]
     pub agent: Option<AgentConfig>,
@@ -92,6 +95,9 @@ pub struct ServiceConfig {
 pub struct AgentConfig {
     pub deno_path: PathBuf,
     pub ready_timeout_ms: u64,
+    /// Dedicated client-authentication material, distinct from Node WSS server TLS.
+    #[serde(default)]
+    pub model_proxy: Option<crate::ModelProxyConfig>,
     /// Root-owned directory holding one directory per running session when agents run as the
     /// workload user; required exactly when `process.workload_uid` is set. The deployment creates
     /// it; the Node only validates it and manages its children.
@@ -164,6 +170,13 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
     }
     if let Some(agent) = &config.agent {
         agents::validate(agent, &config)?;
+    }
+    if let Some(proxy) = config
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.model_proxy.as_ref())
+    {
+        proxy.validate().map_err(io::Error::other)?;
     }
     let control = config.control.clone();
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);

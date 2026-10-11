@@ -98,6 +98,7 @@ async fn register(
 ) -> Result<(), Error> {
     let epoch = store.epoch()?;
     let binding = &sandbox.binding;
+    let model_proxy = sandbox.advertised_model_proxy();
     let response = fault::write(|submission_id| async move {
         let request = store.request(proto::RegisterNodeRequest {
             submission_id,
@@ -109,6 +110,7 @@ async fn register(
                 node_incarnation_id: node.incarnation_id.as_str().into(),
             }),
             protocol_version: u32::from(CURRENT_PROTOCOL_VERSION.value()),
+            model_proxy,
         });
         store.nodes().register_node(request).await
     })

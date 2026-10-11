@@ -487,7 +487,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if reusable {
                                 self.record_cleanup(operation_id, Ok(()));
                             }
-                            ora_debug!(session_id = %self.session.id, error = %error, reusable = reusable, "prompt failed");
+                            ora_debug!(session_id = %self.session.id, code = "agent_turn_failed", reusable = reusable, "prompt failed");
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);
                             let delivered = events.try_send(Err(map_acp_error(error))).is_ok();

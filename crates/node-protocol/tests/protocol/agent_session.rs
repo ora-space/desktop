@@ -30,6 +30,7 @@ pub(super) fn start() -> Case {
                         agent_plugin_id: PluginId::new("ora.1a2b/claude-code"),
                         agent_plugin_version: PluginVersion::new("1.2.0"),
                         checkout_execution_id: ExecutionId::new("execution-clone"),
+                        model_binding_id: None,
                         git_identity: GitIdentity {
                             name: "Ada Lovelace".to_owned(),
                             email: "ada@example.com".to_owned(),
@@ -107,6 +108,31 @@ async fn start_agent_session_round_trips() -> Result<(), TestError> {
             ),
             ("/payload/spec/initial_turn/turn_id", "turn_id"),
         ],
+    )
+    .await
+}
+
+/// An optional model binding crosses the control wire as an opaque reference, never credentials.
+#[tokio::test]
+async fn model_bound_session_round_trips_and_rejects_empty_binding() -> Result<(), TestError> {
+    let mut case = start();
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) =
+        &mut case.message
+    else {
+        panic!("fixture must be a session start")
+    };
+    command.payload.spec.model_binding_id = Some(ModelBindingId::new("binding-1"));
+    case.wire["payload"]["spec"]["model_binding_id"] = json!("binding-1");
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    case.wire["payload"]["spec"]["model_binding_id"] = json!("");
+    reject_semantics(
+        Peer::Controller,
+        &case.wire,
+        "/payload/spec/model_binding_id",
+        MessageValidationError::EmptyField {
+            field: "model_binding_id",
+        },
     )
     .await
 }

@@ -15,6 +15,7 @@ struct AgentData {
 pub(super) struct AgentNode {
     data: Arc<Mutex<AgentData>>,
     pub(super) enabled: Arc<AtomicBool>,
+    pub(super) model_proxy: Arc<AtomicBool>,
     pub(super) drop_reply: Arc<AtomicBool>,
     suppress_replies: Arc<AtomicBool>,
     forged_reply: Arc<AtomicBool>,
@@ -200,6 +201,48 @@ async fn workspace(world: &World) {
     world.node.agents.enabled.store(true, Ordering::SeqCst);
     let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
     settled(world, &create, proto::OperationState::Succeeded).await;
+}
+
+/// A Node can serve Echo while model-bound work waits for the additional negotiated capability.
+#[test]
+fn model_bound_session_requires_model_proxy_capability() {
+    scenario("main", |world| async move {
+        workspace(&world).await;
+        world.cloud.queue_bound_agent("model-run", "binding-1");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(world.cloud.agent_records(), Vec::new());
+        assert_eq!(world.node.agents.data.lock().unwrap().starts.len(), 0);
+    });
+}
+
+/// The production Cloud adapter carries the frozen reference unchanged into the controlled start.
+#[test]
+fn model_binding_is_preserved_through_controller_dispatch() {
+    scenario("main", |world| async move {
+        world.node.agents.model_proxy.store(true, Ordering::SeqCst);
+        workspace(&world).await;
+        world.cloud.queue_bound_agent("model-run", "binding-1");
+        world
+            .timeline
+            .until(|events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::AgentStarted { .. }))
+            })
+            .await;
+        let starts = world.node.agents.data.lock().unwrap();
+        assert_eq!(
+            starts
+                .starts
+                .values()
+                .next()
+                .unwrap()
+                .payload
+                .spec
+                .model_binding_id,
+            Some(ModelBindingId::new("binding-1"))
+        );
+    });
 }
 /// Waits for an exact ACK, never treating a Cloud query or log as receipt.
 async fn acked(world: &World, execution: &ExecutionId, sequence: u64) {

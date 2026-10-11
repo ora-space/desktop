@@ -14,6 +14,115 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use support::*;
 
+/// A committed end command wins over a racing ACP error even before its wake-up arrives.
+#[test]
+fn durable_cancel_wins_a_racing_provider_failure() {
+    with_scoped_async_test(async {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        let (reached, release) = fixture.ledger.pause_append(2);
+        let ledger = fixture.ledger.clone();
+        fixture.start(&sessions, PLUGIN_VERSION, "[request-failed]");
+        tokio::task::spawn_blocking(move || {
+            ora_logging::with_trace_logging(|| {
+                reached
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("provider failure must reach TurnEnded");
+                // The synchronous append blocks this test's runtime. Commit and release from
+                // its joined blocking task, deliberately without command_arrived's wake-up.
+                ledger.accept(
+                    "cancel",
+                    SessionCommand::EndSession(EndSessionReason::Cancelled),
+                );
+                release.send(()).unwrap();
+            });
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            fixture.ended().await.reason,
+            AgentSessionEndReason::Cancelled
+        );
+        assert_eq!(
+            fixture.ledger.settlements(),
+            vec![("cancel".into(), vec![CommandSettlement::Executed])]
+        );
+        sessions.shutdown().await;
+    });
+}
+
+/// ACP request failure must terminate the Node session instead of silently admitting more turns.
+#[test]
+fn provider_failure_ends_the_session_with_a_safe_code_and_releases_resources() {
+    with_scoped_async_test(async {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        fixture.start(&sessions, PLUGIN_VERSION, "[request-failed]");
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), fixture.ended())
+            .await
+            .expect("a failed prompt must not leave the session idle");
+        assert_eq!(ended.reason, AgentSessionEndReason::AgentFailed);
+        assert_eq!(ended.detail.as_deref(), Some("agent_turn_failed"));
+        let history = serde_json::to_string(&fixture.history_lines()).expect("encode history");
+        assert!(!history.contains("upstream diagnostic"));
+        assert_eq!(fixture.leases.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            fixture
+                .plugin_pids()
+                .into_iter()
+                .all(|pid| !process_exists(pid))
+        );
+        sessions.shutdown().await;
+    });
+}
+
+fn with_scoped_async_test(action: impl std::future::Future<Output = ()>) {
+    ora_logging::with_trace_logging(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(action);
+    });
+}
+
+/// A model-bound input never falls back to Echo or an inherited direct API connection.
+#[tokio::test]
+async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
+    use ora_node_protocol::{
+        AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
+    };
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    sessions.start(
+        OperationId::new(OPERATION),
+        ExecutionId::new(EXECUTION),
+        AgentSessionSpec {
+            node_id: fixture.node().node_id,
+            agent_plugin_id: PluginId::new(PLUGIN_ID),
+            agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+            checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+            model_binding_id: Some(ModelBindingId::new("binding-1")),
+            prior_revision: None,
+            git_identity: identity(),
+            initial_turn: turn("turn-1", "read the repository"),
+        },
+    );
+    assert_eq!(
+        fixture.ended().await,
+        AgentSessionEnded {
+            node: fixture.node(),
+            reason: AgentSessionEndReason::AgentFailed,
+            detail: Some("model_proxy_unavailable".into()),
+        }
+    );
+    assert_eq!(
+        (fixture.ledger.events(), fixture.plugin_pids()),
+        (Vec::new(), Vec::new())
+    );
+    sessions.shutdown().await;
+}
+
 /// Every Thread event is a line of the session history, in file order, attributed to the turn
 /// it belongs to; the user message itself carries its turn identity in the history.
 ///

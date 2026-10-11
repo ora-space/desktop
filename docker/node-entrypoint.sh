@@ -50,6 +50,18 @@ prepare() {
     chmod 0600 "/run/ora/$name.pem"
   done
   unset ORA_NODE_CERT ORA_NODE_KEY ORA_NODE_CA ORA_CONTROLLER_CERT value
+  if jq -e '.agent.model_proxy != null' "$config_file" >/dev/null; then
+    for name in model-client model-client-key model-ca; do
+      case "$name" in
+        model-client) value=${ORA_MODEL_CLIENT_CERT:?} ;;
+        model-client-key) value=${ORA_MODEL_CLIENT_KEY:?} ;;
+        model-ca) value=${ORA_MODEL_CA:?} ;;
+      esac
+      printf '%s' "$value" | base64 -d >"/run/ora/$name.pem"
+      chmod 0600 "/run/ora/$name.pem"
+    done
+  fi
+  unset ORA_MODEL_CLIENT_CERT ORA_MODEL_CLIENT_KEY ORA_MODEL_CA value
   unset ORA_NODE_CONFIG
   supervise
 }

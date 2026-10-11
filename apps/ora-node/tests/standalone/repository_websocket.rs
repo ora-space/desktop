@@ -9,6 +9,7 @@ use ora_node_transport::{
     websocket::{self, ClientReceiver, ClientSender, WsEndpoint},
 };
 use pretty_assertions::assert_eq;
+use rusqlite::OptionalExtension;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     process::{Command, Stdio},
@@ -107,6 +108,30 @@ async fn clone_result(receiver: &mut ClientReceiver) -> CloneResultMessage {
     }
 }
 
+/// Observes the exact durable event without acquiring the live Node's exclusive writer lease.
+fn pending_clone_event(fixture: &Fixture, execution: &ExecutionId) -> Option<CloneResultMessage> {
+    let connection = rusqlite::Connection::open_with_flags(
+        fixture.config().home_directory.join("ora-node.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let event: Option<String> = connection
+        .query_row(
+            "SELECT event FROM clone_outbox WHERE execution=?1",
+            [execution.as_str()],
+            |row| row.get(/*idx*/ 0),
+        )
+        .optional()
+        .unwrap();
+    event.map(|event| {
+        let NodeToControllerMessage::CloneResult(result) = serde_json::from_str(&event).unwrap()
+        else {
+            panic!("clone outbox contains a different event family");
+        };
+        result
+    })
+}
+
 /// Starts a loopback-only library fixture for the original transport and crash obligations.
 /// Production network authorization is exercised separately by mTLS and cluster acceptance.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -> ChildGuard {
@@ -115,6 +140,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
     fs::write(
         &config,
         serde_json::to_vec(&ora_node::ServiceConfig {
+            plugins: Default::default(),
             agent: None,
             node: fixture.config(),
             process: fixture.process(),
@@ -304,7 +330,23 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
             )
             .await;
             let original = clone_result(&mut receiver).await;
-            // The acknowledgement is lost with the connection: reconnecting replays the same event.
+            let CloneExecutionResult::CloneReady(ready) = &original.payload else {
+                panic!("fixture clone did not complete");
+            };
+            // Model the actual commit-before-ACK loss window: Controller takeover is durable,
+            // but no ACK reaches Node. Its exact event must still survive disconnect/restart.
+            store
+                .take_over_node_event(&ready.node, &original)
+                .await
+                .unwrap();
+            assert!(matches!(
+                store.result(&command.execution_id).await.unwrap(),
+                Some(ExecutionOutcome::Ready { .. })
+            ));
+            assert_eq!(
+                pending_clone_event(&fixture, &command.execution_id),
+                Some(original.clone())
+            );
             drop((receiver, sender));
             let (mut receiver, _sender) = hello(&endpoint).await;
             assert_eq!(clone_result(&mut receiver).await, original);
@@ -336,16 +378,26 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
             };
             let taken_over = async {
                 loop {
-                    if let Some(outcome) = store.result(&command.execution_id).await.unwrap() {
+                    // Controller commit precedes its wire ACK. Keep the real session alive until
+                    // Node has durably consumed the exact event; cancelling at result visibility
+                    // reproduces the legitimate commit-before-ACK loss window above.
+                    if let Some(outcome) = store.result(&command.execution_id).await.unwrap()
+                        && pending_clone_event(&fixture, &command.execution_id).is_none()
+                    {
                         break outcome;
                     }
                     tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
                 }
             };
-            let outcome = tokio::select! {
-                () = session => unreachable!(),
-                outcome = taken_over => outcome,
-            };
+            let outcome =
+                tokio::time::timeout(Duration::from_millis(settings.io_timeout_ms), async {
+                    tokio::select! {
+                        () = session => unreachable!(),
+                        outcome = taken_over => outcome,
+                    }
+                })
+                .await
+                .expect("Controller takeover never reached Node's durable ACK");
             assert!(
                 matches!(outcome, ExecutionOutcome::Ready { .. }),
                 "{outcome:?}"

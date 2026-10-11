@@ -98,8 +98,9 @@ impl SessionPlacement {
         &self,
         git_identity: &GitIdentity,
         package_root: &Path,
+        runtime: std::collections::BTreeMap<String, String>,
     ) -> SessionLauncher {
-        let environment = SessionEnvironment::new(git_identity);
+        let environment = SessionEnvironment::new(git_identity, runtime);
         match self {
             Self::Shared => PackageViewLauncher {
                 inner: DenoPluginRuntimeLauncher::with_environment_provider(
@@ -122,6 +123,27 @@ impl SessionPlacement {
                     view: directory.package.clone(),
                 },
             },
+        }
+    }
+
+    /// The private workload home owns CLI state; management-owned Node directories remain closed.
+    pub(super) fn home_directory(&self) -> Option<&Path> {
+        match self {
+            Self::Shared => None,
+            Self::Separate { directory, .. } => Some(&directory.home),
+        }
+    }
+
+    /// Publishes only the model CA beside the package view, outside the workload-writable home.
+    pub(super) fn publish_model_ca(
+        &self,
+        access: &mut crate::model_proxy::ModelAccess,
+    ) -> Result<(), crate::model_proxy::ModelAccessError> {
+        match self {
+            Self::Shared => Ok(()),
+            Self::Separate { directory, .. } => {
+                access.publish_ca(&directory.root.join("model-ca.pem"))
+            }
         }
     }
 }

@@ -63,24 +63,26 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
 /// process the host spawns for the plugin, which inherits the host's environment instead. Nothing
 /// is written to a Git configuration. The rest of the host environment (model credentials, proxy
 /// settings) still reaches the agent: these variables are layered on top of it, never instead.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct SessionEnvironment {
     variables: BTreeMap<String, String>,
 }
 
 impl SessionEnvironment {
-    pub(super) fn new(identity: &GitIdentity) -> Self {
-        Self {
-            variables: [
+    /// Runtime authority stays in memory, and the session's Git identity takes precedence.
+    pub(super) fn new(identity: &GitIdentity, runtime: BTreeMap<String, String>) -> Self {
+        let mut variables = runtime;
+        variables.extend(
+            [
                 ("GIT_AUTHOR_NAME", &identity.name),
                 ("GIT_AUTHOR_EMAIL", &identity.email),
                 ("GIT_COMMITTER_NAME", &identity.name),
                 ("GIT_COMMITTER_EMAIL", &identity.email),
             ]
             .into_iter()
-            .map(|(key, value)| (key.to_string(), value.clone()))
-            .collect(),
-        }
+            .map(|(key, value)| (key.to_string(), value.clone())),
+        );
+        Self { variables }
     }
 
     /// Points HOME and every per-user base directory at the session home.
@@ -105,6 +107,12 @@ impl SessionEnvironment {
         }
         self.variables
             .insert("DENO_NO_UPDATE_CHECK".to_string(), "1".to_string());
+        if self.variables.contains_key("OPENCODE_CONFIG_DIR") {
+            self.variables.insert(
+                "OPENCODE_CONFIG_DIR".to_string(),
+                home.join(".config").to_string_lossy().into_owned(),
+            );
+        }
         self
     }
 }

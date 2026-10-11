@@ -121,9 +121,9 @@ prepare ends the session as `agent_failed{agent_start_failed}`.
    Service shutdown waits for that final write; delivery never sees an ended session
    whose history is still being written.
 
-A failed or timed-out agent turn only records `TurnEnded` and the session
-continues. A turn that cannot be admitted at all, because the agent cannot be
-reached, ends the session as `agent_failed{agent_unavailable}`.
+A prompt error or unexpected stream closure records the bounded failed-session outcome and ends
+the Node session. A successfully completed turn admits the next queued command. A turn that cannot
+be admitted because the agent cannot be reached ends as `agent_failed{agent_unavailable}`.
 
 ## Record Order and Crashes
 
@@ -214,3 +214,47 @@ reclamation. Process I/O containment remains a separate dependency.
 real clone and echo plugin: command deduplication, history equality, shared installation leases,
 runtime closure, graceful stop, SIGKILL recovery, window saturation and exact replay. Controller
 Cloud work-item relay remains outside this change.
+
+## Platform model access
+
+`AgentSessionSpec.model_binding_id` is an optional opaque Cloud reference. A configured deployment
+adds `agent.model_proxy` with `gateway_url`, `ca_cert`, `client_cert`, and `client_key`; all certificate
+paths are absolute. Its dedicated client-authentication certificate is issued for the runtime's
+tenant, Workspace and generation, separately from the Node WSS server certificate. The service validates
+this material before advertising `ModelProxy`. Controller registration and retransmission require
+that capability for a model-bound start; local Node admission enforces the same requirement.
+
+The Node requests `POST /internal/v1/model-grants` with only the binding and session execution IDs.
+The platform returns a frozen protocol/model and an in-memory temporary token, never an upstream
+API key. OpenCode uses one `ora-model` provider with the OpenAI-compatible or Anthropic SDK. Its
+config references `ORA_MODEL_ACCESS_TOKEN` through an environment placeholder, preserves slash-containing
+model IDs, uses the platform HTTPS data listener, and trusts the public CA through `NODE_EXTRA_CA_CERTS`.
+With a separate workload identity, HOME, XDG directories and `OPENCODE_CONFIG_DIR` use the
+workload-owned session home. The Node publishes only its validated public CA as a root-owned
+`0644` file beside that home, so the CLI can verify the proxy without accessing management
+directories or client private keys. Shared-identity deployments use the session-private temporary
+directory under Node `model-runtime/`. Both layouts stay outside the checkout and Revision;
+the temporary token remains an environment reference and is never written with the public CA.
+Git identity still comes from the run.
+
+Model-bound OpenCode sets `OPENCODE_DISABLE_PROJECT_CONFIG=true`. The pinned CLI therefore does
+not discover checkout `.opencode` directories or install its dependencies there; HOME/config/cache
+and plugin dependencies remain session-private and cannot be captured in a Revision. Repository
+OpenCode configuration is intentionally ignored because this run's provider and model are frozen.
+
+Only a successful ACP completion admits another turn. A prompt error or unexpected stream closure
+ends the Node session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`, closes
+the provider/plugin, releases its lease and revokes model access. No raw provider diagnostic enters
+history or logs. A durable EndSession already queued keeps its explicit reason if it races the error.
+Cloud still delivers partial repository work through the existing terminal Revision path. Retrying
+a failed provider requires a new run; successful multi-turn sessions and Echo's normal path remain.
+
+Renewal extends the existing grant before expiry without changing the token. Renewal denial cancels
+the conversation; normal termination stops renewal, revokes the grant and removes the temporary
+state before recording the terminal result. Cancellation also aborts renewal and revokes best effort.
+A crashed Node never resumes a session: Cloud terminal recovery and grant expiry revoke its authority.
+Without a model binding, the Echo session path does not request model access or alter its environment.
+A verified `model_session_ending` denial during grant creation or renewal stops model authority and
+waits at most 30 seconds for the durable EndSession command. Its explicit reason stays authoritative;
+ordinary revocation and unavailable-service failures never enter this grace. Ending before any agent
+starts seals an empty Ora history, allowing an unchanged Revision without inventing a provider session.
