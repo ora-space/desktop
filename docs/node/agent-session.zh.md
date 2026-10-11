@@ -94,8 +94,8 @@ Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
    `discarded`，写入终态后再移除存活记录；服务停止会等待该写入。交付看到会话结束时
    history 已不再被写入。
 
-Agent 轮次失败或超时只记录 `TurnEnded`，会话保持。轮次无法被接纳（agent
-无法连接）时以 `agent_failed{agent_unavailable}` 结束。
+prompt 错误或事件流提前关闭以有限失败类别结束 Node 会话；成功完成后才受理下一条排队命令。
+轮次无法被接纳（agent 无法连接）时以 `agent_failed{agent_unavailable}` 结束。
 
 ## 记录顺序与崩溃
 

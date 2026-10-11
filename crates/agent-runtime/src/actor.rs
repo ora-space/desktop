@@ -487,7 +487,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if reusable {
                                 self.record_cleanup(operation_id, Ok(()));
                             }
-                            // ACP/provider messages may contain credentials or request contents.
                             ora_debug!(session_id = %self.session.id, code = "agent_turn_failed", reusable = reusable, "prompt failed");
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);

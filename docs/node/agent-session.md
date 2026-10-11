@@ -121,9 +121,9 @@ prepare ends the session as `agent_failed{agent_start_failed}`.
    Service shutdown waits for that final write; delivery never sees an ended session
    whose history is still being written.
 
-A failed or timed-out agent turn only records `TurnEnded` and the session
-continues. A turn that cannot be admitted at all, because the agent cannot be
-reached, ends the session as `agent_failed{agent_unavailable}`.
+A prompt error or unexpected stream closure records the bounded failed-session outcome and ends
+the Node session. A successfully completed turn admits the next queued command. A turn that cannot
+be admitted because the agent cannot be reached ends as `agent_failed{agent_unavailable}`.
 
 ## Record Order and Crashes
 
