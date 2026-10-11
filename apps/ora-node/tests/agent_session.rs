@@ -21,19 +21,24 @@ fn durable_cancel_wins_a_racing_provider_failure() {
         let fixture = Fixture::new();
         let sessions = fixture.sessions(PLUGIN_VERSION);
         let (reached, release) = fixture.ledger.pause_append(2);
+        let ledger = fixture.ledger.clone();
         fixture.start(&sessions, PLUGIN_VERSION, "[request-failed]");
         tokio::task::spawn_blocking(move || {
-            reached.recv_timeout(std::time::Duration::from_secs(5))
+            ora_logging::with_trace_logging(|| {
+                reached
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("provider failure must reach TurnEnded");
+                // The synchronous append blocks this test's runtime. Commit and release from
+                // its joined blocking task, deliberately without command_arrived's wake-up.
+                ledger.accept(
+                    "cancel",
+                    SessionCommand::EndSession(EndSessionReason::Cancelled),
+                );
+                release.send(()).unwrap();
+            });
         })
         .await
-        .unwrap()
-        .expect("provider failure must reach TurnEnded");
-        // Persist as the protocol does, but deliberately delay command_arrived's wake-up.
-        fixture.ledger.accept(
-            "cancel",
-            SessionCommand::EndSession(EndSessionReason::Cancelled),
-        );
-        release.send(()).unwrap();
+        .unwrap();
         assert_eq!(
             fixture.ended().await.reason,
             AgentSessionEndReason::Cancelled
