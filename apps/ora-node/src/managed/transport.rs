@@ -1,5 +1,5 @@
 use super::{ProcessConfig, Shutdown};
-use gitlancer::GitOutput;
+use gitlancer::{GitIntent, GitOutput};
 use ora_process_client::ProcessHost;
 use ora_process_protocol::*;
 use std::{
@@ -42,10 +42,12 @@ pub(super) async fn close(
 pub(super) async fn execute(
     client: &ProcessHost,
     intent: &HostRunIntent,
+    command_intent: GitIntent,
     config: &ProcessConfig,
     shutdown: &Shutdown,
 ) -> io::Result<GitOutput> {
     let started = Instant::now();
+    let budget = config.command_budget(command_intent);
     match client
         .execute(HostOperation::CreateScope {
             scope: intent.scope,
@@ -65,7 +67,7 @@ pub(super) async fn execute(
         other => return Err(io::Error::other(format!("Run rejected: {other:?}"))),
     }
     let outcome = loop {
-        if started.elapsed() >= Duration::from_millis(config.command_timeout_ms)
+        if started.elapsed() >= budget
             || shutdown.expired(Duration::from_millis(config.shutdown_grace_ms))
         {
             return Err(io::Error::new(
@@ -138,7 +140,7 @@ pub(super) async fn execute(
                     )));
                 }
             }
-            if started.elapsed() >= Duration::from_millis(config.command_timeout_ms) {
+            if started.elapsed() >= budget {
                 return Err(io::Error::other("Git output EOF is unverified"));
             }
             tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;

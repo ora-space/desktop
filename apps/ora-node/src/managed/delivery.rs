@@ -47,6 +47,7 @@ impl GitRunner for CloneHost {
         let result = self.runtime.block_on(transport::execute(
             &client,
             &intent,
+            command.intent,
             &self.config,
             &self.shutdown,
         ));

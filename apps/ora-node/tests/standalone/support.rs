@@ -185,6 +185,7 @@ impl Fixture {
             ]
             .into(),
             command_timeout_ms: 30_000,
+            network_timeout_ms: 30_000,
             cleanup_timeout_ms: 3000,
             shutdown_grace_ms: 100,
         }

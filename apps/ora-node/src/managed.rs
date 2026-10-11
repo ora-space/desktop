@@ -32,11 +32,23 @@ pub struct ProcessConfig {
     pub git_program: PathBuf,
     pub environment: BTreeMap<String, String>,
     pub command_timeout_ms: u64,
+    /// Clone/fetch/push use a separate bounded budget; older deployments receive ten minutes.
+    #[serde(default = "default_network_timeout_ms")]
+    pub network_timeout_ms: u64,
     pub cleanup_timeout_ms: u64,
     pub shutdown_grace_ms: u64,
 }
 
 impl ProcessConfig {
+    /// Selects budgets using Git's declared intent rather than guessing command-line strings.
+    fn command_budget(&self, intent: GitIntent) -> Duration {
+        Duration::from_millis(if intent == GitIntent::Network {
+            self.network_timeout_ms
+        } else {
+            self.command_timeout_ms
+        })
+    }
+
     fn isolate_workload(&self, spec: &mut RunSpec) {
         if let Some(uid) = self.workload_uid {
             let program = spec.program.clone();
@@ -53,6 +65,11 @@ impl ProcessConfig {
             spec.args.extend(args);
         }
     }
+}
+
+/// Keeps network commands bounded when reading a pre-existing deployment configuration.
+fn default_network_timeout_ms() -> u64 {
+    600_000
 }
 
 /// Shutdown stops admission immediately while allowing the current command a bounded grace period.
@@ -104,10 +121,12 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         if !config.host_directory.is_absolute()
             || !config.git_program.is_absolute()
             || config.command_timeout_ms == 0
+            || config.network_timeout_ms == 0
+            || config.network_timeout_ms > 1_200_000
             || config.cleanup_timeout_ms == 0
         {
             return Err(std::io::Error::other(
-                "process paths must be absolute and deadlines positive",
+                "process paths must be absolute, deadlines positive, and network budget at most twenty minutes",
             ));
         }
         let stat = ora_utils::process::linux_process(std::process::id())?;
@@ -315,6 +334,7 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
             let result = self.runtime.block_on(transport::execute(
                 &client,
                 &intent,
+                command.intent,
                 &self.config,
                 &self.shutdown,
             ));
@@ -350,6 +370,7 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
         let result = self.runtime.block_on(transport::execute(
             &client,
             &attempt.intent,
+            command.intent,
             &self.config,
             &self.shutdown,
         ));

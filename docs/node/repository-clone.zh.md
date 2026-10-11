@@ -2,6 +2,12 @@
 
 [English](repository-clone.md) | 中文
 
+`process.command_timeout_ms` 限制本地 Git 命令；具有 Network intent 的 clone/fetch/push 使用独立的
+`process.network_timeout_ms`，省略时默认 600000，范围为 1..1200000 毫秒。M4 保留本地 30000，
+网络使用 600000。网络超时仍关闭原 Scope，并取得 host/guardian 收尾证据后才报告 Interrupted；
+不取消 fencing，也不在旧 Git 可能写入时放行新尝试。Cloud 另以持久执行记录限制 Workspace clone
+最多三次，Node 不自行决定业务重试。
+
 Linux Node 为嵌入调用方提供 `configure_clone`、`submit_clone` 和 `recover_clones`。
 独立可执行程序接受可选 `clone` 部署配置并恢复已受理的 clone；可通过[本机 IPC](local-ipc.zh.md)
 接收新 clone 命令，文件和 stdin 不是命令通道，也未切换 Backend 写入入口。

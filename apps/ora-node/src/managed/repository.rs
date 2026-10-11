@@ -54,6 +54,7 @@ impl CloneHost {
         let _ = self.runtime.block_on(transport::execute(
             &client,
             &attempt.intent,
+            GitIntent::Network,
             &self.config,
             &self.shutdown,
         ));
@@ -111,6 +112,7 @@ impl CloneHost {
         let result = self.runtime.block_on(transport::execute(
             &client,
             &intent,
+            command.intent,
             &self.config,
             &self.shutdown,
         ));

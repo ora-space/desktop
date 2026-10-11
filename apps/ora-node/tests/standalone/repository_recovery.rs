@@ -149,7 +149,49 @@ fn stopped_node_settles_its_interrupted_clone_before_exit() {
     });
 }
 
-/// An expired command deadline ends the attempt the same way a stop does.
+/// Slow network work can outlive the local-command budget without being interrupted.
+#[test]
+fn slow_clone_outlives_the_local_command_budget() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::for_command_deadline();
+        fixture.git(&["update-server-info"]);
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.paused.store(true, Ordering::SeqCst);
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "slow-network", "main");
+        let record = seed(&fixture, &config, &command);
+        let pause = server.paused.clone();
+        let target = record.target.path.clone();
+        let release = std::thread::spawn(move || {
+            until(|| target.join(".git").is_dir());
+            std::thread::sleep(std::time::Duration::from_secs(7));
+            pause.store(false, Ordering::SeqCst);
+        });
+        let mut process = fixture.process();
+        // Keep local host/guardian observation viable on loaded CI machines, while proving
+        // that the seven-second network wait exceeds the unchanged five-second local budget.
+        process.command_timeout_ms = 5_000;
+        process.network_timeout_ms = 30_000;
+        let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.recover_clones().unwrap();
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        release.join().unwrap();
+        assert!(
+            matches!(
+                state,
+                ExecutionState::Completed(ExecutionResult::Clone(
+                    CloneExecutionResult::CloneReady(_)
+                ))
+            ),
+            "slow network clone failed: {state:?}"
+        );
+        drop(node);
+        assert_single_retained_attempt(&fixture, &record, &command);
+    });
+}
+
+/// An expired network deadline ends the attempt the same way a stop does.
 #[test]
 fn command_deadline_settles_clone_as_interrupted() {
     ora_logging::with_trace_logging(|| {
@@ -162,6 +204,7 @@ fn command_deadline_settles_clone_as_interrupted() {
         let record = seed(&fixture, &config, &command);
         let mut process = fixture.process();
         process.command_timeout_ms = 500;
+        process.network_timeout_ms = 500;
         let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
         node.recover_clones().unwrap();
