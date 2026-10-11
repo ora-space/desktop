@@ -28,9 +28,9 @@ Adding an adapter never changes a port signature. Handlers keep depending on the
 
 - `journal_mode = WAL`
 - `busy_timeout = 5000` ms
-- `synchronous = NORMAL`
+- `synchronous = FULL`
 
-Those PRAGMAs are applied in the connection manager rather than at call sites, so no repository can accidentally run with a different durability or concurrency profile. `NORMAL` is crash-safe for process kills but may lose the last COMMIT on power loss. Skill package promotion flushes directory metadata _before_ that COMMIT, so a lost last transaction leaves an unowned package directory that startup reconciliation removes rather than a visible row without files. Pooling requires a file-backed `DatabaseLocation::Path`; `DatabaseLocation::InMemory` is for bootstrap and migration tests and returns `UnsupportedPooledLocation` if pooled.
+Those PRAGMAs are applied in the connection manager rather than at call sites, so no repository can accidentally run with a different durability or concurrency profile. `FULL` is required for power-loss durability: in WAL mode `NORMAL` appends COMMIT frames without an fsync, so a power cut rolls the database back to the last WAL sync — a window that can span a whole Desktop session and that users experienced as projects and tasks/worktrees disappearing after an outage. `FULL` fsyncs the WAL on every COMMIT, so power loss can lose at most the in-flight transaction. This matches the policy every other SQLite owner in the workspace already applies. Skill package promotion flushes directory metadata _before_ that COMMIT, so a lost last transaction leaves an unowned package directory that startup reconciliation removes rather than a visible row without files. Pooling requires a file-backed `DatabaseLocation::Path`; `DatabaseLocation::InMemory` is for bootstrap and migration tests and returns `UnsupportedPooledLocation` if pooled.
 
 File-backed parent directories are not created here. The Desktop composition root prepares them before opening `ora-backend::Backend`.
 
