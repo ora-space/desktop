@@ -71,6 +71,11 @@ pub(super) fn environment(
             "OPENCODE_DISABLE_MODELS_FETCH".to_string(),
             "true".to_string(),
         ),
+        // Keep CLI dependency installation and private state outside the checkout/Revision.
+        (
+            "OPENCODE_DISABLE_PROJECT_CONFIG".to_string(),
+            "true".to_string(),
+        ),
     ]);
     // Disallow discovery of a user's global config and credentials on this management host.
     variables.insert(

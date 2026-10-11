@@ -186,6 +186,15 @@ CA 文件，使 CLI 能验证代理而无法读取管理目录或客户端私钥
 下独立的会话临时目录。两种目录均与 checkout 及 Revision 隔离；临时令牌继续使用环境引用，不随公开
 CA 写入文件。Git 身份仍来自运行。
 
+带模型绑定的 OpenCode 设置 `OPENCODE_DISABLE_PROJECT_CONFIG=true`，固定 CLI 不再发现 checkout 中的
+`.opencode` 或在其中安装依赖；HOME、配置、缓存和插件依赖留在会话私有目录，不进入 Revision。
+仓库的 OpenCode 配置有意忽略，因为本次运行的 provider 和模型已冻结。
+
+只有成功的 ACP 完成才接受下一轮。请求错误或流意外关闭以 `agent_failed` 结束 Node 会话，安全 detail 为
+`agent_turn_failed` 或 `agent_stream_closed`；关闭 provider/plugin、释放租约并撤销模型授权，不将供应商
+原始诊断写入历史或日志。已持久化的 EndSession 与错误同时到达时保留其明确原因。部分仓库成果仍按
+已有终态 Revision 流程交付；失败后重新发起运行，成功的多轮会话和 Echo 正常链路保持原行为。
+
 续期在过期前延长同一授权，不更换令牌。续期被拒绝时取消对话；正常结束先停止续期、撤销授权、
 删除临时状态，再写入终态。任务取消也中止续期并尽力撤销。Node 崩溃后不恢复会话，Cloud 终态恢复
 及授权过期会撤销其权限。不带模型绑定的 Echo 会话保持既有环境，且不请求模型授权。

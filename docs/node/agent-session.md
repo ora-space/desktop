@@ -237,6 +237,18 @@ directory under Node `model-runtime/`. Both layouts stay outside the checkout an
 the temporary token remains an environment reference and is never written with the public CA.
 Git identity still comes from the run.
 
+Model-bound OpenCode sets `OPENCODE_DISABLE_PROJECT_CONFIG=true`. The pinned CLI therefore does
+not discover checkout `.opencode` directories or install its dependencies there; HOME/config/cache
+and plugin dependencies remain session-private and cannot be captured in a Revision. Repository
+OpenCode configuration is intentionally ignored because this run's provider and model are frozen.
+
+Only a successful ACP completion admits another turn. A prompt error or unexpected stream closure
+ends the Node session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`, closes
+the provider/plugin, releases its lease and revokes model access. No raw provider diagnostic enters
+history or logs. A durable EndSession already queued keeps its explicit reason if it races the error.
+Cloud still delivers partial repository work through the existing terminal Revision path. Retrying
+a failed provider requires a new run; successful multi-turn sessions and Echo's normal path remain.
+
 Renewal extends the existing grant before expiry without changing the token. Renewal denial cancels
 the conversation; normal termination stops renewal, revokes the grant and removes the temporary
 state before recording the terminal result. Cancellation also aborts renewal and revokes best effort.

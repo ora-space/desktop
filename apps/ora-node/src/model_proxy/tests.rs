@@ -211,6 +211,13 @@ async fn renewable_access_keeps_token_in_memory_and_revokes_at_end() {
     .await
     .unwrap();
     let home = PathBuf::from(&access.environment["HOME"]);
+    assert_eq!(
+        access
+            .environment
+            .get("OPENCODE_DISABLE_PROJECT_CONFIG")
+            .map(String::as_str),
+        Some("true")
+    );
     let config: Value =
         serde_json::from_str(&access.environment["OPENCODE_CONFIG_CONTENT"]).unwrap();
     assert_eq!(config["model"], "ora-model/team/model");

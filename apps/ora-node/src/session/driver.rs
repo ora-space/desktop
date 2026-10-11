@@ -351,6 +351,7 @@ fn settle<L: SessionLedger>(
 /// How one running turn stopped.
 enum TurnOutcome {
     Finished,
+    Failed(&'static str),
     EndRequested {
         command_id: CommandId,
         reason: EndSessionReason,
@@ -444,6 +445,24 @@ impl<L: SessionLedger> Conversation<'_, L> {
             };
             match self.run_turn(turn).await {
                 Ok(TurnOutcome::Finished) => {}
+                Ok(TurnOutcome::Failed(code)) => {
+                    // A committed EndSession keeps its reason even if its wake-up races the ACP
+                    // result. Never replace a durable cancellation with a provider failure.
+                    return match self.ledger.queued_commands(self.execution).map(plan) {
+                        Ok(Plan::End {
+                            command_id,
+                            reason,
+                            discarded,
+                        }) => self.end_requested(command_id, reason, discarded).await,
+                        Ok(Plan::Turn { .. } | Plan::Wait) => {
+                            self.stop(SessionEnd::agent_failed(code)).await
+                        }
+                        Err(_) => {
+                            self.stop(SessionEnd::agent_failed("ledger_unavailable"))
+                                .await
+                        }
+                    };
+                }
                 Ok(TurnOutcome::EndRequested {
                     command_id,
                     reason,
@@ -500,9 +519,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let outcome = loop {
             tokio::select! {
                 event = stream.recv() => match event {
-                    Some(Ok(PromptSessionEvent::Completed { .. })) | Some(Err(_)) | None => {
-                        break TurnOutcome::Finished;
-                    }
+                    Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
+                    Some(Err(_)) => break TurnOutcome::Failed("agent_turn_failed"),
+                    None => break TurnOutcome::Failed("agent_stream_closed"),
                     Some(Ok(_)) => {}
                 },
                 () = self.wake.notified() => {
@@ -526,6 +545,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
             TurnOutcome::Finished => self.mirror.set_turn(None),
             // The turn is still running: stopping cancels it and records its end under this turn.
             TurnOutcome::EndRequested { .. }
+            | TurnOutcome::Failed(_)
             | TurnOutcome::ThreadBroken
             | TurnOutcome::LedgerUnavailable => {}
         }

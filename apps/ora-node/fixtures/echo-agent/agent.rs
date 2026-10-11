@@ -176,6 +176,14 @@ impl EchoAgent {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.sessions.get(&session_id).cloned().unwrap_or_default();
+        if text.contains("[request-failed]") {
+            return acp(
+                output,
+                json!({"jsonrpc": JSON_RPC_VERSION, "id": id,
+                "error": {"code": -32603, "message": "upstream diagnostic must not escape"}}),
+            )
+            .await;
+        }
         if text.contains("[hold]") {
             message(output, &session_id, "holding").await?;
             self.held = Some(PendingPrompt {

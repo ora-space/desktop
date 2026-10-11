@@ -14,6 +14,73 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use support::*;
 
+/// A committed end command wins over a racing ACP error even before its wake-up arrives.
+#[test]
+fn durable_cancel_wins_a_racing_provider_failure() {
+    with_scoped_async_test(async {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        let (reached, release) = fixture.ledger.pause_append(2);
+        fixture.start(&sessions, PLUGIN_VERSION, "[request-failed]");
+        tokio::task::spawn_blocking(move || {
+            reached.recv_timeout(std::time::Duration::from_secs(5))
+        })
+        .await
+        .unwrap()
+        .expect("provider failure must reach TurnEnded");
+        // Persist as the protocol does, but deliberately delay command_arrived's wake-up.
+        fixture.ledger.accept(
+            "cancel",
+            SessionCommand::EndSession(EndSessionReason::Cancelled),
+        );
+        release.send(()).unwrap();
+        assert_eq!(
+            fixture.ended().await.reason,
+            AgentSessionEndReason::Cancelled
+        );
+        assert_eq!(
+            fixture.ledger.settlements(),
+            vec![("cancel".into(), vec![CommandSettlement::Executed])]
+        );
+        sessions.shutdown().await;
+    });
+}
+
+/// ACP request failure must terminate the Node session instead of silently admitting more turns.
+#[test]
+fn provider_failure_ends_the_session_with_a_safe_code_and_releases_resources() {
+    with_scoped_async_test(async {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        fixture.start(&sessions, PLUGIN_VERSION, "[request-failed]");
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), fixture.ended())
+            .await
+            .expect("a failed prompt must not leave the session idle");
+        assert_eq!(ended.reason, AgentSessionEndReason::AgentFailed);
+        assert_eq!(ended.detail.as_deref(), Some("agent_turn_failed"));
+        let history = serde_json::to_string(&fixture.history_lines()).expect("encode history");
+        assert!(!history.contains("upstream diagnostic"));
+        assert_eq!(fixture.leases.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            fixture
+                .plugin_pids()
+                .into_iter()
+                .all(|pid| !process_exists(pid))
+        );
+        sessions.shutdown().await;
+    });
+}
+
+fn with_scoped_async_test(action: impl std::future::Future<Output = ()>) {
+    ora_logging::with_trace_logging(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(action);
+    });
+}
+
 /// A model-bound input never falls back to Echo or an inherited direct API connection.
 #[tokio::test]
 async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {

@@ -35,6 +35,7 @@ pub struct LedgerError(String);
 /// Stops one Thread append until the test releases it, standing in for a crash at that point.
 struct AppendGate {
     at: usize,
+    fail: bool,
     reached: mpsc::Sender<()>,
     release: mpsc::Receiver<()>,
 }
@@ -101,10 +102,21 @@ impl MemoryLedger {
 
     /// Makes the append at index `at` wait for the returned release, signalling when it waits.
     pub fn gate_append(&self, at: usize) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        self.pause_append_result(at, true)
+    }
+
+    /// Delays a successful append, allowing a durable command to race the ACP result.
+    pub fn pause_append(&self, at: usize) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        self.pause_append_result(at, false)
+    }
+
+    /// Shares the barrier setup; only the crash fixture injects a failure after release.
+    fn pause_append_result(&self, at: usize, fail: bool) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
         let (reached, reached_receiver) = mpsc::channel();
         let (release_sender, release) = mpsc::channel();
         self.state().gate = Some(AppendGate {
             at,
+            fail,
             reached,
             release,
         });
@@ -136,7 +148,9 @@ impl SessionLedger for MemoryLedger {
         if let Some(gate) = gated {
             let _ = gate.reached.send(());
             let _ = gate.release.recv();
-            return Err(LedgerError("the ledger went away".to_string()));
+            if gate.fail {
+                return Err(LedgerError("the ledger went away".to_string()));
+            }
         }
         let mut state = self.state();
         state.events.push(event);
