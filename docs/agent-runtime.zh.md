@@ -8,6 +8,7 @@ Backend 启动时，会为每个已安装的 [Agent 插件](../crates/agent-runt
 
 - Session 合约使用规范的 `<namespace>/<name>` `agent_ref` 标识提供 Agent 的插件。namespace 是身份的一部分；运行时不认识的开放字符串表示对应 provider 当前未安装，返回 `agent_runtime_unavailable`，而不是把数据视为损坏。Ora 本身不内置 Agent。
 - supervisor 以完整插件 id 为键，安装集合变化时实时协调。只有 `agent` 类型插件受监管；插件生命周期负责启动和停止进程，运行时通过 `PluginApi::attach_agent` 附着到进程，并从无损通知 tap 读取该 generation 的 `agent/acp` 帧。
+- 更新或重装后，Session 重新获取 provider 通道时，actor 按持久化的 `agent_ref` 解析当前 supervisor。单个 supervisor 句柄只属于一次安装期间的实例，不会自动跟随共享注册表里的替换。因此旧对话无需重启 Ora 或手动 Stop，就能通过新 supervisor 继续；插件仍被卸载时继续返回 `agent_runtime_unavailable`。恢复或基于 transcript 的重建沿用既有 attach 路径。
 - 插件可以使用包内 CLI，也可以回退到 PATH 中的用户安装。主机负责解析包内可执行文件，`package_command_missing` 明确表示包内命令不存在。机器上缺少 CLI 返回可重试的 `agent_not_installed`；无法使用的包内程序返回 `agent_unusable`，并停止本进程生命周期内的无意义重试。
 - 运行时错误在产生处映射成类型化公开错误。进程启动失败为 `agent_start_failed`，运行时 deadline 为 `agent_timed_out`，模型发现失败为 `agent_model_discovery_failed`。队列溢出或 ACP 违规等用户无法处理的问题仍为 `internal_error`，并保留 request id 供诊断。
 - Task worktree 通过 Task → Workspace id → 已保存 branch → Git worktree 元数据解析。既有 worktree 的路径不从创建根目录或当前进程 cwd 推断。

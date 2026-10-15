@@ -1,5 +1,8 @@
 //! Exercises prompt policy through the production admission, ACP peer, router, and session actor.
 
+#[path = "plugin_replacement_tests.rs"]
+mod plugin_replacement_tests;
+
 use super::*;
 use crate::host::SessionStore;
 use crate::session_setup::LiveMcpState;

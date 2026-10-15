@@ -115,8 +115,8 @@ pub(super) struct ConnectionSupervisor {
 /// every agent is supplied by an installed plugin and which ones exist is not known at build time.
 ///
 /// The set is mutable because installing a plugin adds an agent while Ora is running. It is held
-/// behind a lock rather than rebuilt, so every clone held by a live session actor observes an
-/// install or uninstall without being handed a new value.
+/// behind a lock rather than rebuilt. Actors resolve it again whenever they acquire a provider
+/// channel: a cloned individual supervisor cannot observe its replacement in this map.
 pub(super) struct ConnectionSupervisors<H: AgentRuntimeHost> {
     supervisors: Arc<RwLock<BTreeMap<AgentRef, ConnectionSupervisor>>>,
     /// Agent identities whose supervisor is temporarily barred from spawning.
