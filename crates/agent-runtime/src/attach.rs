@@ -71,6 +71,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
+        // Package replacement retires the entire supervisor, not just its process generation.
+        // Pin the current supervisor for this attach and its MCP capability checks; the actor
+        // and its durable conversation may outlive any number of installed incarnations.
+        self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
