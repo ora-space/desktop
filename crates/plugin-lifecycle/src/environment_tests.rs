@@ -32,20 +32,17 @@ async fn real_agent_and_direct_child_share_environment_without_non_agent_injecti
     ora_logging::initialize_test_clock();
     let root = tempfile::tempdir().unwrap();
     for agent in [true, false] {
-        let receipt = root.path().join(format!("receipt-{agent}.json"));
         let script = root.path().join("main.js");
         let source = format!(
             r#"
 const present = Deno.env.get("ORA_SKILL_FIXTURE") === "test-only-value";
 const child = await new Deno.Command(Deno.execPath(), {{args:["eval", 'Deno.exit(Deno.env.get("ORA_SKILL_FIXTURE") === "test-only-value" ? 0 : 1)'], stdout:"null", stderr:"null"}}).output();
-Deno.writeTextFileSync({}, JSON.stringify([present, child.success]));
-const payload = new TextEncoder().encode(JSON.stringify({{jsonrpc:"2.0",method:"ora/register",params:{{methods:[],emits:[]}}}}));
+const payload = new TextEncoder().encode(JSON.stringify({{jsonrpc:"2.0",method:"ora/register",params:{{methods:[present ? "present" : "absent", child.success ? "child_present" : "child_absent"],emits:[]}}}}));
 const frame = new Uint8Array(payload.length + 5);
 new DataView(frame.buffer).setUint32(0, payload.length + 1); frame[4] = 1; frame.set(payload,5);
 Deno.stdout.writeSync(frame);
 setInterval(() => {{}}, 1000);
-"#,
-            serde_json::to_string(&receipt).unwrap()
+"#
         );
         std::fs::write(&script, source).unwrap();
         let launcher = DenoPluginRuntimeLauncher::with_environment_provider(
@@ -65,7 +62,6 @@ setInterval(() => {{}}, 1000);
                         DenoPermission::AllowRead(crate::ReadScope::Everything),
                         DenoPermission::AllowEnv,
                         DenoPermission::AllowRun,
-                        DenoPermission::AllowWrite(root.path().to_path_buf()),
                     ],
                     allow_childprocess: agent,
                 },
@@ -79,9 +75,18 @@ setInterval(() => {{}}, 1000);
             )
             .await
             .unwrap();
-        let result: Vec<bool> =
-            serde_json::from_str(&std::fs::read_to_string(receipt).unwrap()).unwrap();
-        pretty_assertions::assert_eq!(result, vec![agent, agent]);
+        let expected = if agent {
+            vec!["present", "child_present"]
+        } else {
+            vec!["absent", "child_absent"]
+        };
+        pretty_assertions::assert_eq!(
+            launched.runtime.registration().methods,
+            expected
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::HashSet<_>>()
+        );
         launched.runtime.stop().await.unwrap();
     }
 }
