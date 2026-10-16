@@ -735,6 +735,7 @@ async fn launch_applies_permissions_cwd_and_environment_to_the_process_spec() {
     let expected = ora_process::ProcessSpec::new("deno")
         .arg("run")
         .arg("--no-prompt")
+        .remove_env_prefix("ORA_SKILL_")
         .arg("--allow-read=/tmp/data")
         .arg(entrypoint.as_os_str())
         .cwd(package_root.path())

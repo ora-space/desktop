@@ -6,6 +6,51 @@ use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec, ProcessStdio, Tok
 use pretty_assertions::assert_eq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// A separate test process owns the inherited fixture, avoiding mutations of the test runner env.
+#[test]
+fn inherited_environment_prefix_is_removed_before_host_overrides() {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "environment_prefix_child", "--nocapture"])
+        .env("ORA_ENV_PREFIX_TEST_CHILD", "1")
+        .env("ora_sKiLl_FORGED", "inherited-forgery");
+    ora_utils::process::hide_console_window(&mut command);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Exercises the production spawner and OS environment inheritance in the isolated helper.
+#[tokio::test]
+async fn environment_prefix_child() {
+    if std::env::var_os("ORA_ENV_PREFIX_TEST_CHILD").is_none() {
+        return;
+    }
+    #[cfg(windows)]
+    let spec = shell_command("set ORA_SKILL_");
+    #[cfg(not(windows))]
+    let spec = shell_command("env");
+    let mut process = TokioProcessSpawner::new()
+        .spawn(
+            spec.remove_env_prefix("ORA_SKILL_")
+                .env("ORA_SKILL_HOST", "host-fixture"),
+        )
+        .unwrap();
+    let mut output = String::new();
+    process
+        .take_stdout()
+        .unwrap()
+        .read_to_string(&mut output)
+        .await
+        .unwrap();
+    assert!(process.wait().await.unwrap().success());
+    assert!(output.contains("ORA_SKILL_HOST=host-fixture"));
+    assert!(!output.contains("inherited-forgery"));
+}
+
 #[test]
 fn process_spec_preserves_command_options_and_defaults() {
     let cwd = std::path::PathBuf::from("worktree");

@@ -31,6 +31,7 @@ pub struct ProcessSpec {
     args: Vec<OsString>,
     cwd: Option<PathBuf>,
     envs: Vec<(OsString, OsString)>,
+    removed_env_prefixes: Vec<String>,
     stdin: ProcessStdio,
     stdout: ProcessStdio,
     stderr: ProcessStdio,
@@ -52,6 +53,7 @@ impl ProcessSpec {
             args: Vec::new(),
             cwd: None,
             envs: Vec::new(),
+            removed_env_prefixes: Vec::new(),
             stdin: ProcessStdio::Piped,
             stdout: ProcessStdio::Piped,
             stderr: ProcessStdio::Piped,
@@ -86,6 +88,21 @@ impl ProcessSpec {
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.envs.push((key.into(), value.into()));
         self
+    }
+
+    /// Removes inherited variables matching a case-insensitive prefix before explicit overrides.
+    pub fn remove_env_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.removed_env_prefixes
+            .push(prefix.into().to_ascii_uppercase());
+        self
+    }
+
+    /// Reports whether an inherited variable is excluded by the caller's environment policy.
+    pub fn excludes_inherited_env(&self, key: &OsStr) -> bool {
+        let key = key.to_string_lossy().to_ascii_uppercase();
+        self.removed_env_prefixes
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
     }
 
     /// Sets the stdin policy for the child process.
