@@ -1310,6 +1310,10 @@ mod tests {
                     &b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
                 ),
                 (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"settings":{"token":{"type":"string","title":"Token","description":"Credential","required":true,"secret":true}}}"#.as_slice(),
+                ),
+                (
                     "assets/review/SKILL.md",
                     b"---\nname: review\ndescription: Reviews code\n---\n".as_slice(),
                 ),
@@ -1359,6 +1363,17 @@ mod tests {
                 .join("testing")
                 .join("SKILL.md")
                 .is_file()
+        );
+        let configuration = ora_plugin_config::ConfigurationService::new(temp_dir.path())
+            .get(&package.id.canonical(), &package.package_dir)
+            .unwrap()
+            .unwrap();
+        assert!(configuration.settings[0].declaration.secret);
+        assert_eq!(
+            configuration.summary,
+            ora_plugin_config::ConfigurationSummary::Available {
+                completeness: ora_plugin_config::ConfigurationCompleteness::Incomplete,
+            }
         );
         assert!(!package.package_dir.join("main.js").exists());
     }

@@ -30,6 +30,8 @@ pub struct SettingDeclaration {
     pub description: String,
     pub setting_type: SettingType,
     pub required: bool,
+    #[serde(default)]
+    pub secret: bool,
     pub order: Option<i64>,
     pub default: Option<SettingValue>,
 }
@@ -182,6 +184,8 @@ struct RawSetting {
     #[serde(default)]
     required: bool,
     #[serde(default)]
+    secret: bool,
+    #[serde(default)]
     order: Option<i64>,
     #[serde(default)]
     default: RawDefault,
@@ -228,6 +232,7 @@ fn compile_setting(
         description: raw.description,
         setting_type: raw.setting_type,
         required: raw.required,
+        secret: raw.secret,
         order: raw.order,
         default,
     })
@@ -433,6 +438,7 @@ mod tests {
                         description: "Service URL".to_string(),
                         setting_type: SettingType::String,
                         required: true,
+                        secret: false,
                         order: Some(1),
                         default: None,
                     },
@@ -442,6 +448,7 @@ mod tests {
                         description: "Attempts".to_string(),
                         setting_type: SettingType::Number,
                         required: false,
+                        secret: false,
                         order: Some(1),
                         default: Some(SettingValue::Number(3.into())),
                     },
@@ -451,6 +458,7 @@ mod tests {
                         description: "Use it".to_string(),
                         setting_type: SettingType::Boolean,
                         required: false,
+                        secret: false,
                         order: None,
                         default: None,
                     },

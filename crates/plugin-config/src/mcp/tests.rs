@@ -52,6 +52,7 @@ fn compiles_http_configuration_with_header_setting_reference() {
             description: "Key used to authenticate with the MCP server".to_string(),
             setting_type: SettingType::String,
             required: true,
+            secret: false,
             order: None,
             default: None,
         }]

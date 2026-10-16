@@ -32,6 +32,14 @@ Setting-reference prefix/suffix on args, env, and headers — must not contain c
 The crate does not render UI, expose filesystem paths to frontend callers, or start plugins.
 ACP `mcpServers` mapping and live Session refresh belong to `ora-backend` Session setup.
 
+Settings accept an optional boolean `secret` metadata flag (default false), distinct from the
+unsupported `"type": "secret"`. It participates in declaration fingerprints. Backend editor
+responses hide marked values and defaults; MCP settings retain their existing all-fields redaction.
+`resolve_skill_environment` atomically resolves a complete configuration into canonical encoded
+environment names, omitting absent optional values and rejecting the whole package on NUL or
+invalid values. Backend owns installed Skill selection and startup snapshot lifetime. See
+[Skill configuration](../../docs/skill-configuration.md) for the script-facing contract.
+
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that
 cannot be traversed as a directory (`NotADirectory`), is reported as undeclared rather than as a
 load failure, so list summaries stay consistent across platforms when the package tree is

@@ -29,7 +29,11 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { usePluginConfiguration } from "../../state/hooks/use-plugin-configuration";
 
-type Draft = { override: boolean; value: string | boolean | null };
+type Draft = {
+  override: boolean;
+  value: string | boolean | null;
+  cleared?: boolean;
+};
 type Drafts = Record<string, Draft>;
 
 /** Lets the Settings container protect navigation without owning editor draft state. */
@@ -42,11 +46,13 @@ export interface PluginConfigurationNavigationGuard {
 export function PluginConfigurationEditor({
   pluginId,
   displayName,
+  requiresRestart = false,
   onBack,
   onNavigationGuardChange,
 }: {
   pluginId: string;
   displayName: string;
+  requiresRestart?: boolean;
   onBack: () => void;
   onNavigationGuardChange?: (
     guard: PluginConfigurationNavigationGuard | null,
@@ -90,6 +96,7 @@ export function PluginConfigurationEditor({
     <LoadedConfigurationEditor
       details={details}
       displayName={displayName}
+      requiresRestart={requiresRestart}
       saved={savedRevision === details.revision}
       saving={configuration.save.isPending}
       resetting={configuration.reset.isPending}
@@ -131,6 +138,7 @@ export function PluginConfigurationEditor({
 function LoadedConfigurationEditor({
   details,
   displayName,
+  requiresRestart,
   saved,
   saving,
   resetting,
@@ -142,6 +150,7 @@ function LoadedConfigurationEditor({
 }: {
   details: PluginConfigurationDetails;
   displayName: string;
+  requiresRestart: boolean;
   saved: boolean;
   saving: boolean;
   resetting: boolean;
@@ -177,7 +186,7 @@ function LoadedConfigurationEditor({
     const preserveSettingIds: string[] = [];
     for (const field of details.settings) {
       const draft = drafts[field.declaration.id];
-      if (field.redacted && !draft?.override) {
+      if (field.redacted && !draft?.override && !draft?.cleared) {
         preserveSettingIds.push(field.declaration.id);
         continue;
       }
@@ -278,6 +287,11 @@ function LoadedConfigurationEditor({
             </Button>
           </div>
         )}
+        {requiresRestart && (
+          <p className="text-sm text-muted-foreground">
+            {t("settings.plugins.configuration.skillRestart")}
+          </p>
+        )}
         {details.settings.map((field) => {
           const draft = drafts[field.declaration.id] ?? draftFrom(field);
           const update = (next: Draft) => {
@@ -325,9 +339,11 @@ function LoadedConfigurationEditor({
                   }}
                 >
                   <option value="unset">
-                    {field.declaration.default === null
-                      ? t("settings.plugins.configuration.notSet")
-                      : t("settings.plugins.configuration.useDefault")}
+                    {field.redacted && field.source !== "absent"
+                      ? t("settings.plugins.configuration.configuredSecret")
+                      : field.declaration.default === null
+                        ? t("settings.plugins.configuration.notSet")
+                        : t("settings.plugins.configuration.useDefault")}
                   </option>
                   <option value="true">
                     {t("settings.plugins.configuration.on")}
@@ -351,7 +367,7 @@ function LoadedConfigurationEditor({
                   aria-label={field.declaration.title}
                   type={field.redacted ? "password" : undefined}
                   placeholder={
-                    field.redacted && field.source === "stored"
+                    field.redacted && field.source !== "absent"
                       ? t("settings.plugins.configuration.configuredSecret")
                       : undefined
                   }
@@ -371,7 +387,10 @@ function LoadedConfigurationEditor({
                     {t("settings.plugins.configuration.default")}
                   </Badge>
                 )}
-                {draft.override && (
+                {(draft.override ||
+                  (field.redacted &&
+                    field.source === "stored" &&
+                    !draft.cleared)) && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -560,6 +579,7 @@ function resetDraftFrom(field: PluginSettingDetails): Draft {
   return {
     override: false,
     value: displayValue(field.declaration.default),
+    cleared: true,
   };
 }
 
@@ -582,7 +602,8 @@ function sameDrafts(left: Drafts, right: Drafts): boolean {
     keys.every(
       (key) =>
         left[key]?.override === right[key]?.override &&
-        left[key]?.value === right[key]?.value,
+        left[key]?.value === right[key]?.value &&
+        Boolean(left[key]?.cleared) === Boolean(right[key]?.cleared),
     )
   );
 }

@@ -343,18 +343,18 @@ where
         let program = self.resolve_program(request.program)?;
         let mut spec = ProcessSpec::new(program)
             .args(request.args)
+            .remove_env_prefix("ORA_SKILL_")
             .stdin(ProcessStdio::Piped)
             .stdout(ProcessStdio::Piped)
             .stderr(ProcessStdio::Piped);
-        if request
-            .env
-            .iter()
-            .any(|(key, _)| key.starts_with(MCP_ENVIRONMENT_PREFIX))
-        {
+        if request.env.iter().any(|(key, _)| {
+            key.to_ascii_uppercase().starts_with(MCP_ENVIRONMENT_PREFIX)
+                || key.to_ascii_uppercase().starts_with("ORA_SKILL_")
+        }) {
             return Err(ChildProcessError::new(
                 ChildProcessErrorKind::InvalidParams,
                 format!(
-                    "environment variable names beginning with `{MCP_ENVIRONMENT_PREFIX}` are reserved"
+                    "environment variable names beginning with `{MCP_ENVIRONMENT_PREFIX}` or `ORA_SKILL_` are reserved"
                 ),
             )
             .into());
@@ -365,7 +365,10 @@ where
                 .environment_provider
                 .environment(&self.0.plugin_id, workspace_root)
                 .map_err(|message| ChildProcessError::new(ChildProcessErrorKind::Io, message))?,
-            None => BTreeMap::new(),
+            None => self
+                .0
+                .environment_provider
+                .plugin_environment(&self.0.plugin_id),
         };
         if let Some(cwd) = request.cwd {
             spec = spec.cwd(cwd);

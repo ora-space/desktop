@@ -147,6 +147,7 @@ impl PluginRuntime {
         let mut spec = ProcessSpec::new(config.deno_path.as_os_str())
             .arg("run")
             .arg("--no-prompt")
+            .remove_env_prefix("ORA_SKILL_")
             .args(config.permissions.iter().map(String::as_str))
             .arg(config.entrypoint.as_os_str());
         if let Some(cwd) = &config.cwd {

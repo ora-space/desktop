@@ -78,6 +78,11 @@ impl ProcessSpawner for TokioProcessSpawner {
         if let Some(cwd) = spec.cwd_path() {
             command.current_dir(cwd);
         }
+        for (key, _) in std::env::vars_os() {
+            if spec.excludes_inherited_env(&key) {
+                command.env_remove(key);
+            }
+        }
         for (key, value) in spec.envs() {
             command.env(key, value);
         }

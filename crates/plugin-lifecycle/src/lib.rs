@@ -1,6 +1,8 @@
 mod childprocess;
 mod connection;
 mod data_dir;
+#[cfg(test)]
+mod environment_tests;
 mod launch;
 mod log_levels;
 mod permissions;

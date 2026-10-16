@@ -7,10 +7,12 @@ mod pack;
 mod pack_reconcile;
 mod pack_uninstall;
 mod registry_sync;
+mod skill_environment;
 mod workflow_documents;
 pub use operations::{AdmittedSync, Plugins};
 
 use hook_lifecycle::HookLifecycle;
+use skill_environment::SkillEnvironment;
 
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
@@ -57,8 +59,11 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 /// The concrete lifecycle composition the backend runs.
-pub(crate) type BackendPluginLifecycle =
-    PluginLifecycle<DenoPluginRuntimeLauncher, AppEventPublisher, BroadcastNotificationSink>;
+pub(crate) type BackendPluginLifecycle = PluginLifecycle<
+    DenoPluginRuntimeLauncher<SkillEnvironment>,
+    AppEventPublisher,
+    BroadcastNotificationSink,
+>;
 
 /// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
 ///
@@ -218,7 +223,10 @@ impl PluginApi {
                 data_directory: home_directory.clone(),
                 deno_path,
             },
-            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
+            DenoPluginRuntimeLauncher::with_environment_provider(
+                PluginRuntimeTimeouts::default(),
+                SkillEnvironment::capture(&home_directory, &configuration),
+            ),
             publisher,
             notifications.clone(),
         )
@@ -942,8 +950,9 @@ mod tests {
                 data_directory: data_dir.path().to_path_buf(),
                 deno_path: std::path::PathBuf::from("deno"),
             },
-            ora_plugin_lifecycle::DenoPluginRuntimeLauncher::new(
+            ora_plugin_lifecycle::DenoPluginRuntimeLauncher::with_environment_provider(
                 ora_plugin_lifecycle::PluginRuntimeTimeouts::default(),
+                super::SkillEnvironment::default(),
             ),
             hub.publisher(),
             super::BroadcastNotificationSink::new(),

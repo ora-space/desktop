@@ -29,3 +29,6 @@ pub use service::{
     ConfigurationService, ConfigurationSummary, EffectiveValueSource, SettingDetails,
     recovery_backup_label,
 };
+
+mod skill;
+pub use skill::{resolve_skill_environment, skill_environment_key};

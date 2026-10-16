@@ -307,6 +307,29 @@ async fn spawn_rejects_plugin_supplied_reserved_mcp_environment() {
     );
 }
 
+#[tokio::test]
+async fn spawn_rejects_case_insensitive_skill_environment() {
+    let spawner = FakeChildSpawner::new();
+    let host = PluginProcessHost::new("plugin-a", PathBuf::from("package-root"), spawner.clone());
+
+    let error = host
+        .handle(
+            CHILDPROCESS_SPAWN_METHOD,
+            json!({
+                "command": "agent",
+                "cwd": "/work",
+                "env": { "ora_sKiLl_FORGED": "value" },
+            }),
+        )
+        .await
+        .expect_err("reserved variables are host-owned");
+
+    assert_eq!(
+        (kind_of(&error), spawner.calls().len()),
+        ("invalid_params".to_string(), 0)
+    );
+}
+
 /// Builds a package root holding one executable file, returning the root and its handler.
 fn package_with_executable(
     spawner: FakeChildSpawner,
