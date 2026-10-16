@@ -598,6 +598,7 @@ mod tests {
             description: "Service URL".to_string(),
             setting_type: SettingType::String,
             required: true,
+            secret: false,
             order: None,
             default: None,
         };
@@ -607,6 +608,7 @@ mod tests {
             description: "Attempts".to_string(),
             setting_type: SettingType::Number,
             required: false,
+            secret: false,
             order: None,
             default: Some(SettingValue::Number(3.into())),
         };
