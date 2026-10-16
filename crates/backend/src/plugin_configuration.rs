@@ -158,7 +158,8 @@ fn configuration_details(
         .settings
         .into_iter()
         .map(|setting| {
-            let redacted = redacted_setting_ids.contains(&setting.declaration.id);
+            let redacted = setting.declaration.secret
+                || redacted_setting_ids.contains(&setting.declaration.id);
             Ok(PluginSettingDetails {
                 declaration: PluginSettingDeclaration {
                     id: setting.declaration.id,
@@ -348,4 +349,130 @@ fn configuration_error(error: ConfigurationError) -> BackendError {
         ),
     };
     BackendError::with_source(classification, public_error, context, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// User-facing reads, CAS saves and reset all keep credentials out of every response.
+    #[tokio::test]
+    async fn skill_configuration_public_api_preserves_and_resets_secrets() {
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("plugins/installed/official/demo/1.0.0");
+        std::fs::create_dir_all(package.join("assets/demo")).unwrap();
+        std::fs::write(package.join("orax.toml"), "identifier = \"demo\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Demo\"\n").unwrap();
+        std::fs::write(
+            package.join("assets/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+        std::fs::write(package.join("assets/config.json"), r#"{"schemaVersion":1,"settings":{"token":{"type":"string","title":"Token","description":"Token","required":true,"secret":true}}}"#).unwrap();
+        let backend =
+            crate::Backend::open(crate::test_backend::backend_paths(root.path(), root.path()))
+                .unwrap();
+        let plugins = backend.plugins();
+        let initial = plugins
+            .get_configuration(GetPluginConfigurationRequest {
+                plugin_id: "official/demo".into(),
+            })
+            .unwrap()
+            .configuration;
+        let request = SavePluginConfigurationRequest {
+            plugin_id: "official/demo".into(),
+            expected_revision: initial.revision,
+            declaration_fingerprint: initial.declaration_fingerprint.clone(),
+            values: BTreeMap::from([(
+                "token".into(),
+                PluginSettingValue::String("test-secret-value".into()),
+            )]),
+            preserve_setting_ids: Vec::new(),
+        };
+        let saved = plugins
+            .save_configuration(request.clone())
+            .unwrap()
+            .configuration;
+        assert!(
+            !serde_json::to_string(&saved)
+                .unwrap()
+                .contains("test-secret-value")
+        );
+        assert!(plugins.save_configuration(request).is_err());
+        let preserved = plugins
+            .save_configuration(SavePluginConfigurationRequest {
+                plugin_id: "official/demo".into(),
+                expected_revision: saved.revision,
+                declaration_fingerprint: saved.declaration_fingerprint.clone(),
+                values: BTreeMap::new(),
+                preserve_setting_ids: vec!["token".into()],
+            })
+            .unwrap()
+            .configuration;
+        assert!(preserved.settings[0].redacted);
+        assert!(matches!(
+            preserved.settings[0].source,
+            PluginSettingValueSource::Stored
+        ));
+        let reset = plugins
+            .reset_configuration(ResetPluginConfigurationRequest {
+                plugin_id: "official/demo".into(),
+                declaration_fingerprint: preserved.declaration_fingerprint,
+                reset: ResetPluginConfigurationMode::ResetAll {
+                    expected_revision: preserved.revision,
+                },
+            })
+            .unwrap()
+            .configuration;
+        assert!(matches!(
+            reset.settings[0].source,
+            PluginSettingValueSource::Absent
+        ));
+        assert!(
+            !serde_json::to_string(&reset)
+                .unwrap()
+                .contains("test-secret-value")
+        );
+        let read = plugins
+            .get_configuration(GetPluginConfigurationRequest {
+                plugin_id: "official/demo".into(),
+            })
+            .unwrap();
+        assert!(
+            !serde_json::to_string(&read)
+                .unwrap()
+                .contains("test-secret-value")
+        );
+        assert!(
+            !std::fs::read_to_string(package.join("assets/demo/SKILL.md"))
+                .unwrap()
+                .contains("test-secret-value")
+        );
+    }
+
+    /// All secret scalar types hide defaults and values while public fields remain readable.
+    #[test]
+    fn secret_settings_are_redacted_in_editor_projection() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/config.json"), r#"{"schemaVersion":1,"settings":{
+            "token":{"type":"string","title":"Token","description":"Token","secret":true,"default":"private"},
+            "number":{"type":"number","title":"Number","description":"Number","secret":true,"default":42},
+            "flag":{"type":"boolean","title":"Flag","description":"Flag","secret":true,"default":true},
+            "url":{"type":"string","title":"URL","description":"URL","default":"https://example.test"}
+        }}"#).unwrap();
+        let service = ora_plugin_config::ConfigurationService::new(root.path());
+        let details = service.get("official/demo", root.path()).unwrap().unwrap();
+        let dto = configuration_details("official/demo", details, &BTreeSet::new()).unwrap();
+        for field in dto.settings {
+            if field.declaration.id == "url" {
+                assert!(!field.redacted);
+                assert!(field.effective_value.is_some());
+            } else {
+                assert!(field.redacted);
+                assert!(field.declaration.default.is_none());
+                assert!(field.stored_value.is_none());
+                assert!(field.effective_value.is_none());
+            }
+        }
+    }
 }

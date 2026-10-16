@@ -43,6 +43,109 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
 // Keep this test worker responsible for initializing the instance used by useTranslation.
 void appI18n;
 
+/** Skill configuration keeps hidden scalars untouched until the user explicitly edits or clears them. */
+it("preserves and explicitly clears secret Skill fields with a restart reminder", async () => {
+  const user = userEvent.setup();
+  const state = createFixtureState();
+  state.installedPlugins = [
+    {
+      ...weatherInstalled(),
+      kind: "skill",
+      configuration: { state: "available", completeness: "complete" },
+    },
+  ];
+  state.pluginConfigurations.set("official/weather", {
+    pluginId: "official/weather",
+    schemaVersion: 1,
+    revision: 1n,
+    declarationFingerprint: "skill-config",
+    settings: [
+      {
+        declaration: {
+          id: "token",
+          title: "Token",
+          description: "Credential",
+          type: "string",
+          required: false,
+          order: null,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: true,
+        source: "stored",
+        valueErrorCode: null,
+      },
+      {
+        declaration: {
+          id: "count",
+          title: "Count",
+          description: "Private number",
+          type: "number",
+          required: false,
+          order: null,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: true,
+        source: "default",
+        valueErrorCode: null,
+      },
+      {
+        declaration: {
+          id: "flag",
+          title: "Flag",
+          description: "Private flag",
+          type: "boolean",
+          required: false,
+          order: null,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: true,
+        source: "stored",
+        valueErrorCode: null,
+      },
+    ],
+    summary: { state: "available", completeness: "complete" },
+  });
+  const handlers = createFixtureHandlers(state);
+  const save = vi.fn(handlers.savePluginConfiguration!);
+  renderSettings(
+    createTestClient({ ...handlers, savePluginConfiguration: save }),
+  );
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /配置|Configure/ }),
+  );
+  expect(
+    await screen.findByText(/重启 Ora Desktop|Restart Ora Desktop/),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password");
+  expect(screen.getByLabelText("Count")).toHaveAttribute("type", "password");
+  expect(screen.getByLabelText("Flag")).toHaveValue("unset");
+  await user.type(screen.getByLabelText("Count"), "12");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0]).toMatchObject({
+    values: { count: 12 },
+    preserveSettingIds: ["token", "flag"],
+  });
+  await screen.findByText(/已保存|Saved/);
+  await user.selectOptions(screen.getByLabelText("Flag"), "false");
+  await user.click(
+    screen.getAllByRole("button", { name: /重置此项|Reset field/ })[0]!,
+  );
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[1]?.[0]).toMatchObject({
+    values: { flag: false },
+    preserveSettingIds: ["count"],
+  });
+});
+
 afterEach(() => {
   act(() => usePluginOperationStore.setState({ activities: {} }));
   act(() =>

@@ -95,6 +95,8 @@ export const pluginTranslations = {
     "settings.plugins.configuration.default": "默认值",
     "settings.plugins.configuration.notSet": "未设置",
     "settings.plugins.configuration.configuredSecret": "已配置；输入新值以替换",
+    "settings.plugins.configuration.skillRestart":
+      "配置保存或重置后，重启 Ora Desktop 生效。变量对所有 Agent 可见。",
     "settings.plugins.configuration.useDefault": "使用默认值",
     "settings.plugins.configuration.on": "开启",
     "settings.plugins.configuration.off": "关闭",
@@ -477,6 +479,8 @@ export const pluginTranslations = {
       "The HTTP endpoint returned an error",
     "settings.plugins.configuration.default": "Default",
     "settings.plugins.configuration.notSet": "Not set",
+    "settings.plugins.configuration.skillRestart":
+      "Restart Ora Desktop after saving or resetting configuration. Variables are visible to all Agents.",
     "settings.plugins.configuration.configuredSecret":
       "Configured; enter a new value to replace",
     "settings.plugins.configuration.useDefault": "Use default",
