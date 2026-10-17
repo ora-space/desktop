@@ -129,6 +129,17 @@ worker is never quarantined. The scheduler excludes the recovering Target instea
 planning a second operation. Operation-owned staging and backup Artifacts remain retained until
 exact cleanup authority succeeds.
 
+Quarantine has an explicit exit: the `recoverEffectTarget` command proves every quarantined
+operation against the adapter before closing it. An operation whose external state equals its
+exact planned state finalizes and keeps its ownership ledger row; one that still equals its exact
+expected baseline closes as `FinalizedWithoutEffect` and grants nothing, because its mutation
+provably never became durable. An operation that proves neither state keeps the Target
+quarantined — recovery never replays a mutation, never grants unproven ownership, and never
+e-writes immutable projection history. Closing the last journal resumes the Target's request,
+clears its manual Conditions, and lets ordinary reconciliation converge against current Desired
+State; a retiring Target additionally advances its Scope epoch so its empty retirement projection
+lands on a fresh immutable identity. Migration `0016` stores the closure phase.
+
 ## Persistence and protocol boundaries
 
 SQLite migration `0006` stores Scopes, Sources/Revisions, complete Desired State, Consumer

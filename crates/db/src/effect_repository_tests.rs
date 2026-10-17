@@ -1,5 +1,6 @@
 mod consumer_handover;
 mod declaration;
+mod recovery;
 mod scope_initialization;
 mod skill_republish;
 mod stale_status;

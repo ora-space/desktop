@@ -77,6 +77,17 @@ pub(super) fn update_operation(
             Some(*finalized_at),
             *finalized_at,
         ),
+        OperationProgress::FinalizedWithoutEffect {
+            prepared_at,
+            applied_at,
+            finalized_at,
+        } => (
+            "finalized_without_effect",
+            *prepared_at,
+            *applied_at,
+            Some(*finalized_at),
+            *finalized_at,
+        ),
         OperationProgress::RecoveryRequired {
             prepared_at,
             applied_at,
@@ -113,7 +124,10 @@ pub(super) fn update_operation(
             operation.attempt().as_str(),
             match operation.progress() {
                 OperationProgress::RecoveryRequired { detected_at, .. } => Some(detected_at.millis()),
-                OperationProgress::Prepared { .. } | OperationProgress::Applied { .. } | OperationProgress::Finalized { .. } => None,
+                OperationProgress::Prepared { .. }
+                | OperationProgress::Applied { .. }
+                | OperationProgress::Finalized { .. }
+                | OperationProgress::FinalizedWithoutEffect { .. } => None,
             },
         ],
     )?;
@@ -147,6 +161,19 @@ pub(super) fn map_operation(row: &rusqlite::Row<'_>) -> Result<EffectOperation, 
                 .get::<_, Option<i64>>("applied_at")?
                 .map(LocalTimestamp::from_millis),
             detected_at: LocalTimestamp::from_millis(row.get::<_, i64>("detected_at")?),
+        },
+        "finalized_without_effect" => OperationProgress::FinalizedWithoutEffect {
+            prepared_at,
+            applied_at: row
+                .get::<_, Option<i64>>("applied_at")?
+                .map(LocalTimestamp::from_millis),
+            finalized_at: LocalTimestamp::from_millis(
+                row.get::<_, Option<i64>>("finalized_at")?.ok_or_else(|| {
+                    DatabaseError::CorruptEffectState(
+                        "closed-without-effect operation lacks finalized timestamp".to_string(),
+                    )
+                })?,
+            ),
         },
         "finalized" => OperationProgress::Finalized {
             prepared_at,
@@ -198,5 +225,9 @@ fn operation_progress_can_advance(stored: &str, proposed: &str) -> bool {
             ("prepared", "applied")
                 | ("applied", "finalized")
                 | ("prepared" | "applied", "recovery_required")
+                | (
+                    "recovery_required",
+                    "finalized" | "finalized_without_effect"
+                )
         )
 }

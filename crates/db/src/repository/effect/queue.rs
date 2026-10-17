@@ -56,7 +56,7 @@ pub(super) fn claim_due_targets<Clock: TimestampSource>(
                      SELECT 1 FROM effect_reconcile_attempts attempt
                      JOIN effect_operations operation ON operation.attempt_id = attempt.id
                      WHERE attempt.target_id = effect_reconcile_requests.target_id
-                       AND operation.phase <> 'finalized'
+                       AND operation.phase NOT IN ('finalized', 'finalized_without_effect')
                  )
                  ORDER BY COALESCE(not_before, requested_at), requested_at, target_id
                  LIMIT ?2",
