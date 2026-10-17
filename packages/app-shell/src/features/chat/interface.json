@@ -1,6 +1,10 @@
 {
   "owner": "Conversation UI",
   "modules": {
+    "./agent-effect-recovery-banner": {
+      "exports": ["AgentEffectRecoveryBanner"],
+      "purpose": "Workspace composes chat-owned manual-recovery presentation above the conversation it gates."
+    },
     "./chat-view": {
       "exports": ["ChatView"],
       "purpose": "Workspace and workflow-run compose the same conversation renderer."
