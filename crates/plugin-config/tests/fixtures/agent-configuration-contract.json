@@ -1,0 +1,235 @@
+[
+  {
+    "name": "anthropic-without-settings",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "ok": {
+        "schemaVersion": 2,
+        "settings": [],
+        "modelAccess": {
+          "contractVersion": 1,
+          "protocols": [
+            "anthropic-messages"
+          ],
+          "modelCardinality": "single"
+        },
+        "fingerprint": "2d1afa5e03b476385a6c188f7444184be11e82e81191d8efe2e9f354456753c1"
+      }
+    }
+  },
+  {
+    "name": "two-protocols-with-ordered-settings",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"openai-completions\",\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{\"enabled\":{\"type\":\"boolean\",\"title\":\"Enabled\",\"description\":\"Enable feature\",\"default\":true},\"verbosity\":{\"type\":\"string\",\"title\":\"Verbosity\",\"description\":\"Output style\",\"order\":2,\"default\":\"normal\"},\"retries\":{\"type\":\"number\",\"title\":\"Retries\",\"description\":\"Retry attempts\",\"order\":1,\"default\":3,\"required\":true}}}",
+    "expected": {
+      "ok": {
+        "schemaVersion": 2,
+        "settings": [
+          {
+            "id": "retries",
+            "title": "Retries",
+            "description": "Retry attempts",
+            "settingType": "number",
+            "required": true,
+            "order": 1,
+            "default": 3
+          },
+          {
+            "id": "verbosity",
+            "title": "Verbosity",
+            "description": "Output style",
+            "settingType": "string",
+            "required": false,
+            "order": 2,
+            "default": "normal"
+          },
+          {
+            "id": "enabled",
+            "title": "Enabled",
+            "description": "Enable feature",
+            "settingType": "boolean",
+            "required": false,
+            "order": null,
+            "default": true
+          }
+        ],
+        "modelAccess": {
+          "contractVersion": 1,
+          "protocols": [
+            "openai-completions",
+            "anthropic-messages"
+          ],
+          "modelCardinality": "single"
+        },
+        "fingerprint": "e5897b200a23879d647c107bf8be755107a4416d5ca4e2ad6ab3c63f36b81500"
+      }
+    }
+  },
+  {
+    "name": "utf8-setting-metadata",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{\"message\":{\"type\":\"string\",\"title\":\"消息\",\"description\":\"显示内容\",\"required\":true}}}",
+    "expected": {
+      "ok": {
+        "schemaVersion": 2,
+        "settings": [
+          {
+            "id": "message",
+            "title": "消息",
+            "description": "显示内容",
+            "settingType": "string",
+            "required": true,
+            "order": null,
+            "default": null
+          }
+        ],
+        "modelAccess": {
+          "contractVersion": 1,
+          "protocols": [
+            "anthropic-messages"
+          ],
+          "modelCardinality": "single"
+        },
+        "fingerprint": "f3eb3ff65e50ad6ad871bf743654b20f258332b6f04f2aa2e9df6afa6cb1ba7e"
+      }
+    }
+  },
+  {
+    "name": "unsupported-schema",
+    "source": "{\"schemaVersion\":3,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "unsupported_schema_version"
+    }
+  },
+  {
+    "name": "legacy-version-cannot-declare-agent",
+    "source": "{\"schemaVersion\":1,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "unsupported_schema_version"
+    }
+  },
+  {
+    "name": "unsupported-adapter-contract",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":2,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "unsupported_contract_version"
+    }
+  },
+  {
+    "name": "empty-protocols",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "empty_protocols"
+    }
+  },
+  {
+    "name": "duplicate-protocol",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\",\"anthropic-messages\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "duplicate_protocol"
+    }
+  },
+  {
+    "name": "provider-name-is-not-protocol",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"openai\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "unsupported_protocol"
+    }
+  },
+  {
+    "name": "responses-is-not-completions",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"openai-responses\"],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "unsupported_protocol"
+    }
+  },
+  {
+    "name": "multi-model-not-approved",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"multiple\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "mixed-mcp-shape",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"transport\":{\"type\":\"http\",\"url\":\"https://example.invalid/mcp\"}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "mixed-hook-shape",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"hook\":{}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "unknown-agent-member",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"},\"extra\":true}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "credential-not-in-static-model-access",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\",\"apiKey\":\"synthetic-not-a-real-key\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "personal-reference-not-in-package",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\",\"connectionId\":\"user-connection\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "explicit-empty-settings",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{}}",
+    "expected": {
+      "error": "invalid_settings"
+    }
+  },
+  {
+    "name": "explicit-null-settings",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":null}",
+    "expected": {
+      "error": "invalid_settings"
+    }
+  },
+  {
+    "name": "reserved-secret-type",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{\"credential\":{\"type\":\"secret\",\"title\":\"Credential\",\"description\":\"Invalid setting type\"}}}",
+    "expected": {
+      "error": "invalid_settings"
+    }
+  },
+  {
+    "name": "default-must-match-type",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{\"enabled\":{\"type\":\"boolean\",\"title\":\"Enabled\",\"description\":\"Enable feature\",\"default\":\"true\"}}}",
+    "expected": {
+      "error": "invalid_settings"
+    }
+  },
+  {
+    "name": "unknown-setting-member",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}},\"settings\":{\"enabled\":{\"type\":\"boolean\",\"title\":\"Enabled\",\"description\":\"Enable feature\",\"secret\":true}}}",
+    "expected": {
+      "error": "invalid_settings"
+    }
+  },
+  {
+    "name": "duplicate-nested-key",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"contractVersion\":2}}}",
+    "expected": {
+      "error": "duplicate_key"
+    }
+  },
+  {
+    "name": "concatenated-json",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\"}}} {}",
+    "expected": {
+      "error": "invalid_json"
+    }
+  }
+]

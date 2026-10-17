@@ -1,5 +1,6 @@
 //! Compiles and persists host-owned Plugin Configuration.
 
+mod agent;
 mod declaration;
 mod filesystem;
 mod hook;
@@ -9,6 +10,10 @@ mod values;
 #[cfg(windows)]
 mod windows_permissions;
 
+pub use agent::{
+    AgentModelAccess, AgentModelCardinality, AgentModelProtocol, CompileAgentConfigurationError,
+    CompiledAgentConfiguration, compile_agent_configuration,
+};
 pub use declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, MAX_SETTINGS,
     SettingDeclaration, SettingType, SettingValue, compile_declaration,
