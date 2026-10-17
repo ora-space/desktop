@@ -197,6 +197,23 @@ pub(crate) fn validate(
             ),
         ));
     }
+    // The Agent shape is exclusive to the agent kind: any other kind shipping a personal-model
+    // declaration is either a mispackaged agent or an attempt to claim model-binding capabilities
+    // from a contribution the host would never wire to a model access path.
+    if !matches!(manifest.kind(), PluginKind::Agent)
+        && matches!(
+            configuration_file,
+            Ok(Some(CompiledConfigurationFile::Agent(_)))
+        )
+    {
+        return Err(invalid(
+            CONFIGURATION_FILE,
+            format!(
+                "only `agent` packages may declare an Agent configuration (kind is `{}`)",
+                manifest.kind()
+            ),
+        ));
+    }
     let contributes = match manifest.kind() {
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
             display_name: manifest.title().to_owned(),
@@ -253,6 +270,12 @@ pub(crate) fn validate(
             } else {
                 PluginConfigurationDeclarationValidity::NotDeclared
             }
+        }
+        // The Agent shape is a valid, installable declaration of personal-model access: it gates
+        // activation the same way a valid v1 declaration does. Whether a user has configured the
+        // connection it requires is a separate fact no package validity can prove.
+        Ok(Some(CompiledConfigurationFile::Agent(_))) => {
+            PluginConfigurationDeclarationValidity::Valid
         }
         Err(error) => PluginConfigurationDeclarationValidity::Invalid {
             reason: error.to_string(),

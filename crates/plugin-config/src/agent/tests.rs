@@ -1,5 +1,8 @@
 use super::{CompileAgentConfigurationError, compile_agent_configuration};
-use crate::{MAX_DECLARATION_BYTES, MAX_SETTINGS, compile_configuration_file, compile_declaration};
+use crate::mcp::{
+    CompileConfigurationFileError, CompiledConfigurationFile, compile_configuration_file,
+};
+use crate::{MAX_DECLARATION_BYTES, MAX_SETTINGS, compile_declaration};
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -73,17 +76,30 @@ fn fingerprints_exact_bytes_and_preserves_legacy_fingerprints() -> TestResult {
     Ok(())
 }
 
-/// Declaration recognition must not enable installation or runtime use before those consumers exist.
+/// The dispatcher recognizes the Agent shape since the release consumers (package validation
+/// and install verification) compile the same declaration; legacy v1 sources keep their shapes
+/// and never fall into the Agent compiler.
 #[test]
-fn legacy_dispatcher_still_rejects_the_new_shape() {
-    assert!(compile_agent_configuration(MINIMAL).is_ok());
-    assert!(compile_configuration_file(MINIMAL).is_err());
+fn dispatcher_routes_the_agent_shape_and_legacy_shapes_separately() {
+    assert!(matches!(
+        compile_configuration_file(MINIMAL),
+        Ok(CompiledConfigurationFile::Agent(_))
+    ));
     for source in [
         br#"{"schemaVersion":1,"settings":{"enabled":{"type":"boolean","title":"Enabled","description":"Enable feature"}}}"#.as_slice(),
         br#"{"schemaVersion":1,"transport":{"type":"http","url":"https://mcp.example.invalid/server"}}"#.as_slice(),
     ] {
         assert!(compile_configuration_file(source).is_ok());
         assert!(compile_agent_configuration(source).is_err());
+    }
+    for mixed in [
+        br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}},"transport":{"type":"http","url":"https://mcp.example.invalid/server"}}"#.as_slice(),
+        br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}},"hook":{"events":["before_agent_start"]}}"#.as_slice(),
+    ] {
+        assert!(matches!(
+            compile_configuration_file(mixed),
+            Err(CompileConfigurationFileError::MixedContribution)
+        ));
     }
 }
 

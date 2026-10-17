@@ -74,6 +74,12 @@ pub(crate) fn validate_hook(
                 "a hook plugin must not declare an MCP `transport`",
             ));
         }
+        Ok(Some(CompiledConfigurationFile::Agent(_))) => {
+            return Err(invalid(
+                CONFIGURATION_FILE,
+                "a hook plugin must not declare an Agent configuration",
+            ));
+        }
         Ok(Some(CompiledConfigurationFile::Hook(configuration))) => configuration.clone(),
     };
     validate_executable_containment(package_root, &configuration.hook)?;

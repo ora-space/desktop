@@ -15,6 +15,9 @@ pub use resolve::{
     ResolveMcpBindingError, ResolvedMcpArgument, ResolvedMcpTransport, resolve_mcp_transport,
 };
 
+use crate::agent::{
+    CompileAgentConfigurationError, CompiledAgentConfiguration, compile_agent_configuration,
+};
 use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, compile_declaration,
     compile_declaration_from_value, parse_strict_json,
@@ -33,19 +36,22 @@ use url::Url;
 /// The package-relative directory an MCP stdio command must live in.
 pub const MCP_COMMAND_DIRECTORY: &str = "assets/";
 
-/// Distinguishes the three strict `assets/config.json` shapes: Settings-only, MCP, and Hook.
+/// Distinguishes the four strict `assets/config.json` shapes: Settings-only, MCP, Hook, and the
+/// Agent personal-model declaration.
 ///
 /// The presence of `transport` decides the MCP shape, the presence of `hook` decides the Hook
-/// shape, and the absence of both falls back to Settings-only. The three shapes are mutually
-/// exclusive: a file declaring `transport` and `hook` together fails closed, because the host
-/// must never run two contribution types from one package. Kind policy — an MCP package must
-/// ship the MCP shape, a Hook package must ship the Hook shape, and every other kind must not —
+/// shape, the presence of `agent` decides the Agent shape, and the absence of all three falls
+/// back to Settings-only. The shapes are mutually exclusive: a file declaring two of them
+/// together fails closed, because the host must never run two contribution types from one
+/// package. Kind policy — an MCP package must ship the MCP shape, a Hook package must ship the
+/// Hook shape, only an Agent package may ship the Agent shape, and every other kind must not —
 /// stays with the package validator that knows the manifest kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompiledConfigurationFile {
     Settings(CompiledDeclaration),
     Mcp(CompiledMcpConfiguration),
     Hook(CompiledHookConfiguration),
+    Agent(CompiledAgentConfiguration),
 }
 
 /// Holds one validated MCP Configuration compiled from `assets/config.json`.
@@ -137,9 +143,9 @@ pub enum CompileConfigurationFileError {
     Mcp(#[from] CompileMcpConfigurationError),
     #[error(transparent)]
     Hook(#[from] CompileHookConfigurationError),
-    #[error(
-        "configuration declares both `transport` and `hook`; only one contribution shape is allowed"
-    )]
+    #[error(transparent)]
+    Agent(#[from] CompileAgentConfigurationError),
+    #[error("configuration declares more than one contribution shape; only one is allowed")]
     MixedContribution,
 }
 
@@ -157,10 +163,21 @@ pub fn compile_configuration_file(
     let has_hook = value
         .as_object()
         .is_some_and(|object| object.contains_key("hook"));
-    // A file declaring both shapes would let one package carry two contribution types; the host
+    let has_agent = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("agent"));
+    // A file declaring two shapes would let one package carry two contribution types; the host
     // must never run both, so the combination fails closed rather than picking one.
-    if has_transport && has_hook {
+    if usize::from(has_transport) + usize::from(has_hook) + usize::from(has_agent) > 1 {
         return Err(CompileConfigurationFileError::MixedContribution);
+    }
+    if has_agent {
+        // The Agent compiler re-parses the exact bytes because its fingerprint covers them; the
+        // declaration identity a release association binds is the raw byte digest, not a
+        // normalized value tree.
+        return compile_agent_configuration(source)
+            .map(CompiledConfigurationFile::Agent)
+            .map_err(CompileConfigurationFileError::Agent);
     }
     if has_transport {
         compile_mcp_configuration(value)

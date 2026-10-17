@@ -110,6 +110,22 @@ pub enum PluginRelease {
     Targets { targets: Vec<PluginTargetDownload> },
 }
 
+/// The Agent declaration identity one install plan freezes from Cloud's catalog snapshot.
+///
+/// The association is the release's publication binding minus its marketplace-only copy path:
+/// what a Node must prove is that the package's in-archive declaration bytes carry exactly this
+/// digest, not where the sync read a copy of them. The plugin id, version, target, and package
+/// digest all live on the surrounding plan, which is what makes the association a binding to an
+/// exact release rather than a free-floating schema claim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginAgentConfiguration {
+    /// Declaration schema version the associated copy declares.
+    pub schema_version: u32,
+    /// Lowercase hexadecimal SHA-256 of the exact declaration bytes.
+    pub declaration_sha256: Sha256Digest,
+}
+
 /// One plugin to install at an exact version.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +133,10 @@ pub struct PluginInstall {
     pub plugin_id: PluginId,
     pub version: PluginVersion,
     pub release: PluginRelease,
+    /// Present when the catalog entry the plan froze declared an Agent configuration
+    /// association; absent plans install without a declaration binding to prove.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_configuration: Option<PluginAgentConfiguration>,
 }
 
 /// One plugin to remove; removing an absent plugin succeeds.
@@ -166,6 +186,16 @@ impl InstallPluginsSpec {
                         validate_download(&target.download)?;
                     }
                 }
+            }
+            if let Some(agent) = &plugin.agent_configuration {
+                // A zero version cannot name a declaration schema; support beyond the structural
+                // check belongs to the installer that compiles the declaration bytes.
+                if agent.schema_version == 0 {
+                    return Err(MessageValidationError::EmptyField {
+                        field: "agent_configuration.schema_version",
+                    });
+                }
+                agent.declaration_sha256.validate()?;
             }
         }
         Ok(())

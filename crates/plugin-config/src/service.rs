@@ -424,6 +424,11 @@ where
                 // A Hook Configuration may declare a future plugin-global Settings subset; RTK
                 // v0.1.0 declares none, so the settings summary stays NotDeclared until one ships.
                 CompiledConfigurationFile::Hook(configuration) => configuration.settings,
+                // The Agent shape's Settings belong to the platform's personal configuration
+                // surface (saved per user against the release's declaration fingerprint), not to
+                // this desktop-local v1 store; the local editor reports nothing to edit until
+                // that surface consumes the declaration.
+                CompiledConfigurationFile::Agent(_) => None,
             }))
     }
 

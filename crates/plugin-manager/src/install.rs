@@ -1,7 +1,10 @@
 //! Installs and updates plugin releases by downloading and safely extracting their package.
 
 mod cache;
+pub(crate) mod declaration;
 pub(crate) mod package;
+
+pub use declaration::ExpectedAgentDeclaration;
 
 use crate::discovery::installed_root;
 use crate::limits::package_extract_limits;
@@ -221,6 +224,19 @@ fn download_source(locator: &ReleaseLocator) -> DownloadSource {
     }
 }
 
+/// Derives the declaration expectation a release listing declares, if any.
+///
+/// The copy path is marketplace-side only: what an install must prove is that the package's
+/// declaration bytes carry the digest the listing associated, not where the sync read a copy.
+fn expected_agent_declaration(manifest: &PluginManifest) -> Option<ExpectedAgentDeclaration> {
+    manifest.agent_configuration().map(|association| {
+        ExpectedAgentDeclaration::new(
+            association.schema_version(),
+            *association.declaration_sha256(),
+        )
+    })
+}
+
 /// Reports why one plugin release could not be updated.
 #[derive(Debug, Error)]
 pub enum UpdateError {
@@ -373,6 +389,7 @@ where
             namespace,
             manifest,
             source.target(),
+            expected_agent_declaration(manifest).as_ref(),
         );
         cache::discard_downloaded_archive(&archive_path);
         match outcome {
@@ -2029,5 +2046,152 @@ mod tests {
             error,
             UpdateError::NotFound { ref id } if id == "official/weather"
         ));
+    }
+    /// One valid Agent declaration whose bytes are the package's `assets/config.json`.
+    const AGENT_DECLARATION: &[u8] = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}}}"#;
+
+    /// Builds an installed-form agent package whose declaration bytes are `declaration`.
+    fn agent_package_files(declaration: Option<&[u8]>) -> Vec<(String, Vec<u8>)> {
+        let mut files = vec![
+            (
+                "orax.toml".to_owned(),
+                installed_agent_manifest("weather", "1.0.0").into_bytes(),
+            ),
+            ("main.js".to_owned(), b"export {};\n".to_vec()),
+        ];
+        if let Some(declaration) = declaration {
+            files.push(("assets/config.json".to_owned(), declaration.to_vec()));
+        }
+        files
+    }
+
+    /// Renders the package files in the shape `write_orax_zip` takes.
+    fn files_as_refs(files: &[(String, Vec<u8>)]) -> Vec<(&str, &[u8])> {
+        files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect()
+    }
+
+    /// Installs one agent release whose listing declares the declaration association.
+    ///
+    /// The association binds `declaration`'s real digest, so every failure the caller observes
+    /// comes from the package content rather than from the listing lying about its own release.
+    fn install_declared_agent_release(
+        data_dir: &Path,
+        package_files: &[(String, Vec<u8>)],
+    ) -> Result<PathBuf, InstallError> {
+        let release_path = data_dir.join("pkg.orax");
+        write_orax_zip(&release_path, &files_as_refs(package_files));
+        let digest = sha256_file(&release_path);
+        let declaration_digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(AGENT_DECLARATION);
+            hex(hasher.finalize().into())
+        };
+        let manifest = PluginManifest::parse(&format!(
+            "{}\n[agent_configuration]\nschema_version = 2\ndeclaration_sha256 = \"{declaration_digest}\"\ncopy = \"agent-configuration.json\"\n",
+            manifest_with_digest("weather", "1.0.0", digest)
+        ))
+        .unwrap();
+        assert!(
+            manifest.agent_configuration().is_some(),
+            "the test listing must carry the association"
+        );
+        block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            &PluginNamespace::official(),
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            data_dir,
+        ))
+    }
+
+    /// A listing that declares the association installs a package carrying exactly those
+    /// declaration bytes, and the declaration survives into the installed package.
+    #[test]
+    fn installs_package_matching_the_declared_association() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = install_declared_agent_release(
+            temp_dir.path(),
+            &agent_package_files(Some(AGENT_DECLARATION)),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(package_dir.join("assets").join("config.json")).unwrap(),
+            AGENT_DECLARATION,
+            "the verified declaration bytes land in the installed package"
+        );
+    }
+
+    /// A package whose declaration bytes differ from the associated digest is rejected while it
+    /// is still staged: a reformatted but semantically identical declaration is still a different
+    /// release identity, because fingerprints cover the exact bytes.
+    #[test]
+    fn rejects_package_whose_declaration_bytes_differ() {
+        let temp_dir = TempDir::new().unwrap();
+        let reformatted = br#"{
+  "schemaVersion": 2,
+  "agent": {
+    "modelAccess": {
+      "contractVersion": 1,
+      "protocols": ["anthropic-messages"],
+      "modelCardinality": "single"
+    }
+  }
+}"#;
+        let error = install_declared_agent_release(
+            temp_dir.path(),
+            &agent_package_files(Some(reformatted)),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&error, InstallError::InvalidPackage { field_path, .. } if field_path == "assets/config.json"),
+            "the rejection names the declaration file: {error:?}"
+        );
+        assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
+    }
+
+    /// A package with no declaration at all cannot satisfy a listing that declares one: the
+    /// association would bind a schema no package carries.
+    #[test]
+    fn rejects_package_without_a_declaration_when_the_listing_declares_one() {
+        let temp_dir = TempDir::new().unwrap();
+        let error = install_declared_agent_release(temp_dir.path(), &agent_package_files(None))
+            .unwrap_err();
+        assert!(
+            matches!(&error, InstallError::InvalidPackage { field_path, .. } if field_path == "assets/config.json"),
+            "the rejection names the declaration file: {error:?}"
+        );
+        assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
+    }
+
+    /// A package may carry an Agent declaration while its listing declares no association: the
+    /// declaration is inert package metadata until a release binds it, so the package installs.
+    #[test]
+    fn installs_declaring_package_from_a_listing_without_an_association() {
+        let temp_dir = TempDir::new().unwrap();
+        let files = agent_package_files(Some(AGENT_DECLARATION));
+        let package_dir =
+            install_weather_release(temp_dir.path(), "agent", &files_as_refs(&files)).unwrap();
+        assert!(package_dir.join("assets").join("config.json").exists());
+    }
+    /// A non-agent kind cannot smuggle a personal-model declaration: the Agent shape is
+    /// exclusive to agent packages, whatever its listing claims.
+    #[test]
+    fn rejects_an_agent_declaration_in_a_non_agent_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut files = agent_package_files(Some(AGENT_DECLARATION));
+        files[0] = (
+            "orax.toml".to_owned(),
+            b"resolver = 1\nidentifier = \"weather\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"A test plugin\"\n".to_vec(),
+        );
+        let error =
+            install_weather_release(temp_dir.path(), "mcp", &files_as_refs(&files)).unwrap_err();
+        assert!(
+            matches!(&error, InstallError::InvalidPackage { field_path, message, .. }
+                if field_path == "assets/config.json" && message.contains("Agent configuration")),
+            "the rejection names the kind mismatch: {error:?}"
+        );
+        assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
     }
 }

@@ -69,6 +69,12 @@ pub(crate) fn validate_mcp(
                 "an mcp plugin must not declare a `hook` contribution",
             ));
         }
+        Ok(Some(CompiledConfigurationFile::Agent(_))) => {
+            return Err(invalid(
+                MCP_CONFIGURATION_FILE,
+                "an mcp plugin must not declare an Agent configuration",
+            ));
+        }
         Ok(Some(CompiledConfigurationFile::Mcp(configuration))) => configuration.clone(),
     };
     if let McpTransport::Stdio(stdio) = &configuration.transport {

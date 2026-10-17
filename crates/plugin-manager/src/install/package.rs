@@ -8,6 +8,7 @@
 //! half-materialized package behind.
 
 use super::InstallError;
+use super::declaration::{ExpectedAgentDeclaration, verify_agent_declaration};
 use crate::limits::package_extract_limits;
 use ora_domain::PluginNamespace;
 use ora_plugin_manifest::{HookTarget, PluginManifest};
@@ -24,6 +25,10 @@ use std::path::Path;
 /// error, or a kind the package cannot back with files is rejected while the tree is still staged,
 /// so nothing is ever committed for it.
 ///
+/// `expected_agent_declaration` carries the listing's `[agent_configuration]` association when
+/// it declares one: the package's declaration bytes must then be exactly the ones the release
+/// bound, or the package is rejected while it is still staged.
+///
 /// The staging directory lives inside the destination's parent so the final rename stays on one
 /// filesystem, and it is removed when it drops on every failure path.
 pub(super) fn materialize_package(
@@ -33,6 +38,7 @@ pub(super) fn materialize_package(
     namespace: &PluginNamespace,
     release_manifest: &PluginManifest,
     selected_target: Option<&HookTarget>,
+    expected_agent_declaration: Option<&ExpectedAgentDeclaration>,
 ) -> Result<(), InstallError> {
     std::fs::create_dir_all(package_parent).map_err(|source| InstallError::Io {
         path: package_parent.to_path_buf(),
@@ -61,6 +67,13 @@ pub(super) fn materialize_package(
         /*logo*/ None,
     )
     .map_err(InstallError::invalid_package)?;
+    // The listing's declaration association, when it declares one, is proven against the
+    // package's actual bytes before anything commits: a user's personal configuration is saved
+    // against the associated fingerprint, so a package shipping different declaration bytes
+    // must never install as that release.
+    if let Some(expected) = expected_agent_declaration {
+        verify_agent_declaration(staging.path(), expected)?;
+    }
     // A targeted archive must self-declare its target in an in-package `[artifact]` section.
     // Missing the declaration fails closed so a wrong-architecture archive cannot install as
     // valid; the already-parsed in-package manifest is reused instead of reading the file twice.
