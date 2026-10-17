@@ -6,7 +6,8 @@ use pretty_assertions::assert_eq;
 fn clone_configuration_rejects_protected_roots_without_changing_permissions() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
@@ -26,12 +27,13 @@ fn clone_configuration_rejects_protected_roots_without_changing_permissions() {
             assert_eq!(fs::metadata(root).unwrap().permissions(), before);
         }
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
     });
 }
 
-/// Deployment credentials work while hooks, LFS downloads and recursive submodule acquisition stay off.
+/// Snapshot mTLS access ignores deployment helpers and disables checkout extensions.
 #[test]
-fn private_https_uses_deployment_credentials_without_running_checkout_extensions() {
+fn snapshot_clone_ignores_deployment_credentials_and_checkout_extensions() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let main = fixture.path().join("main");
@@ -60,9 +62,7 @@ fn private_https_uses_deployment_credentials_without_running_checkout_extensions
             "-m",
             "extensions",
         ]);
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), main.join(".git"));
-        server.require_credentials.store(true, Ordering::SeqCst);
+        let server = GitServerFixture::new(fixture.path(), main.join(".git"));
         let config = configuration(&fixture, &server);
         let hooks = fixture.path().join("configured-hooks");
         fs::create_dir(&hooks).unwrap();
@@ -75,17 +75,15 @@ fn private_https_uses_deployment_credentials_without_running_checkout_extensions
         let credentials = fixture.path().join("credentials");
         fs::write(&credentials, "#!/bin/sh\nif test \"$1\" = get; then printf 'username=fixture\\npassword=secret\\n'; fi\n").unwrap();
         fs::set_permissions(&credentials, fs::Permissions::from_mode(/*mode*/ 0o700)).unwrap();
-        fs::write(&config.git_config, format!("[http]\n sslCAInfo = {}\n[credential]\n helper = {}\n[core]\n hooksPath = {}\n[filter \"lfs\"]\n required = true\n smudge = {}\n process = {}\n[submodule]\n recurse = true\n", server.certificate.display(), credentials.display(), hooks.display(), fixture.path().join("smudge").display(), fixture.path().join("smudge").display())).unwrap();
+        fs::write(&config.git_config, format!("[http]\n sslCAInfo = {}\n[credential]\n helper = {}\n[core]\n hooksPath = {}\n[filter \"lfs\"]\n required = true\n smudge = {}\n process = {}\n[submodule]\n recurse = true\n", server.access().ca_cert.display(), credentials.display(), hooks.display(), fixture.path().join("smudge").display(), fixture.path().join("smudge").display())).unwrap();
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         let result = node
             .submit_clone(request(&server, "private", "main"))
             .unwrap();
-        let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(
-            ready,
-        ))) = result.state
-        else {
+        let Some(CloneExecutionResult::CloneReady(ready)) = clone_result(&result.state) else {
             panic!("private clone not ready: {result:?}");
         };
         let target = PathBuf::from(ready.path.as_str());

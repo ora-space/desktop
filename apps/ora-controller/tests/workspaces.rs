@@ -44,7 +44,7 @@ use tokio::sync::oneshot;
 use workspace_cloud::{Event, Timeline, WORKSPACE, WorkspaceCloud};
 
 const NODE_PATH: &str = "/ora-node/v1";
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const COMMIT: &str = workspace_cloud::BASE_COMMIT;
 
 /// The Node identity the Substrate reports for the Workspace, as the Sandbox Server derives it.
 fn node_id() -> NodeId {
@@ -118,6 +118,10 @@ struct Node {
     agents: agents::AgentNode,
     deliveries: deliveries::DeliveryNode,
     restores: restores::RestoreNode,
+    /// Every clone command the Node received, in order.
+    clone_commands: Arc<Mutex<Vec<CloneRepositoryMessage>>>,
+    /// Reports ready clones at another commit than the dispatched base, as a defective Node would.
+    wrong_commit: Arc<AtomicBool>,
     /// Ends the current session once, as a dropped connection would.
     disconnect: Arc<AtomicBool>,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
@@ -164,7 +168,6 @@ impl Node {
                     .agents
                     .next(&mut agent_sent)
                     .or_else(|| self.deliveries.next(&mut delivery_sent))
-                    .or_else(|| self.restores.next())
             {
                 if sender
                     .send(encode_node_frame(&event).unwrap())
@@ -198,14 +201,16 @@ impl Node {
                             },
                         })),
                         ControllerToNodeMessage::ControlledClone(ControlledClone { command, .. }) if self.completes.load(Ordering::SeqCst) => {
+                            self.clone_commands.lock().unwrap().push(command.clone());
+                            let commit = if self.wrong_commit.load(Ordering::SeqCst) { "1123456789abcdef0123456789abcdef01234567" } else { COMMIT };
                             let result = CloneExecutionResult::CloneReady(CloneReady {
                                 node: identity.clone(),
                                 spec: command.payload.spec.clone(),
                                 repository_id: RepositoryId::new("repository"),
                                 path: NodePath::new("/var/lib/ora/repositories/repo"),
-                                commit: CommitId::new(COMMIT),
+                                commit: CommitId::new(commit),
                             });
-                            results.insert(command.execution_id.clone(), ExecutionResult::Clone(result.clone()));
+                            results.insert(command.execution_id.clone(), ExecutionResult::Clone(Box::new(result.clone())));
                             sequence += 1;
                             Some(NodeToControllerMessage::CloneResult(CloneResultMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -222,7 +227,6 @@ impl Node {
                         ControllerToNodeMessage::EventAck(ack) => { self.agents.ack(&ack, &self.timeline); self.deliveries.ack(&ack, &self.timeline); None }
                         ControllerToNodeMessage::ControlledDeliverRevision(envelope) => { self.deliveries.start(*envelope, &self.timeline); None }
                         ControllerToNodeMessage::UploadGrant(grant) => { self.deliveries.grant(grant, &self.timeline); None }
-                        ControllerToNodeMessage::DownloadGrant(answer) => { self.restores.answer(answer, &self.timeline); None }
                         ControllerToNodeMessage::ControlledPlugins(envelope) => {
                             let event = plugins::complete(self, &envelope, &identity);
                             results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
@@ -340,6 +344,8 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                 agents: agents::AgentNode::default(),
                 deliveries: deliveries::DeliveryNode::default(),
                 restores: restores::RestoreNode::default(),
+                clone_commands: Arc::default(),
+                wrong_commit: Arc::new(AtomicBool::new(false)),
                 disconnect: Arc::new(AtomicBool::new(false)),
                 plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
                 timeline: timeline.clone(),
@@ -453,10 +459,67 @@ fn create_and_stop_drive_the_workspace_sandbox_and_its_node() {
     });
 }
 
-/// A ref the Node protocol refuses, such as `HEAD`, blocks the clone step without registering any
-/// execution: retrying could never make it valid.
+/// The clone input Cloud froze for the step reaches `RecordDispatch` and the Node verbatim: the
+/// Controller adds only the target Node and builds nothing from the Project or Workspace.
 #[test]
-fn an_unclonable_ref_blocks_the_clone_step_without_a_dispatch() {
+fn the_frozen_clone_input_reaches_cloud_and_the_node_verbatim() {
+    scenario("main", |world| async move {
+        let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        settled(&world, &create, proto::OperationState::Succeeded).await;
+        let frozen = world.cloud.clone_input();
+        let registered = world.cloud.clone_records();
+        assert_eq!(
+            registered
+                .iter()
+                .map(|record| record.input.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(proto::ExecutionInput {
+                spec: Some(proto::execution_input::Spec::Clone(frozen.clone())),
+            })]
+        );
+        assert_eq!(
+            world.node.clone_commands.lock().unwrap().clone(),
+            vec![CloneRepositoryMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                request_id: None,
+                operation_id: OperationId::new(registered[0].node_operation_id.clone()),
+                execution_id: ExecutionId::new(registered[0].execution_id.clone()),
+                payload: CloneRepository {
+                    spec: CloneExecutionSpec {
+                        node_id: node_id(),
+                        repository_url: GitRepositoryUrl::parse(&frozen.repository_url).unwrap(),
+                        snapshot_ref: SnapshotRef::parse(&frozen.snapshot_ref).unwrap(),
+                        base_commit: CommitId::new(frozen.base_commit),
+                        workspace_ref: WorkspaceRef::parse(&frozen.workspace_ref).unwrap(),
+                    },
+                },
+            }]
+        );
+    });
+}
+
+/// A clone step handed out without its frozen input blocks without registering any execution:
+/// the Controller never makes one up.
+#[test]
+fn a_clone_step_without_a_frozen_input_blocks_without_a_dispatch() {
+    scenario("main", |world| async move {
+        world.cloud.withhold_clone_input();
+        let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        settled(&world, &create, proto::OperationState::Blocked).await;
+        let events = world.timeline.events();
+        assert!(events.contains(&Event::Deferred {
+            reason: "external_failure"
+        }));
+        assert!(!events.contains(&Event::Dispatched), "{events:#?}");
+        assert_eq!(world.cloud.clone_records(), Vec::new());
+        assert!(!world.cloud.workspace().admission_open);
+    });
+}
+
+/// A frozen input the Node protocol refuses, such as a Workspace branch named `HEAD`, blocks the
+/// clone step without registering any execution: retrying could never make it valid.
+#[test]
+fn an_invalid_frozen_clone_input_blocks_the_clone_step_without_a_dispatch() {
     scenario("HEAD", |world| async move {
         let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
         settled(&world, &create, proto::OperationState::Blocked).await;
@@ -466,6 +529,37 @@ fn an_unclonable_ref_blocks_the_clone_step_without_a_dispatch() {
         }));
         assert!(!events.contains(&Event::Dispatched), "{events:#?}");
         assert!(!world.cloud.workspace().admission_open);
+    });
+}
+
+/// A ready clone at another commit than the dispatched base commit is never taken over: Cloud
+/// records no result, the Workspace gets no base commit and admission stays closed.
+#[test]
+fn a_ready_clone_at_another_commit_is_not_taken_over() {
+    scenario("main", |world| async move {
+        world.node.wrong_commit.store(true, Ordering::SeqCst);
+        world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        world
+            .timeline
+            .until(|events| events.contains(&Event::Dispatched))
+            .await;
+        // Long enough for the Node to report the result and for any takeover to land.
+        tokio::time::sleep(Duration::from_millis(/*millis*/ 1000)).await;
+        assert!(!world.node.clone_commands.lock().unwrap().is_empty());
+        assert_eq!(
+            world
+                .cloud
+                .clone_records()
+                .into_iter()
+                .map(|record| record.result)
+                .collect::<Vec<_>>(),
+            vec![None]
+        );
+        let workspace = world.cloud.workspace();
+        assert_eq!(
+            (workspace.base_commit_id, workspace.admission_open),
+            (None, false)
+        );
     });
 }
 

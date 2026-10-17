@@ -16,6 +16,15 @@ pub(crate) enum AttemptSettlement {
     Unverified,
 }
 
+/// Which OS identity a host Run of Git uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunAs {
+    /// The workload user, for every command that touches a checkout.
+    Workload,
+    /// The Node's own identity, for Git Server access from a transport repository.
+    Node,
+}
+
 /// The host side of clone execution: dispatching, settling and inspecting Runs.
 ///
 /// It holds no Node database connection and writes nothing under the Node home, so it can run
@@ -45,6 +54,16 @@ impl CloneHost {
         })
     }
 
+    /// Whether the Node began stopping; long waits between Git Server attempts end early on it.
+    pub(crate) fn stopping(&self) -> bool {
+        self.shutdown.requested()
+    }
+
+    /// The workload user Git that touches checkouts runs as, if the deployment separates it.
+    pub(crate) fn workload_uid(&self) -> Option<u32> {
+        self.config.workload_uid
+    }
+
     /// Starts a recorded attempt and settles it once Git ends or its wait deadline expires.
     pub(crate) fn dispatch(&self, attempt: &ProcessAttempt) -> std::io::Result<AttemptSettlement> {
         let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
@@ -54,7 +73,7 @@ impl CloneHost {
         let _ = self.runtime.block_on(transport::execute(
             &client,
             &attempt.intent,
-            GitIntent::Network,
+            self.config.command_budget(GitIntent::Network),
             &self.config,
             &self.shutdown,
         ));
@@ -112,7 +131,7 @@ impl CloneHost {
         let result = self.runtime.block_on(transport::execute(
             &client,
             &intent,
-            command.intent,
+            self.config.budget_for(command),
             &self.config,
             &self.shutdown,
         ));
@@ -126,6 +145,17 @@ impl CloneHost {
 
     /// Intentionally does not copy the Worktree deployment environment, which may contain secrets.
     pub(super) fn spec(&self, command: &GitCommand, output: OutputPolicy) -> RunSpec {
+        self.spec_as(command, output, RunAs::Workload)
+    }
+
+    /// Builds the Run for `command` as `identity`. Only Git Server access runs as the Node: it
+    /// presents the git-access key, which the workload user cannot read.
+    pub(super) fn spec_as(
+        &self,
+        command: &GitCommand,
+        output: OutputPolicy,
+        identity: RunAs,
+    ) -> RunSpec {
         let mut spec = RunSpec::new(
             self.config.git_program.as_os_str(),
             &command.cwd,
@@ -134,7 +164,10 @@ impl CloneHost {
             },
         );
         spec.args = command.args.iter().map(OsString::from).collect();
-        self.config.isolate_workload(&mut spec);
+        match identity {
+            RunAs::Workload => self.config.isolate_workload(&mut spec),
+            RunAs::Node => {}
+        }
         spec.env = command
             .env
             .variables

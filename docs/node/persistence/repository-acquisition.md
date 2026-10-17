@@ -11,17 +11,16 @@ initial reservation. It never creates a directory. Replaying the same input retu
 changed input or cross-capability operation/execution reuse fails. Destinations cannot overlap any active
 Worktree target or any retained clone target. Clone failure never releases its reservation.
 
-Progress retains Reserved, DirectoryCreated or Dispatched facts. Directory identity is frozen after
+Progress retains Reserved, DirectoryCreated, Fetching (durable pass count) or Dispatched (current step) facts. Directory identity is frozen after
 creation; Unknown retains its phase and cannot roll back to Reserved. SQLite treats native identity as
 opaque evidence: a filesystem owner must capture and verify it, not infer ownership from this row.
-`ProcessJournal::manage_clone` starts only after durable directory creation evidence. At most one mutation
-Run can be recorded per clone execution. Retrying a failed clone requires new identities and a new target.
+`ProcessJournal::manage_clone` starts only after durable directory creation evidence. Each of the three workload steps records one Run; the same step cannot record another, and earlier Runs must be cleaned first. Retrying a failed clone requires new identities and a new target.
 
 Terminal result and original event commit in one transaction. Result input/resource/path must match the
 original record. A dispatched attempt requires exactly one observed ending and no uncleaned Runs: an exit code
 (`process_outcomes`) backs success or a Git failure, and a signal termination (`process_terminations`)
 backs only an `interrupted` failure. A Run cannot have both, and an undispatched execution cannot be
-interrupted. Success requires code zero; verification may reject a code-zero tag checkout as a missing branch.
+interrupted. Success requires zero exits for earlier and current steps; runtime verification also checks HEAD against the snapshot baseline.
 Missing exit/cleanup evidence remains recoverable,
 not terminal. Native repository fact checks are an additional runtime obligation, not supplied by SQLite.
 Pre-dispatch failures may complete with appropriate owned-residue evidence without inventing a Run.
@@ -34,3 +33,7 @@ Schema v3 migrates recognized v1/v2 tables transactionally, preserves old Worktr
 unfinished process attempts, and rejects unknown definitions. Existing old binaries refuse the new version.
 `tests/repository.rs` and `tests/repository_migration.rs` cover these storage obligations using real SQLite;
 they do not prove remote Git execution, directory ownership, Controller takeover or old-binary execution.
+
+Schema v10 adds the checkout-owned Workspace branch ledger. Old clone records are not migrated;
+development Workspace data is rebuilt for the snapshot switch. Existing Worktree schema validation
+retains its previous boundaries.

@@ -1,67 +1,75 @@
-# Managed repository clone
+# Managed snapshot clone and Workspace Git
 
 English | [中文](repository-clone.zh.md)
 
-`process.command_timeout_ms` bounds local Git commands. Network-intent clone/fetch/push use
-`process.network_timeout_ms`, defaulting to 600000 when absent and requiring 1..1200000 milliseconds.
-M4 keeps local commands at 30000 and network work at 600000. An expired network budget still closes
-the original Scope and requires host/guardian cleanup evidence before reporting Interrupted; it
-does not cancel fencing or permit a new attempt while the old Git may write. Cloud separately bounds
-Workspace clone attempts to three durable executions; Node never invents business retry policy.
+Cloud freezes a Binding snapshot before handing out a Workspace's clone step. The Controller
+forwards `repository_url`, `snapshot_ref`, `base_commit` and `workspace_ref` verbatim. The Node
+accepts only HTTPS repository URLs without credentials, queries or fragments; snapshot refs name
+a canonical Binding UUID and the exact base commit; Workspace refs name a canonical Workspace UUID
+and a concrete branch. Old repository/branch inputs and SSH clone inputs are rejected.
 
-Linux Node exposes `configure_clone`, `submit_clone` and `recover_clones` to its embedding caller.
-The standalone executable accepts an optional `clone` deployment section and recovers already accepted
-clones. Optional [local IPC](local-ipc.md) accepts new clone commands; files and stdin are not command channels, and Backend is unchanged.
+## Deployment and execution
 
-```json
-{
-  "clone": {
-    "repository_root": "/home/node/repositories",
-    "git_config": "/home/node/deployment/clone.gitconfig",
-    "search_path": ["/usr/bin"],
-    "ssh": { "kind": "disabled" }
-  }
-}
-```
+Configure `clone` with an existing absolute `repository_root`, a trusted `git_config` file and
+`search_path` (there is no SSH setting: clones come only from the Git Server over HTTPS), and
+configure `git_access` with `ca_cert`, `client_cert` and `client_key`. Cloud mode
+requires git-access. The Node advertises clone only when both clone and git-access are configured.
+The root must not overlap Node/process state or Worktree checkouts. Native device, inode and birth
+time evidence protects reservations; unknown or replaced evidence never authorizes a mutation.
 
-These are additions to the existing executable configuration, not a complete configuration file.
-Provision the root and configuration before startup. All paths must be absolute, controlled by the
-current user or root, without symlink components. Release rejects group/other writes; debug skips permission-bit
-checks. Node does not change deployment
-permissions. The root cannot overlap Node/process state or configured Worktree checkouts. Unix filesystem
-birth-time support is required: device, inode and birth time identify the root and newly created leaf.
-Missing or replaced ownership evidence remains Unknown; a database reservation alone never owns a directory.
-This is rootless, cooperative-user protection, not isolation from hostile code with the same UID.
+The Node fetches only the frozen snapshot into a private bare transport repository under
+`<repository_root>/.ora-transport/`. Its Git uses the git-access client certificate and the clone
+execution's `Ora-Execution-Id` only as command arguments, with helpers, redirects, hooks and ambient
+configuration disabled. The fetched commit must equal `base_commit`.
 
-The explicit Git configuration may select CA certificates and noninteractive deployment credential helpers.
-Only configuration paths are copied into the Run environment; the Worktree environment and ambient HOME
-are not inherited. Clone output is discarded so authentication diagnostics cannot become journal output.
-For SSH, use `{"kind":"configured","program":"/usr/bin/ssh","config":"/home/node/deployment/ssh_config"}`.
-That deployment file selects identities and known hosts; Node forces batch mode and strict host-key checks.
-Unknown host keys must be provisioned by deployment, never accepted interactively by Node.
+The transport is handed to the workload user without credentials. Host-managed workload commands
+initialize the checkout, fetch the local transport's objects into the Workspace's branch and reset
+the working tree. File transport is enabled only for that local fetch. The resulting checkout has
+full history, independent objects, no remote, no credential configuration and no tracking refs.
+Verification checks its directory identity, branch, clean tracked files and exact base commit.
+Transports are removed after use and cleared on startup, except that of a clone whose workload
+sequence has not yet finished the local fetch: that step is never preceded by another snapshot
+fetch, and its Run may still be reading the transport under its guardian.
 
-Each accepted request owns a new, exclusively created directory and at most one durable mutation Run.
-Git performs a nonlocal, full-history, single-branch clone with no templates, recursive submodules or LFS
-smudge/process filters; hooks and interactive prompts are disabled per command. A same-named tag cannot
-satisfy the requested branch. Verification requires a normal, nonshallow checkout, independent objects,
-the requested source/branch, matching HEAD and fetched branch commit, and clean tracked files.
+## Recovery and failures
 
-Every attempt ending (Git exiting on its own, cleanup after the stop grace or command deadline expires,
-or recovery after restart) first closes the original managed scope, then classifies the host's view: an
-exit code with completed cleanup continues to verification; a signal termination with completed cleanup
-fails as `interrupted` and keeps the directory, because Git never reached a verdict and cannot have
-succeeded; missing exit or cleanup facts stay Unknown. A normal Node stop saves the interrupted result
-before exiting, and recovery after a kill reaches the same result. Only then are native directory
-evidence and repository facts read. Missing process evidence cannot justify another Run. A reservation with no Run
-can resume only if its persisted phase proves dispatch never happened. Known failure retains its directory;
-a retry needs new operation/execution identities and receives a different directory. Terminal replay uses
-the original durable result and event, even offline or after user edits, without inspecting or recloning.
+Each workload command is durably associated before dispatch. A completed command is verified only
+after its managed scope has closed and cleanup is confirmed. Confirmed signal termination reports
+`interrupted`; missing process or directory evidence stays Unknown and preserves the directory.
+A known failure retains the reservation; business retries use new execution identities and targets.
+Terminal replay returns the original result without inspecting or fetching again.
 
-Real Linux host/guardian tests cover TLS clone, deployment credentials, missing branches/tag-only sources,
-authentication failure, checkout extension suppression, replay, pre-existing/replaced paths, Node kill, normal stop and command deadline during acquisition
-settling as interrupted, guardian loss staying Unknown, SSH known-host rejection/success and completion/outbox write-failure recovery.
-Linux acceptance requires OpenSSH client/server installed and the system's `/run/sshd` directory provisioned;
-the fixture daemon runs as the ordinary test user on an ephemeral port. CI provisions this test dependency,
-not a production Node service. This is not Controller delivery/reconnect acceptance or a cross-platform Node runtime.
+Snapshot fetch may restart because it changes only the private transport. Its pass count is durable
+and bounded at three across restarts. Each pass retries transient network/5xx failures three times
+with 5/30-second delays. Missing or refused snapshots report `snapshot_unavailable`; a fetched
+commit mismatch reports `base_commit_mismatch`; exhausted network failures report
+`source_unavailable`. Local commands use `command_timeout_ms`, network work uses
+`network_timeout_ms` (default 600000, allowed 1..1200000). Cleanup uncertainty never permits redispatch.
 
-See [durable records](persistence/repository-acquisition.md) and [runtime ownership](runtime.md).
+## Agent collaboration
+
+Set `agent.ora_git_directory` to a Node-owned socket directory, normally `/run/ora-git`. The Node
+creates a random socket per session and exposes only `ORA_GIT_SOCKET` to its workload. Requests
+belong to that socket's session and require the workload UID. They fail as `no_session` once the
+Node stops, an `EndSession` is accepted (before the session acts on it), or the session has ended.
+One request per session runs at a time; concurrent requests receive `busy`. When the session leaves
+the runtime the socket refuses new requests at once but waits for a request whose Git is running,
+so nothing it asked for still writes the checkout or the Git Server once the session is recorded as
+ended and delivery may start. A client whose connection closes without an answer reports
+`no_session`.
+
+The image installs `ora-git` on the workload PATH:
+
+- `info` prints the Workspace identity, branch and baseline without network access.
+- `list` lists upstream/Workspace refs with the frozen session directory's Issue and run metadata.
+- `fetch upstream` and `fetch workspace <uuid> [branch]` update only `refs/remotes/ora/**`.
+- `push [branch]` writes only this Workspace's matching branch, after a local fast-forward check.
+
+Pushes declare the old value from the Node ledger using `--force-with-lease`. Agent-editable tracking
+refs never supply that value. A stale lease is `conflict`, unless the remote already holds the
+requested commit (successful replay). Non-fast-forward changes are rejected before sending a push.
+Fetch preserves local branches, HEAD, index, files and configuration. Git Server authorization uses
+the live session execution and remains authoritative. The CLI exposes no URL, refspec or force flag.
+
+See [durable records](persistence/repository-acquisition.md), [Revision delivery](revision-delivery.md)
+and [runtime ownership](runtime.md).

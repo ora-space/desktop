@@ -10,8 +10,14 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+# A local smart-HTTP Git Server with client-certificate TLS, for tests of Git Server access.
+git-server = ["dep:rcgen", "dep:rustls"]
+
 [dependencies]
 tempfile = { workspace = true }
+rcgen = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

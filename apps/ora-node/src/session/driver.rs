@@ -99,9 +99,10 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
-    let Some(checkout) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
+    let Some(cloned) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
         return SessionEnd::agent_failed("checkout_unavailable");
     };
+    let checkout = cloned.path.clone();
     // The lease comes first, so the version checked below cannot be replaced before it runs.
     let _lease = shared.catalog.lease(&spec.agent_plugin_id);
     let Some(package_root) = shared
@@ -119,9 +120,10 @@ where
         &shared.restorer,
         operation,
         execution,
-        &checkout,
+        &cloned,
         &mut spec,
         stopping,
+        ended_before_start(&shared.ledger, execution, wake),
     );
     if let Err(end) = restored.await {
         return end;
@@ -185,10 +187,36 @@ where
         access.close().await;
         return SessionEnd::agent_failed(error.0);
     }
-    let environment = model_access
+    let mut environment = model_access
         .as_ref()
         .map(|access| access.environment.clone())
         .unwrap_or_default();
+    // The socket exists only while the session runs; dropping it removes the file, and requests
+    // that arrive after that fail as `no_session`.
+    let ora_git = match &shared.ora_git {
+        Some(broker) => match broker.open(crate::ora_git::SessionGit {
+            execution: execution.clone(),
+            checkout_execution: spec.checkout_execution_id.clone(),
+            checkout: cloned.clone(),
+            directory: spec.workspace_directory.clone(),
+        }) {
+            Ok(socket) => {
+                environment.insert(
+                    ora_git::SOCKET_ENV.to_owned(),
+                    socket.path().to_string_lossy().into_owned(),
+                );
+                Some(socket)
+            }
+            Err(error) => {
+                ora_warn!(execution_id = %execution, error = %error, "ora-git socket could not be opened");
+                if let Some(access) = &mut model_access {
+                    access.close().await;
+                }
+                return SessionEnd::agent_failed("ora_git_unavailable");
+            }
+        },
+        None => None,
+    };
     let taps = GenerationTaps::default();
     let launcher = placement.launcher(&spec.git_identity, &package_root, environment);
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
@@ -273,12 +301,18 @@ where
                 },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
             };
+            // The session leaves the runtime here: its ora-git socket goes before the plugin
+            // does, once a request it was still serving has ended.
+            if let Some(socket) = ora_git {
+                socket.close().await;
+            }
             // Dropping the manager releases its connection supervisor, which stops reconnecting.
             drop(manager);
             end
         }
         Err(error) => {
             ora_warn!(execution_id = %execution, error = %error, "agent runtime could not start");
+            drop(ora_git);
             SessionEnd::agent_failed("agent_start_failed")
         }
     };
@@ -344,6 +378,36 @@ fn settle<L: SessionLedger>(
         Err(error) => {
             ora_warn!(execution_id = %execution, command_id = %command_id, error = %error, "session command was not settled");
             false
+        }
+    }
+}
+
+/// Resolves once an `EndSession` is queued for a session whose agent has not started: turns
+/// queued ahead of it are discarded, and the command is executed by ending the session.
+async fn ended_before_start<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    wake: &Notify,
+) -> SessionEnd {
+    loop {
+        match ledger.queued_commands(execution).map(plan) {
+            Ok(Plan::End {
+                command_id,
+                reason,
+                discarded,
+            }) => {
+                for discarded in &discarded {
+                    settle(ledger, execution, discarded, CommandSettlement::Discarded);
+                }
+                settle(ledger, execution, &command_id, CommandSettlement::Executed);
+                return SessionEnd::requested(reason);
+            }
+            // A turn waits for the agent; the conversation reads the queue again once it starts.
+            Ok(Plan::Turn { .. } | Plan::Wait) => wake.notified().await,
+            Err(error) => {
+                ora_warn!(execution_id = %execution, error = %error, "session queue unreadable");
+                return SessionEnd::agent_failed("ledger_unavailable");
+            }
         }
     }
 }

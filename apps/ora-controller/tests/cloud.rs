@@ -1,6 +1,7 @@
 //! Behavior of the Cloud persistence adapter's coordination loop against an in-memory Cloud that
 //! serves the real contract: signal-driven claiming, fallback and reopening, drains, stale
-//! eligibility and shutdown, and claiming only once the static Node proved its identity.
+//! eligibility and shutdown, and claiming only once the static Node proved its identity. Claimed
+//! work without a target sandbox is refused, so nothing here is ever registered for dispatch.
 //!
 //! Spec: specs/test-cases/controller/api-boundary/watch-signal-claiming.md
 //! Decision: specs/decisions/controller/node-management/20260926-static-node-identity-proven-before-dispatch.md
@@ -233,7 +234,8 @@ async fn established(cloud: &FakeCloud, node: &Node) {
         .await;
 }
 
-/// A `WorkAvailable` signal registers the dispatch at once, with no periodic claim in between.
+/// A `WorkAvailable` signal claims at once, with no periodic claim in between. Work without a
+/// target sandbox, the shape tenant-level clones had, is refused: nothing is registered for it.
 #[test]
 fn signals_claim_without_waiting_for_the_claim_interval() {
     scenario(NEVER, |cloud, start, node| async move {
@@ -242,7 +244,7 @@ fn signals_claim_without_waiting_for_the_claim_interval() {
         let signalled = tokio::time::Instant::now();
         cloud.enqueue("op-1");
         cloud.signal_work("op-1");
-        cloud.until(|state| state.dispatched() == ["op-1"]).await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         assert!(signalled.elapsed() < Duration::from_secs(/*secs*/ 1));
         controller.stop().await;
         assert_eq!(
@@ -252,46 +254,29 @@ fn signals_claim_without_waiting_for_the_claim_interval() {
                 Call::Watch { epoch: EPOCH },
                 Call::ClaimWork { epoch: EPOCH },
                 Call::ClaimWork { epoch: EPOCH },
-                Call::RecordDispatch {
-                    epoch: EPOCH,
-                    operation_id: "op-1".into()
-                },
-                Call::ClaimWork { epoch: EPOCH },
                 Call::ReleaseLease { epoch: EPOCH },
             ]
         );
+        assert_eq!(cloud.dispatched(), Vec::<String>::new());
     });
 }
 
-/// Work Cloud accepted before the static Node proved its identity has no signal coming; the
-/// handshake that proves it claims the work at once, with no periodic claim in between.
+/// Work Cloud queued before the static Node proved its identity has no signal coming; the
+/// handshake that proves it claims at once, with no periodic claim in between.
 #[test]
 fn work_queued_before_the_node_handshake_is_claimed_once_it_completes() {
     scenario(NEVER, |cloud, start, node| async move {
         cloud.enqueue("op-1");
-        cloud.enqueue("op-2");
         let controller = start("owner");
         cloud.until(State::watching).await;
         node.listen();
-        cloud
-            .until(|state| state.dispatched() == ["op-1", "op-2"])
-            .await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         controller.stop().await;
         assert_eq!(
             cloud.calls(),
             vec![
                 Call::AcquireLease,
                 Call::Watch { epoch: EPOCH },
-                Call::ClaimWork { epoch: EPOCH },
-                Call::RecordDispatch {
-                    epoch: EPOCH,
-                    operation_id: "op-1".into()
-                },
-                Call::ClaimWork { epoch: EPOCH },
-                Call::RecordDispatch {
-                    epoch: EPOCH,
-                    operation_id: "op-2".into()
-                },
                 Call::ClaimWork { epoch: EPOCH },
                 Call::ReleaseLease { epoch: EPOCH },
             ]
@@ -310,20 +295,18 @@ fn a_broken_stream_falls_back_to_periodic_claims_and_reopens() {
         cloud.break_stream();
         // No signal is sent: only the periodic claim can find this work.
         cloud.enqueue("op-1");
-        cloud.until(|state| state.dispatched() == ["op-1"]).await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         cloud.answer_watch(WatchPolicy::Accept);
         cloud.until(State::watching).await;
         cloud.enqueue("op-2");
         cloud.signal_work("op-2");
-        cloud
-            .until(|state| state.dispatched() == ["op-1", "op-2"])
-            .await;
+        cloud.until(|state| state.claimed == ["op-1", "op-2"]).await;
         controller.stop().await;
     });
 }
 
 /// A drain stops claiming without releasing the lease; the stream reopening on a recovered Cloud
-/// claims the work accepted meanwhile.
+/// claims the work queued meanwhile.
 #[test]
 fn a_drain_pauses_claims_until_a_new_stream_opens() {
     scenario(FAST, |cloud, start, node| async move {
@@ -346,7 +329,7 @@ fn a_drain_pauses_claims_until_a_new_stream_opens() {
             Vec::<&Call>::new()
         );
         cloud.answer_watch(WatchPolicy::Accept);
-        cloud.until(|state| state.dispatched() == ["op-1"]).await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         controller.stop().await;
         assert_eq!(
             count(&cloud.calls(), &Call::ReleaseLease { epoch: EPOCH }),
@@ -365,7 +348,7 @@ fn a_refused_stream_after_a_drain_resumes_periodic_claims() {
         cloud.drain();
         cloud.answer_watch(WatchPolicy::Unimplemented);
         cloud.enqueue("op-1");
-        cloud.until(|state| state.dispatched() == ["op-1"]).await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         controller.stop().await;
     });
 }
@@ -412,27 +395,10 @@ fn shutdown_cancels_the_stream_and_releases_the_lease() {
     });
 }
 
-/// One signal registers a backlog larger than one batch: the loop continues after a full batch
-/// instead of waiting for another trigger.
-#[test]
-fn one_signal_registers_a_backlog_beyond_one_batch() {
-    scenario(NEVER, |cloud, start, node| async move {
-        let controller = start("owner");
-        established(&cloud, &node).await;
-        let operations: Vec<String> = (1..=17).map(|index| format!("op-{index:02}")).collect();
-        for operation in &operations {
-            cloud.enqueue(operation);
-        }
-        cloud.signal_work("op-01");
-        cloud.until(|state| state.dispatched() == operations).await;
-        controller.stop().await;
-    });
-}
-
-/// A Node that answers for another identity than the configured one never lets tenant work be
-/// registered: the work stays queued with Cloud through many claim ticks instead of being bound
-/// for good to a NodeId nothing serves. Once the Node behind the endpoint presents the configured
-/// identity, the next handshake proves it and the queued work is claimed without a signal.
+/// A Node that answers for another identity than the configured one never lets claims start: the
+/// work stays queued with Cloud through many claim ticks. Once the Node behind the endpoint
+/// presents the configured identity, the next handshake proves it and the queued work is claimed
+/// without a signal.
 #[test]
 fn tenant_work_waits_until_the_configured_node_proves_its_identity() {
     scenario(FAST, |cloud, start, node| async move {
@@ -450,7 +416,7 @@ fn tenant_work_waits_until_the_configured_node_proves_its_identity() {
             vec![Call::AcquireLease, Call::Watch { epoch: EPOCH }]
         );
         node.present("node");
-        cloud.until(|state| state.dispatched() == ["op-1"]).await;
+        cloud.until(|state| state.claimed == ["op-1"]).await;
         controller.stop().await;
     });
 }

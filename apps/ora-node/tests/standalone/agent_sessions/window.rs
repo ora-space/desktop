@@ -6,7 +6,8 @@ use pretty_assertions::assert_eq;
 fn window_bounds_delivery_without_blocking_queries_and_reconnect_replays_exactly() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         fs::create_dir_all(&fixture.config().home_directory).unwrap();
         let path = fixture.config().home_directory.join("ora-node.sqlite3");

@@ -5,8 +5,8 @@ use super::support::*;
 use ora_node::SessionCommand;
 use ora_node::{RestoreFailure, RestoreRequest, Restored};
 use ora_node_protocol::{
-    AgentSessionEndReason, AgentSessionEnded, CommitId, EndSessionReason, ExecutionId, ObjectKey,
-    OperationId, PriorRevision, RevisionId, Sha256Digest, StoredObject,
+    AgentSessionEndReason, AgentSessionEnded, CommitId, DeliveryRef, EndSessionReason, ExecutionId,
+    GitRepositoryUrl, OperationId, PriorRevision, RevisionId,
 };
 use pretty_assertions::assert_eq;
 
@@ -18,13 +18,10 @@ fn prior() -> PriorRevision {
     PriorRevision {
         revision_id: RevisionId::new("revision-1"),
         final_commit: CommitId::new(PRIOR_FINAL),
-        bundle: StoredObject {
-            key: ObjectKey::new("runs/prior/revision.bundle"),
-            size: 42,
-            sha256: Sha256Digest::new(
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            ),
-        },
+        base_commit: CommitId::new(BASE),
+        git_repository_url: GitRepositoryUrl::parse("https://git.ora.test/tenant/project.git")
+            .unwrap(),
+        delivery_ref: DeliveryRef::parse("refs/ora/deliveries/prior-work").unwrap(),
     }
 }
 
@@ -64,6 +61,8 @@ async fn a_failed_restore_ends_the_session_before_any_plugin_starts() {
                     operation: OperationId::new(OPERATION),
                     execution: ExecutionId::new(EXECUTION),
                     checkout: fixture.checkout(),
+                    branch: "main".into(),
+                    base_commit: CommitId::new(BASE),
                     prior: prior(),
                 }],
                 Vec::new(),
@@ -115,9 +114,9 @@ async fn a_rewritten_remote_history_is_noted_in_the_first_turn() {
             "hello".to_string(),
             format!(
                 "Note from Ora: this run resumed the previous run's work at commit {PRIOR_FINAL}. \
-                 That work was built on commit {BASE}, which origin/main no longer contains: the \
-                 remote history was rewritten since. The branch main points at the resumed work \
-                 and origin/main is unchanged; reconcile them before relying on either."
+                 That work was built on commit {BASE}, which is not in the history of this Workspace's snapshot: \
+                 the external repository's history was rewritten since. The local branch main points at the resumed work; \
+                 run `ora-git fetch upstream` to see the external repository's latest content and reconcile it."
             ),
         ]
     );
@@ -132,4 +131,50 @@ async fn a_rewritten_remote_history_is_noted_in_the_first_turn() {
     );
     fresh.ended().await;
     assert_eq!(fresh.restorer.requests.lock().unwrap().clone(), vec![]);
+}
+
+/// An `EndSession` that arrives while the restore runs cancels the restore, waits for it, and
+/// ends the session with the command's reason before any plugin starts.
+///
+/// Evidence for specs/decisions/node/revision/20261010-restore-prior-revision-before-session.md D1
+#[tokio::test(flavor = "multi_thread")]
+async fn an_end_during_the_restore_cancels_it_before_any_plugin_starts() {
+    let fixture = Fixture::new();
+    fixture
+        .restorer
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_resuming(&sessions, PLUGIN_VERSION, "hello", Some(prior()));
+    until(|| (!fixture.restorer.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.command(
+        &sessions,
+        "command-end",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    let ended = fixture.ended().await;
+    assert_eq!(
+        (
+            ended,
+            fixture
+                .restorer
+                .cancelled
+                .load(std::sync::atomic::Ordering::SeqCst),
+            fixture.plugin_pids(),
+            fixture.ledger.settlements(),
+        ),
+        (
+            AgentSessionEnded {
+                node: fixture.node(),
+                reason: AgentSessionEndReason::UserEnded,
+                detail: None,
+            },
+            1,
+            Vec::new(),
+            vec![(
+                "command-end".to_string(),
+                vec![ora_node::CommandSettlement::Executed]
+            )],
+        ),
+    );
 }

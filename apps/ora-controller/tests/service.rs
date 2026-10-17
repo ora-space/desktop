@@ -1,10 +1,12 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
+#[path = "support/local_clone.rs"]
+mod local_clone;
 use ora_controller::{
-    CloneIntake, DeploymentConfig, NodeEndpoint, NodeHosting, NodeTarget, Persistence,
+    CoordinationStore, DeploymentConfig, NodeEndpoint, NodeHosting, NodeTarget, Persistence,
     RuntimeConfig, Service, SessionConfig, SingleNodeConfig, SqliteStore,
 };
-use ora_node_protocol::{BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId};
+use ora_node_protocol::{ControllerId, NodeId};
 use pretty_assertions::assert_eq;
 use std::{fs, os::unix::fs::PermissionsExt};
 
@@ -112,18 +114,7 @@ fn local_composition_refuses_before_state_and_holds_an_exclusive_owner() {
                     config.controller.controller_id.clone(),
                 )
                 .unwrap();
-                let original = standalone
-                    .accept_request(
-                        ora_node_protocol::RequestId::new("original"),
-                        CloneExecutionSpec {
-                            node_id: NodeId::new("node"),
-                            repository: CloneRepositoryUrl::parse("https://example.com/repo.git")
-                                .unwrap(),
-                            branch: BranchName::new("main"),
-                        },
-                    )
-                    .await
-                    .unwrap();
+                let original = local_clone::seed(&config.controller.home_directory, "original");
                 // The owner is exclusive: a held database refuses a composition, and a running
                 // composition refuses a second one.
                 assert!(start(config.clone()).await.is_err());
@@ -136,7 +127,7 @@ fn local_composition_refuses_before_state_and_holds_an_exclusive_owner() {
                 }));
                 stop.send(()).unwrap();
                 task.await.unwrap().unwrap();
-                // A stopped composition released the lease and kept the accepted operation.
+                // A stopped composition released the lease and kept the held dispatch.
                 let reopened = ora_controller::SqliteStore::open(
                     &config.controller.home_directory,
                     config.controller.controller_id.clone(),
@@ -144,12 +135,9 @@ fn local_composition_refuses_before_state_and_holds_an_exclusive_owner() {
                 .unwrap();
                 assert_eq!(
                     reopened
-                        .operations()
+                        .pending_dispatches(&NodeId::new("node"))
                         .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|operation| operation.command)
-                        .collect::<Vec<_>>(),
+                        .unwrap(),
                     vec![original]
                 );
             });

@@ -1,12 +1,13 @@
 //! SQLite adapter of [`CoordinationStore`]: the local durable store behind clone coordination. It
 //! owns the database file, the OS lease beside it and every transaction; nothing else in the crate
-//! issues SQL, and cloud deployments never open it.
-mod operations;
+//! issues SQL, and cloud deployments never open it. Local clone intake is gone (Workspace clones
+//! take Git Server snapshot inputs, which a deployment without Cloud cannot produce), so the
+//! adapter only reconciles and reports clone dispatches its database already holds.
 mod takeover;
 
 use crate::*;
 use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension};
 use std::{
     fs::{self, OpenOptions},
     future::Future,
@@ -252,8 +253,8 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
         })
     }
 
-    /// The local authority is this process; there is no lease to keep and no queue to claim.
-    /// Local intake records the dispatch when it accepts a request, so there is nothing to gate.
+    /// The local authority is this process; there is no lease to keep and no queue to claim, and
+    /// nothing registers new dispatches here, so there is nothing to gate.
     fn static_node_established(&self, _node: &NodeRuntimeIdentity) {}
 
     async fn serve(&self, shutdown: impl Future<Output = ()> + Send + 'static) -> io::Result<()> {
@@ -262,73 +263,7 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
     }
 }
 
-impl<W: WriteGuard> CloneIntake for SqliteStore<W> {
-    fn accept_request(
-        &self,
-        request: RequestId,
-        spec: CloneExecutionSpec,
-    ) -> impl Future<Output = Result<CloneRepositoryMessage, Error>> + Send {
-        self.blocking(move |inner| inner.accept(request, spec))
-    }
-
-    fn operations(&self) -> impl Future<Output = Result<Vec<CloneOperation>, Error>> + Send {
-        self.blocking(|inner| inner.operations())
-    }
-
-    fn operation(
-        &self,
-        execution: &ExecutionId,
-    ) -> impl Future<Output = Result<Option<CloneOperation>, Error>> + Send {
-        let execution = execution.clone();
-        self.blocking(move |inner| inner.operation(&execution))
-    }
-}
-
 impl<W: WriteGuard> Inner<W> {
-    /// Atomically freezes caller intent and original dispatch IDs before any network operation.
-    fn accept(
-        &mut self,
-        request: RequestId,
-        spec: CloneExecutionSpec,
-    ) -> Result<CloneRepositoryMessage, Error> {
-        let command = CloneRepositoryMessage {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            request_id: Some(request.clone()),
-            operation_id: OperationId::new(uuid::Uuid::new_v4().to_string()),
-            execution_id: ExecutionId::new(uuid::Uuid::new_v4().to_string()),
-            payload: CloneRepository { spec },
-        };
-        command.validate()?;
-        let existing: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT input FROM clone_operations WHERE request=?1",
-                [request.as_str()],
-                |r| r.get(/*idx*/ 0),
-            )
-            .optional()?;
-        if let Some(input) = existing {
-            let original: CloneRepositoryMessage = serde_json::from_str(&input)?;
-            return if original.payload == command.payload {
-                Ok(original)
-            } else {
-                Err(Error::Conflict)
-            };
-        }
-        self.writes.before_write(WritePoint::Accept)?;
-        self.connection.execute(
-            "INSERT INTO clone_operations VALUES (?1,?2,?3,?4,?5,NULL)",
-            params![
-                request.as_str(),
-                command.operation_id.as_str(),
-                command.execution_id.as_str(),
-                command.payload.spec.node_id.as_str(),
-                serde_json::to_string(&command)?
-            ],
-        )?;
-        Ok(command)
-    }
-
     /// Queries the durable original result without acknowledging any Node event.
     fn result(&self, execution: &ExecutionId) -> Result<Option<CloneExecutionResult>, Error> {
         let result: Option<Option<String>> = self

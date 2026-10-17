@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-const BUNDLE_KEY: &str = "runs/e2e/revision.bundle";
 const HISTORY_KEY: &str = "runs/e2e/history.jsonl";
 /// Appears in every grant URL; it must never reach the Node's ledger.
 const SIGNATURE: &str = "X-Amz-Signature=e2e-bearer-credential";
@@ -83,7 +82,7 @@ async fn next(stream: &mut tokio::net::UnixStream) -> NodeToControllerMessage {
 }
 
 /// Delivers the session fixture's execution from its clone.
-fn deliver(base: &CommitId) -> DeliverRevisionMessage {
+fn deliver(base: &CommitId, server: &GitServerFixture) -> DeliverRevisionMessage {
     DeliverRevisionMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: OperationId::new("deliver-operation"),
@@ -95,7 +94,9 @@ fn deliver(base: &CommitId) -> DeliverRevisionMessage {
                 checkout_execution_id: start("").payload.spec.checkout_execution_id,
                 base_commit: base.clone(),
                 revision_ref: RevisionRef::new("refs/ora/revisions/e2e"),
-                bundle_key: ObjectKey::new(BUNDLE_KEY),
+                git_repository_url: server.url.clone(),
+                delivery_ref: DeliveryRef::parse("refs/ora/deliveries/e2e").unwrap(),
+                workspace_ref: WorkspaceRef::of(super::super::https::WORKSPACE, "main").unwrap(),
                 history_key: ObjectKey::new(HISTORY_KEY),
                 prior_revision: None,
             },
@@ -103,14 +104,14 @@ fn deliver(base: &CommitId) -> DeliverRevisionMessage {
     }
 }
 
-/// An ended session's uncommitted file is delivered as a bundle plus the sealed history, using
+/// An ended session's uncommitted file is pushed to its delivery and Workspace refs, using
 /// grants requested with the frozen checksums; grants never reach the ledger.
 #[test]
 fn ended_session_is_delivered_with_requested_grants() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         prepare(&fixture, &config, &server);
         let clone = checkout(&fixture);
@@ -138,7 +139,7 @@ fn ended_session_is_delivered_with_requested_grants() {
                 "left uncommitted by the run\n",
             )
             .unwrap();
-            let input = deliver(&clone.commit);
+            let input = deliver(&clone.commit, &server);
             send(
                 &mut stream,
                 ControllerToNodeMessage::DeliverRevision(input.clone()),
@@ -154,9 +155,9 @@ fn ended_session_is_delivered_with_requested_grants() {
                                 .keys()
                                 .cloned()
                                 .collect::<Vec<_>>(),
-                            vec![ObjectKey::new(HISTORY_KEY), ObjectKey::new(BUNDLE_KEY)]
+                            vec![ObjectKey::new(HISTORY_KEY)]
                         );
-                        let grants = [BUNDLE_KEY, HISTORY_KEY]
+                        let grants = [HISTORY_KEY]
                             .into_iter()
                             .map(|key| ObjectUploadGrant {
                                 object_key: ObjectKey::new(key),
@@ -214,10 +215,7 @@ fn ended_session_is_delivered_with_requested_grants() {
             size: objects[key].len() as u64,
             sha256: Sha256Digest::new(ora_utils::hash::sha256_hex(&objects[key])),
         };
-        assert_eq!(
-            (delivered.bundle.clone(), delivered.history.clone()),
-            (measured(BUNDLE_KEY), measured(HISTORY_KEY))
-        );
+        assert_eq!(delivered.history.clone(), measured(HISTORY_KEY));
         assert_eq!(
             objects[HISTORY_KEY],
             fs::read(
@@ -229,6 +227,27 @@ fn ended_session_is_delivered_with_requested_grants() {
             )
             .unwrap()
         );
+        assert_eq!(objects.len(), 1);
+        assert_eq!(
+            checkout_git(
+                &server.repository,
+                &["rev-parse", "refs/ora/deliveries/e2e"]
+            ),
+            delivered.final_commit.as_str()
+        );
+        assert_eq!(
+            checkout_git(
+                &server.repository,
+                &[
+                    "rev-parse",
+                    &format!(
+                        "refs/heads/workspaces/{}/main",
+                        super::super::https::WORKSPACE
+                    )
+                ]
+            ),
+            delivered.final_commit.as_str()
+        );
         assert_eq!(delivered.base_commit, clone.commit);
         assert_ne!(delivered.final_commit, clone.commit);
         let ledger = fs::read(fixture.config().home_directory.join("ora-node.sqlite3")).unwrap();
@@ -239,5 +258,58 @@ fn ended_session_is_delivered_with_requested_grants() {
         );
         let frozen = fixture.config().home_directory.join("revision-deliveries");
         assert_eq!(fs::read_dir(frozen).unwrap().count(), 0);
+    });
+}
+
+/// A delivery naming another Workspace branch than its checkout was cloned for is refused as
+/// `checkout_unavailable` before anything is pushed or uploaded.
+#[test]
+fn delivery_for_another_workspace_branch_is_refused() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let clone = checkout(&fixture);
+        let mut child = launch(&fixture, &config);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let served = server.server.served().len();
+        let result = runtime.block_on(async {
+            let (mut stream, _) = connect(&fixture).await;
+            send(
+                &mut stream,
+                ControllerToNodeMessage::StartAgentSession(start("hello")),
+            )
+            .await;
+            send(&mut stream, end()).await;
+            loop {
+                if let NodeToControllerMessage::AgentSessionEnded(_) = receive(&mut stream).await {
+                    break;
+                }
+            }
+            let mut input = deliver(&clone.commit, &server);
+            input.payload.spec.workspace_ref =
+                WorkspaceRef::of(super::super::https::WORKSPACE, "other").unwrap();
+            send(&mut stream, ControllerToNodeMessage::DeliverRevision(input)).await;
+            loop {
+                match next(&mut stream).await {
+                    NodeToControllerMessage::RevisionResult(result) => break result.payload,
+                    NodeToControllerMessage::ExecutionStatus(_)
+                    | NodeToControllerMessage::ThreadEvent(_)
+                    | NodeToControllerMessage::AgentSessionEnded(_) => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        });
+        child.terminate();
+        let RevisionExecutionResult::RevisionFailed(failed) = result else {
+            panic!("expected a failed delivery, got {result:?}");
+        };
+        assert_eq!(failed.failure, RevisionFailureCode::CheckoutUnavailable);
+        assert_eq!(server.server.served().len(), served);
     });
 }

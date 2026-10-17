@@ -1,9 +1,9 @@
-//! Revision delivery execution: saves an ended session's Workspace changes and history to the
-//! object store with Cloud-issued upload grants, and reports what was uploaded.
+//! Revision delivery execution: pushes an ended session's final commit to its delivery ref on
+//! the Git Server, uploads the session history with a Cloud-issued grant, and reports both.
 
 use crate::{
-    CommitId, ExecutionId, MessageValidationError, NodeId, NodeRuntimeIdentity,
-    PriorRevisionCommit, Sha256Digest,
+    CommitId, DeliveryRef, ExecutionId, GitRepositoryUrl, MessageValidationError, NodeId,
+    NodeRuntimeIdentity, PriorRevisionCommit, Sha256Digest, WorkspaceRef,
 };
 use ora_utils::GitBranchName;
 use serde::{Deserialize, Serialize};
@@ -83,18 +83,24 @@ pub struct DeliverRevisionSpec {
     /// Must have a terminal result and a closed process scope before delivery starts.
     pub session_execution_id: ExecutionId,
     pub checkout_execution_id: ExecutionId,
-    /// Commit of the clone; the bundle is relative to it.
+    /// Commit of the clone.
     pub base_commit: CommitId,
     pub revision_ref: RevisionRef,
-    pub bundle_key: ObjectKey,
     pub history_key: ObjectKey,
     /// The Revision the session resumed; a final commit equal to its final commit is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prior_revision: Option<PriorRevisionCommit>,
+    /// The Git Server repository the final commit is pushed to.
+    pub git_repository_url: GitRepositoryUrl,
+    /// Created by this delivery only; the Node pushes nothing else that decides the Revision.
+    pub delivery_ref: DeliveryRef,
+    /// The checkout's Workspace branch, fast-forwarded to the final commit after the delivery ref
+    /// is pushed; failing to do so never fails the delivery.
+    pub workspace_ref: WorkspaceRef,
 }
 
 impl DeliverRevisionSpec {
-    /// Rejects inputs that could write outside the Revision namespace or the delivery's keys.
+    /// Rejects inputs that could write outside the Revision namespace or the delivery's key.
     pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         if self.node_id.is_empty() {
             return Err(MessageValidationError::EmptyField { field: "node_id" });
@@ -111,11 +117,7 @@ impl DeliverRevisionSpec {
         }
         validate_commit(&self.base_commit)?;
         self.revision_ref.validate()?;
-        self.bundle_key.validate()?;
         self.history_key.validate()?;
-        if self.bundle_key == self.history_key {
-            return Err(MessageValidationError::InvalidObjectKey);
-        }
         if let Some(prior) = &self.prior_revision {
             prior.validate()?;
         }
@@ -140,7 +142,9 @@ impl StoredObject {
     }
 }
 
-/// The final commit differs from the base: a bundle and the history were uploaded.
+/// The final commit differs from the base: it was pushed to the input's delivery ref and the
+/// history was uploaded. The delivery ref is part of the fixed input, so the result does not
+/// repeat it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionDelivered {
@@ -148,12 +152,12 @@ pub struct RevisionDelivered {
     pub final_commit: CommitId,
     pub base_commit: CommitId,
     pub revision_ref: RevisionRef,
-    pub bundle: StoredObject,
     pub history: StoredObject,
 }
 
-/// The final commit equals the base, or the final commit of the Revision the session resumed:
-/// only the history was uploaded.
+/// The final commit equals the base, or the final commit of the Revision the session resumed. It
+/// was pushed to the delivery ref all the same, so the Revision can be verified and resumed from
+/// its own ref, and the history was uploaded.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionUnchanged {
@@ -171,9 +175,16 @@ pub enum RevisionFailureCode {
     SessionNotSettled,
     CheckoutUnavailable,
     SnapshotFailed,
+    /// Only in records written before deliveries went over Git; a new result carrying it is
+    /// rejected.
     BundleFailed,
     HistoryUnavailable,
+    /// The session JSONL could not be uploaded.
     UploadFailed,
+    /// The Git Server refused the delivery ref push (401, 403, another 4xx or a declined update).
+    PushRejected,
+    /// The push failed on 5xx, network, TLS or deadline until the attempts ran out.
+    PushFailed,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -206,7 +217,6 @@ impl RevisionExecutionResult {
                 validate_commit(&result.final_commit)?;
                 validate_commit(&result.base_commit)?;
                 result.revision_ref.validate()?;
-                result.bundle.validate()?;
                 result.history.validate()?;
                 if result.final_commit == result.base_commit {
                     return Err(MessageValidationError::RevisionCommitMismatch);
@@ -218,6 +228,9 @@ impl RevisionExecutionResult {
                 validate_commit(&result.base_commit)?;
                 result.revision_ref.validate()?;
                 result.history.validate()
+            }
+            Self::RevisionFailed(result) if result.failure == RevisionFailureCode::BundleFailed => {
+                Err(MessageValidationError::RetiredRevisionFailure)
             }
             Self::RevisionFailed(_) => Ok(()),
         }
@@ -242,7 +255,7 @@ pub(crate) fn validate_commit(commit: &CommitId) -> Result<(), MessageValidation
     Err(MessageValidationError::InvalidCommit)
 }
 
-/// Presigned upload or download URL. It is a bearer credential, so `Debug` never prints it.
+/// Presigned upload URL. It is a bearer credential, so `Debug` never prints it.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct PresignedUrl(String);

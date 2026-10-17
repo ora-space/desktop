@@ -35,6 +35,9 @@ fn launch(fixture: &Fixture, config: &CloneConfig, label: &str) -> ChildGuard {
         &path,
         serde_json::to_vec(&serde_json::json!({
             "node": fixture.config(), "process": fixture.process(), "clone": config,
+            "git_access": { "ca_cert": fixture.path().join("git-server/git-access/ca.pem"),
+                "client_cert": fixture.path().join("git-server/git-access/client.pem"),
+                "client_key": fixture.path().join("git-server/git-access/client-key.pem") },
             "timezone": "Asia/Shanghai", "recovery_interval_ms": 100,
         }))
         .unwrap(),
@@ -56,7 +59,8 @@ fn launch(fixture: &Fixture, config: &CloneConfig, label: &str) -> ChildGuard {
 fn accepted_clone_never_adopts_an_existing_directory_or_replaced_root() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let command = request(&server, "existing", "main");
         let record = seed(&fixture, &config, &command);
@@ -66,6 +70,7 @@ fn accepted_clone_never_adopts_an_existing_directory_or_replaced_root() {
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config.clone()).unwrap();
+        node.configure_git_access(server.access());
         assert_eq!(
             node.recover_clones().unwrap(),
             ora_node::NodeState::RecoveryPending
@@ -89,21 +94,20 @@ fn accepted_clone_never_adopts_an_existing_directory_or_replaced_root() {
     });
 }
 
-/// Killing a real Node during HTTPS cannot authorize another Run or a directory-based success.
+/// Killing a real Node during the workload checkout fetch cannot authorize another Run or a directory-based success.
 #[test]
 fn killed_clone_recovers_original_run_without_redispatch() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
         let command = request(&server, "kill", "main");
         let record = seed(&fixture, &config, &command);
         let mut child = launch(&fixture, &config, "clone-first");
-        until(|| record.target.path.join(".git").is_dir());
+        until(|| gate.ready.exists());
         child.kill();
-        server.paused.store(false, Ordering::SeqCst);
         let mut replacement = launch(&fixture, &config, "clone-replacement");
         until(|| {
             fixture
@@ -114,13 +118,14 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
         // The guardian terminated Git when its owner died, so recovery reads a confirmed
         // termination: a retryable failure, not success and not permanent Unknown.
         assert_interrupted(&state, &record, &command);
         drop(node);
-        assert_single_retained_attempt(&fixture, &record, &command);
+        assert_retained_attempts(&fixture, &record, &command, 2);
     });
 }
 
@@ -129,23 +134,24 @@ fn killed_clone_recovers_original_run_without_redispatch() {
 fn stopped_node_settles_its_interrupted_clone_before_exit() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
         let command = request(&server, "stop", "main");
         let record = seed(&fixture, &config, &command);
         let mut child = launch(&fixture, &config, "clone-stopped");
-        until(|| record.target.path.join(".git").is_dir());
+        until(|| gate.ready.exists());
         child.terminate();
         // Reading without recover_clones proves the stopping process itself persisted the result.
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         let state = node.submit_clone(command.clone()).unwrap().state;
         assert_interrupted(&state, &record, &command);
         drop(node);
-        assert_single_retained_attempt(&fixture, &record, &command);
+        assert_retained_attempts(&fixture, &record, &command, 2);
     });
 }
 
@@ -154,16 +160,16 @@ fn stopped_node_settles_its_interrupted_clone_before_exit() {
 fn slow_clone_outlives_the_local_command_budget() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::for_command_deadline();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let config = configuration(&fixture, &server);
         let command = request(&server, "slow-network", "main");
         let record = seed(&fixture, &config, &command);
-        let pause = server.paused.clone();
+        let pause = server.pause_flag();
         let target = record.target.path.clone();
         let release = std::thread::spawn(move || {
-            until(|| target.join(".git").is_dir());
+            until(|| target.is_dir());
             std::thread::sleep(std::time::Duration::from_secs(7));
             pause.store(false, Ordering::SeqCst);
         });
@@ -174,20 +180,19 @@ fn slow_clone_outlives_the_local_command_budget() {
         process.network_timeout_ms = 30_000;
         let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
         release.join().unwrap();
         assert!(
             matches!(
-                state,
-                ExecutionState::Completed(ExecutionResult::Clone(
-                    CloneExecutionResult::CloneReady(_)
-                ))
+                clone_result(&state),
+                Some(CloneExecutionResult::CloneReady(_))
             ),
             "slow network clone failed: {state:?}"
         );
         drop(node);
-        assert_single_retained_attempt(&fixture, &record, &command);
+        assert_retained_attempts(&fixture, &record, &command, 3);
     });
 }
 
@@ -196,32 +201,35 @@ fn slow_clone_outlives_the_local_command_budget() {
 fn command_deadline_settles_clone_as_interrupted() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::for_command_deadline();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
+        let _gate = https::WorkloadGate::install(fixture.path());
         let command = request(&server, "deadline", "main");
         let record = seed(&fixture, &config, &command);
         let mut process = fixture.process();
-        process.command_timeout_ms = 500;
-        process.network_timeout_ms = 500;
+        // A dispatched clone step waits up to the network budget; the Node's own local Git in
+        // the transport repository keeps the ordinary local budget.
+        process.command_timeout_ms = 10_000;
+        process.network_timeout_ms = 4_000;
         let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
         assert_eq!(
             state,
-            ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneFailed(
-                CloneFailed {
+            ExecutionState::Completed(ExecutionResult::Clone(Box::new(
+                CloneExecutionResult::CloneFailed(CloneFailed {
                     node: node.identity().clone(),
                     spec: command.payload.spec.clone(),
                     failure: CloneFailureCode::Interrupted,
                     residual: retained(&record),
-                }
+                })
             )))
         );
         drop(node);
-        assert_single_retained_attempt(&fixture, &record, &command);
+        assert_retained_attempts(&fixture, &record, &command, 2);
     });
 }
 
@@ -230,19 +238,20 @@ fn command_deadline_settles_clone_as_interrupted() {
 fn guardian_loss_keeps_interrupted_clone_unknown() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
         let command = request(&server, "lost", "main");
         let record = seed(&fixture, &config, &command);
         let mut child = launch(&fixture, &config, "clone-lost");
-        until(|| record.target.path.join(".git").is_dir());
+        until(|| gate.ready.exists());
         fixture.kill_guardians();
         child.kill();
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         assert_eq!(
             node.submit_clone(command.clone()).unwrap().state,
@@ -255,7 +264,7 @@ fn guardian_loss_keeps_interrupted_clone_unknown() {
         )
         .unwrap();
         let journal = database.process_journal().unwrap();
-        assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 1);
+        assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 2);
         assert!(record.target.path.is_dir());
     });
 }
@@ -274,10 +283,7 @@ fn assert_interrupted(
     record: &CloneExecution,
     command: &CloneRepositoryMessage,
 ) {
-    let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneFailed(
-        failed,
-    ))) = state
-    else {
+    let Some(CloneExecutionResult::CloneFailed(failed)) = clone_result(state) else {
         panic!("clone not settled as a failure: {state:?}");
     };
     assert_eq!(
@@ -292,10 +298,11 @@ fn assert_interrupted(
 }
 
 /// One dispatched Run, fully cleaned, and the original directory still in place.
-fn assert_single_retained_attempt(
+fn assert_retained_attempts(
     fixture: &Fixture,
     record: &CloneExecution,
     command: &CloneRepositoryMessage,
+    attempts: usize,
 ) {
     let database = NodeDatabase::open(
         &fixture.config().home_directory.join("ora-node.sqlite3"),
@@ -303,7 +310,10 @@ fn assert_single_retained_attempt(
     )
     .unwrap();
     let journal = database.process_journal().unwrap();
-    assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 1);
+    assert_eq!(
+        journal.attempts(&command.execution_id).unwrap().len(),
+        attempts
+    );
     assert!(journal.pending(&command.execution_id).unwrap().is_empty());
     assert!(record.target.path.is_dir());
 }

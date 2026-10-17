@@ -1,6 +1,7 @@
 use super::session::node;
 use super::support::*;
 use ora_node_protocol::*;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 const OPERATION: &str = "run-1";
@@ -8,8 +9,10 @@ const EXECUTION: &str = "execution-delivery";
 const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 const FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const BUNDLE_KEY: &str = "revisions/tenant-1/run-1/execution-delivery/revision.bundle";
 const HISTORY_KEY: &str = "revisions/tenant-1/run-1/execution-delivery/session.jsonl";
+const REPOSITORY: &str = "https://git.ora.test/tenant-1/project-1.git";
+const DELIVERY_REF: &str = "refs/ora/deliveries/work-1";
+const WORKSPACE_REF: &str = "refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/main";
 
 /// A delivery command with independent JSON.
 pub(super) fn deliver() -> Case {
@@ -26,9 +29,14 @@ pub(super) fn deliver() -> Case {
                         checkout_execution_id: ExecutionId::new("execution-clone"),
                         base_commit: CommitId::new(BASE),
                         revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
-                        bundle_key: ObjectKey::new(BUNDLE_KEY),
                         history_key: ObjectKey::new(HISTORY_KEY),
                         prior_revision: None,
+                        git_repository_url: GitRepositoryUrl::parse(REPOSITORY)
+                            .unwrap_or_else(|error| panic!("invalid fixture: {error}")),
+                        delivery_ref: DeliveryRef::parse(DELIVERY_REF)
+                            .unwrap_or_else(|error| panic!("invalid fixture: {error}")),
+                        workspace_ref: WorkspaceRef::parse(WORKSPACE_REF)
+                            .unwrap_or_else(|error| panic!("invalid fixture: {error}")),
                     },
                 },
             },
@@ -41,8 +49,10 @@ pub(super) fn deliver() -> Case {
             "checkout_execution_id": "execution-clone",
             "base_commit": BASE,
             "revision_ref": "refs/ora/revisions/run-1",
-            "bundle_key": BUNDLE_KEY,
-            "history_key": HISTORY_KEY
+            "history_key": HISTORY_KEY,
+            "git_repository_url": REPOSITORY,
+            "delivery_ref": DELIVERY_REF,
+            "workspace_ref": WORKSPACE_REF
         }}}),
     }
 }
@@ -64,13 +74,11 @@ fn results() -> Vec<(RevisionExecutionResult, Value)> {
         final_commit: CommitId::new(FINAL),
         base_commit: CommitId::new(BASE),
         revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
-        bundle: stored(BUNDLE_KEY, /*size*/ 2048),
         history: stored(HISTORY_KEY, /*size*/ 512),
     });
     let delivered_wire = json!({"kind": "revision_delivered", "result": {
         "node": node_wire, "final_commit": FINAL, "base_commit": BASE,
         "revision_ref": "refs/ora/revisions/run-1",
-        "bundle": {"key": BUNDLE_KEY, "size": 2048, "sha256": DIGEST},
         "history": {"key": HISTORY_KEY, "size": 512, "sha256": DIGEST}}});
     let unchanged = RevisionExecutionResult::RevisionUnchanged(RevisionUnchanged {
         node: node(),
@@ -147,8 +155,10 @@ async fn deliver_revision_round_trips() -> Result<(), TestError> {
             "/payload/spec/session_execution_id",
             "/payload/spec/base_commit",
             "/payload/spec/revision_ref",
-            "/payload/spec/bundle_key",
             "/payload/spec/history_key",
+            "/payload/spec/git_repository_url",
+            "/payload/spec/delivery_ref",
+            "/payload/spec/workspace_ref",
         ],
         &[
             ("/operation_id", "operation_id"),
@@ -180,18 +190,13 @@ async fn deliver_revision_rejects_refs_keys_and_commits_outside_the_contract()
             MessageValidationError::InvalidRevisionRef,
         ),
         (
-            "/payload/spec/bundle_key",
-            json!("/revisions/run-1/revision.bundle"),
+            "/payload/spec/history_key",
+            json!("/revisions/run-1/session.jsonl"),
             MessageValidationError::InvalidObjectKey,
         ),
         (
-            "/payload/spec/bundle_key",
-            json!("revisions/../other-tenant/revision.bundle"),
-            MessageValidationError::InvalidObjectKey,
-        ),
-        (
-            "/payload/spec/bundle_key",
-            json!(HISTORY_KEY),
+            "/payload/spec/history_key",
+            json!("revisions/../other-tenant/session.jsonl"),
             MessageValidationError::InvalidObjectKey,
         ),
         (
@@ -205,6 +210,73 @@ async fn deliver_revision_rejects_refs_keys_and_commits_outside_the_contract()
         replace(&mut wire, path, value);
         reject_semantics(Peer::Controller, &wire, path, expected).await?;
     }
+    // The Git targets cannot even be decoded outside their namespaces: a delivery pushes only its
+    // own delivery ref and its Workspace's branch, and only to an HTTPS Git Server.
+    for (path, value) in [
+        (
+            "/payload/spec/git_repository_url",
+            "http://git.ora.test/t/p.git",
+        ),
+        (
+            "/payload/spec/git_repository_url",
+            "https://user@git.ora.test/t/p.git",
+        ),
+        (
+            "/payload/spec/git_repository_url",
+            "ssh://git.ora.test/t/p.git",
+        ),
+        ("/payload/spec/delivery_ref", "refs/heads/main"),
+        ("/payload/spec/delivery_ref", "refs/ora/deliveries/"),
+        (
+            "/payload/spec/delivery_ref",
+            "refs/ora/deliveries/../heads/main",
+        ),
+        ("/payload/spec/workspace_ref", "refs/heads/main"),
+        (
+            "/payload/spec/workspace_ref",
+            "refs/heads/workspaces/workspace-1/main",
+        ),
+    ] {
+        let mut wire = deliver().wire;
+        replace(&mut wire, path, json!(value));
+        reject_structure(Peer::Controller, &wire, path).await;
+    }
+    // The bundle-based input is no longer understood.
+    let mut wire = deliver().wire;
+    wire["payload"]["spec"]["bundle_key"] = json!("runs/run-1/revision.bundle");
+    reject_structure(Peer::Controller, &wire, "retired bundle key").await;
+    Ok(())
+}
+
+/// The push failure codes are part of the closed set; the bundle failure only lives in
+/// historical records and is refused in a new result, as is a delivered result with a bundle.
+#[tokio::test]
+async fn revision_failures_name_push_outcomes() -> Result<(), TestError> {
+    for (code, wire) in [
+        (RevisionFailureCode::PushRejected, "push_rejected"),
+        (RevisionFailureCode::PushFailed, "push_failed"),
+        (RevisionFailureCode::UploadFailed, "upload_failed"),
+    ] {
+        assert_eq!(serde_json::to_value(code)?, json!(wire));
+    }
+    let mut fixtures = results();
+    let (failed, failed_wire) = fixtures.remove(2);
+    let (delivered, delivered_wire) = fixtures.remove(0);
+    let [failed_event, _] = result_cases(failed, failed_wire);
+    let mut wire = failed_event.wire;
+    replace(&mut wire, "/payload/result/failure", json!("bundle_failed"));
+    reject_semantics(
+        Peer::Node,
+        &wire,
+        "retired failure",
+        MessageValidationError::RetiredRevisionFailure,
+    )
+    .await?;
+    let [delivered_event, _] = result_cases(delivered, delivered_wire);
+    let mut wire = delivered_event.wire;
+    wire["payload"]["result"]["bundle"] =
+        json!({"key": "runs/run-1/revision.bundle", "size": 1, "sha256": DIGEST});
+    reject_structure(Peer::Node, &wire, "retired bundle").await;
     Ok(())
 }
 
@@ -261,7 +333,7 @@ async fn revision_results_round_trip_and_keep_commits_consistent() -> Result<(),
 /// Upload grants are unsequenced messages, and their URL never appears in debug output.
 #[tokio::test]
 async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestError> {
-    let url = "https://objects.example.com/bucket/revision.bundle?X-Amz-Signature=secret";
+    let url = "https://objects.example.com/bucket/session.jsonl?X-Amz-Signature=secret";
     let grant = Case {
         message: Message::Controller(ControllerToNodeMessage::UploadGrant(UploadGrantMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -269,7 +341,7 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
             execution_id: ExecutionId::new(EXECUTION),
             payload: UploadGrant {
                 grants: vec![ObjectUploadGrant {
-                    object_key: ObjectKey::new(BUNDLE_KEY),
+                    object_key: ObjectKey::new(HISTORY_KEY),
                     url: PresignedUrl::new(url),
                     method: UploadMethod::Put,
                     headers: [(
@@ -283,7 +355,7 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
         })),
         wire: json!({"message_type": "upload_grant", "protocol_version": 1,
             "operation_id": OPERATION, "execution_id": EXECUTION,
-            "payload": {"grants": [{"object_key": BUNDLE_KEY, "url": url, "method": "PUT",
+            "payload": {"grants": [{"object_key": HISTORY_KEY, "url": url, "method": "PUT",
                 "headers": {"x-amz-sdk-checksum-algorithm": "SHA256"},
                 "expires_at": "2026-09-28T12:15:00Z"}]}}),
     };
@@ -309,7 +381,7 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
         "/payload/grants",
         grant.wire["payload"]["grants"].clone(),
     );
-    replace(&mut wire, "/payload/grants/0/url", json!("revision.bundle"));
+    replace(&mut wire, "/payload/grants/0/url", json!("session.jsonl"));
     reject_semantics(
         Peer::Controller,
         &wire,
@@ -326,13 +398,13 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: UploadGrantNeeded {
                     node_id: NodeId::new("node-1"),
-                    checksums: [(ObjectKey::new(BUNDLE_KEY), Sha256Digest::new(DIGEST))].into(),
+                    checksums: [(ObjectKey::new(HISTORY_KEY), Sha256Digest::new(DIGEST))].into(),
                 },
             },
         )),
         wire: json!({"message_type": "upload_grant_needed", "protocol_version": 1,
             "operation_id": OPERATION, "execution_id": EXECUTION,
-            "payload": {"node_id": "node-1", "checksums": {BUNDLE_KEY: DIGEST}}}),
+            "payload": {"node_id": "node-1", "checksums": {HISTORY_KEY: DIGEST}}}),
     };
     needed.assert_wire().await?;
     needed.assert_round_trip().await?;
@@ -361,7 +433,7 @@ async fn upload_grants_round_trip_without_exposing_the_url() -> Result<(), TestE
     replace(
         &mut wire,
         "/payload/checksums",
-        json!({BUNDLE_KEY: DIGEST.to_uppercase()}),
+        json!({HISTORY_KEY: DIGEST.to_uppercase()}),
     );
     reject_semantics(
         Peer::Node,

@@ -9,7 +9,6 @@ use tracing_subscriber::layer::{Context, Layer};
 use workspace_cloud::{SIGNATURE, STORE_HOST};
 
 const FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
-const BUNDLE_DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const HISTORY_DIGEST: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 #[derive(Default)]
@@ -97,17 +96,23 @@ impl DeliveryNode {
         }
     }
 
-    /// Reports that the delivery holds no valid grant for its two frozen objects.
+    /// Reports that the delivery holds no valid grant for its frozen history.
     fn need(&self, execution: &ExecutionId) {
+        let start = self.started(execution);
+        self.need_for(execution, checksums(&start));
+    }
+
+    /// Reports that the delivery holds no valid grant for exactly these objects.
+    fn need_for(&self, execution: &ExecutionId, checksums: BTreeMap<ObjectKey, Sha256Digest>) {
         let mut data = self.data.lock().unwrap();
         let start = data.starts.get(execution).unwrap().clone();
         data.needs.push(UploadGrantNeededMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            operation_id: start.operation_id.clone(),
+            operation_id: start.operation_id,
             execution_id: execution.clone(),
             payload: UploadGrantNeeded {
                 node_id: node_id(),
-                checksums: checksums(&start),
+                checksums,
             },
         });
     }
@@ -125,11 +130,6 @@ impl DeliveryNode {
             final_commit: CommitId::new(FINAL),
             base_commit: spec.base_commit.clone(),
             revision_ref: spec.revision_ref.clone(),
-            bundle: StoredObject {
-                key: spec.bundle_key.clone(),
-                size: 10,
-                sha256: Sha256Digest::new(BUNDLE_DIGEST),
-            },
             history: StoredObject {
                 key: spec.history_key.clone(),
                 size: 20,
@@ -159,26 +159,17 @@ impl DeliveryNode {
     }
 }
 
-/// The digests the fake Node froze for a delivery's two objects.
+/// The digest the fake Node froze for a delivery's only uploaded object, its session history.
 fn checksums(start: &DeliverRevisionMessage) -> BTreeMap<ObjectKey, Sha256Digest> {
-    BTreeMap::from([
-        (
-            start.payload.spec.bundle_key.clone(),
-            Sha256Digest::new(BUNDLE_DIGEST),
-        ),
-        (
-            start.payload.spec.history_key.clone(),
-            Sha256Digest::new(HISTORY_DIGEST),
-        ),
-    ])
+    BTreeMap::from([(
+        start.payload.spec.history_key.clone(),
+        Sha256Digest::new(HISTORY_DIGEST),
+    )])
 }
 
-/// The Cloud request map the Controller must send for those digests.
+/// The Cloud request map the Controller must send for that digest.
 fn requested(run: &str) -> HashMap<String, String> {
-    HashMap::from([
-        (format!("runs/{run}/revision.bundle"), BUNDLE_DIGEST.into()),
-        (format!("runs/{run}/history.jsonl"), HISTORY_DIGEST.into()),
-    ])
+    HashMap::from([(format!("runs/{run}/history.jsonl"), HISTORY_DIGEST.into())])
 }
 
 /// What the Node must receive for one Cloud response: every grant with headers and expiry as issued.
@@ -338,9 +329,18 @@ fn delivery_waits_for_its_permit_and_relays_checksum_bound_grants_unlogged() {
                             checkout_execution_id: ExecutionId::new(spec.checkout_execution_id),
                             base_commit: CommitId::new(COMMIT),
                             revision_ref: RevisionRef::new("refs/ora/revisions/run"),
-                            bundle_key: ObjectKey::new("runs/run/revision.bundle"),
                             history_key: ObjectKey::new("runs/run/history.jsonl"),
                             prior_revision: None,
+                            git_repository_url: GitRepositoryUrl::parse(
+                                workspace_cloud::REPOSITORY
+                            )
+                            .unwrap(),
+                            delivery_ref: DeliveryRef::parse("refs/ora/deliveries/run").unwrap(),
+                            workspace_ref: WorkspaceRef::parse(&format!(
+                                "refs/heads/workspaces/{}/main",
+                                workspace_cloud::WORKSPACE
+                            ))
+                            .unwrap(),
                         },
                     },
                 }
@@ -502,11 +502,6 @@ fn revision_result_is_acknowledged_only_after_cloud_commits() {
                         final_commit: FINAL.into(),
                         base_commit: COMMIT.into(),
                         revision_ref: "refs/ora/revisions/run".into(),
-                        bundle: Some(proto::StoredObject {
-                            key: delivered.bundle.key.as_str().into(),
-                            size: 10,
-                            sha256: BUNDLE_DIGEST.into(),
-                        }),
                         history: Some(proto::StoredObject {
                             key: delivered.history.key.as_str().into(),
                             size: 20,
@@ -609,6 +604,44 @@ fn refused_grants_never_fail_the_delivery() {
             .timeline
             .until(|events| received(events, &execution) == 1)
             .await;
+    });
+}
+
+/// A delivery over Git uploads only its session history: a grant request naming any other object
+/// is never forwarded to Cloud and yields no grant, without failing the delivery or the
+/// connection; a later request for the history alone is granted.
+#[test]
+fn upload_grants_are_requested_only_for_the_history_key() {
+    scenario("main", |world| async move {
+        workspace(&world).await;
+        let execution = delivering(&world, "run").await;
+        let before = world.timeline.events().len();
+        let start = world.node.deliveries.started(&execution);
+        let mut foreign = checksums(&start);
+        foreign.insert(
+            ObjectKey::new("runs/run/revision.bundle"),
+            Sha256Digest::new(HISTORY_DIGEST),
+        );
+        world.node.deliveries.need_for(&execution, foreign);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(world.cloud.issued_grants().is_empty());
+        assert!(world.node.deliveries.grants().is_empty());
+        assert_eq!(record(&world, "run").result, None);
+        assert!(!world.timeline.events()[before..].contains(&Event::SessionEnded));
+        world.node.deliveries.need(&execution);
+        world
+            .timeline
+            .until(|events| received(events, &execution) == 1)
+            .await;
+        assert_eq!(
+            world
+                .cloud
+                .issued_grants()
+                .into_iter()
+                .map(|(request, _)| request.checksums)
+                .collect::<Vec<_>>(),
+            vec![requested("run")]
+        );
     });
 }
 

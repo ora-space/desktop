@@ -10,6 +10,7 @@ use std::collections::HashSet;
 #[serde(rename_all = "snake_case")]
 pub enum NodeCapability {
     WorktreeExecution,
+    /// Snapshot clones from the Git Server; declared only with a git-access identity.
     RepositoryClone,
     RuntimeControl,
     /// `InstallPlugins` and `RemovePlugins`.
@@ -18,10 +19,11 @@ pub enum NodeCapability {
     AgentSession,
     /// Scoped model access through the platform gateway; no direct upstream credentials.
     ModelProxy,
-    /// `DeliverRevision` and the upload grant exchange.
+    /// `DeliverRevision` over Git and the history upload grant exchange; declared only with a
+    /// git-access identity.
     RevisionDelivery,
-    /// Sessions with a prior Revision, restored before the agent starts, and the download grant
-    /// exchange; a delivery of such a session reports an unchanged prior final commit as unchanged.
+    /// Sessions with a prior Revision, fetched from the Git Server and restored before the agent
+    /// starts; a delivery of such a session reports an unchanged prior final commit as unchanged.
     RevisionRestore,
 }
 

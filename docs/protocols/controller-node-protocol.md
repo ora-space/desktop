@@ -38,23 +38,12 @@ than an `ExecutionCorrelation` wrapper; this keeps applicable fields visible wit
 ## Initial clone request
 
 `CloneRepositoryMessage` (`clone_repository`) carries `operation_id`, `execution_id`, optional
-`request_id`, and `payload.spec` containing only `node_id`, `repository`, and `branch`.
-`domain/repository.rs` owns source policy; `message/repository.rs` owns envelope validation.
-
-`CloneRepositoryUrl::parse` and deserialization accept explicit lowercase `https://` or `ssh://`
-URLs with a host and repository path. They reject whitespace, backslashes, query/fragment components,
-passwords and HTTPS userinfo; SSH usernames are allowed. Source spelling is preserved for deduplication.
-Debug redacts the address and parse errors do not echo input. Serialization retains the source for
-execution and persistence, so serialized messages must not be logged. Credentials are deployment data.
-
-Both codec directions validate a short branch using `ora-utils::GitBranchName`, additionally rejecting
-`HEAD`. Execution must still verify a remote branch exists rather than accepting a same-named tag.
-Clone payload/spec reject unknown fields, including destination, credentials and arbitrary Git options;
-the outer envelope retains extension tolerance.
-
-Version 1 framing and Worktree encodings remain unchanged; older codecs reject the new message type.
-No running Node currently advertises or executes clone. Dispatch still requires a capable runtime and
-durable acceptance. This step changes no database layout, IPC listener or Backend writer.
+`request_id`, and `payload.spec` containing `node_id`, `repository_url`, `snapshot_ref`,
+`base_commit` and `workspace_ref`. Repository URLs are HTTPS without userinfo/query/fragment;
+refs require canonical UUIDs, snapshots name the exact base commit and Workspace branches reject
+`HEAD`. Old repository/branch inputs and SSH are rejected. Payload/spec reject unknown fields,
+destinations, credentials and arbitrary Git options. Clone capability requires clone and git-access
+configuration. Cloud, Controller and Node ship together; old development clone data is rebuilt.
 
 ## Clone results and capabilities
 
@@ -68,7 +57,7 @@ and a full 40- or 64-digit hexadecimal commit ID. `CloneFailed` includes the sam
 failure code and `no_directory` or `retained { repository_id, path }` residue. `no_directory` means no
 owned directory, not that a conflicting user path is absent. Raw diagnostics are not accepted. Unknown
 outcomes stay nonterminal; wire validity cannot prove Git success or cleanup. Source availability,
-missing branch, destination conflict and operation failure are the initial definitive error categories.
+missing/refused snapshots, base-commit mismatch, destination conflict, operation failure and interruption have stable codes.
 
 Events and Completed queries apply identical clone checks. Result NodeId must match the input target;
 the status reporter must match the result's persistent NodeId but may have a newer incarnation.
@@ -88,12 +77,12 @@ and both runtimes refuse their messages as unsupported. The Node's
 [session execution](../node/agent-session.md) exists behind its ledger interfaces but is not yet
 wired to these messages.
 
-| Capability          | Controller → Node                                             | Node → Controller                                                                                          |
-| ------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `plugin_install`    | `install_plugins`, `remove_plugins`                           | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
-| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session`      | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
-| `revision_delivery` | `deliver_revision`, `upload_grant`                            | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
-| `revision_restore`  | `start_agent_session` with `prior_revision`, `download_grant` | `download_grant_needed`                                                                                    |
+| Capability          | Controller → Node                                        | Node → Controller                                                                                          |
+| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`, `remove_plugins`                      | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
+| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
+| `revision_delivery` | `deliver_revision`, `upload_grant`                       | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
+| `revision_restore`  | `start_agent_session` with `prior_revision`              | restore failure codes in session results                                                                   |
 
 - Plugin inputs name each canonical `<namespace>/<identifier>` once, with either one universal HTTP(S)
   download or distinct per-target downloads, each with a lowercase SHA-256. Item failures are reported
@@ -106,18 +95,15 @@ wired to these messages.
 - `submit_user_turn` and `end_session` carry a `command_id`; their replies carry no sequence and need no
   acknowledgement, and a lost reply is recovered by resending the command.
 - A delivery names the ended session, the clone, the base commit, a ref under `refs/ora/revisions/`, and
-  two distinct normalized object keys. `revision_delivered` requires the final commit to differ from the
+  the Git repository URL, delivery ref, Workspace ref and one normalized history object key. `revision_delivered` requires the final commit to differ from the
   base. `revision_unchanged` validates only its commits on the wire: its final commit equals the base or,
   when the delivery input carries `prior_revision`, that prior final commit, which the receiver (Node
   ledger, Controller) checks against the input.
-- A session may carry `prior_revision{revision_id, final_commit, bundle{key, size, sha256}}`, the Revision
+- A session may carry `prior_revision{revision_id, final_commit, base_commit, git_repository_url, delivery_ref}`, the Revision
   it resumes; only a Node advertising `revision_restore` receives one. A delivery may carry
-  `prior_revision{revision_id, final_commit}` without a bundle. A restore failure ends the session as
+  `prior_revision{revision_id, final_commit}` with identity only. A restore failure ends the session as
   `agent_session_ended{agent_failed}` with `prior_revision_unavailable` or
   `prior_revision_base_unavailable`.
-- `download_grant_needed` (Node, names only its Node) and `download_grant` (`granted` with presigned
-  `GET` grants, or `refused`) are memory-only like the upload pair; the Node repeats its request on
-  every new connection.
 - `upload_grant` and `upload_grant_needed` are memory-only: no sequence, no acknowledgement, never
   persisted or logged. `PresignedUrl` redacts itself in `Debug`. `upload_grant_needed` names every
   object still to upload with its frozen SHA-256; the Node's side is described in

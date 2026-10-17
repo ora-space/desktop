@@ -1,132 +1,79 @@
-# Revision delivery
+# Revision delivery over Git
 
 English | [中文](revision-delivery.zh.md)
 
-The Linux Node saves an ended Agent session's checkout and history as a Revision
-(`revision_delivery` capability, ADR `node/revision/0`). It advertises the capability whenever it
-has the `clone` deployment section, because delivery runs Git in checkouts created by clone, with
-clone's hardened Git environment.
+The Linux Node pushes an ended Agent session's final commit to Git Server and uploads only its
+sealed session JSONL to object storage. Clone and git-access configuration enable delivery;
+Agent sessions additionally enable restore. Cloud mode requires usable git-access material.
 
-## Admission
+## Admission and preparation
 
-- `controlled_deliver_revision` is the production entry: the runtime permit must match this Node,
-  incarnation, operation and execution, and is checked at admission. Bare `deliver_revision` is
-  accepted only on private IPC in a home that never enabled runtime control.
-- The input is persisted before any work and the delivery is recorded as already started
-  (`Running`). Repeating the same input only reports state; different input under the same
-  identity is a protocol error.
-- Ledger: table `revision_deliveries` (schema v9, identity kind `deliver_revision`) with its
-  single terminal event in `revision_outbox`. Deliveries share no table with sessions, so session
-  recovery never sees them. Status queries answer `Running` until the terminal result, then the
-  stored `revision` result.
+The production `controlled_deliver_revision` entry checks a permit bound to the Node, incarnation,
+operation and execution. Bare delivery is allowed only over private IPC before runtime control has
+ever been enabled. The immutable input names the session, clone execution, snapshot baseline,
+local Revision ref, Git repository URL, delivery ref, Workspace ref and history object key.
+The Workspace ref must equal the clone's; an identical request replays state and a conflict fails.
 
-## Preparation (once)
+The ledger records responsibility before work starts. Preparation requires a settled session and
+its checkout, then copies the sealed JSONL under
+`<home>/revision-deliveries/<sha256(execution)>/history.jsonl`. Workload Git uses a scratch index:
+`read-tree HEAD`, `add -A`, `write-tree`. A clean tree keeps HEAD; remaining changes become a child
+commit authored by the session identity and committed by `Ora <revision@ora.invalid>`. Hooks,
+fsmonitor and signing are disabled. The real index, worktree and local branches remain untouched.
+The local Revision ref retains the final commit.
 
-1. The session must have its terminal result and no live actor; otherwise
-   `failed{session_not_settled}`. The checkout is the session's own clone and must still be at the
-   delivery's base commit; otherwise `failed{checkout_unavailable}`. A missing session JSONL is
-   `failed{history_unavailable}`.
-2. The sealed JSONL is copied into `<home>/revision-deliveries/<sha256(execution)>/history.jsonl`.
-3. The snapshot uses a scratch index in the checkout's Git directory (writable by the workload
-   identity, unlike the Node home): `read-tree HEAD`, `add -A`, `write-tree`. If the tree equals
-   `HEAD^{tree}` the final commit is `HEAD`; otherwise `commit-tree` adds one commit authored by the
-   session's git identity and committed by `Ora <revision@ora.invalid>`. Hooks, fsmonitor and
-   signing are disabled; the real index, worktree files and branches are not changed.
-   `update-ref` points the Revision ref at the final commit.
-4. If the final commit differs from the base, `bundle create <ref> ^<base>` and `bundle verify`
-   produce `revision.bundle`, copied next to the history. When the input carries a
-   `prior_revision` (a resumed session) and the final commit equals its `final_commit`, the
-   delivery is `unchanged` at that commit and no bundle is made: the prior Revision's bundle
-   already holds it. Any other new commit is bundled against the clone's base as usual, so it
-   carries the prior Revision's commits too.
-5. Size and SHA-256 of every object and the declaration (`delivered` or `unchanged`) are written to
-   the ledger as the frozen plan **before the first PUT**. A restart before that prepares again;
-   after it, the same files and declaration are reused and nothing is snapshotted again.
+Before network writes, the Node freezes that commit, history bytes/digest and result declaration.
+Restart before freezing prepares again; restart afterwards reuses the same plan. A final commit
+equal to the baseline or resumed final commit is `unchanged`; every delivery still creates its own
+delivery ref and attempts the Workspace update. No bundle is generated, uploaded or downloaded.
 
-## Upload
+## Push and upload
 
-- Grants live only in memory and are never logged or written to the ledger. Without a valid grant
-  (none yet, expired within 5 s, refused with 403, or lost by a restart) the Node sends
-  `upload_grant_needed` with the frozen SHA-256 of every object still to upload, repeats it every
-  2 s while waiting, and sends it again at once on every new Controller connection. The delivery
-  stays `Running` while waiting, without a deadline.
-- Each PUT streams the frozen file with every grant header unchanged (including `If-None-Match: *`
-  and `x-amz-checksum-sha256`) and never follows redirects. 2xx and 412 count as uploaded; Cloud
-  verifies the declaration. Every other outcome is an attempt; the third failed attempt of one
-  object ends the delivery with `failed{upload_failed}`.
-- The terminal `revision_result` (sequence 1) is replayed until acknowledged. The frozen files are
-  removed once it is durable; leftovers are swept at the next start.
-- Shutdown, Controller disconnect and lifecycle cancellation never write a failure: the delivery
-  resumes after restart.
+Git with the Node identity never runs in the checkout. A private transport repository borrows only
+its object store, refuses nested alternates/shared directories and disables alternate ref discovery.
+The certificate, key, CA and execution header are supplied only to each HTTPS command; checkout
+configuration cannot redirect it or install credential helpers.
 
-## Resuming a prior Revision
+1. Push the frozen commit to `delivery_ref` under `refs/ora/deliveries/`. Creation and identical
+   replay succeed; refusal is `push_rejected`; exhausted network failures are `push_failed`.
+2. Try to fast-forward `workspace_ref`, declaring the Node ledger's old value. Replays succeed;
+   stale leases, rejection or exhausted network failures are logged and never fail the delivery.
+3. Request an in-memory upload grant for the history checksum and PUT the frozen JSONL with every
+   grant header unchanged. No redirects are followed. 2xx and 412 proceed to Cloud verification;
+   three failed upload attempts report `upload_failed`. A 403 invalidates the grant and asks again.
 
-A new run of the same Issue resumes the Issue's latest Revision (ADR
-`node/revision/20261010-restore-prior-revision-before-session`). The Node advertises
-`revision_restore` exactly when it advertises both `agent_session` and `revision_delivery`, since
-restore runs delivery Git in session checkouts; the Controller sends a session with
-`prior_revision` only to such a Node.
+Transient Git failures use three attempts with 5/30-second delays. Each delivery push attempt may
+run 30 minutes, independent of `network_timeout_ms`, with a 1 KiB/s low-speed abort after one
+minute; 401/403 and refused ref updates are not retried. Shutdown/disconnect preserve the
+frozen plan. The terminal sequence-1 event replays until ACK. Cloud verifies the delivery ref and
+history outside its transaction before registering the Revision. Grants never reach the ledger.
+Frozen files are removed after a durable terminal result, and leftovers are swept on startup.
 
-The session driver restores after resolving the checkout and checking the plugin, and before the
-checkout is handed back to the workload user or any plugin starts. A failed restore ends the session
-as `agent_failed` with `prior_revision_unavailable` or `prior_revision_base_unavailable`; no plugin
-process ever existed. A Node restart during a restore ends the session `interrupted`, like any
-session, and the delivery decision below stays exact for either state of the checkout.
+## Restore before Agent launch
 
-### Download
+`prior_revision` supplies the Revision identity, final/base commits, Git repository URL and delivery
+ref. The repository must equal the checkout's clone repository. The session's execution authorizes
+fetching the ref into a private transport, negotiating only from the snapshot baseline. The fetched
+commit must equal the prior final commit. Then workload Git takes the objects from the local
+transport and checks out the Workspace's local branch at that final commit, before any plugin starts.
+The clone baseline stays unchanged, and configuration and `refs/remotes/ora/**` are preserved.
 
-- The Node sends `download_grant_needed` (no sequence), repeats it every 2 s while waiting, and
-  again at once on every new Controller connection. The answer is `download_grant{granted}` or
-  `download_grant{refused}`; a refusal fails the restore at once. Grants are memory-only and never
-  logged; only a grant for the session's own `prior_revision.bundle.key` is accepted.
-- Grant wait and download share one 5-minute deadline. The bundle is fetched with one presigned
-  `GET` (headers verbatim, redirects never followed, no URL in errors) into
-  `<home>/revision-restores/<sha256(execution)>/prior.bundle` (directories `0700`, file `0600`),
-  bounded by the declared size, and must match the declared size and SHA-256. Network errors, 429
-  and 5xx are retried 3 times; a 403 drops the grant and asks for a fresh one once; any other
-  answer fails. The directory is removed when the restore ends and the root is cleared at start.
+If the prior base is absent from the current snapshot's history, the first turn gains a fixed hint
+naming the final/base commits and recommending `ora-git fetch upstream`. A missing/refused delivery
+ref is `prior_revision_base_unavailable`; transient fetch, verification or checkout failures are
+`prior_revision_unavailable`. The fetch and the import share one five-minute deadline, retries
+included, which runs out as `prior_revision_unavailable`. Either ends the session before launch. A
+Node stop or an `EndSession` during the restore stops it before its next Git command and waits for
+the running one, so the session ends (with the command's reason) only once the restore no longer
+writes the checkout. Restart interrupts the session;
+it never resumes an old Agent input. Transports are removed after use and swept at Node startup.
 
-### Git steps
+## Deployment and limits
 
-All commands run like delivery Git (host-managed, as the workload user, hooks/fsmonitor/signing
-disabled, clone's environment and protocol policy), on a blocking thread:
+Sandbox Server issues a distinct git-access client certificate for tenant, Workspace and generation.
+The entrypoint stores material in root-only `/run/ora` tmpfs; workloads receive only their session
+socket. The certificate carries identity, while Git Server derives permission from current Cloud state.
 
-1. The bundle header must be v2 or v3 (only `@object-format` capabilities) with exactly one head,
-   under `refs/ora/revisions/`, pointing at `prior_revision.final_commit`; otherwise unavailable.
-2. Every prerequisite (`-<oid>`) must exist (`cat-file -e <oid>^{commit}`). Missing ones are fetched
-   once with `fetch --no-tags origin <oids>`. Only when the remote answers that it has no such object
-   (`not our ref`, an unadvertised object, no such remote ref), or the fetch succeeds and a commit is
-   still missing, is the result `base_unavailable`; an unreachable remote or refused access is
-   `unavailable`, which Cloud retries on the next run instead of refusing the Revision.
-3. The verified bundle is copied into the checkout's Git directory (owned by the workload user,
-   removed afterwards), then `bundle verify`, then `fetch --no-tags <bundle> <head>:<head>` (the
-   file transport is allowed for this one command), and the final commit must resolve.
-4. `checkout --force -B <branch> <final_commit>` on the clone's branch; `origin/<branch>` is not
-   touched, so the worktree and index equal the prior final commit.
-5. If a prerequisite is not an ancestor of `refs/remotes/origin/<branch>`, the remote history was
-   rewritten: one fixed English text block naming the restored commit, its base commit and
-   `origin/<branch>` is appended to the first turn, so it also reaches the session history and
-   Thread.
-
-## Git Server access material
-
-A deployment that enables the platform Git Server (proposed ADR `cloud/git-server/0`) adds a
-top-level `git_access` section with absolute `ca_cert`, `client_cert`, and `client_key` paths. The
-Sandbox Server then issues a git-access client certificate for the runtime's tenant, Workspace and
-generation, separate from the Node WSS server identity and the model-access identity; the entrypoint
-writes it into the private `/run/ora` tmpfs (`git-ca.pem`, `git-client.pem`, `git-client-key.pem`,
-root-owned, mode 0600), out of the workload's reach. The Node validates this material at startup and
-refuses to start when it is unusable. The certificate grants no repository permission by itself, and
-the Git Server address is not configured here: each execution input supplies it. Delivery and
-restore still use object storage until the Revision ADRs adopt the Git Server.
-
-## Known limits
-
-- Agent plugins run outside host Scopes, so "process scope closed" means the session's terminal
-  result is written and its plugin process tree was stopped by the session runtime.
-- Delivery Git Runs are host-managed but not journaled as business mutations; an interrupted
-  preparation is simply prepared again.
-- Repository configuration can still select clean/smudge filters that `git add` runs; they run under
-  the workload identity, like the Agent itself.
-- The permanent `base_unavailable` relies on the remote's wording for a missing object; a server
-  that phrases it differently is reported as the retryable `unavailable`.
+Snapshot filters still run as the workload user. Borrowed object parsing and resource limits remain
+future hardening work. Delivery preparation is replayable rather than a journaled business mutation;
+its durability boundary is the frozen plan. See [snapshot clone and collaboration](repository-clone.md).

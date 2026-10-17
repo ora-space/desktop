@@ -14,14 +14,34 @@ impl crate::PriorRevisionRestore for CheckoutPath {
     async fn restore(
         &self,
         _request: crate::RestoreRequest,
+        _cancel: crate::RestoreCancel,
     ) -> Result<crate::Restored, crate::RestoreFailure> {
         panic!("an unstarted model session must not restore a prior Revision")
     }
 }
 impl crate::CheckoutResolver for CheckoutPath {
     /// Resolves the isolated checkout without invoking Git for an unstarted session.
-    fn checkout(&self, _execution: &ExecutionId) -> Option<std::path::PathBuf> {
-        Some(self.0.clone())
+    fn checkout(&self, _execution: &ExecutionId) -> Option<ora_node_db::ClonedCheckout> {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        Some(ora_node_db::ClonedCheckout {
+            path: self.0.clone(),
+            spec: ora_node_protocol::CloneExecutionSpec {
+                node_id: ora_node_protocol::NodeId::new("node"),
+                repository_url: ora_node_protocol::GitRepositoryUrl::parse(
+                    "https://git.ora.test/tenant/project.git",
+                )
+                .ok()?,
+                snapshot_ref: ora_node_protocol::SnapshotRef::parse(&format!(
+                    "refs/ora/upstreams/9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a/snapshots/{commit}"
+                ))
+                .ok()?,
+                base_commit: ora_node_protocol::CommitId::new(commit),
+                workspace_ref: ora_node_protocol::WorkspaceRef::parse(
+                    "refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/main",
+                )
+                .ok()?,
+            },
+        })
     }
 }
 impl crate::PluginCatalog for CheckoutPath {
@@ -223,6 +243,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             checkout_execution_id: ExecutionId::new("clone-1"),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
             prior_revision: None,
+            workspace_directory: Vec::new(),
             git_identity: GitIdentity {
                 name: "User".into(),
                 email: "user@example.com".into(),

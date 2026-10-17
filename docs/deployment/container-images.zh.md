@@ -21,17 +21,19 @@ docker build -f docker/Dockerfile --target controller -t ora-controller:local .
 | `ORA_NODE_CONFIG`          | 完整的 Node 服务配置 JSON；为空则拒绝启动。                                                        |
 | `/var/lib/ora`             | Workspace 卷的挂载点。配置中的所有状态路径（Node home、process host 目录、clone 根目录）都在其下。 |
 | `/etc/ora/clone.gitconfig` | clone 使用的 Git 配置；镜像自带一个不含凭据、属主为 root 的空文件。                                |
-| 用户                       | 服务以 `node`（UID 1000）运行，与 `process.expected_uid` 一致。                                    |
+| 用户                       | Node 与 process host 以 root 运行；Agent 工作负载以 `node`（UID 1000）运行。                       |
 
-入口脚本由 `tini` 作为 PID 1 托管。它以 root 身份只做三件事：把卷根目录设为 `node` 所有、权限 `0700`
-（不改动其中内容），创建 Node 要求预先存在的 clone 根目录，把配置写入 `/run/ora/node.json`；然后降权
-为 `node`。host 目录不存在时以 `create` 启动 process host，否则以 `recover` 启动，因此同一个 Workspace
+入口脚本由 `tini` 作为 PID 1 托管。它以 root 身份保持卷根目录属主为 root、权限 `0711`
+（不递归改写其中内容），创建 Node 要求预先存在的 clone 根目录，把配置与服务身份写入 `/run/ora` 的私有管理 tmpfs。host 目录不存在时以 `create` 启动 process host，否则以 `recover` 启动，因此同一个 Workspace
 卷在多个容器之间沿用同一份 host 日志；恢复失败不会退回为新建。等 host socket 真正可连接（残留的 socket
 文件不算）后才启动 `ora-node`。
 
 停止信号先交给 Node，由它经仍在运行的 host 关闭受管 scope；Node 退出后才停止 host。guardian 不会被
 停止：它们的日志留在卷上，由下一个容器恢复。因此 Sandbox Server 的停止超时必须大于 Node 的
 `shutdown_grace_ms + cleanup_timeout_ms`。Node 自行退出时同样停止 host，容器以 Node 的退出码退出。
+
+镜像在工作负载 PATH 中的 `/usr/local/bin/ora-git` 提供 `ora-git` 命令。它经当前会话的
+`ORA_GIT_SOCKET` 发送固定请求；Git Server 凭据仍由 Node 持有。
 
 可执行文件位于属主为 root 的 `/opt/ora/bin`，release 构建的 host 要求 guardian 位于这样的目录。
 镜像同时提供所有插件运行所需的 `/opt/ora/bin/deno`：版本取自 `.deno-version`，构建时按

@@ -1,7 +1,7 @@
 use super::*;
 use crate::session::{SessionObserver, run_observed_session};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, io, sync::Arc, time::Duration};
+use std::{future::Future, io, time::Duration};
 use tokio::sync::watch;
 
 /// Which authority persists coordination for this deployment. Chosen once at deployment time: a
@@ -13,13 +13,13 @@ pub enum Persistence {
     /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
     Sqlite,
     /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
-    /// at `endpoint` (a gRPC URI); no database is opened locally. Tenant clone work accepted by
-    /// Cloud is dispatched to the single configured Node. While a `Watch` stream is live, claims
-    /// follow its signals and every lease renewal; `claim_interval_ms` is the claim cadence while
-    /// no stream is live. With `substrate`, the Controller also drives runtime Workspace
+    /// at `endpoint` (a gRPC URI); no database is opened locally. While a `Watch` stream is live,
+    /// claims follow its signals and every lease renewal; `claim_interval_ms` is the claim cadence
+    /// while no stream is live. With `substrate`, the Controller drives runtime Workspace
     /// operations: it creates and terminates Workspace sandboxes through the Substrate effects
-    /// interface and reaches each sandbox's Node through the router; static `nodes` then serve
-    /// only tenant clones and may be empty.
+    /// interface and reaches each sandbox's Node through the router. Every work item Cloud hands
+    /// out targets such a sandbox; Cloud no longer hands out tenant clones, so a static Node in
+    /// `nodes` receives no work and `nodes` may be empty.
     Cloud {
         endpoint: String,
         claim_interval_ms: u64,
@@ -66,23 +66,8 @@ pub struct RuntimeConfig {
 /// Owns deployment and the reconnect lifetime; callers supply their own process shutdown signal.
 /// The store type is fixed at construction: one deployment runs exactly one persistence adapter.
 pub struct ControllerRuntime<S: CoordinationStore> {
-    handle: ControllerHandle<S>,
-    config: RuntimeConfig,
-}
-
-/// Narrow application access to the durable store; the store itself decides how its work is executed.
-pub struct ControllerHandle<S: CoordinationStore> {
     store: S,
-    nodes: Arc<Vec<NodeId>>,
-}
-
-impl<S: CoordinationStore> Clone for ControllerHandle<S> {
-    fn clone(&self) -> Self {
-        Self {
-            store: self.store.clone(),
-            nodes: self.nodes.clone(),
-        }
-    }
+    config: RuntimeConfig,
 }
 
 impl ControllerRuntime<SqliteStore> {
@@ -168,22 +153,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
 
     /// Binds validated deployment to an already opened store; adapters validate their own state.
     fn with_store(config: RuntimeConfig, store: S) -> Self {
-        let nodes = Arc::new(
-            config
-                .nodes
-                .iter()
-                .map(|node| node.node_id.clone())
-                .collect(),
-        );
-        Self {
-            handle: ControllerHandle { store, nodes },
-            config,
-        }
-    }
-
-    /// Supplies application access without exposing the store, mutex or reconnect implementation.
-    pub fn handle(&self) -> ControllerHandle<S> {
-        self.handle.clone()
+        Self { store, config }
     }
 
     /// Reconnects configured Nodes and runs the adapter's authority coordination until shutdown.
@@ -194,7 +164,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
         let mut sessions = tokio::task::JoinSet::new();
         let (stop_sessions, sessions_stopping) = watch::channel(false);
         for target in self.config.nodes.clone() {
-            let store = self.handle.store.clone();
+            let store = self.store.clone();
             let settings = self.config.session.clone();
             let delay = Duration::from_millis(self.config.reconnect_ms);
             let mut stopping = sessions_stopping.clone();
@@ -212,7 +182,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             });
         }
         let (stop_serving, serving_stopping) = watch::channel(false);
-        let store = self.handle.store.clone();
+        let store = self.store.clone();
         let mut serving = tokio::spawn(async move {
             store
                 .serve(async move {
@@ -266,28 +236,4 @@ impl<S: CoordinationStore> SessionObserver for StaticNode<'_, S> {
     fn unresolved(&self, _execution: &ExecutionId) {}
 
     fn answered(&self, _execution: &ExecutionId) {}
-}
-
-impl<S: CloneIntake> ControllerHandle<S> {
-    /// Accepts only a deployment-configured target before any Node dispatch observes the operation.
-    pub async fn accept_clone(
-        &self,
-        request: RequestId,
-        spec: CloneExecutionSpec,
-    ) -> Result<CloneRepositoryMessage, Error> {
-        if !self.nodes.contains(&spec.node_id) {
-            return Err(Error::Conflict);
-        }
-        self.store.accept_request(request, spec).await
-    }
-
-    /// Returns accepted operations, including pending responsibility while Nodes are disconnected.
-    pub async fn operations(&self) -> Result<Vec<CloneOperation>, Error> {
-        self.store.operations().await
-    }
-
-    /// Reads one operation without confusing missing identity with an unknown terminal result.
-    pub async fn operation(&self, execution: ExecutionId) -> Result<Option<CloneOperation>, Error> {
-        self.store.operation(&execution).await
-    }
 }

@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, future::Future, io};
 /// Every method is one atomic business operation that the implementation commits as a whole; the
 /// trait deliberately exposes no transaction, connection or table so a remote adapter can honor the
 /// same promises with a single request. Implementations are cheap to clone and shared across the
-/// runtime, the Node sessions and local intake. The ordering promises are the contract, not a hint:
+/// runtime and the Node sessions. The ordering promises are the contract, not a hint:
 ///
 /// - `take_over_node_event` returns only after the execution fact and the exact event receipt are
 ///   durable; callers acknowledge that sequence to the Node only after it succeeds.
@@ -150,26 +150,6 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         async { Ok(GrantOutcome::NotGrantable) }
     }
 
-    /// Asks the authority for a fresh read grant of the prior bundle a restoring session needs.
-    /// The answer is either granted or refused; a refusal ends the Node's restore, so it is given
-    /// only when the authority definitively declines, never for an outage (an `Err` the caller
-    /// retries). Grants are bearer credentials: implementations keep them in memory and never
-    /// persist or log them. Authorities without sessions refuse.
-    fn grant_download(
-        &self,
-        _session: &NodeRuntimeIdentity,
-        operation: &OperationId,
-        execution: &ExecutionId,
-    ) -> impl Future<Output = Result<DownloadGrantMessage, Error>> + Send {
-        let refused = DownloadGrantMessage {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            operation_id: operation.clone(),
-            execution_id: execution.clone(),
-            payload: DownloadGrant::Refused {},
-        };
-        async move { Ok(refused) }
-    }
-
     /// An advisory wake-up; periodic polling remains authoritative if a hint is missed.
     fn wait_agent_command_hint(&self) -> impl Future<Output = ()> + Send {
         std::future::pending()
@@ -260,7 +240,7 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
     /// proves that the configured `NodeId` names the Node actually behind the endpoint. The Cloud
     /// adapter registers tenant work to that Node only after this, so a misconfigured identity
     /// leaves the work queued with Cloud instead of pending forever on a Node that does not exist.
-    /// The local adapter records dispatches at intake and ignores it.
+    /// The local adapter registers no new dispatches and ignores it.
     fn static_node_established(&self, node: &NodeRuntimeIdentity);
 
     /// Runs the adapter's own coordination with its authority until `shutdown` resolves, then
@@ -273,32 +253,10 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
-/// The intake side of an authority that accepts caller requests itself and can catalogue every
-/// accepted operation: the local SQLite adapter, reached through [`ControllerHandle`] by whatever
-/// embeds a local Controller. A cloud deployment accepts through Cloud's public API and has no
-/// catalogue here, so it does not implement this trait and offers no local intake at all.
-pub trait CloneIntake: CoordinationStore {
-    /// Freezes caller intent and the original dispatch identities before any network operation.
-    fn accept_request(
-        &self,
-        request: RequestId,
-        spec: CloneExecutionSpec,
-    ) -> impl Future<Output = Result<CloneRepositoryMessage, Error>> + Send;
-
-    /// Lists accepted operations for presentation, newest first.
-    fn operations(&self) -> impl Future<Output = Result<Vec<CloneOperation>, Error>> + Send;
-
-    /// Reads one operation; `None` is an absent identity, not a pending result.
-    fn operation(
-        &self,
-        execution: &ExecutionId,
-    ) -> impl Future<Output = Result<Option<CloneOperation>, Error>> + Send;
-}
-
 /// The terminal fact of one execution in the shape every authority persists and reports: the Node
 /// incarnation that produced it and its outcome. The echoed spec and the Node-local repository
 /// identity of the wire result are not part of it because the Cloud contract deliberately does not
-/// carry them; the local catalogue keeps the full wire result for its own presentation.
+/// carry them; the local adapter keeps the full wire result in its database.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionOutcome {
     Ready {

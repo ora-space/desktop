@@ -4,11 +4,34 @@
 //! `refs/ora/revisions/` ref, so its Runs are not journaled as business mutations: a delivery
 //! interrupted before freezing prepares again from scratch, and the guardian ends a Run whose
 //! Node exited. Each Run gets its own Scope, closed before the next command starts.
-use super::{CloneHost, transport};
+use super::{CloneHost, RunAs, transport};
 use gitlancer::{GitCommand, GitExecError, GitOutput, GitRunner};
 use ora_process_client::ProcessHost;
 use ora_process_protocol::*;
 use std::time::Duration;
+
+/// The same host Runs as the Node identity, for Git Server access from transport repositories;
+/// it borrows or owns its host side.
+pub(crate) struct AsNode<H>(pub(crate) H);
+
+impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
+    /// Captures both streams up to the guardian limit.
+    fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
+        self.run_bounded(command, GUARDIAN_CAPTURE_LIMIT, GUARDIAN_CAPTURE_LIMIT)
+    }
+
+    /// Runs one command without the workload isolation, in its own closed Scope.
+    fn run_bounded(
+        &self,
+        command: &GitCommand,
+        stdout: usize,
+        stderr: usize,
+    ) -> Result<GitOutput, GitExecError> {
+        self.0
+            .borrow()
+            .run_scoped(command, stdout, stderr, RunAs::Node)
+    }
+}
 
 impl GitRunner for CloneHost {
     /// Captures both streams up to the guardian limit.
@@ -24,6 +47,19 @@ impl GitRunner for CloneHost {
         stdout: usize,
         stderr: usize,
     ) -> Result<GitOutput, GitExecError> {
+        self.run_scoped(command, stdout, stderr, RunAs::Workload)
+    }
+}
+
+impl CloneHost {
+    /// Runs one command as `identity` in a fresh Scope, closed before returning.
+    fn run_scoped(
+        &self,
+        command: &GitCommand,
+        stdout: usize,
+        stderr: usize,
+        identity: RunAs,
+    ) -> Result<GitOutput, GitExecError> {
         let fail = |source| GitExecError::OutputReadFailed {
             stream: "delivery Git",
             source,
@@ -35,19 +71,20 @@ impl GitRunner for CloneHost {
         let intent = HostRunIntent {
             scope: ScopeId::new(),
             run: RunId::new(),
-            spec: self.spec(
+            spec: self.spec_as(
                 command,
                 OutputPolicy::Capture {
                     stdout_limit: stdout.min(GUARDIAN_CAPTURE_LIMIT),
                     stderr_limit: stderr.min(GUARDIAN_CAPTURE_LIMIT),
                 },
+                identity,
             ),
             host_disconnect: GuardianHostDisconnect::KeepRunning,
         };
         let result = self.runtime.block_on(transport::execute(
             &client,
             &intent,
-            command.intent,
+            self.config.budget_for(command),
             &self.config,
             &self.shutdown,
         ));

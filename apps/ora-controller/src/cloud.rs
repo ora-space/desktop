@@ -262,7 +262,8 @@ impl CloudStore {
     }
 
     /// The guard both fact writes share with the local adapter: the Node's fact must describe the
-    /// dispatched spec and the command's request identity, and come from the dispatched Node.
+    /// dispatched spec and the command's request identity, and come from the dispatched Node. A
+    /// ready checkout must also sit at the dispatched base commit, checked before Cloud sees it.
     async fn dispatched(
         &self,
         session: &NodeRuntimeIdentity,
@@ -274,6 +275,13 @@ impl CloudStore {
         let command = self
             .original_dispatch(session, operation, execution)
             .await?;
+        if !mapping::matches_dispatch(&command, result) {
+            ora_logging::ora_error!(
+                execution_id = %execution.as_str(),
+                "clone result is not at the dispatched base commit; it is neither taken over nor acknowledged"
+            );
+            return Err(Error::Conflict);
+        }
         let (node, spec) = match result {
             CloneExecutionResult::CloneReady(ready) => (&ready.node, &ready.spec),
             CloneExecutionResult::CloneFailed(failed) => (&failed.node, &failed.spec),

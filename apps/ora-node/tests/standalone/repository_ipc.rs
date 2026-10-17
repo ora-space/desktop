@@ -48,7 +48,11 @@ pub(super) fn write_config(
             node: fixture.config(),
             process: fixture.process(),
             clone: Some(clone.clone()),
-            git_access: None,
+            git_access: Some(ora_node::GitAccessConfig {
+                ca_cert: fixture.path().join("git-server/git-access/ca.pem"),
+                client_cert: fixture.path().join("git-server/git-access/client.pem"),
+                client_key: fixture.path().join("git-server/git-access/client-key.pem"),
+            }),
             control: Some(ora_node::ControlConfig {
                 target: None,
                 controller_id: ControllerId::new("owner"),
@@ -98,8 +102,8 @@ async fn receive(stream: &mut UnixStream) -> Option<NodeToControllerMessage> {
 fn local_ipc_enforces_owner_and_replays_original_clone_after_restart() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = launch(&fixture, &config);
@@ -160,7 +164,7 @@ fn local_ipc_enforces_owner_and_replays_original_clone_after_restart() {
             }
         });
         child.kill();
-        server.reject_auth.store(true, Ordering::SeqCst);
+        server.reject_auth(true);
         let mut replacement = launch(&fixture, &config);
         // Readiness is emitted after binding; a probe connection would itself occupy the handshake slot.
         until(|| {
@@ -216,7 +220,9 @@ fn local_ipc_enforces_owner_and_replays_original_clone_after_restart() {
                 {
                     assert_eq!(
                         status.payload.state,
-                        ExecutionState::Completed(ExecutionResult::Clone(event.payload.clone()))
+                        ExecutionState::Completed(ExecutionResult::Clone(Box::new(
+                            event.payload.clone()
+                        )))
                     );
                     break;
                 }
@@ -225,5 +231,92 @@ fn local_ipc_enforces_owner_and_replays_original_clone_after_restart() {
         replacement.terminate();
         let node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         assert!(node.pending_events().unwrap().is_empty());
+    });
+}
+
+/// Clone and delivery reach the Git Server only with the git-access identity, so a Node without
+/// it declares neither (nor restore, which needs delivery); with it both are declared.
+#[test]
+fn git_server_capabilities_follow_the_git_access_identity() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let endpoint = fixture.config().home_directory.join("control.sock");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut declared = Vec::new();
+        for with_access in [false, true] {
+            let path = write_config(&fixture, &config, /*frame_timeout_ms*/ 40_000);
+            let mut deployment: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            if !with_access {
+                deployment.as_object_mut().unwrap().remove("git_access");
+            }
+            fs::write(&path, serde_json::to_vec(&deployment).unwrap()).unwrap();
+            let mut child = ChildGuard(
+                Command::new(env!("CARGO_BIN_EXE_ora-node"))
+                    .arg(&path)
+                    .stdin(Stdio::null())
+                    .stdout(fs::File::create(fixture.path().join("ipc.log")).unwrap())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .unwrap(),
+            );
+            until(|| endpoint.exists());
+            declared.push(runtime.block_on(async {
+                // The socket file may be bound a moment before the Node accepts on it; the first
+                // connection that succeeds is the session.
+                let mut stream = timeout(Duration::from_secs(/*secs*/ 30), async {
+                    loop {
+                        if let Ok(stream) = UnixStream::connect(&endpoint).await {
+                            break stream;
+                        }
+                        tokio::time::sleep(Duration::from_millis(/*millis*/ 20)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                write_controller_message(
+                    &mut stream,
+                    &ControllerToNodeMessage::Hello(HelloMessage {
+                        protocol_version: CURRENT_PROTOCOL_VERSION,
+                        payload: Hello {
+                            controller_id: ControllerId::new("owner"),
+                            supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                        },
+                    }),
+                )
+                .await
+                .unwrap();
+                let Some(NodeToControllerMessage::HelloAccepted(hello)) =
+                    receive(&mut stream).await
+                else {
+                    panic!("missing hello")
+                };
+                hello.payload.capabilities
+            }));
+            child.terminate();
+            // A stopped Node may leave its socket file; the next one binds a fresh one.
+            let _ = fs::remove_file(&endpoint);
+        }
+        assert_eq!(
+            declared,
+            vec![
+                vec![
+                    NodeCapability::PluginInstall,
+                    NodeCapability::RuntimeControl
+                ],
+                vec![
+                    NodeCapability::RepositoryClone,
+                    NodeCapability::PluginInstall,
+                    NodeCapability::RuntimeControl,
+                    NodeCapability::RevisionDelivery,
+                ],
+            ]
+        );
     });
 }

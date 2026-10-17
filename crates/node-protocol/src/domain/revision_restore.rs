@@ -1,26 +1,26 @@
 //! Resuming a session from the latest Revision of its Issue: the prior Revision a session restores
-//! before its agent starts, the commit a delivery compares against, and the memory-only download
-//! grant for the prior bundle.
+//! from the Git Server before its agent starts, and the commit a delivery compares against.
 
-use super::revision::{PresignedUrl, validate_commit};
-use crate::{CommitId, MessageValidationError, ObjectKey, RevisionId, StoredObject};
+use super::revision::validate_commit;
+use crate::{CommitId, DeliveryRef, GitRepositoryUrl, MessageValidationError, RevisionId};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use time::OffsetDateTime;
 
-/// The Revision a session resumes, fixed by Cloud when it released the session. The bundle names
-/// the verified object holding it, which may belong to an earlier Revision the prior one reused.
+/// The Revision a session resumes, fixed by Cloud when it released the session: where the Node
+/// fetches its final commit, and the base it was built on, which tells whether the Workspace
+/// snapshot still contains that history.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PriorRevision {
     pub revision_id: RevisionId,
     pub final_commit: CommitId,
-    pub bundle: StoredObject,
+    pub git_repository_url: GitRepositoryUrl,
+    pub delivery_ref: DeliveryRef,
+    pub base_commit: CommitId,
 }
 
 impl PriorRevision {
-    /// Requires an identity, a full commit and a well-formed object description, so the Node can
-    /// verify the downloaded bytes and the restored commit against exactly these values.
+    /// Requires an identity and full commits, so the Node can verify the fetched commit against
+    /// exactly these values.
     pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
         if self.revision_id.is_empty() {
             return Err(MessageValidationError::EmptyField {
@@ -28,7 +28,7 @@ impl PriorRevision {
             });
         }
         validate_commit(&self.final_commit)?;
-        self.bundle.validate()
+        validate_commit(&self.base_commit)
     }
 
     /// The part a delivery of the same run compares its final commit against.
@@ -57,36 +57,5 @@ impl PriorRevisionCommit {
             });
         }
         validate_commit(&self.final_commit)
-    }
-}
-
-/// HTTP method a download grant was signed for.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum DownloadMethod {
-    Get,
-}
-
-/// A presigned single-object read of a prior bundle, held only in memory by every party.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObjectDownloadGrant {
-    pub object_key: ObjectKey,
-    pub url: PresignedUrl,
-    pub method: DownloadMethod,
-    /// Headers the download must carry unchanged.
-    pub headers: BTreeMap<String, String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub expires_at: OffsetDateTime,
-}
-
-impl ObjectDownloadGrant {
-    /// Requires an absolute HTTP(S) URL and a valid key.
-    pub(crate) fn validate(&self) -> Result<(), MessageValidationError> {
-        self.object_key.validate()?;
-        if self.url.is_absolute_http() {
-            return Ok(());
-        }
-        Err(MessageValidationError::InvalidDownloadGrant)
     }
 }

@@ -23,12 +23,10 @@ pub(super) enum Backlog {
 }
 
 /// The queue head this Controller already warned about. It stays the head until Cloud resolves
-/// it, so one warning per item replaces one per trigger. The same holds for the wait on the static
-/// Node's handshake, which every trigger would otherwise report again.
+/// it, so one warning per item replaces one per trigger.
 #[derive(Default)]
 pub(super) struct Refusals {
     last: Option<String>,
-    unverified: bool,
 }
 
 /// Claims and registers accepted work until Cloud has none left, a step fails, or one batch is
@@ -64,97 +62,64 @@ pub(super) async fn batch(
                 return Backlog::Settled;
             }
         };
-        if let Some(target) = &item.target {
-            let Some(sandbox) = fleet.and_then(|fleet| fleet.get(&target.sandbox_instance_id))
-            else {
-                return Backlog::Settled;
-            };
-            let Some(family) = Targeted::of(&item) else {
-                if refusals.last.as_deref() != Some(item.operation_id.as_str()) {
-                    ora_logging::ora_warn!(operation_id = %item.operation_id, "targeted work names no session or delivery input");
-                    refusals.last = Some(item.operation_id);
-                }
-                return Backlog::Settled;
-            };
-            let capable = match family {
-                Targeted::Session => {
-                    sandbox.advertises(NodeCapability::AgentSession)
-                        && (!agents::mapping::resumes(item.input.as_ref())
-                            || sandbox.advertises(NodeCapability::RevisionRestore))
-                        && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
-                        Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
-                            || sandbox.advertises(NodeCapability::ModelProxy))
-                }
-                Targeted::Delivery => sandbox.advertises(NodeCapability::RevisionDelivery),
-            };
-            // A Node without the capability leaves the item queued in Cloud for a capable session;
-            // a session resuming a prior Revision on a Node that cannot restore it would otherwise
-            // run on a fresh clone and later deliver a Revision without the prior work.
-            if sandbox.binding.node_id.as_str() != target.node_id || !capable {
-                return Backlog::Settled;
-            }
-            // Quiesce cannot race a new registration into the supposedly idle sandbox.
-            let Ok(gate) = sandbox.gate.try_lock() else {
-                return Backlog::Settled;
-            };
-            if *gate != Gate::Open {
-                return Backlog::Settled;
-            }
-            if let Err(error) =
-                record_targeted(store, epoch, &item, family, &sandbox.binding.node_id).await
-            {
-                ora_logging::ora_warn!(error = %error, operation_id = %item.operation_id, "targeted work remains queued in Cloud");
-                return Backlog::Settled;
-            }
-            continue;
-        }
-        let Some(node) = &store.inner.node else {
-            return Backlog::Settled;
-        };
-        if !*store.inner.node_verified.borrow() {
-            if !refusals.unverified {
-                ora_logging::ora_info!("tenant work waits for its configured Node handshake");
-                refusals.unverified = true;
+        // Every work item names its run Workspace sandbox: tenant-level clones are gone, and a
+        // Workspace clone is dispatched only from its operation's clone step. An item without a
+        // target stays queued in Cloud, which must resolve it.
+        let Some(target) = &item.target else {
+            if refusals.last.as_deref() != Some(item.operation_id.as_str()) {
+                ora_logging::ora_warn!(operation_id = %item.operation_id, "work item names no target sandbox; it remains queued in Cloud");
+                refusals.last = Some(item.operation_id);
             }
             return Backlog::Settled;
-        }
-        let registered = match mapping::spec(item.input.clone(), node) {
-            Ok(spec) => {
-                let operation = OperationId::new(item.operation_id.clone());
-                record_dispatch(store, epoch, operation, spec).await
-            }
-            Err(error) => Err(error),
         };
-        match registered {
-            Ok(command) => {
-                refusals.last = None;
-                ora_logging::ora_info!(
-                    operation_id = %command.operation_id.as_str(),
-                    execution_id = %command.execution_id.as_str(),
-                    "dispatch recorded with Cloud; the Node session delivers it"
-                );
+        let Some(sandbox) = fleet.and_then(|fleet| fleet.get(&target.sandbox_instance_id)) else {
+            return Backlog::Settled;
+        };
+        let Some(family) = Targeted::of(&item) else {
+            if refusals.last.as_deref() != Some(item.operation_id.as_str()) {
+                ora_logging::ora_warn!(operation_id = %item.operation_id, "targeted work names no session or delivery input");
+                refusals.last = Some(item.operation_id);
             }
-            // A head that cannot be registered is returned by every claim until Cloud resolves it,
-            // so the batch stops rather than spin on it.
-            Err(error) => {
-                if refusals.last.as_deref() != Some(item.operation_id.as_str()) {
-                    ora_logging::ora_warn!(
-                        operation_id = %item.operation_id,
-                        error = %error,
-                        "claimed work could not be registered for dispatch"
-                    );
-                    refusals.last = Some(item.operation_id);
-                }
-                return Backlog::Settled;
+            return Backlog::Settled;
+        };
+        let capable = match family {
+            Targeted::Session => {
+                sandbox.advertises(NodeCapability::AgentSession)
+                    && (!agents::mapping::resumes(item.input.as_ref())
+                        || sandbox.advertises(NodeCapability::RevisionRestore))
+                    && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
+                    Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
+                        || sandbox.advertises(NodeCapability::ModelProxy))
             }
+            Targeted::Delivery => sandbox.advertises(NodeCapability::RevisionDelivery),
+        };
+        // A Node without the capability leaves the item queued in Cloud for a capable session;
+        // a session resuming a prior Revision on a Node that cannot restore it would otherwise
+        // run on a fresh clone and later deliver a Revision without the prior work.
+        if sandbox.binding.node_id.as_str() != target.node_id || !capable {
+            return Backlog::Settled;
+        }
+        // Quiesce cannot race a new registration into the supposedly idle sandbox.
+        let Ok(gate) = sandbox.gate.try_lock() else {
+            return Backlog::Settled;
+        };
+        if *gate != Gate::Open {
+            return Backlog::Settled;
+        }
+        if let Err(error) =
+            record_targeted(store, epoch, &item, family, &sandbox.binding.node_id).await
+        {
+            ora_logging::ora_warn!(error = %error, operation_id = %item.operation_id, "targeted work remains queued in Cloud");
+            return Backlog::Settled;
         }
     }
     Backlog::Pending
 }
 
-/// Freezes a new execution identity and the full input with Cloud, for a tenant work item or a
-/// Workspace operation's clone step alike; the Node protocol validates the command first so
-/// nothing undispatchable is ever registered. The Node session delivers it afterwards.
+/// Freezes a new execution identity and the full input of a Workspace operation's clone step with
+/// Cloud; the Node protocol validates the command first so nothing undispatchable is ever
+/// registered. The spec carries the strings of the input Cloud froze unchanged, so the registered
+/// input is that input verbatim. The Node session delivers it afterwards.
 pub(super) async fn record_dispatch(
     store: &CloudStore,
     epoch: i64,

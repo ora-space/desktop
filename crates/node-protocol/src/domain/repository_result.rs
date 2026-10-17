@@ -5,7 +5,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Successful acquisition facts; the original spec carries source and selected branch.
+/// Successful acquisition facts; the original spec carries the snapshot input, and `commit`
+/// always equals its `base_commit`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CloneReady {
@@ -20,13 +21,21 @@ pub struct CloneReady {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CloneFailureCode {
+    /// The Git Server was unreachable, or answered 5xx, until the retries ran out.
     SourceUnavailable,
+    /// Only in records written before the snapshot input; a new result carrying it is rejected.
     BranchNotFound,
     DestinationConflict,
     OperationFailed,
     /// Terminated before Git reached its own verdict, with cleanup confirmed; a new execution may
     /// simply retry, unlike `OperationFailed`, which usually needs investigation first.
     Interrupted,
+    /// The Git Server answered that the snapshot ref is missing or not readable; it gives both
+    /// the same answer.
+    SnapshotUnavailable,
+    /// The fetched snapshot ref was not a commit, or not the input's base commit: the Git Server
+    /// and Cloud disagree about the snapshot, which a network failure must not hide.
+    BaseCommitMismatch,
 }
 
 /// Describes retained responsibility, never permission to delete or reuse a directory.
@@ -75,7 +84,15 @@ impl CloneExecutionResult {
             Self::CloneReady(result) => {
                 validate_destination(&result.repository_id, &result.path)?;
                 validate_commit(&result.commit)
-                    .map_err(|_| MessageValidationError::InvalidCloneCommit)
+                    .map_err(|_| MessageValidationError::InvalidCloneCommit)?;
+                // A checkout at any other commit would become every later delivery's base.
+                if result.commit != result.spec.base_commit {
+                    return Err(MessageValidationError::CloneCommitMismatch);
+                }
+                Ok(())
+            }
+            Self::CloneFailed(result) if result.failure == CloneFailureCode::BranchNotFound => {
+                Err(MessageValidationError::RetiredCloneFailure)
             }
             Self::CloneFailed(result) => match &result.residual {
                 CloneResidual::NoDirectory {} => Ok(()),

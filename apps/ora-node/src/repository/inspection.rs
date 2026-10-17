@@ -3,12 +3,14 @@ use crate::managed::CloneHost;
 use gitlancer::{GitCommand, GitIntent};
 use std::io;
 
-/// Requires the original branch and remote-tracking commit, not a same-named tag or later user commit.
+/// Confirms the checkout the workload sequence built (Node clone ADR D3) and returns its HEAD:
+/// a plain, complete repository of its own on the Workspace branch, with no remote and a clean
+/// tree. The caller compares the commit with the input's base commit.
 pub(super) fn verify(
     host: &CloneHost,
     record: &CloneExecution,
     config: &CloneConfig,
-) -> io::Result<Option<CommitId>> {
+) -> io::Result<CommitId> {
     let target = &record.target.path;
     let git_dir = target.join(".git");
     DirectoryIdentity::read(&git_dir)?;
@@ -36,56 +38,47 @@ pub(super) fn verify(
         }
         Ok(output.stdout.trim_end_matches('\n').to_owned())
     };
+    let local = format!(
+        "refs/heads/{}",
+        record.command.payload.spec.workspace_ref.branch()
+    );
     if query(vec!["rev-parse".into(), "--is-bare-repository".into()])? != "false"
         || query(vec!["rev-parse".into(), "--is-shallow-repository".into()])? != "false"
         || std::path::Path::new(&query(vec![
             "rev-parse".into(),
             "--absolute-git-dir".into(),
         ])?) != git_dir
+        || !query(vec!["remote".into()])?.is_empty()
+        || !query(vec![
+            "for-each-ref".into(),
+            "--format=%(refname)".into(),
+            "refs/remotes/".into(),
+        ])?
+        .is_empty()
         || query(vec![
-            "config".into(),
-            "--get".into(),
-            "remote.origin.url".into(),
-        ])? != record.command.payload.spec.repository.as_str()
+            "for-each-ref".into(),
+            "--format=%(refname)".into(),
+            local.clone(),
+        ])? != local
+        || query(vec!["symbolic-ref".into(), "HEAD".into()])? != local
     {
         return Err(io::Error::other(
-            "checkout shape or source differs from intent",
+            "checkout shape differs from the snapshot sequence",
         ));
-    }
-    let branch = record.command.payload.spec.branch.as_str();
-    let local = format!("refs/heads/{branch}");
-    let reference = query(vec![
-        "for-each-ref".into(),
-        "--format=%(refname)".into(),
-        local.clone(),
-    ])?;
-    if reference != local {
-        return Ok(None);
-    }
-    if query(vec!["symbolic-ref".into(), "HEAD".into()])? != local {
-        return Err(io::Error::other("checkout is not on the requested branch"));
     }
     let head = query(vec![
         "rev-parse".into(),
         "--verify".into(),
         "HEAD^{commit}".into(),
     ])?;
-    let fetched = query(vec![
-        "rev-parse".into(),
-        "--verify".into(),
-        format!("refs/remotes/origin/{branch}^{{commit}}"),
-    ])?;
-    if head != fetched
-        || !query(vec![
-            "status".into(),
-            "--porcelain".into(),
-            "--untracked-files=no".into(),
-        ])?
-        .is_empty()
+    if !query(vec![
+        "status".into(),
+        "--porcelain".into(),
+        "--untracked-files=no".into(),
+    ])?
+    .is_empty()
     {
-        return Err(io::Error::other(
-            "checkout no longer matches acquired facts",
-        ));
+        return Err(io::Error::other("checkout tree differs from its HEAD"));
     }
-    Ok(Some(CommitId::new(head)))
+    Ok(CommitId::new(head))
 }

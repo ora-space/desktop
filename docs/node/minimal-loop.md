@@ -31,14 +31,14 @@ API are implemented; see [clone deployment and recovery](repository-clone.md). T
 
 Stable execution identities, durable responsibility before dispatch, process handoff, queryable results
 and acknowledgement after durable takeover remain reliability principles. Trust infrastructure and Strong
-containment remain deferred; private Git access uses trusted, noninteractive Node deployment credentials.
+containment remain deferred; clones read only from the Git Server with the Node's git-access identity, never deployment credentials.
 Existing Backend writers, Worktree records and filesystem layouts remain unchanged.
 
 ## Approved boundaries and remaining design
 
 | Topic           | Approved policy / remaining work                                                                           |
 | --------------- | ---------------------------------------------------------------------------------------------------------- |
-| Input           | HTTPS and explicit SSH, deployment credentials, explicit branch; return the actual fetched commit          |
+| Input           | Git Server snapshot over HTTPS with the git-access identity, no SSH or deployment credentials; base commit |
 | Local resources | Node allocates an exclusive destination under an injected root; preserve failed/unknown residue            |
 | Git scope       | Full single-branch history and checkout; hooks disabled, no recursive submodules or LFS downloads          |
 | Coordination    | Local IPC, durable Controller takeover, original-execution replay and intake through Cloud are implemented |

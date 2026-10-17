@@ -711,7 +711,7 @@ dependencies = [
  "find-msvc-tools",
  "jobserver",
  "libc",
- "shlex 2.0.1",
+ "shlex",
 ]
 
 [[package]]
@@ -3845,6 +3845,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-git"
+version = "0.0.0"
+dependencies = [
+ "ora-node-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ora-history"
 version = "0.0.0"
 dependencies = [
@@ -3892,6 +3902,7 @@ dependencies = [
  "ora-controller",
  "ora-domain",
  "ora-effect",
+ "ora-git",
  "ora-history",
  "ora-logging",
  "ora-node-db",
@@ -3905,6 +3916,7 @@ dependencies = [
  "ora-process-client",
  "ora-process-protocol",
  "ora-scheduler",
+ "ora-test-support",
  "ora-utils",
  "pretty_assertions",
  "rcgen",
@@ -3914,7 +3926,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "shlex 1.3.0",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -4295,6 +4306,8 @@ name = "ora-test-support"
 version = "0.0.0"
 dependencies = [
  "pretty_assertions",
+ "rcgen",
+ "rustls",
  "tempfile",
 ]
 
@@ -5816,12 +5829,6 @@ name = "shell-words"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
-
-[[package]]
-name = "shlex"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shlex"

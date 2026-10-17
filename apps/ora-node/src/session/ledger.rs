@@ -2,7 +2,6 @@
 use super::{CheckoutResolver, CommandSettlement, QueuedCommand, SessionCommand, SessionLedger};
 use ora_node_db::{SessionCommandInput, SessionCommandSettlement, SessionJournal, WriteGuard};
 use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, ThreadEvent};
-use std::path::PathBuf;
 
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
     type Error = ora_node_db::Error;
@@ -64,7 +63,9 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
 
 impl<G: WriteGuard + Send + Sync + 'static> CheckoutResolver for SessionJournal<G> {
     /// Storage errors fail closed: no unproven checkout can start an agent.
-    fn checkout(&self, execution: &ExecutionId) -> Option<PathBuf> {
-        SessionJournal::checkout(self, execution).ok().flatten()
+    fn checkout(&self, execution: &ExecutionId) -> Option<ora_node_db::ClonedCheckout> {
+        SessionJournal::cloned_checkout(self, execution)
+            .ok()
+            .flatten()
     }
 }

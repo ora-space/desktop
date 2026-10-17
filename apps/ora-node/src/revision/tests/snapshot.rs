@@ -1,5 +1,5 @@
 //! Preparation against real repositories: what the snapshot saves, what it leaves untouched, and
-//! that the bundle restores the final commit on top of the base alone.
+//! and which final commit it freezes.
 use super::super::prepare::directory_name;
 use super::*;
 use gitlancer::{CliGitRunner, GitEnv};
@@ -57,9 +57,15 @@ impl Fixture {
                 checkout_execution_id: ExecutionId::new("clone"),
                 base_commit: self.base.clone(),
                 revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
-                bundle_key: ObjectKey::new("runs/1/revision.bundle"),
                 history_key: ObjectKey::new("runs/1/history.jsonl"),
                 prior_revision: None,
+                git_repository_url: GitRepositoryUrl::parse("https://git.ora.test/t/p.git")
+                    .unwrap(),
+                delivery_ref: DeliveryRef::parse("refs/ora/deliveries/work-1").unwrap(),
+                workspace_ref: WorkspaceRef::parse(
+                    "refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/main",
+                )
+                .unwrap(),
             },
             checkout: self.checkout(),
             history: self.directory.path().join("history.jsonl"),
@@ -136,7 +142,8 @@ fn measured(key: &str, path: &Path) -> StoredObject {
     }
 }
 
-/// With nothing to save the result is `unchanged`, the ref names the base and no bundle exists.
+/// With nothing to save the result is `unchanged`, the ref names the base, and only the history
+/// is frozen.
 #[test]
 fn unchanged_checkout_freezes_only_the_history() {
     let fixture = Fixture::new();
@@ -162,7 +169,11 @@ fn unchanged_checkout_freezes_only_the_history() {
         fs::read(frozen.join("history.jsonl")).unwrap(),
         fs::read(&job.history).unwrap()
     );
-    assert!(!frozen.join("revision.bundle").exists());
+    assert_eq!(
+        fs::read_dir(&frozen).unwrap().count(),
+        1,
+        "only the history is frozen"
+    );
     assert_eq!(
         git(
             &fixture.checkout(),
@@ -173,8 +184,8 @@ fn unchanged_checkout_freezes_only_the_history() {
 }
 
 /// A resumed session that added nothing stops at the prior Revision's final commit: the delivery
-/// is unchanged at that commit and freezes no bundle, since the prior bundle already holds it
-/// (restore ADR D5). Any further change is delivered as usual.
+/// is unchanged at that commit, since the prior Revision already holds it (restore ADR D5). Any
+/// further change is delivered as usual.
 #[test]
 fn resumed_delivery_stopping_at_the_prior_final_commit_is_unchanged() {
     let fixture = Fixture::new();
@@ -203,7 +214,6 @@ fn resumed_delivery_stopping_at_the_prior_final_commit_is_unchanged() {
             }),
         }
     );
-    assert!(!frozen.join("revision.bundle").exists());
 
     fs::write(checkout.join("more.txt"), "this run\n").unwrap();
     let FrozenOutcome::Delivered(delivered) = fixture.prepare(&job).unwrap().outcome else {
@@ -225,10 +235,9 @@ fn resumed_delivery_stopping_at_the_prior_final_commit_is_unchanged() {
 }
 
 /// Agent commits are kept, remaining edits, deletions and new files become one hookless snapshot
-/// commit, ignored files stay out, and the user's index, files and branch are untouched; the
-/// bundle then restores the final commit in a repository that has only the base.
+/// commit, ignored files stay out, and the user's index, files and branch are untouched.
 #[test]
-fn changes_become_a_hookless_snapshot_bundled_against_the_base() {
+fn changes_become_a_hookless_snapshot_on_top_of_the_agent_commits() {
     let fixture = Fixture::new();
     let checkout = fixture.checkout();
     fs::write(checkout.join("agent.txt"), "committed by the agent\n").unwrap();
@@ -287,33 +296,16 @@ fn changes_become_a_hookless_snapshot_bundled_against_the_base() {
             final_commit: delivered.final_commit.clone(),
             base_commit: fixture.base.clone(),
             revision_ref: job.spec.revision_ref,
-            bundle: measured("runs/1/revision.bundle", &frozen.join("revision.bundle")),
             history: measured("runs/1/history.jsonl", &frozen.join("history.jsonl")),
         })
     );
-    // Scratch files in the Git directory are gone once the bundle is frozen.
+    // Scratch files in the Git directory are gone once the plan is frozen.
     let scratch: Vec<_> = fs::read_dir(checkout.join(".git"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|name| name.starts_with("ora-revision-"))
         .collect();
     assert_eq!(scratch, Vec::<String>::new());
-    let restored = fixture.directory.path().join("restored");
-    git(
-        fixture.directory.path(),
-        &["clone", "-q", "--no-local", "origin", "restored"],
-    );
-    let bundle = frozen.join("revision.bundle");
-    git(
-        &restored,
-        &[
-            "fetch",
-            "-q",
-            bundle.to_str().unwrap(),
-            "refs/ora/revisions/run-1:refs/heads/restored",
-        ],
-    );
-    assert_eq!(git(&restored, &["rev-parse", "restored"]), final_commit);
 }
 
 /// A checkout without the base, a directory that is no repository and a missing history fail
@@ -344,8 +336,8 @@ fn preparing_again_discards_an_abandoned_attempt() {
     let job = fixture.job();
     let leftover = fixture.root().join(directory_name(&job.execution));
     fs::create_dir_all(&leftover).unwrap();
-    fs::write(leftover.join("revision.bundle"), "partial").unwrap();
+    fs::write(leftover.join("partial"), "partial").unwrap();
     let plan = fixture.prepare(&job).unwrap();
     assert!(matches!(plan.outcome, FrozenOutcome::Unchanged(_)));
-    assert!(!leftover.join("revision.bundle").exists());
+    assert!(!leftover.join("partial").exists());
 }

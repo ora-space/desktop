@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used)]
+#[path = "support/local_clone.rs"]
+mod local_clone;
 use ora_controller::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
@@ -32,15 +34,6 @@ fn directory() -> tempfile::TempDir {
     }
 }
 
-/// Supplies immutable business intent, never a local checkout path or credential.
-fn spec() -> CloneExecutionSpec {
-    CloneExecutionSpec {
-        node_id: NodeId::new("node"),
-        repository: CloneRepositoryUrl::parse("https://example.com/repo.git").unwrap(),
-        branch: BranchName::new("main"),
-    }
-}
-
 /// Builds retained historical facts with a different incarnation from the current session.
 fn event(command: &CloneRepositoryMessage) -> CloneResultMessage {
     CloneResultMessage {
@@ -57,38 +50,21 @@ fn event(command: &CloneRepositoryMessage) -> CloneResultMessage {
             spec: command.payload.spec.clone(),
             repository_id: RepositoryId::new("repository"),
             path: NodePath::new("/node/checkout"),
-            commit: CommitId::new("0123456789abcdef0123456789abcdef01234567"),
+            commit: CommitId::new(local_clone::BASE_COMMIT),
         }),
     }
 }
 
-/// Acceptance survives restart, rejects changed input and excludes a second live database owner.
+/// A held dispatch survives restart, and the database excludes a second live owner and an owner
+/// with another identity.
 #[tokio::test]
-async fn acceptance_is_durable_idempotent_and_exclusive() {
+async fn held_dispatches_are_durable_and_ownership_exclusive() {
     let directory = directory();
     let owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
-    let accepted = owner
-        .accept_request(RequestId::new("request"), spec())
-        .await
-        .unwrap();
+    let held = local_clone::seed(directory.path(), "request");
     assert!(matches!(
         SqliteStore::open(directory.path(), ControllerId::new("owner")),
         Err(Error::AlreadyRunning)
-    ));
-    assert_eq!(
-        owner
-            .accept_request(RequestId::new("request"), spec())
-            .await
-            .unwrap(),
-        accepted
-    );
-    let mut changed = spec();
-    changed.branch = BranchName::new("different");
-    assert!(matches!(
-        owner
-            .accept_request(RequestId::new("request"), changed)
-            .await,
-        Err(Error::Conflict)
     ));
     drop(owner);
     let owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
@@ -97,7 +73,7 @@ async fn acceptance_is_durable_idempotent_and_exclusive() {
             .pending_dispatches(&NodeId::new("node"))
             .await
             .unwrap(),
-        vec![accepted]
+        vec![held]
     );
     drop(owner);
     assert!(matches!(
@@ -118,10 +94,7 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             Fault(fault.clone()),
         )
         .unwrap();
-        let command = owner
-            .accept_request(RequestId::new("request"), spec())
-            .await
-            .unwrap();
+        let command = local_clone::seed(directory.path(), "request");
         let event = event(&command);
         let session = NodeRuntimeIdentity {
             node_id: NodeId::new("node"),
@@ -133,7 +106,9 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             execution_id: command.execution_id.clone(),
             payload: ExecutionStatus {
                 node: session.clone(),
-                state: ExecutionState::Completed(ExecutionResult::Clone(event.payload.clone())),
+                state: ExecutionState::Completed(ExecutionResult::Clone(Box::new(
+                    event.payload.clone(),
+                ))),
             },
         });
         *fault.lock().unwrap() = Some(WritePoint::Receipt);
@@ -210,6 +185,7 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             .await,
             Err(Error::Conflict)
         ));
+        // A checkout at another commit than the snapshot's base is never taken over or acknowledged.
         let mut wrong = event.clone();
         if let CloneExecutionResult::CloneReady(ready) = &mut wrong.payload {
             ready.commit = CommitId::new("1123456789abcdef0123456789abcdef01234567");
@@ -221,21 +197,27 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
                 &NodeToControllerMessage::CloneResult(wrong)
             )
             .await,
-            Err(Error::Conflict)
+            Err(Error::Validation(_))
         ));
         assert_eq!(
             owner.result(&command.execution_id).await.unwrap(),
             Some(ExecutionOutcome::from(&event.payload))
         );
-        assert_eq!(
-            owner.operation(&command.execution_id).await.unwrap(),
-            Some(CloneOperation {
-                command: command.clone(),
-                result: Some(event.payload)
-            })
-        );
         let inspect =
             rusqlite::Connection::open(directory.path().join("ora-controller.sqlite3")).unwrap();
+        assert_eq!(
+            inspect
+                .query_row("SELECT input,result FROM clone_operations", [], |r| Ok((
+                    r.get::<_, String>(/*idx*/ 0)?,
+                    r.get::<_, String>(/*idx*/ 1)?
+                )))
+                .map(|(input, result)| (
+                    serde_json::from_str::<CloneRepositoryMessage>(&input).unwrap(),
+                    serde_json::from_str::<CloneExecutionResult>(&result).unwrap()
+                ))
+                .unwrap(),
+            (command.clone(), event.payload.clone())
+        );
         assert_eq!(
             inspect
                 .query_row("SELECT count(*) FROM clone_receipts", [], |r| r
@@ -246,30 +228,10 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
     }
 }
 
-/// Persistence failure cannot manufacture accepted intent, and foreign files are not reinitialized.
+/// Foreign files are not reinitialized.
 #[tokio::test]
-async fn failed_acceptance_and_unknown_files_remain_untouched() {
+async fn unknown_files_remain_untouched() {
     let directory = directory();
-    let owner = SqliteStore::open_with_guard(
-        directory.path(),
-        ControllerId::new("owner"),
-        Fault(Arc::new(Mutex::new(Some(WritePoint::Accept)))),
-    )
-    .unwrap();
-    assert!(matches!(
-        owner
-            .accept_request(RequestId::new("request"), spec())
-            .await,
-        Err(Error::Injected)
-    ));
-    assert_eq!(
-        owner
-            .pending_dispatches(&NodeId::new("node"))
-            .await
-            .unwrap(),
-        vec![]
-    );
-    drop(owner);
     let foreign = directory.path().join("foreign");
     std::fs::create_dir(&foreign).unwrap();
     #[cfg(unix)]

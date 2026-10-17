@@ -158,6 +158,8 @@ impl<G: WriteGuard> NodeDatabase<G> {
         else {
             return Err(Error::InvalidTransition);
         };
+        // Phases only move forward along the original directory identity: the snapshot pass count
+        // only grows, and the workload sequence moves one command at a time.
         let valid = match (before, after) {
             (ClonePhase::Reserved, ClonePhase::Reserved) => true,
             (ClonePhase::Reserved, ClonePhase::DirectoryCreated { identity }) => {
@@ -165,18 +167,52 @@ impl<G: WriteGuard> NodeDatabase<G> {
             }
             (
                 ClonePhase::DirectoryCreated { identity: a },
-                ClonePhase::DirectoryCreated { identity: b }
-                | ClonePhase::Dispatched { identity: b },
-            )
-            | (ClonePhase::Dispatched { identity: a }, ClonePhase::Dispatched { identity: b }) => {
-                a == b && !a.is_empty()
-            }
-            (ClonePhase::Reserved, ClonePhase::Dispatched { .. })
+                ClonePhase::DirectoryCreated { identity: b },
+            ) => a == b && !a.is_empty(),
+            (
+                ClonePhase::DirectoryCreated { identity: a },
+                ClonePhase::Fetching {
+                    identity: b,
+                    attempts,
+                },
+            ) => a == b && !a.is_empty() && *attempts >= 1,
+            (
+                ClonePhase::Fetching {
+                    identity: a,
+                    attempts: before,
+                },
+                ClonePhase::Fetching {
+                    identity: b,
+                    attempts: after,
+                },
+            ) => a == b && after >= before,
+            (
+                ClonePhase::Fetching { identity: a, .. },
+                ClonePhase::Dispatched { identity: b, step },
+            ) => a == b && *step == 0,
+            (
+                ClonePhase::Dispatched {
+                    identity: a,
+                    step: before,
+                },
+                ClonePhase::Dispatched {
+                    identity: b,
+                    step: after,
+                },
+            ) => a == b && (after == before || *after == before + 1),
+            (ClonePhase::Reserved, ClonePhase::Fetching { .. } | ClonePhase::Dispatched { .. })
+            | (ClonePhase::DirectoryCreated { .. }, ClonePhase::Dispatched { .. })
             | (
-                ClonePhase::DirectoryCreated { .. } | ClonePhase::Dispatched { .. },
+                ClonePhase::DirectoryCreated { .. }
+                | ClonePhase::Fetching { .. }
+                | ClonePhase::Dispatched { .. },
                 ClonePhase::Reserved,
             )
-            | (ClonePhase::Dispatched { .. }, ClonePhase::DirectoryCreated { .. }) => false,
+            | (
+                ClonePhase::Fetching { .. } | ClonePhase::Dispatched { .. },
+                ClonePhase::DirectoryCreated { .. },
+            )
+            | (ClonePhase::Dispatched { .. }, ClonePhase::Fetching { .. }) => false,
         };
         if !valid {
             return Err(Error::InvalidTransition);
@@ -247,20 +283,29 @@ impl<G: WriteGuard> NodeDatabase<G> {
             &result,
             CloneExecutionResult::CloneFailed(failed) if failed.failure == CloneFailureCode::Interrupted
         );
-        if matches!(phase, ClonePhase::Dispatched { .. }) {
+        if let ClonePhase::Dispatched { step, .. } = phase {
             let codes: Vec<i32> = self.connection.prepare(
-                "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1",
+                "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1 ORDER BY process_attempts.rowid",
             )?.query_map([record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0))?.collect::<Result<_, _>>()?;
             let terminations: i64 = self.connection.query_row(
                 "SELECT count(*) FROM process_terminations JOIN process_attempts USING(run) WHERE execution=?1",
                 [record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0),
             )?;
             let success = matches!(result, CloneExecutionResult::CloneReady(_));
-            // The single Run's one recorded ending decides which results are attributable: an
-            // exit code backs success or a Git failure, a signal termination backs only Interrupted.
-            let attributable = match (codes.as_slice(), terminations) {
-                ([code], 0) => !interrupted && (!success || *code == 0),
-                ([], 1) => interrupted,
+            let step = *step as usize;
+            // One ending per dispatched command decides which results are attributable: every
+            // command before the current one exited 0; the current one's exit code backs success
+            // or a Git failure, and a signal termination of it backs only Interrupted.
+            let earlier_succeeded =
+                |count: usize| codes.len() >= count && codes[..count].iter().all(|code| *code == 0);
+            let attributable = match terminations {
+                0 => {
+                    codes.len() == step + 1
+                        && earlier_succeeded(step)
+                        && !interrupted
+                        && (!success || codes[step] == 0)
+                }
+                1 => codes.len() == step && earlier_succeeded(step) && interrupted,
                 _ => false,
             };
             if !attributable {
@@ -274,7 +319,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let tx = self.connection.transaction()?;
         let changed = tx.execute(
             "UPDATE clone_executions SET state='completed',progress=?1 WHERE execution=?2 AND input=?3 AND target=?4 AND progress=?5",
-            params![serde_json::to_string(&CloneProgress::Completed(result.clone()))?, record.command.execution_id.as_str(),
+            params![serde_json::to_string(&CloneProgress::Completed(Box::new(result.clone())))?, record.command.execution_id.as_str(),
                 serde_json::to_string(&record.command)?, serde_json::to_string(&record.target)?, serde_json::to_string(&record.progress)?],
         )?;
         if changed != 1 {

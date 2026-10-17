@@ -11,7 +11,9 @@ pub enum ExecutionResult {
     // Each business owns disjoint `kind` tags. Keeping these encodings avoids rewriting
     // historical Worktree evidence just to introduce a second result family.
     Worktree(WorktreeExecutionResult),
-    Clone(CloneExecutionResult),
+    // Boxed because the snapshot input a clone result repeats would otherwise inflate every
+    // ExecutionState a status query builds.
+    Clone(Box<CloneExecutionResult>),
     Plugin(PluginExecutionResult),
     AgentSession(AgentSessionResult),
     // Boxed because a delivered Revision carries two object descriptions and three commits,

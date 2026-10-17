@@ -2,10 +2,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
 //! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
-use ora_controller::{CloneIntake, SqliteStore};
-use ora_node_protocol::{
-    BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId, RequestId,
-};
+#[path = "support/local_clone.rs"]
+mod local_clone;
+use ora_controller::{CoordinationStore, SqliteStore};
+use ora_node_protocol::{ControllerId, NodeId};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
 use std::{
@@ -355,18 +355,9 @@ fn node_exit_stops_composition_and_keeps_records() {
         .enable_all()
         .build()
         .unwrap();
-    // Work reaches a local owner through the embedding caller, never through the executable.
+    // A dispatch the database already holds; the executable never accepts work itself.
     let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
-    let accepted = runtime
-        .block_on(owner.accept_request(
-            RequestId::new("before-node-loss"),
-            CloneExecutionSpec {
-                node_id: NodeId::new("node"),
-                repository: CloneRepositoryUrl::parse("https://example.com/repo.git").unwrap(),
-                branch: BranchName::new("main"),
-            },
-        ))
-        .unwrap();
+    let accepted = local_clone::seed(&deployment.home, "before-node-loss");
     drop(owner);
     let mut executable = Executable::start(
         deployment.root.path(),
@@ -387,10 +378,12 @@ fn node_exit_stops_composition_and_keeps_records() {
             .contains("managed Node exited unexpectedly")
     );
     let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
-    let operations = runtime.block_on(owner.operations()).unwrap();
-    assert_eq!(operations.len(), 1);
-    assert_eq!(operations[0].command, accepted);
-    assert!(operations[0].result.is_none());
+    assert_eq!(
+        runtime
+            .block_on(owner.pending_dispatches(&NodeId::new("node")))
+            .unwrap(),
+        vec![accepted]
+    );
 }
 
 /// A cloud deployment creates no local state; with Cloud unreachable it stays up, ineligible,

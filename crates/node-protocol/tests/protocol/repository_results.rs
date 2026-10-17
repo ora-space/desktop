@@ -1,3 +1,4 @@
+use super::repository::{BASE_COMMIT, clone_spec, clone_spec_wire};
 use super::session::node;
 use super::support::*;
 use ora_node_protocol::*;
@@ -6,29 +7,24 @@ use serde_json::json;
 
 /// Pairs each clone result with independent JSON, including both failure residue shapes.
 fn results() -> Vec<(CloneExecutionResult, serde_json::Value)> {
-    let spec = CloneExecutionSpec {
-        node_id: NodeId::new("node-1"),
-        repository: CloneRepositoryUrl::parse("ssh://git@example.com/team/repo.git")
-            .unwrap_or_else(|error| panic!("invalid fixture: {error}")),
-        branch: BranchName::new("feature/clone"),
-    };
+    let spec = clone_spec();
     let ready = CloneExecutionResult::CloneReady(CloneReady {
         node: node(),
         spec: spec.clone(),
         repository_id: RepositoryId::new("repository-1"),
         path: NodePath::new("/node/repositories/repository-1"),
-        commit: CommitId::new("0123456789abcdef0123456789abcdef01234567"),
+        commit: CommitId::new(BASE_COMMIT),
     });
     let ready_wire = json!({"kind":"clone_ready", "result": {
         "node":{"node_id":"node-1","incarnation_id":"incarnation-1"},
-        "spec":{"node_id":"node-1","repository":"ssh://git@example.com/team/repo.git","branch":"feature/clone"},
+        "spec":clone_spec_wire(),
         "repository_id":"repository-1","path":"/node/repositories/repository-1",
-        "commit":"0123456789abcdef0123456789abcdef01234567"
+        "commit":BASE_COMMIT
     }});
     let failed = CloneExecutionResult::CloneFailed(CloneFailed {
         node: node(),
         spec: spec.clone(),
-        failure: CloneFailureCode::BranchNotFound,
+        failure: CloneFailureCode::SnapshotUnavailable,
         residual: CloneResidual::Retained {
             repository_id: RepositoryId::new("repository-1"),
             path: NodePath::new("/node/repositories/repository-1"),
@@ -36,8 +32,8 @@ fn results() -> Vec<(CloneExecutionResult, serde_json::Value)> {
     });
     let failed_wire = json!({"kind":"clone_failed", "result": {
         "node":{"node_id":"node-1","incarnation_id":"incarnation-1"},
-        "spec":{"node_id":"node-1","repository":"ssh://git@example.com/team/repo.git","branch":"feature/clone"},
-        "failure":"branch_not_found",
+        "spec":clone_spec_wire(),
+        "failure":"snapshot_unavailable",
         "residual":{"kind":"retained","repository_id":"repository-1","path":"/node/repositories/repository-1"}
     }});
     let no_directory = CloneExecutionResult::CloneFailed(CloneFailed {
@@ -48,7 +44,7 @@ fn results() -> Vec<(CloneExecutionResult, serde_json::Value)> {
     });
     let no_directory_wire = json!({"kind":"clone_failed", "result": {
         "node":{"node_id":"node-1","incarnation_id":"incarnation-1"},
-        "spec":{"node_id":"node-1","repository":"ssh://git@example.com/team/repo.git","branch":"feature/clone"},
+        "spec":clone_spec_wire(),
         "failure":"destination_conflict","residual":{"kind":"no_directory"}
     }});
     vec![
@@ -82,7 +78,7 @@ fn cases(result: CloneExecutionResult, wire: serde_json::Value) -> [Case; 2] {
                     execution_id: ExecutionId::new("execution-clone"),
                     payload: ExecutionStatus {
                         node: node(),
-                        state: ExecutionState::Completed(ExecutionResult::Clone(result)),
+                        state: ExecutionState::Completed(ExecutionResult::Clone(Box::new(result))),
                     },
                 },
             )),
@@ -157,16 +153,22 @@ async fn clone_result_validation_cannot_be_bypassed_by_status_queries() -> Resul
                     MessageValidationError::CloneTargetMismatch,
                 ),
                 (
-                    "/spec/branch",
-                    json!("HEAD~1"),
-                    MessageValidationError::InvalidCloneBranch,
+                    "/spec/base_commit",
+                    json!("1123456789abcdef0123456789abcdef01234567"),
+                    MessageValidationError::SnapshotCommitMismatch,
                 ),
             ] {
                 let mut bad = case.wire.clone();
                 replace(&mut bad, &format!("{prefix}{suffix}"), value);
                 reject_semantics(Peer::Node, &bad, suffix, expected).await?;
             }
-            for suffix in ["/node", "/spec", "/spec/repository", "/spec/branch"] {
+            for suffix in [
+                "/node",
+                "/spec",
+                "/spec/repository_url",
+                "/spec/snapshot_ref",
+                "/spec/workspace_ref",
+            ] {
                 let mut bad = case.wire.clone();
                 replace(&mut bad, &format!("{prefix}{suffix}"), json!(null));
                 reject_structure(Peer::Node, &bad, suffix).await;
@@ -233,6 +235,21 @@ async fn clone_results_require_complete_destination_and_commit_facts() -> Result
                     )
                     .await?;
                 }
+                // A well-formed commit other than the input's base would become the base of
+                // every later delivery, so it is refused like a malformed one.
+                let mut bad = case.wire.clone();
+                replace(
+                    &mut bad,
+                    &format!("{prefix}/commit"),
+                    json!("1123456789abcdef0123456789abcdef01234567"),
+                );
+                reject_semantics(
+                    Peer::Node,
+                    &bad,
+                    "commit",
+                    MessageValidationError::CloneCommitMismatch,
+                )
+                .await?;
             } else {
                 for (suffix, value) in [
                     ("failure", json!("result_unknown")),
@@ -248,6 +265,43 @@ async fn clone_results_require_complete_destination_and_commit_facts() -> Result
     Ok(())
 }
 
+/// Every current failure code decodes; the branch-not-found code of external clones only lives in
+/// historical records and is refused in a new result.
+#[tokio::test]
+async fn clone_failure_codes_cover_snapshot_outcomes() -> Result<(), TestError> {
+    for (code, wire) in [
+        (CloneFailureCode::SourceUnavailable, "source_unavailable"),
+        (
+            CloneFailureCode::SnapshotUnavailable,
+            "snapshot_unavailable",
+        ),
+        (CloneFailureCode::BaseCommitMismatch, "base_commit_mismatch"),
+        (CloneFailureCode::OperationFailed, "operation_failed"),
+        (CloneFailureCode::Interrupted, "interrupted"),
+        (
+            CloneFailureCode::DestinationConflict,
+            "destination_conflict",
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(code)?, json!(wire));
+    }
+    let [case, _] = cases(results().remove(1).0, results().remove(1).1);
+    let mut bad = case.wire.clone();
+    replace(
+        &mut bad,
+        "/payload/result/failure",
+        json!("branch_not_found"),
+    );
+    reject_semantics(
+        Peer::Node,
+        &bad,
+        "retired failure",
+        MessageValidationError::RetiredCloneFailure,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Clone tags remain disjoint from all historical Worktree terminal tags.
 #[test]
 fn clone_results_are_not_worktree_results() -> Result<(), serde_json::Error> {
@@ -255,7 +309,7 @@ fn clone_results_are_not_worktree_results() -> Result<(), serde_json::Error> {
         assert!(serde_json::from_value::<WorktreeExecutionResult>(wire.clone()).is_err());
         assert_eq!(
             serde_json::from_value::<ExecutionResult>(wire)?,
-            ExecutionResult::Clone(result)
+            ExecutionResult::Clone(Box::new(result))
         );
     }
     Ok(())

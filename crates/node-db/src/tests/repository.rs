@@ -3,6 +3,9 @@ use ora_node_protocol::*;
 use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
+/// The snapshot commit of the clone fixture.
+pub(super) const CLONE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
 /// Supplies a clone without requiring a Main Workspace or performing filesystem mutations.
 pub(super) fn clone_fixture(
     node: &NodeId,
@@ -17,8 +20,19 @@ pub(super) fn clone_fixture(
             payload: CloneRepository {
                 spec: CloneExecutionSpec {
                     node_id: node.clone(),
-                    repository: CloneRepositoryUrl::parse("https://example.com/repo.git").unwrap(),
-                    branch: BranchName::new("feature/clone"),
+                    repository_url: GitRepositoryUrl::parse(
+                        "https://git.example.test/tenant/project.git",
+                    )
+                    .unwrap(),
+                    snapshot_ref: SnapshotRef::parse(&format!(
+                        "refs/ora/upstreams/9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a/snapshots/{CLONE_COMMIT}"
+                    ))
+                    .unwrap(),
+                    base_commit: CommitId::new(CLONE_COMMIT),
+                    workspace_ref: WorkspaceRef::parse(
+                        "refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/feature/clone",
+                    )
+                    .unwrap(),
                 },
             },
         },
@@ -185,11 +199,21 @@ pub(super) fn dispatch<G: WriteGuard>(
         .unwrap();
     let journal = db.process_journal().unwrap();
     journal.manage_clone(&created).unwrap();
-    let dispatched = db
+    let fetching = db
         .advance_clone(
             &created,
+            CloneProgress::Pending(ClonePhase::Fetching {
+                identity: "native-directory-identity".into(),
+                attempts: 1,
+            }),
+        )
+        .unwrap();
+    let dispatched = db
+        .advance_clone(
+            &fetching,
             CloneProgress::Pending(ClonePhase::Dispatched {
                 identity: "native-directory-identity".into(),
+                step: 0,
             }),
         )
         .unwrap();
@@ -218,7 +242,7 @@ pub(super) fn clone_ready(record: &CloneExecution) -> CloneExecutionResult {
         spec: record.command.payload.spec.clone(),
         repository_id: record.target.repository_id.clone(),
         path: NodePath::new(record.target.path.to_str().unwrap()),
-        commit: CommitId::new("0123456789abcdef0123456789abcdef01234567"),
+        commit: CommitId::new(CLONE_COMMIT),
     })
 }
 
@@ -235,7 +259,9 @@ fn clone_acceptance_deduplicates_and_reserves_across_capabilities() {
     changed_target.path = dir.path().join("must-not-allocate");
     assert_eq!(db.accept_clone(&command, &changed_target).unwrap(), record);
     let mut changed = command.clone();
-    changed.payload.spec.branch = BranchName::new("other");
+    changed.payload.spec.workspace_ref =
+        WorkspaceRef::parse("refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/other")
+            .unwrap();
     assert!(matches!(
         db.accept_clone(&changed, &target),
         Err(Error::IdentityConflict)
@@ -328,7 +354,7 @@ fn clone_completion_requires_process_evidence_and_survives_exact_ack() {
     assert_eq!(
         db.execution_state(&command.operation_id, &command.execution_id)
             .unwrap(),
-        ExecutionState::Completed(ExecutionResult::Clone(result.clone()))
+        ExecutionState::Completed(ExecutionResult::Clone(Box::new(result.clone())))
     );
     assert_eq!(db.pending_events().unwrap(), expected);
     let mut ack = EventAckMessage {
@@ -347,7 +373,7 @@ fn clone_completion_requires_process_evidence_and_survives_exact_ack() {
     assert_eq!(db.pending_events().unwrap(), vec![]);
     assert_eq!(
         db.accept_clone(&command, &target).unwrap().progress,
-        CloneProgress::Completed(result)
+        CloneProgress::Completed(Box::new(result))
     );
 }
 
@@ -364,6 +390,7 @@ fn clone_failure_retains_destination_and_unknown_never_restarts() {
             &record,
             CloneProgress::Unknown(ClonePhase::Dispatched {
                 identity: "native-directory-identity".into(),
+                step: 0,
             }),
         )
         .unwrap();
@@ -375,7 +402,8 @@ fn clone_failure_retains_destination_and_unknown_never_restarts() {
         db.advance_clone(
             &unknown,
             CloneProgress::Pending(ClonePhase::Dispatched {
-                identity: "replacement".into()
+                identity: "replacement".into(),
+                step: 0,
             })
         ),
         Err(Error::InvalidTransition)
@@ -468,7 +496,7 @@ fn controller_binding_preserves_unclaimed_history_and_survives_restart() {
     let original = db.accept_clone(&old, &target).unwrap();
     drop(db);
     remove_plugin_schema(&path);
-    Connection::open(&path).unwrap().execute_batch("DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
+    Connection::open(&path).unwrap().execute_batch("DROP TABLE IF EXISTS workspace_branch_heads; DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
     let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     let owner = ControllerId::new("owner");
     db.bind_controller(&owner).unwrap();
@@ -557,7 +585,7 @@ fn clone_interruption_requires_recorded_termination() {
     assert_eq!(
         db.execution_state(&command.operation_id, &command.execution_id)
             .unwrap(),
-        ExecutionState::Completed(ExecutionResult::Clone(interrupted))
+        ExecutionState::Completed(ExecutionResult::Clone(Box::new(interrupted)))
     );
 }
 
@@ -620,7 +648,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
     remove_plugin_schema(&path);
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; PRAGMA user_version=4;")
+        .execute_batch("DROP TABLE IF EXISTS workspace_branch_heads; DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; PRAGMA user_version=4;")
         .unwrap();
     let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     assert_eq!(db.recoverable_clones().unwrap(), vec![record.clone()]);
@@ -632,7 +660,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     let journal = db.process_journal().unwrap();
     journal
         .record_termination(attempt.intent.run, /*signal*/ 9)
@@ -703,4 +731,142 @@ fn permit_refuses_old_delivery_and_a_clock_ahead_of_the_local_node() {
     ));
     assert!(db.unfinished_runtime_executions().unwrap().is_empty());
     assert!(!target.path.exists());
+}
+
+/// The snapshot pass count only grows and the workload sequence advances one command at a time,
+/// always along the original directory identity.
+#[test]
+fn clone_phases_move_forward_through_the_snapshot_and_workload_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let identity = || "native-directory-identity".to_owned();
+    let created = db
+        .advance_clone(
+            &accepted,
+            CloneProgress::Pending(ClonePhase::DirectoryCreated {
+                identity: identity(),
+            }),
+        )
+        .unwrap();
+    let fetching = |attempts| {
+        CloneProgress::Pending(ClonePhase::Fetching {
+            identity: identity(),
+            attempts,
+        })
+    };
+    let dispatched = |step| {
+        CloneProgress::Pending(ClonePhase::Dispatched {
+            identity: identity(),
+            step,
+        })
+    };
+    assert!(matches!(
+        db.advance_clone(&created, dispatched(0)),
+        Err(Error::InvalidTransition)
+    ));
+    let first = db.advance_clone(&created, fetching(1)).unwrap();
+    let second = db.advance_clone(&first, fetching(2)).unwrap();
+    assert!(matches!(
+        db.advance_clone(&second, fetching(1)),
+        Err(Error::InvalidTransition)
+    ));
+    assert!(matches!(
+        db.advance_clone(&second, dispatched(1)),
+        Err(Error::InvalidTransition)
+    ));
+    let step = db.advance_clone(&second, dispatched(0)).unwrap();
+    assert!(matches!(
+        db.advance_clone(&step, dispatched(2)),
+        Err(Error::InvalidTransition)
+    ));
+    assert!(matches!(
+        db.advance_clone(&step, fetching(3)),
+        Err(Error::InvalidTransition)
+    ));
+    let next = db.advance_clone(&step, dispatched(1)).unwrap();
+    assert_eq!(next.progress, dispatched(1));
+    assert_eq!(next.progress.state(), ExecutionState::Running);
+}
+
+/// The ledger keeps one value per checkout and Workspace branch, and the checkout facts come only
+/// from a successful clone.
+#[test]
+fn branch_heads_record_the_last_known_value_per_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (record, attempt) = dispatch(&mut db, &accepted);
+    assert_eq!(db.cloned_checkout(&command.execution_id).unwrap(), None);
+    let journal = db.process_journal().unwrap();
+    journal.record_outcome(attempt.intent.run, 0).unwrap();
+    journal.cleaned(attempt.intent.run).unwrap();
+    db.complete_clone(&record, clone_ready(&record)).unwrap();
+    assert_eq!(
+        db.cloned_checkout(&command.execution_id).unwrap(),
+        Some(ClonedCheckout {
+            path: target.path.clone(),
+            spec: command.payload.spec.clone(),
+        })
+    );
+    let branch = &command.payload.spec.workspace_ref;
+    let checkout = &command.execution_id;
+    assert_eq!(db.branch_head(checkout, branch).unwrap(), None);
+    db.record_branch_head(checkout, branch, &CommitId::new(CLONE_COMMIT))
+        .unwrap();
+    let later = CommitId::new("89abcdef0123456789abcdef0123456789abcdef");
+    db.session_journal()
+        .unwrap()
+        .record_branch_head(checkout, branch, &later)
+        .unwrap();
+    assert_eq!(
+        db.branch_head(checkout, branch).unwrap(),
+        Some(later.clone())
+    );
+    assert_eq!(db.branch_heads(checkout).unwrap(), vec![later]);
+}
+
+/// Snapshot clone records exactly one Run per durable workload step and never overlaps cleanup.
+#[test]
+fn clone_records_next_step_only_after_the_previous_run_is_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("node.db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (mut record, mut attempt) = dispatch(&mut db, &accepted);
+    let journal = db.process_journal().unwrap();
+    for step in 1..3 {
+        let CloneProgress::Pending(ClonePhase::Dispatched { identity, .. }) = &record.progress
+        else {
+            panic!("expected dispatched")
+        };
+        record = db
+            .advance_clone(
+                &record,
+                CloneProgress::Pending(ClonePhase::Dispatched {
+                    identity: identity.clone(),
+                    step,
+                }),
+            )
+            .unwrap();
+        let previous = attempt.intent.run;
+        attempt.intent.run = RunId::new();
+        attempt.intent.scope = ScopeId::new();
+        assert!(matches!(
+            journal.record(&attempt),
+            Err(Error::InvalidTransition)
+        ));
+        journal.record_outcome(previous, /*exit_code*/ 0).unwrap();
+        journal.cleaned(previous).unwrap();
+        journal.record(&attempt).unwrap();
+        let mut duplicate = attempt.clone();
+        duplicate.intent.run = RunId::new();
+        assert!(matches!(
+            journal.record(&duplicate),
+            Err(Error::InvalidTransition)
+        ));
+    }
+    assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 3);
 }

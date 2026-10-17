@@ -1,18 +1,20 @@
 //! Which delivery runs next, decided on the worker that owns the ledger, and the executor thread
-//! that runs its Git, file copies and uploads.
+//! that runs its Git, file copies, pushes and uploads.
 //!
-//! One delivery step is outstanding at a time. Preparation and upload are separate steps so the
-//! worker persists the frozen plan between them: no PUT can start before the plan is durable.
+//! One delivery step is outstanding at a time. Preparation and delivery are separate steps so the
+//! worker persists the frozen plan between them: no push or PUT can start before the plan is
+//! durable. Delivery pushes the frozen final commit, then uploads the history.
 //! Shutdown, a lost Controller and a lifecycle cancellation never write a failure: an interrupted
 //! step leaves the delivery running and the next start resumes it.
 use super::agents::SessionHost;
+use crate::git_server::GitServerAccess;
 use crate::revision::{
-    DELIVERY_ROOT, DeliveryGit, GrantStore, HttpUploader, ObjectUploader, Preparation, RetryPolicy,
-    UploadEnd, UploadJob, prepare, upload,
+    DELIVERY_ROOT, DeliveryGit, GrantStore, HttpUploader, ObjectUploader, Preparation, PushJob,
+    Pushed, RetryPolicy, UploadEnd, UploadJob, prepare, push, upload,
 };
 use crate::{ManagedNode, SessionHost as _, Shutdown};
 use gitlancer::GitRunner;
-use ora_node_db::{DeliveryPlan, DeliveryProgress, RevisionDelivery};
+use ora_node_db::{DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery};
 use ora_node_protocol::*;
 use ora_utils::http::{ProxyConfig, ReqwestUploader, UploadOptions};
 use std::{
@@ -23,7 +25,7 @@ use std::{
     time::Duration,
 };
 
-/// Generous enough for a large bundle on a slow link; a stuck request still ends and is retried.
+/// Generous enough for a large history on a slow link; a stuck request still ends and is retried.
 const UPLOAD_OPTIONS: UploadOptions = UploadOptions {
     connect_timeout: Duration::from_secs(/*secs*/ 30),
     total_timeout: Duration::from_secs(/*secs*/ 30 * 60),
@@ -31,14 +33,18 @@ const UPLOAD_OPTIONS: UploadOptions = UploadOptions {
 
 /// One step handed to the executor.
 enum Step {
-    Prepare(Preparation),
-    Upload(UploadJob),
+    Prepare(Box<Preparation>),
+    Deliver(Box<(PushJob, UploadJob)>),
 }
 
 /// What a step reported; `Interrupted` leaves the delivery exactly as durable state describes it.
 enum Finished {
     Prepared(ExecutionId, Result<Box<DeliveryPlan>, RevisionFailureCode>),
-    Uploaded(Box<UploadJob>, UploadEnd),
+    /// The push failed definitively; nothing was uploaded.
+    PushFailed(Box<UploadJob>, RevisionFailureCode),
+    /// The push succeeded and the upload ended; `workspace_head` is the Workspace branch value
+    /// the fast-forward established, for the ledger.
+    Uploaded(Box<UploadJob>, UploadEnd, Option<Box<(PushJob, CommitId)>>),
     Interrupted(ExecutionId),
 }
 
@@ -69,7 +75,7 @@ impl Revisions {
         grants: GrantStore,
         shutdown: Shutdown,
     ) -> Result<Option<Self>, crate::Error> {
-        let Some(policy) = node.delivery_git_policy()? else {
+        let (Some(policy), Some(access)) = (node.delivery_git_policy()?, node.git_server()) else {
             return Ok(None);
         };
         let root = node.home_directory().join(DELIVERY_ROOT);
@@ -81,17 +87,30 @@ impl Revisions {
                 .map_err(ora_node_db::Error::from)?,
             policy,
         );
+        let node_git = crate::managed::AsNode(
+            node.git
+                .runner()
+                .detached_clone_host()
+                .map_err(ora_node_db::Error::from)?,
+        );
         let uploader =
             HttpUploader::new(ReqwestUploader::new(ProxyConfig::default()), UPLOAD_OPTIONS);
-        Self::spawn(git, uploader, grants, shutdown, root, RetryPolicy::DEFAULT)
-            .map(Some)
-            .map_err(|error| ora_node_db::Error::from(error).into())
+        Self::spawn(
+            (git, node_git, access),
+            uploader,
+            grants,
+            shutdown,
+            root,
+            RetryPolicy::DEFAULT,
+        )
+        .map(Some)
+        .map_err(|error| ora_node_db::Error::from(error).into())
     }
 
     /// Runs steps on a dedicated thread with its own runtime for uploads; preparation runs
     /// outside that runtime because host-backed Git blocks on a runtime of its own.
-    fn spawn<R, U>(
-        git: DeliveryGit<R>,
+    fn spawn<R, N, U>(
+        (git, node_git, access): (DeliveryGit<R>, N, GitServerAccess),
         uploader: U,
         grants: GrantStore,
         shutdown: Shutdown,
@@ -100,6 +119,7 @@ impl Revisions {
     ) -> std::io::Result<Self>
     where
         R: GitRunner + Send + 'static,
+        N: GitRunner + Send + 'static,
         U: ObjectUploader,
     {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -123,18 +143,36 @@ impl Revisions {
                                 Finished::Prepared(job.execution, result.map(Box::new))
                             }
                         }
-                        Step::Upload(job) => {
-                            let mut stopping = stopping.clone();
-                            let end = runtime.block_on(async {
-                                tokio::select! {
-                                    biased;
-                                    _ = stopping.wait_for(|stop| *stop) => None,
-                                    end = upload(&uploader, &grants, &job, policy) => Some(end),
-                                }
+                        Step::Deliver(jobs) => {
+                            let (push_job, job) = *jobs;
+                            // Pushing runs host-backed Git, which blocks on a runtime of its own,
+                            // so it stays outside the upload runtime too.
+                            let pushed = push(&node_git, &access, &push_job, &|| {
+                                shutdown.requested() || *stopping.borrow()
                             });
-                            match end {
-                                Some(end) => Finished::Uploaded(Box::new(job), end),
-                                None => Finished::Interrupted(job.execution),
+                            match pushed {
+                                Pushed::Interrupted => Finished::Interrupted(job.execution),
+                                Pushed::Failed(failure) => {
+                                    Finished::PushFailed(Box::new(job), failure)
+                                }
+                                Pushed::Delivered { workspace_head } => {
+                                    let mut stopping = stopping.clone();
+                                    let end = runtime.block_on(async {
+                                        tokio::select! {
+                                            biased;
+                                            _ = stopping.wait_for(|stop| *stop) => None,
+                                            end = upload(&uploader, &grants, &job, policy) => Some(end),
+                                        }
+                                    });
+                                    match end {
+                                        Some(end) => Finished::Uploaded(
+                                            Box::new(job),
+                                            end,
+                                            workspace_head.map(|head| Box::new((push_job, head))),
+                                        ),
+                                        None => Finished::Interrupted(job.execution),
+                                    }
+                                }
                             }
                         }
                     };
@@ -172,16 +210,29 @@ impl Revisions {
             return Ok(());
         }
         for record in node.database.recoverable_deliveries()? {
-            let step = match record.progress {
-                DeliveryProgress::Frozen(plan) => Step::Upload(UploadJob {
-                    operation: record.command.operation_id.clone(),
-                    execution: record.command.execution_id.clone(),
-                    node_id: node.node_id().clone(),
-                    directory: self.root.join(&plan.directory),
-                    outcome: plan.outcome,
-                }),
+            let step = match record.progress.clone() {
+                DeliveryProgress::Frozen(plan) => match push_job(node, &record, &plan)? {
+                    Some(push) => Step::Deliver(Box::new((
+                        push,
+                        UploadJob {
+                            operation: record.command.operation_id.clone(),
+                            execution: record.command.execution_id.clone(),
+                            node_id: node.node_id().clone(),
+                            directory: self.root.join(&plan.directory),
+                            outcome: plan.outcome,
+                        },
+                    ))),
+                    None => {
+                        fail(
+                            node,
+                            &record.command.execution_id,
+                            RevisionFailureCode::CheckoutUnavailable,
+                        )?;
+                        continue;
+                    }
+                },
                 DeliveryProgress::Preparing => match inputs(node, agents, &record)? {
-                    Inputs::Ready(job) => Step::Prepare(*job),
+                    Inputs::Ready(job) => Step::Prepare(job),
                     Inputs::Failed(failure) => {
                         fail(node, &record.command.execution_id, failure)?;
                         continue;
@@ -193,7 +244,7 @@ impl Revisions {
                 },
                 DeliveryProgress::Completed(_) => continue,
             };
-            ora_logging::ora_info!(execution_id = %record.command.execution_id.as_str(), step = match &step { Step::Prepare(_) => "prepare", Step::Upload(_) => "upload" }, "Revision delivery step started");
+            ora_logging::ora_info!(execution_id = %record.command.execution_id.as_str(), step = match &step { Step::Prepare(_) => "prepare", Step::Deliver(_) => "deliver" }, "Revision delivery step started");
             self.in_flight = Some(record.command.execution_id.clone());
             self.steps
                 .as_ref()
@@ -229,7 +280,24 @@ impl Revisions {
                 node.database.freeze_delivery(&execution, &plan)?;
             }
             Finished::Prepared(execution, Err(failure)) => fail(node, &execution, failure)?,
-            Finished::Uploaded(job, end) => {
+            Finished::PushFailed(job, failure) => {
+                fail(node, &job.execution, failure)?;
+                if let Err(error) = std::fs::remove_dir_all(&job.directory) {
+                    ora_logging::ora_warn!(execution_id = %job.execution.as_str(), error = %error, "frozen delivery objects were not removed");
+                }
+            }
+            Finished::Uploaded(job, end, workspace_head) => {
+                // The ledger learns the branch value before the terminal result, so a later push
+                // from a resumed checkout of the same Workspace declares it.
+                if let Some((push, head)) = workspace_head.map(|boxed| *boxed)
+                    && let Err(error) = node.database.record_branch_head(
+                        &push.spec.checkout_execution_id,
+                        &push.spec.workspace_ref,
+                        &head,
+                    )
+                {
+                    ora_logging::ora_warn!(execution_id = %job.execution.as_str(), error = %error, "Workspace branch value was not recorded");
+                }
                 let result = match end {
                     UploadEnd::Uploaded => job.outcome.result(),
                     UploadEnd::Failed => failed(node, RevisionFailureCode::UploadFailed),
@@ -278,16 +346,14 @@ fn inputs(
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     }
     let session_spec = session.command.payload.spec;
-    let checkout = node
-        .database
-        .delivery_checkout(&spec.checkout_execution_id)?;
-    // The checkout must be the session's own, at the base the bundle will be relative to.
-    let Some((checkout, _)) = checkout.filter(|(_, commit)| {
-        session_spec.checkout_execution_id == spec.checkout_execution_id
-            && *commit == spec.base_commit
-    }) else {
+    // The checkout must be the session's own, at the base the delivery compares against, and
+    // the Workspace branch the delivery fast-forwards must be the one it was cloned for.
+    let Some(checkout) = checkout_of(node, spec)? else {
         return Ok(Inputs::Failed(RevisionFailureCode::CheckoutUnavailable));
     };
+    if session_spec.checkout_execution_id != spec.checkout_execution_id {
+        return Ok(Inputs::Failed(RevisionFailureCode::CheckoutUnavailable));
+    }
     let Ok(history) = ora_history::history_path(
         &node.home_directory().join("sessions"),
         spec.session_execution_id.as_str(),
@@ -313,6 +379,49 @@ fn inputs(
         node: node.identity().clone(),
         owner: node.git.runner().process_config().workload_uid,
     })))
+}
+
+/// The delivery's checkout, when it is a successful clone at the delivery's base commit and for
+/// its Workspace branch.
+fn checkout_of(
+    node: &ManagedNode,
+    spec: &DeliverRevisionSpec,
+) -> Result<Option<PathBuf>, crate::Error> {
+    Ok(node
+        .database
+        .cloned_checkout(&spec.checkout_execution_id)?
+        .filter(|checkout| {
+            checkout.spec.base_commit == spec.base_commit
+                && checkout.spec.workspace_ref == spec.workspace_ref
+        })
+        .map(|checkout| checkout.path))
+}
+
+/// What a frozen delivery pushes: the frozen final commit from its checkout, declaring the
+/// ledger's last known Workspace branch value. `None` when the checkout is gone.
+fn push_job(
+    node: &ManagedNode,
+    record: &RevisionDelivery,
+    plan: &DeliveryPlan,
+) -> Result<Option<PushJob>, crate::Error> {
+    let spec = &record.command.payload.spec;
+    let (Some(checkout), Some(config)) = (checkout_of(node, spec)?, node.clone_config()) else {
+        return Ok(None);
+    };
+    let final_commit = match &plan.outcome {
+        FrozenOutcome::Delivered(result) => result.final_commit.clone(),
+        FrozenOutcome::Unchanged(result) => result.final_commit.clone(),
+    };
+    Ok(Some(PushJob {
+        execution: record.command.execution_id.clone(),
+        spec: spec.clone(),
+        checkout,
+        final_commit,
+        workspace_head: node
+            .database
+            .branch_head(&spec.checkout_execution_id, &spec.workspace_ref)?,
+        repository_root: config.repository_root.clone(),
+    }))
 }
 
 /// Writes a definitive failure for the current incarnation.

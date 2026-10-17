@@ -1,4 +1,5 @@
 //! Independent Node storage. The open database owns the process-wide execution lease.
+mod branch_heads;
 mod controller;
 mod delivery;
 pub use delivery::EventCursor;
@@ -16,7 +17,9 @@ mod session;
 pub use execution::owns;
 pub use model::*;
 pub use process::{ProcessAttempt, ProcessJournal};
-pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
+pub use repository_model::{
+    CloneExecution, ClonePhase, CloneProgress, CloneTarget, ClonedCheckout,
+};
 pub use revision::{DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery};
 pub use session::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,

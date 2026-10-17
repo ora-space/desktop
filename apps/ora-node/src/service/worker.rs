@@ -52,6 +52,9 @@ pub(super) fn run(
             }
             node.configure_clone(clone).map_err(|e| e.to_string())?;
         }
+        if let Some(git_access) = config.git_access {
+            node.configure_git_access(git_access);
+        }
         let controller = config
             .control
             .as_ref()
@@ -67,8 +70,7 @@ pub(super) fn run(
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
-        let downloads = crate::revision::DownloadGrants::new();
-        let restorer = agents::restorer(&node, config.agent.as_ref(), downloads.clone())
+        let restorer = agents::restorer(&node, config.agent.as_ref(), shutdown.clone())
             .map_err(|e| e.to_string())?;
         let agents = agents::open(
             &mut node,
@@ -77,13 +79,12 @@ pub(super) fn run(
             &config.timezone,
             plugins.catalog.clone(),
             restorer,
+            &shutdown,
         )
         .map_err(|e| e.to_string())?;
-        Ok::<_, String>((
-            node, controller, clones, plugins, agents, grants, downloads, revisions,
-        ))
+        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions))
     })();
-    let (mut node, controller, mut clones, mut plugins, agents, grants, downloads, mut revisions) =
+    let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions) =
         match initialized {
             Ok(value) => value,
             Err(error) => {
@@ -92,10 +93,13 @@ pub(super) fn run(
             }
         };
     let mut capabilities = vec![
-        NodeCapability::RepositoryClone,
         NodeCapability::PluginInstall,
         NodeCapability::RuntimeControl,
     ];
+    // Clones come only from the Git Server, which the Node reaches with its git-access identity.
+    if node.git_server().is_some() {
+        capabilities.insert(0, NodeCapability::RepositoryClone);
+    }
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
     }
@@ -115,7 +119,6 @@ pub(super) fn run(
     let info = SessionInfo {
         agents: agents.clone(),
         grants,
-        downloads,
         identity: node.identity().clone(),
         controller: controller.clone(),
         capabilities,
@@ -428,8 +431,7 @@ fn handle(
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
-            | ControllerToNodeMessage::UploadGrant(_)
-            | ControllerToNodeMessage::DownloadGrant(_),
+            | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
 }

@@ -20,12 +20,13 @@ impl<G: WriteGuard> SessionJournal<G> {
         };
         let progress: CloneProgress = serde_json::from_str(&progress)?;
         match progress {
-            CloneProgress::Completed(CloneExecutionResult::CloneReady(_)) => {
-                Ok(Some(serde_json::from_str::<CloneTarget>(&target)?.path))
-            }
-            CloneProgress::Completed(CloneExecutionResult::CloneFailed(_))
-            | CloneProgress::Pending(_)
-            | CloneProgress::Unknown(_) => Ok(None),
+            CloneProgress::Completed(result) => match *result {
+                CloneExecutionResult::CloneReady(_) => {
+                    Ok(Some(serde_json::from_str::<CloneTarget>(&target)?.path))
+                }
+                CloneExecutionResult::CloneFailed(_) => Ok(None),
+            },
+            CloneProgress::Pending(_) | CloneProgress::Unknown(_) => Ok(None),
         }
     }
 }

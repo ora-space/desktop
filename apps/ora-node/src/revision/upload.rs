@@ -3,9 +3,9 @@
 //! A 412 answer counts as uploaded: a previous PUT may have created the object while its reply was
 //! lost, and the conditional create refuses to overwrite it. The Node never infers that the stored
 //! bytes match; it reports its frozen declaration and Cloud verifies size and digest itself.
+use super::HISTORY_FILE;
 use super::grants::{GrantStore, Registration};
 use super::prepare::stored;
-use super::{BUNDLE_FILE, HISTORY_FILE};
 use ora_node_db::FrozenOutcome;
 use ora_node_protocol::*;
 use ora_utils::http::{FileUpload, ReqwestUploader, UploadError, UploadOptions};
@@ -97,15 +97,10 @@ pub(crate) enum UploadEnd {
     Failed,
 }
 
-/// The frozen objects of a plan and the files holding them, bundle first.
+/// The frozen objects of a plan and the files holding them: the session history only.
 pub(crate) fn objects(outcome: &FrozenOutcome) -> Vec<(&StoredObject, &'static str)> {
     match outcome {
-        FrozenOutcome::Delivered(result) => {
-            vec![
-                (&result.bundle, BUNDLE_FILE),
-                (&result.history, HISTORY_FILE),
-            ]
-        }
+        FrozenOutcome::Delivered(result) => vec![(&result.history, HISTORY_FILE)],
         FrozenOutcome::Unchanged(result) => vec![(&result.history, HISTORY_FILE)],
     }
 }

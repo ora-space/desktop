@@ -11,7 +11,7 @@ mod deliveries;
 pub use deliveries::{SIGNATURE, STORE_HOST};
 #[path = "workspace_cloud/restores.rs"]
 mod restores;
-pub use restores::{PRIOR_BUNDLE, PRIOR_FINAL};
+pub use restores::{PRIOR_BASE, PRIOR_DELIVERY_REF, PRIOR_FINAL};
 #[path = "workspace_cloud/plugins.rs"]
 mod plugins;
 #[path = "workspace_cloud/runtime_control.rs"]
@@ -42,7 +42,12 @@ use tonic::{Request, Response, Status, transport::server::TcpIncoming};
 
 pub const PROJECT: &str = "00000000-0000-4000-8000-000000000001";
 pub const WORKSPACE: &str = "00000000-0000-4000-8000-000000000002";
-pub const REPOSITORY: &str = "https://example.invalid/repo.git";
+/// The Project's repository on the Git Server.
+pub const REPOSITORY: &str = "https://git.ora.test/00000000-0000-4000-8000-0000000000aa/00000000-0000-4000-8000-000000000001.git";
+/// The commit of the Binding snapshot the Workspace clones.
+pub const BASE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+/// The Binding whose snapshot the Workspace clones.
+pub const BINDING: &str = "00000000-0000-4000-8000-0000000000bb";
 /// The only lease the fake grants.
 pub const EPOCH: i64 = 1;
 
@@ -105,19 +110,6 @@ pub enum Event {
     DeliveryAck {
         execution: String,
         sequence: u64,
-    },
-    /// Cloud signed a read of a resumed session's prior bundle.
-    DownloadIssued {
-        execution: String,
-    },
-    /// Cloud declined a download grant for a resumed session.
-    DownloadRefused {
-        execution: String,
-    },
-    /// The fake Node received a `DownloadGrant` frame, granted or refused.
-    DownloadReceived {
-        execution: String,
-        granted: bool,
     },
 
     Claimed {
@@ -216,6 +208,8 @@ struct State {
     effects: Vec<(String, proto::Effect)>,
     clones: Vec<proto::ExecutionRecord>,
     plugin_input: Option<proto::ExecutionInput>,
+    /// Whether clone-step snapshots leave out the frozen clone input.
+    withhold_clone_input: bool,
     agents: agents::AgentState,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
     next_id: u64,
@@ -293,6 +287,7 @@ impl WorkspaceCloud {
                 effects: Vec::new(),
                 clones: Vec::new(),
                 plugin_input: None,
+                withhold_clone_input: false,
                 agents: agents::AgentState::default(),
                 subscriber: None,
                 next_id: 100,
@@ -389,21 +384,54 @@ impl WorkspaceCloud {
             .unwrap()
     }
 
+    /// The snapshot clone input Cloud froze for the Workspace's clone step (`request.clone`).
+    pub fn clone_input(&self) -> proto::CloneSpec {
+        Self::frozen_clone(&self.lock())
+    }
+
+    /// Makes clone-step snapshots carry no frozen input, as a Cloud defect would.
+    pub fn withhold_clone_input(&self) {
+        self.lock().withhold_clone_input = true;
+    }
+
+    /// The frozen clone input; the Workspace branch is named after its requested ref.
+    fn frozen_clone(state: &State) -> proto::CloneSpec {
+        let branch = &state.workspace.requested_ref;
+        proto::CloneSpec {
+            repository_url: REPOSITORY.into(),
+            snapshot_ref: format!("refs/ora/upstreams/{BINDING}/snapshots/{BASE_COMMIT}"),
+            base_commit: BASE_COMMIT.into(),
+            workspace_ref: format!("refs/heads/workspaces/{WORKSPACE}/{branch}"),
+        }
+    }
+
+    /// Every registered clone execution, in registration order.
+    pub fn clone_records(&self) -> Vec<proto::ExecutionRecord> {
+        self.lock()
+            .clones
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record.input.as_ref().and_then(|input| input.spec.as_ref()),
+                    Some(proto::execution_input::Spec::Clone(_))
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Registers an execution to `node` that has no result, as a dispatch still in flight.
     pub fn inject_pending(&self, operation: &str, node: &str) {
+        let input = self.clone_input();
         let mut state = self.lock();
         let execution = Self::next_id(&mut state);
-        let branch = state.workspace.requested_ref.clone();
         state.clones.push(proto::ExecutionRecord {
             node_operation_id: execution.clone(),
             operation_id: operation.into(),
             execution_id: execution,
             node_id: node.into(),
             input: Some(proto::ExecutionInput {
-                spec: Some(proto::execution_input::Spec::Clone(proto::CloneSpec {
-                    repository: REPOSITORY.into(),
-                    branch,
-                })),
+                spec: Some(proto::execution_input::Spec::Clone(input)),
             }),
             result: None,
         });
@@ -439,12 +467,7 @@ impl WorkspaceCloud {
         let id = &state.ops[index].operation.id;
         proto::OperationSnapshot {
             operation: Some(state.ops[index].operation.clone()),
-            project: Some(proto::OperationProject {
-                id: PROJECT.into(),
-                repository_url: REPOSITORY.into(),
-                default_branch: state.workspace.requested_ref.clone(),
-                credential_ref: None,
-            }),
+            project: Some(proto::OperationProject { id: PROJECT.into() }),
             workspaces: vec![state.workspace.clone()],
             sandboxes: state.sandboxes.clone(),
             nodes: state.nodes.clone(),
@@ -467,6 +490,11 @@ impl WorkspaceCloud {
                 .cloned()
                 .collect(),
             plugin_input: state.plugin_input.clone(),
+            // Cloud freezes the clone input before handing out the clone step, and keeps it for
+            // every attempt; a test may withhold it to model a step handed out without one.
+            clone_input: (state.ops[index].operation.step() == proto::OperationStep::Clone
+                && !state.withhold_clone_input)
+                .then(|| Self::frozen_clone(state)),
         }
     }
 
@@ -1123,6 +1151,7 @@ impl ExecutionService for WorkspaceCloud {
         ) {
             return self.register_agent(&message);
         }
+        let frozen = self.clone_input();
         let record = {
             let mut state = self.lock();
             let op = state
@@ -1131,11 +1160,9 @@ impl ExecutionService for WorkspaceCloud {
                 .find(|op| op.operation.id == message.operation_id)
                 .ok_or_else(|| Status::not_found("not_found"))?;
             let expected = match op.operation.step() {
+                // Cloud requires the clone input to equal the operation's `request.clone`.
                 proto::OperationStep::Clone => proto::ExecutionInput {
-                    spec: Some(proto::execution_input::Spec::Clone(proto::CloneSpec {
-                        repository: REPOSITORY.into(),
-                        branch: state.workspace.requested_ref.clone(),
-                    })),
+                    spec: Some(proto::execution_input::Spec::Clone(frozen)),
                 },
                 proto::OperationStep::Plugin => state
                     .plugin_input

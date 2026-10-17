@@ -64,6 +64,34 @@ impl<G: WriteGuard> SessionJournal<G> {
             .map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
+    /// Whether the session still runs as far as the ledger knows: it has no terminal result and
+    /// no `EndSession` was ever accepted for it, whether or not the session acted on it yet.
+    /// Local work done on the session's behalf (`ora-git`) stops being accepted from the moment
+    /// an end is requested, not only once the session has ended.
+    pub fn session_running(&self, execution: &ExecutionId) -> Result<bool, Error> {
+        let db = self.lock()?;
+        let Some(session) = read(&db.connection, execution)? else {
+            return Ok(false);
+        };
+        if matches!(session.state, ExecutionState::Completed(_)) {
+            return Ok(false);
+        }
+        let inputs = db
+            .connection
+            .prepare("SELECT input FROM session_commands WHERE execution=?1")?
+            .query_map([execution.as_str()], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for input in inputs {
+            if matches!(
+                serde_json::from_str::<SessionCommandInput>(&input)?,
+                SessionCommandInput::EndSession(_)
+            ) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Observes settlement without consuming the command or changing its admission order.
     pub fn command_state(
         &self,

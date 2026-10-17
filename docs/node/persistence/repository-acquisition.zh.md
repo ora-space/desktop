@@ -9,15 +9,15 @@ Linux 运行时现已连接存储、原生目录身份、受管 Git 获取及重
 相同输入重放返回原目标；输入变化或跨能力复用 operation／execution 均失败。目标不能与 active
 Worktree 路径或任何保留的 clone 路径重叠；clone 失败不释放预留。
 
-进度保留 Reserved、DirectoryCreated 或 Dispatched 事实。创建后的目录身份固定，Unknown
+进度保留 Reserved、DirectoryCreated、Fetching（含跨重启次数）或 Dispatched（含当前步骤）事实。创建后的目录身份固定，Unknown
 保留原阶段，不能倒退为 Reserved。SQLite 将原生目录身份视为不透明证据，须由文件系统所有者
 采集、核实，不能凭数据库行推断归属。`ProcessJournal::manage_clone` 只在目录创建证据落盘后
-接管；每个 clone 执行最多登记一次变更 Run。失败后重试必须使用新身份及新目录。
+接管；工作负载三步各登记一个 Run；同一步不重复登记，前一步清理完成后才能登记下一步。失败后重试必须使用新身份及新目录。
 
 终态与原始事件在同一事务提交，结果输入／资源／路径必须匹配原记录。已派发尝试须有且仅有
 一个已观测结束事实，且不存在未清理 Run：退出码（`process_outcomes`）支撑成功或 Git 失败，
 信号终止（`process_terminations`）只支撑 `interrupted` 失败；同一 Run 不能同时有两者，未派发的执行
-不能判为中断。成功要求零退出码；校验也可将零退出码的 tag checkout 判为缺少分支。缺少退出／清理证据
+不能判为中断。成功要求此前步骤与当前步骤都为零退出码；运行时还须核对 HEAD 等于快照基线。缺少退出／清理证据
 时保持可恢复，不提交终态。真实仓库事实检查是运行时的额外义务，SQLite 不提供该证明。
 派发前失败可按自有残留事实提交，不编造 Run。
 
@@ -27,3 +27,6 @@ Worktree 路径或任何保留的 clone 路径重叠；clone 失败不释放预�
 schema v5 只新增 `process_terminations`，不改写已有行。schema v3 事务迁移可识别的 v1／v2 表，保留 Worktree 旧记录／事件和未清理进程尝试，拒绝未知
 结构。已有旧程序拒绝新版本。`tests/repository.rs` 与 `tests/repository_migration.rs` 使用真实
 SQLite 验证这些存储义务，不证明远端 Git 执行、目录归属、Controller 接管或真实旧程序运行。
+
+快照切换后的 schema v10 增加 checkout 的 Workspace 分支已知值账本。旧 clone 记录不迁移，开发环境
+数据随 Workspace 重建；已有 Worktree schema 的识别与校验保持原有边界。

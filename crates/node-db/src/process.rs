@@ -62,8 +62,11 @@ impl<G: WriteGuard> ProcessJournal<G> {
         }
         if !matches!(
             record.progress,
-            crate::CloneProgress::Pending(crate::ClonePhase::DirectoryCreated { .. })
-                | crate::CloneProgress::Unknown(crate::ClonePhase::DirectoryCreated { .. })
+            crate::CloneProgress::Pending(
+                crate::ClonePhase::DirectoryCreated { .. } | crate::ClonePhase::Fetching { .. }
+            ) | crate::CloneProgress::Unknown(
+                crate::ClonePhase::DirectoryCreated { .. } | crate::ClonePhase::Fetching { .. }
+            )
         ) {
             return Err(Error::InvalidTransition);
         }
@@ -192,11 +195,13 @@ impl<G: WriteGuard> ProcessJournal<G> {
         if !unfinished {
             return Err(Error::InvalidTransition);
         }
-        let repeated_clone: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM clone_executions JOIN process_attempts USING(execution) WHERE execution=?1)",
+        // Snapshot clone has one durable Run per workload step. A repeated Run for the same
+        // step is forbidden; the next step may start only after every earlier Run is cleaned.
+        let invalid_clone: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM clone_executions c WHERE c.execution=?1 AND (COALESCE(json_extract(c.progress, '$.evidence.step'),0) != (SELECT count(*) FROM process_attempts p WHERE p.execution=c.execution) OR EXISTS(SELECT 1 FROM process_attempts p WHERE p.execution=c.execution AND p.cleaned=0)))",
             [attempt.execution.as_str()], |r| r.get(/*idx*/ 0),
         )?;
-        if repeated_clone {
+        if invalid_clone {
             return Err(Error::InvalidTransition);
         }
         self.guard.before_write(WritePoint::Process)?;

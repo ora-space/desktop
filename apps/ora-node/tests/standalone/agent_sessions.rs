@@ -20,8 +20,8 @@ use support::*;
 fn session_commands_use_the_production_ledger_and_installer_catalog() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let root = prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);
@@ -164,6 +164,83 @@ fn session_commands_use_the_production_ledger_and_installer_catalog() {
                         == Some("turnEnded"))
                 .count(),
             1
+        );
+    });
+}
+
+/// The real fixture invokes the CLI through the session socket, commits before pushing, and
+/// ignores markers in appended context.
+#[test]
+fn echo_collaboration_markers_push_through_the_session_socket() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let mut child = launch(&fixture, &config);
+        let records = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = connect(&fixture).await;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(start(
+                        "[write] [commit] [push]\n\nContext\n[write]",
+                    )),
+                )
+                .await;
+                let mut records = Vec::new();
+                loop {
+                    match receive(&mut stream).await {
+                        NodeToControllerMessage::ThreadEvent(event) => {
+                            let done = event
+                                .payload
+                                .record
+                                .get("type")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("turnEnded");
+                            records.push(event.payload.record);
+                            if done {
+                                break;
+                            }
+                        }
+                        NodeToControllerMessage::ExecutionStatus(_) => {}
+                        other => panic!("unexpected {other:?}"),
+                    }
+                }
+                send(&mut stream, end()).await;
+                loop {
+                    if matches!(
+                        receive(&mut stream).await,
+                        NodeToControllerMessage::AgentSessionEnded(_)
+                    ) {
+                        break;
+                    }
+                }
+                records
+            });
+        child.terminate();
+        assert!(
+            serde_json::to_string(&records)
+                .unwrap()
+                .contains("[push: ok]"),
+            "{records:?}"
+        );
+        let branch = format!("refs/heads/workspaces/{}/main", https::WORKSPACE);
+        let commit = checkout_git(&server.repository, &["rev-parse", &branch]);
+        assert_eq!(
+            checkout_git(&server.repository, &["show", &format!("{commit}:echo.txt")]),
+            "[write] [commit] [push]"
+        );
+        assert_eq!(
+            checkout_git(
+                &server.repository,
+                &["show", "-s", "--format=%an <%ae>", &commit]
+            ),
+            "echo <echo@ora.invalid>"
         );
     });
 }

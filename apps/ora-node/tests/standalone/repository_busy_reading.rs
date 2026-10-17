@@ -88,9 +88,9 @@ async fn running_ipc(stream: &mut UnixStream, command: &CloneRepositoryMessage) 
 fn ipc_peer_leaving_while_clone_git_runs_releases_the_control_slot() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = ipc::launch(&fixture, &config);
@@ -143,7 +143,7 @@ fn ipc_peer_leaving_while_clone_git_runs_releases_the_control_slot() {
                 .await
                 .expect("a departed peer must not hold the control slot while Git runs");
             });
-        server.paused.store(false, Ordering::SeqCst);
+        server.pause(false);
         child.terminate();
     });
 }
@@ -154,9 +154,9 @@ fn ipc_peer_leaving_while_clone_git_runs_releases_the_control_slot() {
 fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let clone = configuration(&fixture, &server);
         // Reserve a free port; the Node binds it again after this listener closes.
         let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -310,7 +310,7 @@ fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
                 .await
                 .expect("a closed peer must not hold the control slot while Git runs");
             });
-        server.paused.store(false, Ordering::SeqCst);
+        server.pause(false);
     });
 }
 
@@ -320,9 +320,9 @@ fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
 fn polling_flood_while_git_runs_keeps_the_session() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = ipc::launch(&fixture, &config);
@@ -378,7 +378,7 @@ fn polling_flood_while_git_runs_keeps_the_session() {
                     answers > 0 && beats > 0,
                     "flood left {answers} answers and {beats} heartbeats"
                 );
-                server.paused.store(false, Ordering::SeqCst);
+                server.pause(false);
             });
         child.terminate();
     });

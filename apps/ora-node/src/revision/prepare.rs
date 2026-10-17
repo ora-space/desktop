@@ -1,7 +1,8 @@
-//! Preparation runs once per delivery: snapshot, bundle, and freeze every object with its size and
-//! digest under the Node home before anything is uploaded (Revision ADR D4).
+//! Preparation runs once per delivery: snapshot, and freeze the final commit, the declaration and
+//! the history's bytes, size and digest under the Node home before anything is pushed or uploaded
+//! (Node delivery push ADR D3).
+use super::HISTORY_FILE;
 use super::snapshot::{DeliveryGit, Snapshot, SnapshotFailure, SnapshotRequest};
-use super::{BUNDLE_FILE, HISTORY_FILE};
 use gitlancer::GitRunner;
 use ora_node_db::{DeliveryPlan, FrozenOutcome};
 use ora_node_protocol::*;
@@ -47,7 +48,7 @@ pub(crate) fn prepare<R: GitRunner>(
     result
 }
 
-/// Writes the objects into a fresh directory and describes them as they will be uploaded.
+/// Writes the history into a fresh directory and describes the delivery as it will be reported.
 fn freeze<R: GitRunner>(
     git: &DeliveryGit<R>,
     frozen: &Path,
@@ -94,7 +95,6 @@ fn freeze<R: GitRunner>(
         .map_err(|failure| match failure {
             SnapshotFailure::CheckoutUnavailable => RevisionFailureCode::CheckoutUnavailable,
             SnapshotFailure::SnapshotFailed => RevisionFailureCode::SnapshotFailed,
-            SnapshotFailure::BundleFailed => RevisionFailureCode::BundleFailed,
         })?;
     let history = stored(&job.spec.history_key, &history_path)
         .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
@@ -106,24 +106,13 @@ fn freeze<R: GitRunner>(
             revision_ref: job.spec.revision_ref.clone(),
             history,
         }),
-        Snapshot::Changed {
+        Snapshot::Changed { final_commit } => FrozenOutcome::Delivered(RevisionDelivered {
+            node: job.node.clone(),
             final_commit,
-            bundle,
-        } => {
-            let bundle_path = frozen.join(BUNDLE_FILE);
-            let copied = copy_synced(&bundle, &bundle_path);
-            let _ = fs::remove_file(&bundle);
-            copied.map_err(|error| local(error, RevisionFailureCode::BundleFailed))?;
-            FrozenOutcome::Delivered(RevisionDelivered {
-                node: job.node.clone(),
-                final_commit,
-                base_commit: job.spec.base_commit.clone(),
-                revision_ref: job.spec.revision_ref.clone(),
-                bundle: stored(&job.spec.bundle_key, &bundle_path)
-                    .map_err(|error| local(error, RevisionFailureCode::BundleFailed))?,
-                history,
-            })
-        }
+            base_commit: job.spec.base_commit.clone(),
+            revision_ref: job.spec.revision_ref.clone(),
+            history,
+        }),
     };
     fs::File::open(frozen)
         .and_then(|directory| directory.sync_all())
@@ -145,8 +134,8 @@ pub(crate) fn stored(key: &ObjectKey, path: &Path) -> io::Result<StoredObject> {
 
 /// Copies a regular file without following a final symlink, and makes the copy durable.
 ///
-/// Both sources sit in directories other programs wrote (the checkout's Git directory, the
-/// session root); refusing a symlink keeps the Node from freezing an unrelated file.
+/// The source sits in a directory another program wrote (the session root); refusing a symlink
+/// keeps the Node from freezing an unrelated file.
 fn copy_synced(source: &Path, destination: &Path) -> io::Result<()> {
     let mut input = fs::OpenOptions::new()
         .read(/*read*/ true)

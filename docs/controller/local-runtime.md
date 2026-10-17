@@ -17,18 +17,18 @@ local deployments, whose operations run on the blocking pool so SQLite's fsync n
 async runtime that hosts Node sessions and the embedding caller; and `CloudStore::open(&config)` for cloud
 deployments, whose operations are calls on the
 [Controller–Cloud contract](../protocols/controller-cloud-contract.md) committed by Cloud in PostgreSQL.
-Accepting caller requests and cataloguing accepted operations (`accept_request`, `operations`,
-`operation`) is the separate `CloneIntake` interface that only the SQLite adapter implements; whatever
-embeds a local Controller (Desktop's future local mode) uses it through `ControllerHandle`. In a cloud
-deployment acceptance belongs to Cloud's public API, and there is no local intake at all.
+The Controller has no local clone intake: a Workspace clone takes a Git Server snapshot input that
+only Cloud can fix, so a deployment without Cloud cannot produce a valid one. The former
+`CloneIntake` interface (`accept_request`, `operations`, `operation`) and `ControllerHandle` were
+removed
+([ADR](../../specs/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)
+D4); the SQLite adapter keeps reconciling, taking over and reporting the clone dispatches its database
+already holds.
 `result(execution_id)` reports the terminal fact as an `ExecutionOutcome` (Node incarnation plus
 `ready{path, commit}` or `failed{reason, retained_path}`), the shape both authorities persist; the local
-catalogue keeps the full wire result for presentation.
+database keeps the full wire result.
 
-The command returned by `accept_request(request_id, spec)` contains stable operation/execution IDs.
-Acceptance writes the complete input and target Node before returning; repeating a request returns the
-original command, while changed input is rejected. `result(execution_id)` reads a durable terminal
-result; absence is not proof of failure. `pending_dispatches(node)` lists only the executions
+`result(execution_id)` reads a durable terminal result; absence is not proof of failure. `pending_dispatches(node)` lists only the executions
 without a durable result: they are what a reconnected session keeps querying, while replayed events of
 completed executions are still verified against `original_dispatch`.
 
@@ -38,7 +38,7 @@ the sibling `ora-controller.sqlite3.lock` protect reopening; the lease lives bes
 SQLite's own file locks never collide with it on macOS or Windows. A different ControllerId or unknown existing file is rejected. No HOME-derived
 storage location, database reset, task import or automatic Controller rebinding is provided.
 
-`clone_operations` stores acceptance and the immutable terminal result. `clone_receipts` stores exact
+`clone_operations` stores the dispatched input and the immutable terminal result. `clone_receipts` stores exact
 Node event identities/content. Query completion and event delivery use the same takeover transaction;
 only a received event produces an Ack after its receipt commits. Duplicate content is idempotent;
 conflicting input/result/request association is rejected without acknowledgement. Historical Node
@@ -46,14 +46,11 @@ incarnations are retained, while query reporters and heartbeats must match the c
 
 ## Independent executable
 
-`ControllerRuntime::open(RuntimeConfig)` supports embedding. `handle()` exposes durable clone
-acceptance, operation listing and lookup; `run(shutdown)` owns reconnect loops without installing signal
-handlers. Missing lookup is distinct from an accepted operation without a terminal result.
-`Service::start(DeploymentConfig, NodeHosting)` composes the sole runtime owner and an optionally hosted
+`ControllerRuntime::open(RuntimeConfig)` supports embedding; `run(shutdown)` owns reconnect loops
+without installing signal handlers. `Service::start(DeploymentConfig, NodeHosting)` composes the sole runtime owner and an optionally hosted
 Node for the executable and for tests, and opens no listener. The executable has no intake of its own:
-in the SQLite form it dispatches and takes over the work its owner already accepted and logs
-`ora-controller coordinating locally` once composed; new work is accepted by whatever embeds
-`ControllerHandle`.
+in the SQLite form it reconciles and takes over the dispatches its database already holds and logs
+`ora-controller coordinating locally` once composed.
 
 Build `cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian`.
 Deployment state lives in one configuration file; per-process composition is given on the command line:
@@ -86,7 +83,9 @@ which Cloud records as the lease and submission holder (it must be printable ASC
 [Workspace sandboxes](#workspace-sandboxes)). The adapter's
 `serve` task acquires Cloud's global lease, renews it every ten seconds, claims accepted work,
 validates it as a Node command and registers the dispatch with `RecordDispatch` before the existing
-Node session delivers it through its periodic status query. One claim registers work until Cloud has
+Node session delivers it. Every work item names the Workspace sandbox it runs in (Agent sessions and
+Revision deliveries); Cloud no longer hands out tenant-level clones, and an item without a target is
+logged once and left queued in Cloud without being registered. One claim registers work until Cloud has
 none left or a step fails, in batches of at most 16 so a long queue never delays the lease renewal. Every write carries
 the lease epoch and a stable submission identity; only a lost reply is retransmitted, with the same
 identity, so Cloud replays its recorded response instead of applying the effect twice. Cloud's
@@ -96,8 +95,9 @@ only), stale eligibility (the lease is forgotten and re-acquired by the next ren
 lease is not held nothing is claimed, dispatched or acknowledged, and the Controller never falls back
 to writing locally.
 
-Tenant work is claimed only after a session with the static Node completed its handshake in this
-process, which proves that the configured `node_id` is the Node behind the endpoint. A dispatch
+Without a `substrate` section claims still start only after a session with the static Node completed
+its handshake in this process (a static Node no longer receives any work: this gating outlived the
+tenant clones it was made for), which proves that the configured `node_id` is the Node behind the endpoint. A dispatch
 names its Node for good (the Node may already have run it, so it is never moved to another
 identity); registering work under a misconfigured `node_id` would leave it pending forever. Until
 the handshake succeeds the work stays queued with Cloud and the Controller logs once that it is
@@ -159,26 +159,28 @@ one after another. The steps are:
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | sandbox   | executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`)                                           |
 | node      | opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
-| clone     | dispatches the latest clone through the Node session and advances once its result is ready                                          |
+| clone     | forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready    |
 | quiesce   | closes the sandbox's dispatch gate and reports idle only when no dispatch is pending or unresolved                                  |
 | terminate | stops the Node session first, then executes the terminate effect                                                                    |
 | cleanup   | executes the data-delete effect                                                                                                     |
 
-Node targets come only from Cloud's sandbox rows; static `nodes` stay tenant clone targets, and a
-sandbox whose NodeId collides with a static Node is refused. The Controller never recreates a sandbox
+Node targets come only from Cloud's sandbox rows; a sandbox whose NodeId collides with a static Node
+is refused. The Controller never recreates a sandbox
 on its own. After a handshake it registers the Node incarnation with `RegisterNode`, reports it
 connected every ten seconds, reports it disconnected once when the session is lost (not when the Controller stopped it), and ends a previous
 incarnation before registering a new one. A failed effect defers the operation with
 `external_failure`, a timed-out one with `substrate_timeout`, and an unconfirmed termination blocks
-it with `termination_unconfirmed`. A clone whose ref the Node protocol refuses (such as `HEAD`)
-blocks the step without a dispatch.
+it with `termination_unconfirmed`. The Controller never builds a clone input from the Project or
+Workspace fields: a clone step whose snapshot carries no `clone_input`, or one the Node protocol
+refuses (a URL that is not plain `https`, a ref outside its namespace, a snapshot ref not named after
+`base_commit`), blocks with `external_failure` without a dispatch. A ready clone is taken over only
+when its commit equals the input's `base_commit`; otherwise it is neither taken over nor acknowledged.
 
 Sessions follow Cloud's record. When a lease epoch is first held, the Controller calls
 `ListLiveSandboxes`, starts a session for every listed sandbox and stops any it holds that is not
 listed, so a restarted Controller reconnects before any operation is claimed; each claimed
 operation's snapshot then keeps its own Project's sandboxes in line. A failed list does not hold
-operations back and is retried on the next wake. Cloud requires a concrete Project default branch,
-so `HEAD` reaches the clone step only for Projects created before that rule.
+operations back and is retried on the next wake.
 
 ```json
 {
@@ -255,24 +257,27 @@ proto and the Controller dials out as its client (see the
 
 ## Verification and remaining scope
 
-Real SQLite tests, driven through the `CoordinationStore` and `CloneIntake` interfaces, cover acceptance, exclusive ownership, transaction failure, query/event ordering,
+Real SQLite tests, driven through the `CoordinationStore` interface on dispatches written into the
+database directly, cover durability, exclusive ownership, transaction failure, query/event ordering,
 duplicate takeover, conflicting facts and the retirement of completed executions from periodic queries.
 The Cloud adapter's verdict mapping, same-identity retransmission and message translation are unit
 tested, and so are the transitions of the stream state. `apps/ora-controller/tests/cloud.rs` drives
 the runtime against an in-memory Cloud that serves the real contract through the test-only server
 stubs of `ora-controller-proto` (`test-server` feature) and a fake static Node over IPC, covering
-signal-driven claiming, work queued before the Node's handshake, work held back while the Node
-presents another identity, fallback and reopening after a broken stream, drains, a refused
-stream after a drain, a stale epoch on opening, batching, and cancelling the stream and releasing the
-lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state and stays up while
+signal-driven claiming, claims held back until the Node's handshake and while the Node presents
+another identity, fallback and reopening after a broken stream, drains, a refused stream after a
+drain, a stale epoch on opening, refusing work without a target, and cancelling the stream and
+releasing the lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state and stays up while
 Cloud is unreachable. Its behavior against a real Cloud (lease, claim, dispatch, takeover, restart
 without a second clone) was verified end to end by hand; integration now runs in the cluster
 repository's Compose stack (Gateway → Cloud → Controller → Sandbox Server → Node), and none of it is an
 automated test yet. `apps/ora-controller/tests/workspaces.rs` drives
 Workspace operations against a fake Cloud, a fake Substrate effect server and a fake Node: creating
 and stopping a Workspace runs every step, registers the Node before the clone, reports idle and stops
-the session before terminating without reporting that stop as a lost connection; an unclonable ref blocks the clone step without a dispatch; and quiesce reports busy
-while a dispatch has no result. The Substrate client is unit tested for querying a timed-out effect
+the session before terminating without reporting that stop as a lost connection; the frozen clone
+input reaches `RecordDispatch` and the Node verbatim; a clone step without that input, or with one
+the Node protocol refuses, blocks without a dispatch; a ready clone at another commit is not taken
+over; and quiesce reports busy while a dispatch has no result. The Substrate client is unit tested for querying a timed-out effect
 by the same id and for not resending a completed effect. Framed-session tests cover bounded Unknown retransmission
 and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills

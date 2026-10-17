@@ -1,4 +1,4 @@
-//! The internal snapshot commit and the incremental bundle (Revision ADR D2, D3).
+//! The internal snapshot commit (Revision ADR D2).
 //!
 //! Everything here runs Git plumbing against a scratch index, so the real index, the worktree
 //! files and every branch stay as the Agent left them, and no commit hook can run. Scratch files
@@ -37,18 +37,12 @@ pub(crate) struct DeliveryGit<R> {
     policy: GitPolicy,
 }
 
-/// What the snapshot produced; a bundle exists exactly when the final commit is neither the base
-/// nor the final commit of the Revision the session resumed.
+/// What the snapshot produced: the run changed the Workspace exactly when the final commit is
+/// neither the base nor the final commit of the Revision the session resumed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Snapshot {
-    Unchanged {
-        final_commit: CommitId,
-    },
-    Changed {
-        final_commit: CommitId,
-        /// Verified bundle in the Git directory's scratch space, to be frozen by the caller.
-        bundle: PathBuf,
-    },
+    Unchanged { final_commit: CommitId },
+    Changed { final_commit: CommitId },
 }
 
 /// Which delivery step failed; raw Git diagnostics stay in Node logs.
@@ -56,7 +50,6 @@ pub(crate) enum Snapshot {
 pub(crate) enum SnapshotFailure {
     CheckoutUnavailable,
     SnapshotFailed,
-    BundleFailed,
 }
 
 /// The delivery's checkout, target ref, base and author.
@@ -65,7 +58,7 @@ pub(crate) struct SnapshotRequest<'a> {
     pub(crate) revision_ref: &'a RevisionRef,
     pub(crate) base_commit: &'a CommitId,
     /// The final commit of the Revision the session resumed, if it resumed one: stopping there
-    /// adds nothing the prior Revision's bundle does not already hold (restore ADR D5).
+    /// adds nothing the prior Revision does not already hold (restore ADR D5).
     pub(crate) prior_final_commit: Option<&'a CommitId>,
     pub(crate) author: &'a GitIdentity,
     /// Unique per execution, so concurrent or leftover scratch files never collide.
@@ -77,8 +70,7 @@ impl<R: GitRunner> DeliveryGit<R> {
         Self { runner, policy }
     }
 
-    /// Saves the checkout's HEAD chain plus remaining changes under the Revision ref and bundles
-    /// what the base commit lacks.
+    /// Saves the checkout's HEAD chain plus remaining changes under the Revision ref.
     pub(crate) fn snapshot(
         &self,
         request: &SnapshotRequest<'_>,
@@ -109,9 +101,8 @@ impl<R: GitRunner> DeliveryGit<R> {
         };
         let (git_dir, head, head_tree) = (PathBuf::from(git_dir), head.to_owned(), head_tree);
         let index = git_dir.join(format!("ora-revision-{}.index", request.scratch));
-        let bundle = git_dir.join(format!("ora-revision-{}.bundle", request.scratch));
         // Leftovers of an attempt interrupted by a restart are discarded: nothing was frozen yet.
-        for stale in [&index, &index.with_extension("index.lock"), &bundle] {
+        for stale in [&index, &index.with_extension("index.lock")] {
             let _ = std::fs::remove_file(stale);
         }
         let tree = self.scratch_tree(checkout, &index);
@@ -155,33 +146,7 @@ impl<R: GitRunner> DeliveryGit<R> {
         {
             return Ok(Snapshot::Unchanged { final_commit });
         }
-        let path = bundle
-            .to_str()
-            .ok_or(SnapshotFailure::BundleFailed)?
-            .to_owned();
-        let excluded = format!("^{}", request.base_commit.as_str());
-        let created = self
-            .output(
-                checkout,
-                &[
-                    "bundle",
-                    "create",
-                    "-q",
-                    &path,
-                    request.revision_ref.as_str(),
-                    &excluded,
-                ],
-                &[],
-            )
-            .and_then(|_| self.output(checkout, &["bundle", "verify", "-q", &path], &[]));
-        if let Err(error) = created {
-            let _ = std::fs::remove_file(&bundle);
-            return Err(log(error, SnapshotFailure::BundleFailed));
-        }
-        Ok(Snapshot::Changed {
-            final_commit,
-            bundle,
-        })
+        Ok(Snapshot::Changed { final_commit })
     }
 
     /// Stages HEAD plus the worktree into the scratch index and writes its tree.
@@ -200,12 +165,22 @@ impl<R: GitRunner> DeliveryGit<R> {
 
     /// Runs one hardened command in the checkout and returns its trimmed standard output. Restore
     /// runs its Git through here too, so both share one policy.
-    pub(super) fn output(
+    pub(crate) fn output(
         &self,
         checkout: &Path,
         args: &[&str],
         variables: &[(&str, &str)],
     ) -> Result<String, GitExecError> {
+        self.run(self.command(checkout, args, variables))
+    }
+
+    /// The hardened command running `args` in the checkout.
+    pub(crate) fn command(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        variables: &[(&str, &str)],
+    ) -> GitCommand {
         let mut env = self.policy.env.clone();
         for (name, value) in variables {
             env = env.with_variable(*name, *value);
@@ -215,7 +190,11 @@ impl<R: GitRunner> DeliveryGit<R> {
             full.extend(["-c".to_owned(), config.to_owned()]);
         }
         full.extend(args.iter().map(|arg| (*arg).to_owned()));
-        let command = GitCommand::new(checkout.to_path_buf(), full, env, GitIntent::Mutating);
+        GitCommand::new(checkout.to_path_buf(), full, env, GitIntent::Mutating)
+    }
+
+    /// Runs a command built by [`DeliveryGit::command`] and returns its trimmed standard output.
+    pub(crate) fn run(&self, command: GitCommand) -> Result<String, GitExecError> {
         let output = self
             .runner
             .run_bounded(&command, OUTPUT_LIMIT, OUTPUT_LIMIT)?;

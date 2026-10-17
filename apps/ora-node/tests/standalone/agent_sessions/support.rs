@@ -31,6 +31,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
                     content: vec![ContentBlock::Text { text: text.into() }],
                 },
                 prior_revision: None,
+                workspace_directory: vec![],
             },
         },
     }
@@ -38,7 +39,9 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
 
 /// Writes a deployment config enabling the existing echo fixture as the plugin executable.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
-    let path = ipc::write_config(fixture, clone, /*frame_timeout_ms*/ 40_000);
+    // The tests only read while a delivery prepares and pushes; the Node must not take that
+    // silence on a busy machine for a dead Controller.
+    let path = ipc::write_config(fixture, clone, /*frame_timeout_ms*/ 120_000);
     let mut config: ora_node::ServiceConfig =
         serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     config.agent = Some(ora_node::AgentConfig {
@@ -46,6 +49,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
         deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
         ready_timeout_ms: 5000,
         workload_directory: None,
+        ora_git_directory: Some(fixture.path().join("ora-git")),
     });
     config.control.as_mut().unwrap().heartbeat_ms = 20;
     fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
@@ -69,7 +73,11 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
 }
 
 /// Installs a deterministic package and obtains its checkout through the real clone executor.
-pub(super) fn prepare(fixture: &Fixture, clone: &CloneConfig, server: &HttpsRepository) -> PathBuf {
+pub(super) fn prepare(
+    fixture: &Fixture,
+    clone: &CloneConfig,
+    server: &GitServerFixture,
+) -> PathBuf {
     let root = fixture
         .config()
         .home_directory
@@ -83,19 +91,24 @@ pub(super) fn prepare(fixture: &Fixture, clone: &CloneConfig, server: &HttpsRepo
     fs::write(root.join("orax.toml"), "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"test\"\n").unwrap();
     let mut node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
     node.configure_clone(clone.clone()).unwrap();
-    assert!(matches!(
-        node.submit_clone(request(server, "agent", "main"))
-            .unwrap()
-            .state,
-        ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(_)))
-    ));
+    node.configure_git_access(server.access());
+    let cloned = node.submit_clone(request(server, "agent", "main")).unwrap();
+    assert!(
+        matches!(
+            clone_result(&cloned.state),
+            Some(CloneExecutionResult::CloneReady(_))
+        ),
+        "{cloned:?}"
+    );
     drop(node);
     root
 }
 
-/// Bounds every expected response independently of heartbeat traffic.
+/// Bounds every expected response independently of heartbeat traffic. A turn that commits,
+/// pushes or restores runs several host-managed Git Runs and Git Server round trips before its
+/// next event, so the bound leaves room for a busy machine.
 pub(super) async fn receive(stream: &mut UnixStream) -> NodeToControllerMessage {
-    tokio::time::timeout(Duration::from_secs(/*secs*/ 15), async {
+    tokio::time::timeout(Duration::from_secs(/*secs*/ 60), async {
         loop {
             let message = read_node_message(stream)
                 .await
@@ -240,10 +253,8 @@ pub(super) fn checkout(fixture: &Fixture) -> CloneReady {
             },
         })
         .unwrap();
-    let ExecutionState::Completed(ExecutionResult::Clone(CloneExecutionResult::CloneReady(ready))) =
-        status.payload.state
-    else {
+    let Some(CloneExecutionResult::CloneReady(ready)) = clone_result(&status.payload.state) else {
         panic!("the fixture clone is ready");
     };
-    ready
+    ready.clone()
 }

@@ -222,6 +222,7 @@ fn checkout_rejects_unknown_and_failed_clone() {
             &record,
             CloneProgress::Unknown(ClonePhase::Dispatched {
                 identity: "native-directory-identity".into(),
+                step: 0,
             }),
         )
         .unwrap();

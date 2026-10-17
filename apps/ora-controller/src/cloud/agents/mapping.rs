@@ -42,6 +42,7 @@ pub(in crate::cloud) fn start(
                 },
                 initial_turn: turn(spec.initial_turn.as_ref().ok_or(Error::Conflict)?)?,
                 prior_revision: spec.prior_revision.as_ref().map(prior).transpose()?,
+                workspace_directory: spec.workspace_directory.iter().map(listing).collect(),
             },
         },
     };
@@ -49,19 +50,32 @@ pub(in crate::cloud) fn start(
     Ok(command)
 }
 
-/// A session restores its prior Revision from exactly the object Cloud verified, so a prior
-/// Revision without one cannot be restored and the input is refused.
+/// A session restores its prior Revision from the Git Server location Cloud fixed, so a prior
+/// Revision whose repository or delivery ref the Node protocol refuses cannot be restored and the
+/// input is refused rather than started as a fresh session.
 fn prior(input: &proto::PriorRevision) -> Result<PriorRevision, Error> {
-    let bundle = input.bundle.as_ref().ok_or(Error::Conflict)?;
     Ok(PriorRevision {
         revision_id: RevisionId::new(input.revision_id.clone()),
         final_commit: CommitId::new(input.final_commit.clone()),
-        bundle: StoredObject {
-            key: ObjectKey::new(bundle.key.clone()),
-            size: bundle.size,
-            sha256: Sha256Digest::new(bundle.sha256.clone()),
-        },
+        git_repository_url: GitRepositoryUrl::parse(&input.git_repository_url)
+            .map_err(|_| Error::Conflict)?,
+        delivery_ref: DeliveryRef::parse(&input.delivery_ref).map_err(|_| Error::Conflict)?,
+        base_commit: CommitId::new(input.base_commit.clone()),
     })
+}
+
+/// Forwards one Workspace directory entry verbatim. Proto strings cannot be absent, so the empty
+/// string Cloud sends for fields that do not apply (a non-run Workspace) becomes `None`.
+fn listing(input: &proto::WorkspaceListing) -> WorkspaceListing {
+    let optional = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+    WorkspaceListing {
+        workspace_id: input.workspace_id.clone(),
+        kind: input.kind.clone(),
+        issue_id: optional(&input.issue_id),
+        issue_title: optional(&input.issue_title),
+        issue_run_id: optional(&input.issue_run_id),
+        run_status: optional(&input.run_status),
+    }
 }
 
 /// Whether a session input needs a Node that restores prior Revisions.
@@ -70,48 +84,6 @@ pub(in crate::cloud) fn resumes(input: Option<&proto::ExecutionInput>) -> bool {
         input.and_then(|v| v.spec.as_ref()),
         Some(proto::execution_input::Spec::AgentSession(spec)) if spec.prior_revision.is_some()
     )
-}
-
-/// Hands Cloud's download grant to the Node unchanged: headers verbatim and the same expiry. Only
-/// a read of the session's own prior bundle is accepted, so Cloud can never point the restore at
-/// another object.
-pub(super) fn download_grants(
-    response: proto::GrantRevisionDownloadResponse,
-    command: &StartAgentSessionMessage,
-) -> Result<DownloadGrantMessage, Error> {
-    let bundle = &command
-        .payload
-        .spec
-        .prior_revision
-        .as_ref()
-        .ok_or(Error::Conflict)?
-        .bundle
-        .key;
-    let grants = response
-        .grants
-        .into_iter()
-        .map(|grant| {
-            let object_key = ObjectKey::new(grant.object_key);
-            if object_key != *bundle || grant.method != "GET" {
-                return Err(Error::Conflict);
-            }
-            Ok(ObjectDownloadGrant {
-                object_key,
-                url: PresignedUrl::new(grant.url),
-                method: DownloadMethod::Get,
-                headers: grant.headers.into_iter().collect(),
-                expires_at: super::super::mapping::expiry(grant.expires_at)?,
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    let message = DownloadGrantMessage {
-        protocol_version: CURRENT_PROTOCOL_VERSION,
-        operation_id: command.operation_id.clone(),
-        execution_id: command.execution_id.clone(),
-        payload: DownloadGrant::Granted { grants },
-    };
-    message.validate()?;
-    Ok(message)
 }
 
 /// Rejects unknown content blocks rather than silently losing part of a prompt.
@@ -210,13 +182,13 @@ pub(super) fn result(value: &AgentSessionResult) -> proto::ExecutionResult {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
 
     const PRIOR_FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
-    const DIGEST: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    const BUNDLE: &str = "runs/prior/revision.bundle";
+    const PRIOR_BASE: &str = "0123456789abcdef0123456789abcdef01234567";
+    const REPOSITORY: &str = "https://git.ora.test/6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d.git";
+    const DELIVERY_REF: &str = "refs/ora/deliveries/revision-1";
 
-    /// A recorded session that resumes a prior Revision held in `BUNDLE`.
+    /// A recorded session that resumes a prior Revision and lists two Workspaces.
     fn resumed() -> proto::ExecutionRecord {
         proto::ExecutionRecord {
             operation_id: "run".into(),
@@ -247,12 +219,28 @@ mod tests {
                         prior_revision: Some(proto::PriorRevision {
                             revision_id: "revision-1".into(),
                             final_commit: PRIOR_FINAL.into(),
-                            bundle: Some(proto::StoredObject {
-                                key: BUNDLE.into(),
-                                size: 42,
-                                sha256: DIGEST.into(),
-                            }),
+                            git_repository_url: REPOSITORY.into(),
+                            delivery_ref: DELIVERY_REF.into(),
+                            base_commit: PRIOR_BASE.into(),
                         }),
+                        workspace_directory: vec![
+                            proto::WorkspaceListing {
+                                workspace_id: "4b3c2d1e-0f9a-4b8c-9d7e-6f5a4b3c2d1e".into(),
+                                kind: "run".into(),
+                                issue_id: "issue-7".into(),
+                                issue_title: "Fix the parser".into(),
+                                issue_run_id: "run-3".into(),
+                                run_status: "succeeded".into(),
+                            },
+                            proto::WorkspaceListing {
+                                workspace_id: "1e2d3c4b-5a69-4788-9a6b-5c4d3e2f1a0b".into(),
+                                kind: "main".into(),
+                                issue_id: String::new(),
+                                issue_title: String::new(),
+                                issue_run_id: String::new(),
+                                run_status: String::new(),
+                            },
+                        ],
                     },
                 )),
             }),
@@ -260,122 +248,115 @@ mod tests {
         }
     }
 
-    /// Edits the recorded prior Revision in place.
-    fn edit_prior(
-        record: &mut proto::ExecutionRecord,
-        edit: impl FnOnce(&mut proto::PriorRevision),
-    ) {
+    /// Edits the recorded session input in place.
+    fn edit(record: &mut proto::ExecutionRecord, edit: impl FnOnce(&mut proto::AgentSessionSpec)) {
         if let Some(proto::execution_input::Spec::AgentSession(spec)) =
             record.input.as_mut().and_then(|i| i.spec.as_mut())
-            && let Some(prior) = spec.prior_revision.as_mut()
         {
-            edit(prior);
+            edit(spec);
         }
     }
 
-    /// The prior Revision reaches the Node exactly as Cloud fixed it, and a prior Revision
-    /// without its verified bundle object is refused rather than started as a fresh session.
+    /// The prior Revision and the Workspace directory reach the Node exactly as Cloud fixed them.
     #[test]
-    fn resumed_sessions_carry_the_prior_revision() {
-        let node = NodeId::new("node");
-        let command = start(&resumed(), &node).unwrap();
-        assert_eq!(
-            command.payload.spec.prior_revision,
-            Some(PriorRevision {
-                revision_id: RevisionId::new("revision-1"),
-                final_commit: CommitId::new(PRIOR_FINAL),
-                bundle: StoredObject {
-                    key: ObjectKey::new(BUNDLE),
-                    size: 42,
-                    sha256: Sha256Digest::new(DIGEST),
-                },
-            })
-        );
-        assert!(resumes(resumed().input.as_ref()));
-        let mut fresh = resumed();
-        if let Some(proto::execution_input::Spec::AgentSession(spec)) =
-            fresh.input.as_mut().and_then(|i| i.spec.as_mut())
-        {
-            spec.prior_revision = None;
-        }
-        assert!(!resumes(fresh.input.as_ref()));
-        assert_eq!(
-            start(&fresh, &node).unwrap().payload.spec.prior_revision,
-            None
-        );
-
-        let mut without_bundle = resumed();
-        edit_prior(&mut without_bundle, |prior| prior.bundle = None);
-        assert!(matches!(
-            start(&without_bundle, &node),
-            Err(Error::Conflict)
-        ));
-        let mut partial = resumed();
-        edit_prior(&mut partial, |prior| prior.final_commit = "89abcdef".into());
-        assert!(matches!(start(&partial, &node), Err(Error::Validation(_))));
-    }
-
-    /// A download grant passes through verbatim, and only as a read of the session's own bundle.
-    #[test]
-    fn download_grants_pass_through_only_for_the_prior_bundle() {
+    fn resumed_sessions_carry_the_prior_revision_and_the_directory_verbatim() {
         let command = start(&resumed(), &NodeId::new("node")).unwrap();
-        let headers = HashMap::from([("x-amz-meta-proof".to_owned(), "signed".to_owned())]);
-        let grant = |key: &str, method: &str| proto::DownloadGrant {
-            object_key: key.into(),
-            url: "https://store.example/read?X-Amz-Signature=s".into(),
-            method: method.into(),
-            headers: headers.clone(),
-            expires_at: Some(prost_types::Timestamp {
-                seconds: 1_800_000_000,
-                nanos: 5,
-            }),
-        };
         assert_eq!(
-            download_grants(
-                proto::GrantRevisionDownloadResponse {
-                    grants: vec![grant(BUNDLE, "GET")],
-                },
-                &command,
-            )
-            .unwrap(),
-            DownloadGrantMessage {
+            command,
+            StartAgentSessionMessage {
                 protocol_version: CURRENT_PROTOCOL_VERSION,
                 operation_id: OperationId::new("run"),
                 execution_id: ExecutionId::new("session"),
-                payload: DownloadGrant::Granted {
-                    grants: vec![ObjectDownloadGrant {
-                        object_key: ObjectKey::new(BUNDLE),
-                        url: PresignedUrl::new("https://store.example/read?X-Amz-Signature=s"),
-                        method: DownloadMethod::Get,
-                        headers: headers.clone().into_iter().collect(),
-                        expires_at: time::OffsetDateTime::from_unix_timestamp_nanos(
-                            1_800_000_000_000_000_005
-                        )
-                        .unwrap(),
-                    }],
+                payload: StartAgentSession {
+                    spec: AgentSessionSpec {
+                        node_id: NodeId::new("node"),
+                        agent_plugin_id: PluginId::new("official/ora-space.echo"),
+                        agent_plugin_version: PluginVersion::new("1.2.3"),
+                        checkout_execution_id: ExecutionId::new("clone"),
+                        model_binding_id: None,
+                        git_identity: GitIdentity {
+                            name: "User".into(),
+                            email: "user@example.com".into(),
+                        },
+                        initial_turn: UserTurn {
+                            turn_id: TurnId::new("turn"),
+                            content: vec![ContentBlock::Text {
+                                text: "Issue prompt".into(),
+                            }],
+                        },
+                        prior_revision: Some(PriorRevision {
+                            revision_id: RevisionId::new("revision-1"),
+                            final_commit: CommitId::new(PRIOR_FINAL),
+                            git_repository_url: GitRepositoryUrl::parse(REPOSITORY).unwrap(),
+                            delivery_ref: DeliveryRef::parse(DELIVERY_REF).unwrap(),
+                            base_commit: CommitId::new(PRIOR_BASE),
+                        }),
+                        workspace_directory: vec![
+                            WorkspaceListing {
+                                workspace_id: "4b3c2d1e-0f9a-4b8c-9d7e-6f5a4b3c2d1e".into(),
+                                kind: "run".into(),
+                                issue_id: Some("issue-7".into()),
+                                issue_title: Some("Fix the parser".into()),
+                                issue_run_id: Some("run-3".into()),
+                                run_status: Some("succeeded".into()),
+                            },
+                            WorkspaceListing {
+                                workspace_id: "1e2d3c4b-5a69-4788-9a6b-5c4d3e2f1a0b".into(),
+                                kind: "main".into(),
+                                issue_id: None,
+                                issue_title: None,
+                                issue_run_id: None,
+                                run_status: None,
+                            },
+                        ],
+                    },
                 },
             }
         );
-        for wrong in [
-            grant("runs/other/revision.bundle", "GET"),
-            grant(BUNDLE, "PUT"),
+        assert!(resumes(resumed().input.as_ref()));
+        let mut fresh = resumed();
+        edit(&mut fresh, |spec| spec.prior_revision = None);
+        assert!(!resumes(fresh.input.as_ref()));
+        assert_eq!(
+            start(&fresh, &NodeId::new("node"))
+                .unwrap()
+                .payload
+                .spec
+                .prior_revision,
+            None
+        );
+    }
+
+    /// A prior Revision the Node could not fetch from the Git Server is refused rather than
+    /// started as a fresh session.
+    #[test]
+    fn prior_revisions_outside_the_git_server_contract_are_refused() {
+        let node = NodeId::new("node");
+        let prior = |change: fn(&mut proto::PriorRevision)| {
+            let mut record = resumed();
+            edit(&mut record, |spec| {
+                if let Some(prior) = spec.prior_revision.as_mut() {
+                    change(prior);
+                }
+            });
+            start(&record, &node)
+        };
+        for change in [
+            (|prior: &mut proto::PriorRevision| prior.git_repository_url = String::new())
+                as fn(&mut proto::PriorRevision),
+            |prior| prior.git_repository_url = "http://git.ora.test/t/p.git".into(),
+            |prior| prior.git_repository_url = "https://user@git.ora.test/t/p.git".into(),
+            |prior| prior.delivery_ref = String::new(),
+            |prior| prior.delivery_ref = "refs/heads/main".into(),
         ] {
-            assert!(matches!(
-                download_grants(
-                    proto::GrantRevisionDownloadResponse {
-                        grants: vec![wrong],
-                    },
-                    &command,
-                ),
-                Err(Error::Conflict)
-            ));
+            assert!(matches!(prior(change), Err(Error::Conflict)));
         }
-        assert!(matches!(
-            download_grants(
-                proto::GrantRevisionDownloadResponse { grants: vec![] },
-                &command,
-            ),
-            Err(Error::Validation(_))
-        ));
+        for change in [
+            (|prior: &mut proto::PriorRevision| prior.final_commit = "89abcdef".into())
+                as fn(&mut proto::PriorRevision),
+            |prior| prior.base_commit = String::new(),
+        ] {
+            assert!(matches!(prior(change), Err(Error::Validation(_))));
+        }
     }
 }

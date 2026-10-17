@@ -7,8 +7,8 @@ use pretty_assertions::assert_eq;
 fn controlled_start_and_command_closure_use_original_runtime_authority() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);

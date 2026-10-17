@@ -43,17 +43,43 @@ pub struct UserTurn {
     pub content: ::prost::alloc::vec::Vec<ContentBlock>,
 }
 /// The Revision a new run of the same Issue resumes from (IssueRun resume decision D1). On a session
-/// spec it names the verified object holding the bundle, which may belong to an earlier Revision the
-/// resumed one reused; on a delivery spec it carries only the identity and final commit.
+/// spec it also says where the Node fetches the prior final commit and what it was based on; on a
+/// delivery spec it carries only the identity and final commit.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PriorRevision {
     #[prost(string, tag="1")]
     pub revision_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub final_commit: ::prost::alloc::string::String,
-    /// Set on AgentSessionSpec only. The download grant covers exactly this object key.
-    #[prost(message, optional, tag="3")]
-    pub bundle: ::core::option::Option<StoredObject>,
+    /// Session spec only: the Git Server repository and verified delivery ref holding final_commit.
+    #[prost(string, tag="4")]
+    pub git_repository_url: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub delivery_ref: ::prost::alloc::string::String,
+    /// Session spec only: the base commit of the prior Revision, used to tell whether the Workspace
+    /// snapshot still contains it.
+    #[prost(string, tag="6")]
+    pub base_commit: ::prost::alloc::string::String,
+}
+/// One Workspace of the session's Project, so `ora-git list` can name branches by Issue and run. It
+/// is a snapshot taken when the work item was released and never takes part in authorization.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkspaceListing {
+    #[prost(string, tag="1")]
+    pub workspace_id: ::prost::alloc::string::String,
+    /// main | isolated | run
+    #[prost(string, tag="2")]
+    pub kind: ::prost::alloc::string::String,
+    /// Run Workspaces only.
+    #[prost(string, tag="3")]
+    pub issue_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub issue_title: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub issue_run_id: ::prost::alloc::string::String,
+    /// As of when the session work item was released.
+    #[prost(string, tag="6")]
+    pub run_status: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AgentSessionSpec {
@@ -79,6 +105,9 @@ pub struct AgentSessionSpec {
     /// No provider credential or temporary access token crosses this contract.
     #[prost(string, tag="7")]
     pub model_binding_id: ::prost::alloc::string::String,
+    /// Workspaces of this Project, newest first, at most 100, fixed when the work item was released.
+    #[prost(message, repeated, tag="8")]
+    pub workspace_directory: ::prost::alloc::vec::Vec<WorkspaceListing>,
 }
 /// The only terminal result of a session execution. It is taken over only after every Thread event
 /// before it, so the Thread's last entry lands before the session is known to have ended.
@@ -97,21 +126,30 @@ pub struct DeliverRevisionSpec {
     pub session_execution_id: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub checkout_execution_id: ::prost::alloc::string::String,
-    /// Commit of the run Workspace's clone; the bundle is relative to it.
+    /// Commit of the run Workspace's clone.
     #[prost(string, tag="3")]
     pub base_commit: ::prost::alloc::string::String,
     /// Must be under `refs/ora/revisions/`.
     #[prost(string, tag="4")]
     pub revision_ref: ::prost::alloc::string::String,
-    /// Object keys Cloud chose for this delivery; upload grants are issued only for these keys.
-    #[prost(string, tag="5")]
-    pub bundle_key: ::prost::alloc::string::String,
+    /// Object key Cloud chose for the session history; upload grants are issued only for this key.
     #[prost(string, tag="6")]
     pub history_key: ::prost::alloc::string::String,
-    /// The session's resumed Revision, without bundle. A final commit equal to its final commit is
-    /// reported as RevisionUnchanged.
+    /// The session's resumed Revision, identity and final commit only. A final commit equal to its
+    /// final commit is reported as RevisionUnchanged.
     #[prost(message, optional, tag="7")]
     pub prior_revision: ::core::option::Option<PriorRevision>,
+    /// Fixed by Cloud when the work item was released; the Node pushes the final commit to
+    /// delivery_ref (create only) in this repository.
+    #[prost(string, tag="8")]
+    pub git_repository_url: ::prost::alloc::string::String,
+    /// Under `refs/ora/deliveries/`.
+    #[prost(string, tag="9")]
+    pub delivery_ref: ::prost::alloc::string::String,
+    /// The run Workspace's branch, from its clone input. The Node fast-forwards it to the final commit
+    /// after the delivery ref is pushed; failing to do so never fails the delivery.
+    #[prost(string, tag="10")]
+    pub workspace_ref: ::prost::alloc::string::String,
 }
 /// An object the Node uploaded, as the Node measured it; Cloud verifies it before registering.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -124,6 +162,7 @@ pub struct StoredObject {
     #[prost(string, tag="3")]
     pub sha256: ::prost::alloc::string::String,
 }
+/// The final commit was pushed to the input's delivery_ref; Cloud verifies the ref before registering.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevisionDelivered {
     #[prost(string, tag="1")]
@@ -132,13 +171,12 @@ pub struct RevisionDelivered {
     pub base_commit: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub revision_ref: ::prost::alloc::string::String,
-    #[prost(message, optional, tag="4")]
-    pub bundle: ::core::option::Option<StoredObject>,
     #[prost(message, optional, tag="5")]
     pub history: ::core::option::Option<StoredObject>,
 }
 /// The final commit equals the base commit, or the delivery spec's prior_revision final commit (a
-/// resumed run that added nothing): no bundle, only the session history.
+/// resumed run that added nothing). It still pushes its own delivery_ref and attempts to fast-forward
+/// workspace_ref before uploading only the session history.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevisionUnchanged {
     #[prost(string, tag="1")]
@@ -170,23 +208,6 @@ pub struct UploadGrant {
     /// A checksum-bound grant includes `x-amz-checksum-sha256`; legacy uploaders add that digest.
     /// On 412, preserve the existing object and submit the declaration for Cloud verification;
     /// neither the uploader nor Controller may treat 412 alone as proof that its bytes match.
-    #[prost(map="string, string", tag="4")]
-    pub headers: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-    #[prost(message, optional, tag="5")]
-    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-}
-/// A presigned single-object read of a prior Revision's bundle. Like UploadGrant it is a short-lived
-/// bearer credential kept in memory only and never logged.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DownloadGrant {
-    #[prost(string, tag="1")]
-    pub object_key: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub url: ::prost::alloc::string::String,
-    /// Always GET.
-    #[prost(string, tag="3")]
-    pub method: ::prost::alloc::string::String,
-    /// Headers the download must carry unchanged.
     #[prost(map="string, string", tag="4")]
     pub headers: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(message, optional, tag="5")]
@@ -239,11 +260,16 @@ pub enum RevisionFailureReason {
     SessionNotSettled = 1,
     CheckoutUnavailable = 2,
     SnapshotFailed = 3,
+    /// Kept for history only; a new result carrying it is rejected.
     BundleFailed = 4,
     HistoryUnavailable = 5,
     UploadFailed = 6,
     /// Recorded by Cloud when the declared objects are missing or differ; a Node never reports it.
     VerificationFailed = 7,
+    /// The Git Server refused the delivery ref push (401, 403 or a declined ref update).
+    PushRejected = 8,
+    /// The delivery ref push failed on 5xx, network, TLS or deadline after the retries ran out.
+    PushFailed = 9,
 }
 impl RevisionFailureReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -260,6 +286,8 @@ impl RevisionFailureReason {
             Self::HistoryUnavailable => "REVISION_FAILURE_REASON_HISTORY_UNAVAILABLE",
             Self::UploadFailed => "REVISION_FAILURE_REASON_UPLOAD_FAILED",
             Self::VerificationFailed => "REVISION_FAILURE_REASON_VERIFICATION_FAILED",
+            Self::PushRejected => "REVISION_FAILURE_REASON_PUSH_REJECTED",
+            Self::PushFailed => "REVISION_FAILURE_REASON_PUSH_FAILED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -273,6 +301,8 @@ impl RevisionFailureReason {
             "REVISION_FAILURE_REASON_HISTORY_UNAVAILABLE" => Some(Self::HistoryUnavailable),
             "REVISION_FAILURE_REASON_UPLOAD_FAILED" => Some(Self::UploadFailed),
             "REVISION_FAILURE_REASON_VERIFICATION_FAILED" => Some(Self::VerificationFailed),
+            "REVISION_FAILURE_REASON_PUSH_REJECTED" => Some(Self::PushRejected),
+            "REVISION_FAILURE_REASON_PUSH_FAILED" => Some(Self::PushFailed),
             _ => None,
         }
     }
@@ -461,13 +491,23 @@ pub struct NodeIdentity {
     #[prost(string, tag="2")]
     pub node_incarnation_id: ::prost::alloc::string::String,
 }
+/// A Workspace clone from a Binding snapshot on the Git Server. Cloud freezes all four fields before
+/// the clone step is handed to a Controller; the Controller forwards them verbatim. Checkout paths
+/// belong to the Node, never to the caller.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CloneSpec {
-    /// HTTPS or SSH repository URL. Checkout paths belong to the Node, never to the caller.
-    #[prost(string, tag="1")]
-    pub repository: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub branch: ::prost::alloc::string::String,
+    /// <https://<git-server>/<tenantId>/<projectId>.git>
+    #[prost(string, tag="3")]
+    pub repository_url: ::prost::alloc::string::String,
+    /// refs/ora/upstreams/<bindingId>/snapshots/<commitOid>
+    #[prost(string, tag="4")]
+    pub snapshot_ref: ::prost::alloc::string::String,
+    /// The commit snapshot_ref points to; the checkout is verified against it.
+    #[prost(string, tag="5")]
+    pub base_commit: ::prost::alloc::string::String,
+    /// refs/heads/workspaces/<workspaceId>/<branch>; <branch> is the local branch of the checkout.
+    #[prost(string, tag="6")]
+    pub workspace_ref: ::prost::alloc::string::String,
 }
 /// Full execution input as dispatched; extended with new oneof members as further execution kinds
 /// join the loop.
@@ -496,6 +536,7 @@ pub mod execution_input {
 pub struct CloneReady {
     #[prost(string, tag="1")]
     pub path: ::prost::alloc::string::String,
+    /// Must equal the input's base_commit.
     #[prost(string, tag="2")]
     pub commit: ::prost::alloc::string::String,
 }
@@ -556,8 +597,7 @@ pub struct WorkItem {
     pub operation_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="2")]
     pub input: ::core::option::Option<ExecutionInput>,
-    /// Set for Agent session and Revision delivery work; unset for a tenant-level clone, whose Node
-    /// the Controller chooses.
+    /// Always set: Agent session and Revision delivery work name their run Workspace sandbox.
     #[prost(message, optional, tag="3")]
     pub target: ::core::option::Option<WorkTarget>,
 }
@@ -680,13 +720,18 @@ pub struct ListPendingDispatchesResponse {
 #[repr(i32)]
 pub enum CloneFailureReason {
     Unspecified = 0,
+    /// The Git Server was unreachable, or answered 5xx until the retries ran out.
     SourceUnavailable = 1,
-    BranchNotFound = 2,
     DestinationConflict = 3,
     OperationFailed = 4,
     /// The attempt was terminated before Git reached its own verdict (Node stop, command deadline,
     /// or an external signal) and its cleanup was confirmed; a new execution may simply retry.
     Interrupted = 5,
+    /// The Git Server answered that the snapshot ref is missing or not readable (it gives both the
+    /// same answer).
+    SnapshotUnavailable = 6,
+    /// The fetched snapshot ref did not point at base_commit.
+    BaseCommitMismatch = 7,
 }
 impl CloneFailureReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -697,10 +742,11 @@ impl CloneFailureReason {
         match self {
             Self::Unspecified => "CLONE_FAILURE_REASON_UNSPECIFIED",
             Self::SourceUnavailable => "CLONE_FAILURE_REASON_SOURCE_UNAVAILABLE",
-            Self::BranchNotFound => "CLONE_FAILURE_REASON_BRANCH_NOT_FOUND",
             Self::DestinationConflict => "CLONE_FAILURE_REASON_DESTINATION_CONFLICT",
             Self::OperationFailed => "CLONE_FAILURE_REASON_OPERATION_FAILED",
             Self::Interrupted => "CLONE_FAILURE_REASON_INTERRUPTED",
+            Self::SnapshotUnavailable => "CLONE_FAILURE_REASON_SNAPSHOT_UNAVAILABLE",
+            Self::BaseCommitMismatch => "CLONE_FAILURE_REASON_BASE_COMMIT_MISMATCH",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -708,10 +754,11 @@ impl CloneFailureReason {
         match value {
             "CLONE_FAILURE_REASON_UNSPECIFIED" => Some(Self::Unspecified),
             "CLONE_FAILURE_REASON_SOURCE_UNAVAILABLE" => Some(Self::SourceUnavailable),
-            "CLONE_FAILURE_REASON_BRANCH_NOT_FOUND" => Some(Self::BranchNotFound),
             "CLONE_FAILURE_REASON_DESTINATION_CONFLICT" => Some(Self::DestinationConflict),
             "CLONE_FAILURE_REASON_OPERATION_FAILED" => Some(Self::OperationFailed),
             "CLONE_FAILURE_REASON_INTERRUPTED" => Some(Self::Interrupted),
+            "CLONE_FAILURE_REASON_SNAPSHOT_UNAVAILABLE" => Some(Self::SnapshotUnavailable),
+            "CLONE_FAILURE_REASON_BASE_COMMIT_MISMATCH" => Some(Self::BaseCommitMismatch),
             _ => None,
         }
     }
@@ -830,31 +877,17 @@ pub struct GrantRevisionUploadRequest {
     /// A delivery execution registered through RecordDispatch.
     #[prost(string, tag="2")]
     pub execution_id: ::prost::alloc::string::String,
-    /// Optional object key -> lowercase hexadecimal SHA-256. Keys must belong to the frozen
-    /// delivery input. Cloud binds each checksum into its ephemeral PUT signature; refreshing
-    /// this capability never changes the execution input. Omit for legacy v1 grants.
+    /// Optional object key -> lowercase hexadecimal SHA-256. The only accepted key is the frozen
+    /// delivery input's history_key. Cloud binds the checksum into its ephemeral PUT signature;
+    /// refreshing this capability never changes the execution input. Omit for unbound grants.
     #[prost(map="string, string", tag="3")]
     pub checksums: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GrantRevisionUploadResponse {
-    /// One grant per requested checksum key, or both input keys for legacy requests.
+    /// Exactly one grant, for the input's history_key.
     #[prost(message, repeated, tag="1")]
     pub grants: ::prost::alloc::vec::Vec<UploadGrant>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GrantRevisionDownloadRequest {
-    #[prost(int64, tag="1")]
-    pub epoch: i64,
-    /// A session execution registered through RecordDispatch whose input carries prior_revision.
-    #[prost(string, tag="2")]
-    pub execution_id: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GrantRevisionDownloadResponse {
-    /// Exactly one grant, for the input's prior_revision bundle key.
-    #[prost(message, repeated, tag="1")]
-    pub grants: ::prost::alloc::vec::Vec<DownloadGrant>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1160,17 +1193,13 @@ pub struct Operation {
     #[prost(string, optional, tag="9")]
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// The Project an operation belongs to. Its external repository, branch and credential reference
+/// never reach a Controller: a Workspace clones only the Git Server snapshot its clone step was
+/// handed (clone_input).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperationProject {
     #[prost(string, tag="1")]
     pub id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub repository_url: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub default_branch: ::prost::alloc::string::String,
-    /// Infrastructure reference to the repository credential; never the credential itself.
-    #[prost(string, optional, tag="4")]
-    pub credential_ref: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperationWorkspace {
@@ -1190,7 +1219,8 @@ pub struct OperationWorkspace {
     pub admission_open: bool,
     #[prost(int64, tag="7")]
     pub admission_epoch: i64,
-    /// The ref the Workspace's Node clones.
+    /// The short name of the Workspace's branch on the Git Server
+    /// (refs/heads/workspaces/<id>/<requested_ref>) and of the checkout's local branch.
     #[prost(string, tag="8")]
     pub requested_ref: ::prost::alloc::string::String,
     /// Commit of the Workspace's successful clone.
@@ -1393,6 +1423,12 @@ pub struct OperationSnapshot {
     /// case the step advances without an execution.
     #[prost(message, optional, tag="9")]
     pub plugin_input: ::core::option::Option<ExecutionInput>,
+    /// The input the clone step's execution must carry, frozen by Cloud from the Binding's current
+    /// snapshot before the step was handed out and identical for every attempt of the operation. Set
+    /// whenever the operation is in the clone step; the Controller forwards it verbatim to
+    /// RecordDispatch and the Node, and does not dispatch a clone step without it.
+    #[prost(message, optional, tag="10")]
+    pub clone_input: ::core::option::Option<CloneSpec>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaimOperationRequest {

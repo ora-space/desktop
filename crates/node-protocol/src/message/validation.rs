@@ -10,8 +10,16 @@ pub enum MessageValidationError {
     CloneTargetMismatch,
     #[error("clone commit must be a full hexadecimal Git object ID")]
     InvalidCloneCommit,
-    #[error("clone branch must be a literal short branch name, not HEAD or a revision expression")]
-    InvalidCloneBranch,
+    #[error("snapshot ref must be named after the clone's base commit")]
+    SnapshotCommitMismatch,
+    #[error("clone result commit must equal the input's base commit")]
+    CloneCommitMismatch,
+    #[error("clone failure code is retired and only appears in historical records")]
+    RetiredCloneFailure,
+    #[error("revision failure code is retired and only appears in historical records")]
+    RetiredRevisionFailure,
+    #[error("Workspace directory must list at most 100 distinct canonical Workspaces")]
+    InvalidWorkspaceDirectory,
     #[error("unsupported protocol version {actual}; expected {expected}")]
     UnsupportedProtocolVersion { actual: u16, expected: u16 },
     #[error("protocol field {field} must not be empty")]
@@ -64,10 +72,6 @@ pub enum MessageValidationError {
     InvalidUploadGrant,
     #[error("upload grant must carry at least one object")]
     EmptyUploadGrant,
-    #[error("download grant must carry an absolute HTTP(S) URL")]
-    InvalidDownloadGrant,
-    #[error("granted download must carry at least one object")]
-    EmptyDownloadGrant,
 }
 
 /// Centralizes wire invariants used identically for outbound and decoded messages.

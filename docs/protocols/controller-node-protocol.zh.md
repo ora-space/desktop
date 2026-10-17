@@ -32,21 +32,11 @@ Serde flatten 就能直接看出适用字段。
 ## 首个 clone 请求
 
 `CloneRepositoryMessage`（`clone_repository`）携带 `operation_id`、`execution_id`、可选
-`request_id`，以及只含 `node_id`、`repository`、`branch` 的 `payload.spec`。
-`domain/repository.rs` 拥有源地址政策，`message/repository.rs` 拥有信封校验。
-
-`CloneRepositoryUrl::parse` 和反序列化只接受小写显式 `https://` 或 `ssh://`、带主机和仓库路径的
-URL；拒绝空白、反斜杠、query／fragment、密码及 HTTPS userinfo，允许 SSH 用户名。
-保留地址原始拼写用于去重。Debug 隐去地址，解析错误不回显输入；序列化仍保留源地址供执行和
-持久化使用，不能将序列化消息直接记录到日志。凭据属于部署数据。
-
-Codec 收发均使用 `ora-utils::GitBranchName` 校验短分支名，另拒绝 `HEAD`；执行仍须验证远端
-分支存在，不能接受同名 tag 替代。clone payload／spec 拒绝未知字段，包括目标目录、凭据和
-任意 Git 选项；外层信封仍允许扩展字段。
-
-version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型。当前 Node 尚未声明或
-执行 clone；派发仍需具备能力的运行时及持久接受。这一步不改数据库布局、IPC listener
-或 Backend 写入入口。
+`request_id`，以及含 `node_id`、`repository_url`、`snapshot_ref`、`base_commit`、`workspace_ref` 的 `payload.spec`。
+仓库 URL 仅接受无 userinfo、query、fragment 的 HTTPS；快照 ref 中的 UUID 必须规范，末段等于基础提交；
+Workspace ref 必须属于规范 UUID 并带非 `HEAD` 的合法分支名。旧形状和 SSH 被拒绝。
+clone payload/spec 拒绝未知字段，不接受目标目录、凭据或任意 Git 参数。Node 的 clone 能力要求 clone 与
+git-access 均已配置；Cloud、Controller、Node 同时发布，开发环境的旧 clone 数据重建。
 
 ## Clone 结果与能力
 
@@ -59,7 +49,7 @@ version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型
 十六进制 commit。`CloneFailed` 包含同样的来源／spec、结构化错误码，以及 `no_directory` 或
 `retained { repository_id, path }` 残留描述。`no_directory` 表示没有自有目录，不表示冲突的
 用户路径不存在。不接受原始诊断；未知结果保持非终态，wire 合法不证明 Git 成功或清理完成。
-首版明确失败分类为来源不可用、分支不存在、目标冲突和操作失败。
+失败分类包括来源不可用、快照不可用、基础提交不符、目标冲突、操作失败和中断。
 
 事件和 Completed 查询使用相同 clone 校验。结果 NodeId 必须匹配输入目标；状态报告者的持久
 NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事件序号，也不会确认原事件。
@@ -74,12 +64,12 @@ NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事�
 proposed）。codec 定义并校验它们；目前没有运行中的 Node 声明这些能力，两端运行时都以“不支持”拒绝这些消息。
 Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实现，但尚未接入这些消息。
 
-| 能力                | Controller → Node                                              | Node → Controller                                                                                           |
-| ------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `plugin_install`    | `install_plugins`、`remove_plugins`                            | `plugins_result`（`plugins_completed` / `plugins_failed`）                                                  |
-| `agent_session`     | `start_agent_session`、`submit_user_turn`、`end_session`       | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected`               |
-| `revision_delivery` | `deliver_revision`、`upload_grant`                             | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
-| `revision_restore`  | 带 `prior_revision` 的 `start_agent_session`、`download_grant` | `download_grant_needed`                                                                                     |
+| 能力                | Controller → Node                                        | Node → Controller                                                                                           |
+| ------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`、`remove_plugins`                      | `plugins_result`（`plugins_completed` / `plugins_failed`）                                                  |
+| `agent_session`     | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected`               |
+| `revision_delivery` | `deliver_revision`、`upload_grant`                       | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
+| `revision_restore`  | 带 `prior_revision` 的 `start_agent_session`             | 会话结果中的恢复失败码                                                                                      |
 
 - 插件输入中每个 canonical `<namespace>/<identifier>` 只出现一次，要么一个 universal HTTP(S) 下载，
   要么按 target 互不重复的下载，均带小写 SHA-256。单个插件的失败逐项报告；`plugins_failed` 表示整个执行无法运行。
@@ -88,16 +78,13 @@ Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实�
   记录，作为不透明 JSON 对象，至多 256 KiB（`truncated` 表示已截断），与终态 `agent_session_ended`
   共享执行内连续的序号空间；终态的 `detail` 是简短的 snake_case 代码。
 - `submit_user_turn` 与 `end_session` 带 `command_id`；它们的回复不带序号、不需要确认，回复丢失后重发命令即可。
-- 交付输入给出已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的 ref，以及两个互不相同的规范化
-  对象键。`revision_delivered` 要求最终 commit 不同于基础 commit。`revision_unchanged` 在 wire 上只校验 commit
+- 交付输入给出已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的 ref，Git 仓库地址、交付 ref、Workspace ref 和一个规范化历史对象键。`revision_delivered` 要求最终 commit 不同于基础 commit。`revision_unchanged` 在 wire 上只校验 commit
   格式：其最终 commit 等于基础 commit，或在交付输入带 `prior_revision` 时等于该前序最终 commit，由接收方（Node
   账本、Controller）对照输入检查。
-- 会话可带 `prior_revision{revision_id, final_commit, bundle{key, size, sha256}}`，即它续接的 Revision；只有声明
-  `revision_restore` 的 Node 会收到。交付可带不含 bundle 的 `prior_revision{revision_id, final_commit}`。恢复失败时
+- 会话可带 `prior_revision{revision_id, final_commit, base_commit, git_repository_url, delivery_ref}`，即它续接的 Revision；只有声明
+  `revision_restore` 的 Node 会收到。交付可带仅含身份的 `prior_revision{revision_id, final_commit}`。恢复失败时
   会话以 `agent_session_ended{agent_failed}` 结束，`detail` 为 `prior_revision_unavailable` 或
   `prior_revision_base_unavailable`。
-- `download_grant_needed`（Node 发出，只带其 Node）与 `download_grant`（`granted` 带预签名 `GET` 授权，或
-  `refused`）与上传授权一样只存在于内存；Node 在每次新连接时重发请求。
 - `upload_grant` 与 `upload_grant_needed` 只存在于内存：没有序号、不需要确认、不持久化、不写日志。
   `upload_grant_needed` 给出每个待上传对象及其固定的 SHA-256；Node 侧行为见
   [Revision 交付](../node/revision-delivery.zh.md)。

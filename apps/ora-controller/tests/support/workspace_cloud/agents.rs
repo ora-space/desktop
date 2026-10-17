@@ -15,7 +15,6 @@ pub(super) struct AgentState {
     lose_reply: bool,
     pub(super) input_closed: bool,
     pub(super) deliveries: super::deliveries::DeliveryState,
-    pub(super) restores: super::restores::RestoreState,
 }
 impl WorkspaceCloud {
     /// Changes current permission without changing the historical registered dispatch.
@@ -75,6 +74,7 @@ impl WorkspaceCloud {
                             }],
                         }),
                         prior_revision: prior,
+                        workspace_directory: Self::workspace_directory(),
                     },
                 )),
             }),
@@ -87,6 +87,28 @@ impl WorkspaceCloud {
                 })),
             }));
         }
+    }
+    /// The Workspace directory every queued session carries: this run Workspace and a main one,
+    /// whose run-only fields Cloud leaves empty.
+    pub fn workspace_directory() -> Vec<proto::WorkspaceListing> {
+        vec![
+            proto::WorkspaceListing {
+                workspace_id: WORKSPACE.into(),
+                kind: "run".into(),
+                issue_id: "issue-7".into(),
+                issue_title: "Fix the parser".into(),
+                issue_run_id: "run-3".into(),
+                run_status: "running".into(),
+            },
+            proto::WorkspaceListing {
+                workspace_id: "00000000-0000-4000-8000-000000000003".into(),
+                kind: "main".into(),
+                issue_id: String::new(),
+                issue_title: String::new(),
+                issue_run_id: String::new(),
+                run_status: String::new(),
+            },
+        ]
     }
     /// Reads registered session facts for assertions and subsequent command input.
     pub fn agent_records(&self) -> Vec<proto::ExecutionRecord> {
@@ -384,12 +406,5 @@ impl AgentRunService for WorkspaceCloud {
         request: Request<proto::GrantRevisionUploadRequest>,
     ) -> Result<Response<proto::GrantRevisionUploadResponse>, Status> {
         self.grant(request.into_inner())
-    }
-    /// Signs a read of a resumed session's prior bundle.
-    async fn grant_revision_download(
-        &self,
-        request: Request<proto::GrantRevisionDownloadRequest>,
-    ) -> Result<Response<proto::GrantRevisionDownloadResponse>, Status> {
-        self.grant_download(request.into_inner())
     }
 }

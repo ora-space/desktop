@@ -30,7 +30,7 @@ impl<G> Clone for SessionJournal<G> {
 
 impl<G: WriteGuard> SessionJournal<G> {
     /// A poisoned actor handle fails closed rather than guessing whether a write committed.
-    fn lock(&self) -> Result<MutexGuard<'_, NodeDatabase<G>>, Error> {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, NodeDatabase<G>>, Error> {
         self.inner.lock().map_err(|_| Error::InvalidTransition)
     }
 }

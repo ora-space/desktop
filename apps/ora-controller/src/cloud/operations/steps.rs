@@ -188,8 +188,8 @@ impl Round<'_> {
         }
     }
 
-    /// clone: dispatches one clone of the Project repository at the Workspace's requested ref to
-    /// the Workspace's Node and waits for its result. A pending execution from an earlier round is
+    /// clone: dispatches one clone of the Binding snapshot Cloud froze for the step to the
+    /// Workspace's Node and waits for its result. A pending execution from an earlier round is
     /// waited on, never registered twice; a failed one is followed by a new execution.
     pub(super) async fn clone_step(&mut self) -> Result<(), Error> {
         let Some(sandbox) = self.ready_node().await? else {
@@ -261,49 +261,41 @@ impl Round<'_> {
         }
     }
 
-    /// Registers the Workspace's clone with Cloud while dispatch to the Node is open. Cloud checks
-    /// the input against the Workspace, so it is built from the snapshot and never chosen here. An
-    /// input the Node protocol refuses (such as the ref `HEAD`) blocks the operation instead of
-    /// being sent: retrying cannot make it valid.
+    /// Registers the Workspace's clone with Cloud while dispatch to the Node is open, forwarding
+    /// the snapshot input Cloud froze (`clone_input`) verbatim; the Controller never builds a
+    /// clone input from the Project or Workspace fields. A step without that input, or with one
+    /// the Node protocol refuses, blocks the operation instead of being sent: retrying cannot make
+    /// it valid, and both mean Cloud handed out a step it should not have.
     async fn dispatch_clone(&mut self, sandbox: &Sandbox) -> Result<Option<ExecutionId>, Error> {
-        let workspace = self.workspace()?;
-        let project = self.snapshot.project.as_ref().ok_or(Error::Conflict)?;
-        let spec = CloneRepositoryUrl::parse(&project.repository_url).map(|repository| {
-            CloneExecutionSpec {
-                node_id: sandbox.binding.node_id.clone(),
-                repository,
-                branch: BranchName::new(workspace.requested_ref.clone()),
-            }
-        });
-        let operation = OperationId::new(self.operation.id.clone());
-        let registered = {
-            let gate = sandbox.gate.lock().await;
-            if *gate == Gate::Closed {
-                return Err(Error::Conflict);
-            }
-            match spec {
-                Ok(spec) => claim::record_dispatch(self.store, self.epoch, operation, spec).await,
-                Err(error) => Err(Error::Configuration(error.to_string())),
-            }
+        let refusal = match self.snapshot.clone_input.as_ref() {
+            None => "the clone step carries no frozen clone input",
+            Some(input) => match mapping::clone_spec(input, &sandbox.binding.node_id) {
+                Err(_) => "the frozen clone input is not a valid Node command",
+                Ok(spec) => {
+                    let operation = OperationId::new(self.operation.id.clone());
+                    let gate = sandbox.gate.lock().await;
+                    if *gate == Gate::Closed {
+                        return Err(Error::Conflict);
+                    }
+                    match claim::record_dispatch(self.store, self.epoch, operation, spec).await {
+                        Ok(command) => return Ok(Some(command.execution_id)),
+                        Err(Error::Validation(_)) => "the Node protocol refuses the clone command",
+                        Err(error) => return Err(error),
+                    }
+                }
+            },
         };
-        match registered {
-            Ok(command) => Ok(Some(command.execution_id)),
-            Err(error @ (Error::Validation(_) | Error::Configuration(_))) => {
-                ora_logging::ora_error!(
-                    operation_id = %self.operation.id,
-                    requested_ref = %self.workspace()?.requested_ref,
-                    error = %error,
-                    "the Workspace's clone input is not a valid Node command; the operation stays blocked"
-                );
-                self.defer(
-                    proto::DeferState::Blocked,
-                    proto::DeferReason::ExternalFailure,
-                )
-                .await
-                .map(|_| None)
-            }
-            Err(error) => Err(error),
-        }
+        ora_logging::ora_error!(
+            operation_id = %self.operation.id,
+            reason = %refusal,
+            "the clone step is not dispatched; the operation stays blocked"
+        );
+        self.defer(
+            proto::DeferState::Blocked,
+            proto::DeferReason::ExternalFailure,
+        )
+        .await
+        .map(|_| None)
     }
 
     /// quiesce: for each Workspace in scope, stops dispatching to its Node, then reports idle only

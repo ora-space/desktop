@@ -1,8 +1,8 @@
 use super::*;
 use crate::support::{ChildGuard, until};
 use ora_controller::{
-    CloneIntake, CoordinationStore, ExecutionOutcome, NodeEndpoint, NodeTarget, SessionConfig,
-    SessionError, SqliteStore,
+    CoordinationStore, ExecutionOutcome, NodeEndpoint, NodeTarget, SessionConfig, SessionError,
+    SqliteStore,
 };
 use ora_node_transport::{
     CloseReason, FrameReceiver, FrameSender, TransportError,
@@ -145,7 +145,12 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
             node: fixture.config(),
             process: fixture.process(),
             clone: Some(clone.clone()),
-            git_access: None,
+            // A Node with a platform-assigned target must have the git-access identity.
+            git_access: Some(ora_node::GitAccessConfig {
+                ca_cert: fixture.path().join("git-server/git-access/ca.pem"),
+                client_cert: fixture.path().join("git-server/git-access/client.pem"),
+                client_key: fixture.path().join("git-server/git-access/client-key.pem"),
+            }),
             control: Some(ora_node::ControlConfig {
                 target: Some(runtime_fixture::scope()),
                 controller_id: ControllerId::new("owner"),
@@ -191,8 +196,8 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
 fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         // Reserve a free port; the Node binds it again after this listener closes.
         let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -226,13 +231,9 @@ fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session()
             .unwrap();
         let outcome = runtime.block_on(async {
             let command = store
-                .accept_request(
+                .seed_clone(
                     RequestId::new("websocket"),
-                    CloneExecutionSpec {
-                        node_id: NodeId::new("test-node"),
-                        repository: CloneRepositoryUrl::parse(&server.address).unwrap(),
-                        branch: BranchName::new("main"),
-                    },
+                    server.spec("test-node", &server.snapshot(), "main"),
                 )
                 .await
                 .unwrap();
@@ -286,8 +287,8 @@ fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session()
 fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_controller_acks() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .unwrap()
@@ -314,13 +315,9 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
             .unwrap();
         let (command, original) = runtime.block_on(async {
             let command = store
-                .accept_request(
+                .seed_clone(
                     RequestId::new("websocket-replay"),
-                    CloneExecutionSpec {
-                        node_id: NodeId::new("test-node"),
-                        repository: CloneRepositoryUrl::parse(&server.address).unwrap(),
-                        branch: BranchName::new("main"),
-                    },
+                    server.spec("test-node", &server.snapshot(), "main"),
                 )
                 .await
                 .unwrap();
@@ -442,16 +439,17 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
     });
 }
 
-/// A clone cut short by a normal Node stop reaches the Controller as a terminal interrupted failure
-/// over WebSocket: the stopping Node settles it, the restarted Node replays it, the production
-/// session takes it over, and the execution leaves the Controller's pending queries for good.
+/// A clone whose snapshot fetch a normal Node stop cut short reaches the Controller as a terminal
+/// failure over WebSocket: the restarted Node is a new incarnation, which runtime control does
+/// not let continue the old one's execution, so it fails it with the reserved directory retained;
+/// the production session takes it over, and the execution leaves the pending queries for good.
 #[test]
-fn controller_session_takes_over_interrupted_clone_after_node_stop() {
+fn controller_session_takes_over_clone_stopped_in_its_snapshot_fetch() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let clone = configuration(&fixture, &server);
         let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .unwrap()
@@ -491,24 +489,24 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
         };
         let (command, directory) = runtime.block_on(async {
             let command = store
-                .accept_request(
+                .seed_clone(
                     RequestId::new("websocket-interrupted"),
-                    CloneExecutionSpec {
-                        node_id: NodeId::new("test-node"),
-                        repository: CloneRepositoryUrl::parse(&server.address).unwrap(),
-                        branch: BranchName::new("main"),
-                    },
+                    server.spec("test-node", &server.snapshot(), "main"),
                 )
                 .await
                 .unwrap();
-            // The session dispatches the clone; Git then blocks on the paused HTTPS server.
+            // The session dispatches the clone; the Node's snapshot fetch then blocks on the paused
+            // Git Server, with the target directory reserved and the transport repository made.
+            let transports = clone.repository_root.join(".ora-transport");
             let dispatched = async {
                 loop {
+                    let fetching =
+                        fs::read_dir(&transports).is_ok_and(|mut entries| entries.next().is_some());
                     let started = fs::read_dir(&clone.repository_root)
                         .unwrap()
                         .map(|entry| entry.unwrap().path())
-                        .find(|path| path.join(".git").is_dir());
-                    if let Some(directory) = started {
+                        .find(|path| *path != transports && path.is_dir());
+                    if let Some(directory) = started.filter(|_| fetching) {
                         break directory;
                     }
                     tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
@@ -538,17 +536,17 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
             }
         });
         let ExecutionOutcome::Failed { node: reporter, .. } = &outcome else {
-            panic!("interrupted clone must fail: {outcome:?}");
+            panic!("a clone of an earlier incarnation must fail: {outcome:?}");
         };
         assert_eq!(
             outcome,
             ExecutionOutcome::Failed {
                 node: reporter.clone(),
-                failure: CloneFailureCode::Interrupted,
+                failure: CloneFailureCode::OperationFailed,
                 retained_path: Some(NodePath::new(directory.to_str().unwrap())),
             }
         );
-        // A terminal result is no longer queried, unlike the permanent Unknown it replaces.
+        // A terminal result is no longer queried.
         assert_eq!(
             runtime
                 .block_on(store.pending_dispatches(&NodeId::new("test-node")))
@@ -568,7 +566,8 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
 fn node_closes_sessions_with_the_reason_code() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let bind = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .unwrap()

@@ -37,6 +37,7 @@ fn config(
         deno_path: PathBuf::from("/usr/bin/deno"),
         ready_timeout_ms: 1000,
         workload_directory,
+        ora_git_directory: None,
     });
     config
 }

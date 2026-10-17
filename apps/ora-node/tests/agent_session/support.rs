@@ -2,8 +2,8 @@
 
 use ora_node::{
     AgentSessions, CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig,
-    SessionHost, SessionLedger, SessionWorkload,
+    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
+    SessionConfig, SessionHost, SessionLedger, SessionWorkload,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, ExecutionId, GitIdentity, NodeId,
@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
@@ -208,8 +208,29 @@ impl SessionLedger for MemoryLedger {
 pub struct Checkouts(pub HashMap<ExecutionId, PathBuf>);
 
 impl CheckoutResolver for Checkouts {
-    fn checkout(&self, clone_execution: &ExecutionId) -> Option<PathBuf> {
-        self.0.get(clone_execution).cloned()
+    fn checkout(&self, clone_execution: &ExecutionId) -> Option<ora_node_db::ClonedCheckout> {
+        let path = self.0.get(clone_execution)?.clone();
+        let base = "0123456789abcdef0123456789abcdef01234567";
+        Some(ora_node_db::ClonedCheckout {
+            path,
+            spec: ora_node_protocol::CloneExecutionSpec {
+                node_id: NodeId::new("node-1"),
+                repository_url: ora_node_protocol::GitRepositoryUrl::parse(
+                    "https://git.ora.test/tenant/project.git",
+                )
+                .unwrap(),
+                snapshot_ref: ora_node_protocol::SnapshotRef::parse(&format!(
+                    "refs/ora/upstreams/9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a/snapshots/{base}"
+                ))
+                .unwrap(),
+                base_commit: ora_node_protocol::CommitId::new(base),
+                workspace_ref: ora_node_protocol::WorkspaceRef::of(
+                    "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a",
+                    "main",
+                )
+                .unwrap(),
+            },
+        })
     }
 }
 
@@ -248,15 +269,27 @@ impl PluginCatalog for Catalog {
 pub struct Restorer {
     pub answer: Arc<Mutex<Result<Restored, RestoreFailure>>>,
     pub requests: Arc<Mutex<Vec<RestoreRequest>>>,
+    /// While set, a restore runs until it is cancelled, then counts that in `cancelled`.
+    pub hold: Arc<AtomicBool>,
+    pub cancelled: Arc<AtomicUsize>,
 }
 
 impl PriorRevisionRestore for Restorer {
     /// Records the request and answers as scripted.
-    async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
+    async fn restore(
+        &self,
+        request: RestoreRequest,
+        cancel: RestoreCancel,
+    ) -> Result<Restored, RestoreFailure> {
         self.requests
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(request);
+        if self.hold.load(Ordering::SeqCst) {
+            until(|| cancel.requested().then_some(())).await;
+            self.cancelled.fetch_add(1, Ordering::SeqCst);
+            return Err(RestoreFailure::Unavailable);
+        }
         self.answer
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -281,8 +314,10 @@ impl Fixture {
             ledger: MemoryLedger::default(),
             leases: Arc::new(AtomicUsize::new(0)),
             restorer: Restorer {
-                answer: Arc::new(Mutex::new(Ok(Restored::OnRemoteHistory))),
+                answer: Arc::new(Mutex::new(Ok(Restored::OnSnapshotHistory))),
                 requests: Arc::default(),
+                hold: Arc::default(),
+                cancelled: Arc::default(),
             },
         };
         let package = fixture.package_root();
@@ -423,6 +458,7 @@ impl Fixture {
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
                 prior_revision: prior,
+                workspace_directory: vec![],
             },
         );
     }

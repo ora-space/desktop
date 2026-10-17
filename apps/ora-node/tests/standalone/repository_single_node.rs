@@ -1,8 +1,8 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
 use ora_controller::{
-    CloneIntake, DeploymentConfig, NodeEndpoint, NodeTarget, Persistence, RuntimeConfig,
-    SessionConfig, SingleNodeConfig, SqliteStore,
+    DeploymentConfig, NodeEndpoint, NodeTarget, Persistence, RuntimeConfig, SessionConfig,
+    SingleNodeConfig, SqliteStore,
 };
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 use pretty_assertions::assert_eq;
@@ -85,10 +85,10 @@ fn live_git(fixture: &Fixture) -> LinuxPidFd {
 fn single_node_composition_hosts_and_retires_its_node() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
         let expected_commit = fixture.git(&["rev-parse", "main"]);
-        let source = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        source.paused.store(true, Ordering::SeqCst);
+        let source =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        source.pause(true);
         let clone = configuration(&fixture, &source);
         let node_config = ipc::write_config(&fixture, &clone, /*frame_timeout_ms*/ 40_000);
         let endpoint = fixture.config().home_directory.join("control.sock");
@@ -144,11 +144,10 @@ fn single_node_composition_hosts_and_retires_its_node() {
         // The hosted Node shares the Controller's process group without a new session of its own.
         let group = controller.0.id();
         assert_eq!(process_group(first.1), group);
+        // The Node's snapshot fetch now waits on the paused Git Server.
         until(|| {
-            fs::read_dir(&clone.repository_root)
-                .unwrap()
-                .flatten()
-                .any(|entry| entry.path().join(".git").is_dir())
+            fs::read_dir(clone.repository_root.join(".ora-transport"))
+                .is_ok_and(|mut entries| entries.next().is_some())
         });
         // Killing only the Controller must not signal the Node it started or the Git it accepted.
         controller.kill();
@@ -156,7 +155,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
         let (mut refused, _) = launch_expecting_exit(&fixture, &config);
         assert!(!refused.0.wait().unwrap().success());
         assert!(!first.0.has_exited().unwrap());
-        source.paused.store(false, Ordering::SeqCst);
+        source.pause(false);
         // The surviving Node finishes the clone on its own and replays the unacknowledged result
         // to whoever holds the owner session; observing it without an Ack leaves the event for the
         // replacement Controller to take over durably.
@@ -226,7 +225,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
         // Normal stop during a live clone: the hosted Node finishes its managed-Git cleanup and
         // exits before the Controller does; the accepted record is neither lost nor turned into a
         // fresh execution when the composition comes back.
-        source.paused.store(true, Ordering::SeqCst);
+        source.pause(true);
         let interrupted = accept(&home, &source, "hosted-interrupted");
         controller = launch(&fixture, &config);
         let third = hosted_node(&node_config);
@@ -235,7 +234,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
         assert!(controller.0.try_wait().unwrap().unwrap().success());
         assert!(third.0.has_exited().unwrap());
         assert!(git.has_exited().unwrap());
-        source.paused.store(false, Ordering::SeqCst);
+        source.pause(false);
         controller = launch(&fixture, &config);
         let fourth = hosted_node(&node_config);
         controller.terminate();
@@ -266,7 +265,8 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 .attempts(&hosted.execution_id)
                 .unwrap()
                 .len(),
-            1
+            // One Run per workload step of the clone.
+            3
         );
     });
 }
@@ -274,21 +274,22 @@ fn single_node_composition_hosts_and_retires_its_node() {
 /// Accepts one clone through the durable local owner while no Controller process holds it.
 fn accept(
     home: &std::path::Path,
-    source: &HttpsRepository,
+    source: &GitServerFixture,
     request_id: &str,
 ) -> CloneRepositoryMessage {
     let owner = SqliteStore::open(home, ControllerId::new("owner")).unwrap();
-    block_on(owner.accept_request(
+    let command = seed_dispatch(
+        home,
+        request(source, request_id, "main"),
         RequestId::new(request_id),
-        request(source, request_id, "main").payload.spec,
-    ))
-    .unwrap()
+    );
+    drop(owner);
+    command
 }
 
 /// Reads every accepted operation once the Controller process has released the owner.
-fn operations(home: &std::path::Path) -> Vec<ora_controller::CloneOperation> {
-    let owner = SqliteStore::open(home, ControllerId::new("owner")).unwrap();
-    block_on(owner.operations()).unwrap()
+fn operations(home: &std::path::Path) -> Vec<HistoricalClone> {
+    historical_clones(home)
 }
 
 /// Counts the Node's unacknowledged result events.

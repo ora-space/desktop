@@ -1,8 +1,8 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
 use ora_controller::{
-    CloneIntake, CoordinationStore, ExecutionOutcome, NodeEndpoint, NodeTarget, SessionConfig,
-    SqliteStore, WriteGuard, WritePoint,
+    CoordinationStore, ExecutionOutcome, NodeEndpoint, NodeTarget, SessionConfig, SqliteStore,
+    WriteGuard, WritePoint,
 };
 use pretty_assertions::assert_eq;
 use std::{
@@ -64,16 +64,16 @@ fn controller_transaction_child() {
 fn killed_controller_before_commit_replays_without_losing_node_responsibility() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let home = fixture.path().join("controller");
         let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
-        let command = block_on(owner.accept_request(
+        let command = seed_dispatch(
+            &home,
+            request(&server, "crash", "main"),
             RequestId::new("crash-request"),
-            request(&server, "crash", "main").payload.spec,
-        ))
-        .unwrap();
+        );
         drop(owner);
         let mut node = ipc::launch(&fixture, &clone);
         until(|| {
@@ -132,7 +132,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
             vec![command.clone()]
         );
         drop(owner);
-        server.reject_auth.store(true, Ordering::SeqCst);
+        server.reject_auth(true);
         proxy.drop_ack.store(false, Ordering::SeqCst);
         let mut replacement = controller::launch(&fixture, &proxy);
         let ack = proxy
@@ -159,13 +159,14 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         let status = node.status(&query).unwrap();
         assert_eq!(
             status.payload.state,
-            ExecutionState::Completed(ExecutionResult::Clone(
-                block_on(owner.operation(&query.execution_id))
-                    .unwrap()
+            ExecutionState::Completed(ExecutionResult::Clone(Box::new(
+                historical_clones(&home)
+                    .into_iter()
+                    .find(|r| r.command.execution_id == query.execution_id)
                     .unwrap()
                     .result
                     .unwrap()
-            ))
+            )))
         );
     });
 }

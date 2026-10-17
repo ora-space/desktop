@@ -9,8 +9,8 @@ use tokio::time::timeout;
 fn slow_reader_is_disconnected_and_original_result_is_replayed() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child =
@@ -112,7 +112,8 @@ fn slow_reader_is_disconnected_and_original_result_is_replayed() {
 fn partial_frame_expires_and_releases_the_control_session() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child =
@@ -163,7 +164,8 @@ fn partial_frame_expires_and_releases_the_control_session() {
 fn controller_heartbeats_keep_idle_session_and_foreign_heartbeat_ends_it() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child =

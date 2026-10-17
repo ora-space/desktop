@@ -364,6 +364,7 @@ fn remove_plugin_schema(path: &std::path::Path) {
 
 /// Reconstructs v8 exactly so the v9 migration exercises the old identity constraint and data.
 fn remove_revision_schema(path: &std::path::Path) {
+    remove_branch_heads_schema(path);
     let connection = Connection::open(path).unwrap();
     connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_revision; DROP TABLE revision_outbox; DROP TABLE revision_deliveries; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
     let definition = include_str!("session.sql")
@@ -377,6 +378,14 @@ fn remove_revision_schema(path: &std::path::Path) {
         .execute_batch(&format!("CREATE TABLE execution_identities{definition}"))
         .unwrap();
     connection.execute_batch("INSERT INTO execution_identities SELECT * FROM old_ids; DROP TABLE old_ids; PRAGMA user_version=8;").unwrap();
+}
+
+/// Reconstructs v9 exactly: the schema before the own-branch ledger.
+fn remove_branch_heads_schema(path: &std::path::Path) {
+    Connection::open(path)
+        .unwrap()
+        .execute_batch("DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
+        .unwrap();
 }
 
 /// Reconstructs v7 exactly so migrations exercise the old identity constraint and data.

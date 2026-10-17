@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
+#[path = "support/local_clone.rs"]
+mod local_clone;
 use ora_controller::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
@@ -37,18 +39,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                 .build()
                 .unwrap()
                 .block_on(async {
-                    let command = store
-                        .accept_request(
-                            RequestId::new("request"),
-                            CloneExecutionSpec {
-                                node_id: NodeId::new("node"),
-                                repository: CloneRepositoryUrl::parse("https://example.com/repo")
-                                    .unwrap(),
-                                branch: BranchName::new("main"),
-                            },
-                        )
-                        .await
-                        .unwrap();
+                    let command = local_clone::seed(&root.path().join("controller"), "request");
                     let listener = UnixListener::bind(&socket).unwrap();
                     let settings = SessionConfig {
                         io_timeout_ms: 1000,
@@ -119,17 +110,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
             },
         };
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-            let command = store
-                .accept_request(
-                    RequestId::new("request"),
-                    CloneExecutionSpec {
-                        node_id: NodeId::new("node"),
-                        repository: CloneRepositoryUrl::parse("https://example.com/repo").unwrap(),
-                        branch: BranchName::new("main"),
-                    },
-                )
-                .await
-                .unwrap();
+            let command = local_clone::seed(&root.path().join("controller"), "request");
             let listener = UnixListener::bind(&socket).unwrap();
             let settings = SessionConfig { io_timeout_ms: 1000, query_interval_ms: 20 };
             let session = run_session(&store, &endpoint, &settings);
@@ -218,18 +199,7 @@ fn connection_failures_are_classified_without_releasing_responsibility() {
             .build()
             .unwrap()
             .block_on(async {
-                let command = store
-                    .accept_request(
-                        RequestId::new("request"),
-                        CloneExecutionSpec {
-                            node_id: NodeId::new("node"),
-                            repository: CloneRepositoryUrl::parse("https://example.com/repo")
-                                .unwrap(),
-                            branch: BranchName::new("main"),
-                        },
-                    )
-                    .await
-                    .unwrap();
+                let command = local_clone::seed(&root.path().join("controller"), "request");
                 // Reserve and release a port so nothing listens there.
                 let closed = std::net::TcpListener::bind("127.0.0.1:0")
                     .unwrap()

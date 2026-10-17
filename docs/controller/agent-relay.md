@@ -2,13 +2,19 @@
 
 English | [中文](agent-relay.zh.md)
 
-In Cloud mode, `ora-controller` carries Agent session work, commands, Revision deliveries, their
-upload grants and the download grants of resumed sessions between Cloud and the Workspace's Node. Cloud owns the IssueRun phase and durable
-receipts; the Controller keeps only connection-local queues. Local SQLite mode remains clone-only.
+In Cloud mode, `ora-controller` carries Agent session work, commands, Revision deliveries and the
+upload grants of their session history between Cloud and the Workspace's Node. Cloud owns the IssueRun
+phase and durable receipts; the Controller keeps only connection-local queues. It forwards the Git
+Server repository and refs Cloud fixed in each input verbatim and holds, requests or relays no Git
+access credential: the Node reaches the Git Server with its own git-access identity
+([ADR](../../specs/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)).
+Local SQLite mode remains clone-only.
 
 ## Dispatch and authority
 
-`ClaimWork` session items name their Workspace sandbox and Node. The Controller waits for that
+`ClaimWork` session items name their Workspace sandbox and Node. The session input's Workspace
+directory (`workspace_directory`, for `ora-git list`) reaches the Node verbatim, with the empty
+run-only fields of a non-run Workspace left out. The Controller waits for that
 sandbox's verified handshake and `agent_session` capability, then records the exact input in Cloud
 while holding the sandbox admission gate. A reconnect wakes queued work. The Node operation ID is
 read back from the registered record; it is not assumed to equal the IssueRun ID.
@@ -23,12 +29,17 @@ unfinished work when quiesce determines whether the sandbox is idle.
 `DeliverRevision` work items take the same claim, register and dispatch path. Registration
 requires the target Node's verified handshake with the `revision_delivery` capability; a Node
 without it leaves the item queued in Cloud. The registered input is rebuilt with the target Node
-added (Cloud's spec carries none) and sent only as `ControlledDeliverRevision` under a fresh
-execution permit. Each family has its own pending list, so a delivery record never reaches clone
+added (Cloud's spec carries none), the Git Server repository, `delivery_ref` and `workspace_ref`
+unchanged, and sent only as `ControlledDeliverRevision` under a fresh execution permit. Each family has its own pending list, so a delivery record never reaches clone
 polling or clone reconciliation, and an unfinished delivery keeps quiesce from reporting idle.
 
-The terminal `RevisionResult` is taken over with `TakeOverNodeEvent` and acknowledged only after
-Cloud committed it; Cloud verifies the declared objects inside that takeover. A Completed status
+Before `TakeOverNodeEvent` the Controller checks a terminal `RevisionResult` against the dispatched
+input: `base_commit`, `revision_ref` and `history.key` must match, an unchanged final commit must be
+the base or the input's prior final commit, and a delivered one neither. A result that fails the
+check is neither taken over nor acknowledged. Whether the delivery ref holds the final commit only
+Cloud verifies, through a ref query; the Controller never contacts the Git Server. The result is
+acknowledged only after Cloud committed it; Cloud verifies the declared history object inside that
+takeover. A Completed status
 reply settles nothing, because Cloud accepts a delivery result only together with the Node's
 sequenced receipt; the Node keeps replaying the envelope until it is acknowledged. The Controller
 never writes `RevisionFailed` itself and never reports `VERIFICATION_FAILED`, which only Cloud
@@ -38,8 +49,11 @@ command.
 
 ## Upload grants
 
-Grants are requested from `GrantRevisionUpload` only with the SHA-256 digests the Node froze, so
-Cloud signs `x-amz-checksum-sha256` together with `If-None-Match: *`:
+A delivery uploads only its session history (the JSONL at `history_key`); the commits go to the
+Git Server. Grants are requested from `GrantRevisionUpload` only for that key and only with the
+SHA-256 digest the Node froze, so Cloud signs `x-amz-checksum-sha256` together with
+`If-None-Match: *`. A request naming any other key is never forwarded to Cloud and yields no grant,
+without failing the delivery:
 
 - When the Node sends `UploadGrantNeeded`, its checksum map is forwarded unchanged.
 - When a new connection first sees the delivery `Accepted` or `Running`, it requests again with the
@@ -55,25 +69,17 @@ delivery or the connection. Grants live only in the relay's memory on their way 
 they are not persisted or logged, and the frame is never formatted into diagnostics. The process
 memory keeps only the digests, which are not credentials.
 
-## Resumed sessions and download grants
+## Resumed sessions
 
 A session input with `prior_revision` resumes the Issue's latest Revision (restore contract
 `cloud/controller-integration/20261010-revision-restore-contract`). Its prior Revision maps into the
-Node session spec with its bundle object (an input without one is refused), and into the delivery
-spec without it (an input with one is refused). Such a session is registered only when the target
-Node's live handshake also advertised `revision_restore`; otherwise it stays queued in Cloud like
-any capability miss, so it never runs on a fresh clone of a Node that cannot restore. An unchanged
-delivery result is accepted when its final commit is the base or the input's prior final commit.
-
-The Node asks with `DownloadGrantNeeded` while its restore waits, and again on every new
-connection; the Controller asks `GrantRevisionDownload` only then and keeps nothing across
-connections. Repeated requests for one execution coalesce. The returned grant is relayed as
-`DownloadGrant{granted}` with headers and expiry verbatim, only as a `GET` of the session's own
-bundle key. `NOT_FOUND` and `ABORTED` (`CONFLICT`: the session has a result, its run stopped, or
-the input names no bundle) reach the Node as `DownloadGrant{refused}`, which fails its restore;
-an unavailable Cloud, a lost reply or a stale lease (`FAILED_PRECONDITION`) keeps the request and
-retries it, so an outage never fails a restore. Download grants, like upload grants, are never
-persisted or logged.
+Node session spec with its Git Server repository, delivery ref and base commit (an input whose
+repository or ref the Node protocol refuses is refused), and into the delivery spec with its
+identity and final commit only (a delivery input naming a repository, delivery ref or base commit
+is refused). The Node fetches the prior final commit from the Git Server itself; there is no
+download grant. Such a session is registered only when the target Node's live handshake also
+advertised `revision_restore`; otherwise it stays queued in Cloud like any capability miss, so it
+never runs on a fresh clone of a Node that cannot restore.
 
 ## Events and recovery
 
@@ -108,10 +114,10 @@ tests with in-memory Cloud and Node fixtures in `tests/workspaces/agents.rs`,
 `tests/workspaces/deliveries.rs` and `tests/workspaces/restores.rs`. They exercise ordered takeover, independent slow executions,
 outage/conflict/lost-response recovery, Controller restart, command retry/order/rejection,
 capability gating, large records, quiesce responsibility, permit-gated delivery dispatch,
-checksum-bound grant relay with verbatim headers, grant refresh on reconnect, refused grants,
-ACK after commit, the `revision_restore` gate for resumed sessions, download grant relay,
-refusal and outage retry, re-requests after reconnect, and the absence of grant URLs and signatures
-from logs. These tests do not
+checksum-bound grant relay with verbatim headers for the history key only, grant refresh on
+reconnect, refused grants, ACK after commit, the `revision_restore` gate for resumed sessions, the
+prior Revision and Workspace directory reaching the Node verbatim, and the absence of grant URLs
+and signatures from logs. These tests do not
 establish real PostgreSQL, object storage, production Node or browser Thread integration.
 
 The Controller session ADR is still `proposed`; this implementation supplies reviewable behavior

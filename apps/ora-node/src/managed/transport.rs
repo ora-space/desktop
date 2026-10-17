@@ -1,5 +1,5 @@
 use super::{ProcessConfig, Shutdown};
-use gitlancer::{GitIntent, GitOutput};
+use gitlancer::GitOutput;
 use ora_process_client::ProcessHost;
 use ora_process_protocol::*;
 use std::{
@@ -42,12 +42,11 @@ pub(super) async fn close(
 pub(super) async fn execute(
     client: &ProcessHost,
     intent: &HostRunIntent,
-    command_intent: GitIntent,
+    budget: Duration,
     config: &ProcessConfig,
     shutdown: &Shutdown,
 ) -> io::Result<GitOutput> {
     let started = Instant::now();
-    let budget = config.command_budget(command_intent);
     match client
         .execute(HostOperation::CreateScope {
             scope: intent.scope,

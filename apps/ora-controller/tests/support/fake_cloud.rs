@@ -64,6 +64,8 @@ pub struct State {
     pub epoch: Option<i64>,
     next_epoch: i64,
     queue: VecDeque<proto::WorkItem>,
+    /// Operation identities `ClaimWork` handed out, in claim order.
+    pub claimed: Vec<String>,
     pub dispatches: Vec<proto::ExecutionRecord>,
     watch: WatchPolicy,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
@@ -119,6 +121,7 @@ impl FakeCloud {
                 epoch: None,
                 next_epoch: 1,
                 queue: VecDeque::new(),
+                claimed: Vec::new(),
                 dispatches: Vec::new(),
                 watch: WatchPolicy::Accept,
                 subscriber: None,
@@ -216,18 +219,21 @@ impl FakeCloud {
         self.lock().dispatched()
     }
 
-    /// Accepts clone work, as the public clone intake does before any signal.
+    /// Queues a work item without a target, the shape tenant-level clones had. Cloud no longer
+    /// hands such work out, and the Controller refuses it without registering anything; it only
+    /// makes each claim observable.
     pub fn enqueue(&self, operation_id: &str) {
         self.update(|state| {
             state.queue.push_back(proto::WorkItem {
                 operation_id: operation_id.into(),
                 input: Some(proto::ExecutionInput {
                     spec: Some(proto::execution_input::Spec::Clone(proto::CloneSpec {
-                        repository: "https://example.invalid/repo.git".into(),
-                        branch: "main".into(),
+                        repository_url: "https://git.ora.test/6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d.git".into(),
+                        snapshot_ref: "refs/ora/upstreams/9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d/snapshots/0123456789abcdef0123456789abcdef01234567".into(),
+                        base_commit: "0123456789abcdef0123456789abcdef01234567".into(),
+                        workspace_ref: "refs/heads/workspaces/4b3c2d1e-0f9a-4b8c-9d7e-6f5a4b3c2d1e/main".into(),
                     })),
                 }),
-                // Tenant-level clone work carries no target; the Controller picks the Node.
                 target: None,
             });
         });
@@ -345,8 +351,16 @@ impl ExecutionService for FakeCloud {
     ) -> Result<Response<proto::ClaimWorkResponse>, Status> {
         let epoch = request.get_ref().epoch;
         self.fenced(Call::ClaimWork { epoch }, epoch)?;
-        // Claiming is a pure read: the head stays queued until a dispatch is registered.
-        let item = self.lock().queue.front().cloned();
+        // Each item is handed out once. The real Cloud keeps the head queued until a dispatch is
+        // registered, but these items are refused and never registered, so keeping them would
+        // only replay the same refusal on every claim.
+        let item = self.update(|state| {
+            let item = state.queue.pop_front();
+            if let Some(item) = &item {
+                state.claimed.push(item.operation_id.clone());
+            }
+            item
+        });
         Ok(Response::new(proto::ClaimWorkResponse { item }))
     }
 

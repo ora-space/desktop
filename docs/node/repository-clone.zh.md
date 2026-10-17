@@ -1,54 +1,59 @@
-# 受管仓库 Clone
+# 受管快照 clone 与 Workspace Git
 
 [English](repository-clone.md) | 中文
 
-`process.command_timeout_ms` 限制本地 Git 命令；具有 Network intent 的 clone/fetch/push 使用独立的
-`process.network_timeout_ms`，省略时默认 600000，范围为 1..1200000 毫秒。M4 保留本地 30000，
-网络使用 600000。网络超时仍关闭原 Scope，并取得 host/guardian 收尾证据后才报告 Interrupted；
-不取消 fencing，也不在旧 Git 可能写入时放行新尝试。Cloud 另以持久执行记录限制 Workspace clone
-最多三次，Node 不自行决定业务重试。
+Cloud 在交出 Workspace 的 clone 步骤前冻结 Binding 快照。Controller 原样转交 `repository_url`、
+`snapshot_ref`、`base_commit`、`workspace_ref`。Node 只接受不带凭据、查询或片段的 HTTPS URL；
+快照 ref 必须包含规范 Binding UUID 并指向基础提交；Workspace ref 必须包含规范 Workspace UUID
+与具体分支名。旧的 repository/branch 输入和 SSH clone 被拒绝。
 
-Linux Node 为嵌入调用方提供 `configure_clone`、`submit_clone` 和 `recover_clones`。
-独立可执行程序接受可选 `clone` 部署配置并恢复已受理的 clone；可通过[本机 IPC](local-ipc.zh.md)
-接收新 clone 命令，文件和 stdin 不是命令通道，也未切换 Backend 写入入口。
+## 部署与执行
 
-```json
-{
-  "clone": {
-    "repository_root": "/home/node/repositories",
-    "git_config": "/home/node/deployment/clone.gitconfig",
-    "search_path": ["/usr/bin"],
-    "ssh": { "kind": "disabled" }
-  }
-}
-```
+`clone` 配置预先存在的绝对路径 `repository_root`、受信 `git_config` 文件与 `search_path`（没有 SSH 配置：clone 只经 HTTPS 来自 Git Server）；
+`git_access` 配置 `ca_cert`、`client_cert`、`client_key`。Cloud 模式必须启用 git-access；clone 能力
+要求两项同时配置。clone 根目录不能与 Node、process 状态或 Worktree 重叠。目录预留由设备、inode、
+创建时间的原生证据保护；未知或被替换的证据不能授权写入。
 
-这是原独立入口配置的附加部分，不是完整配置文件。启动前须部署根目录和配置文件。路径必须绝对，
-由当前用户或 root 控制，禁止符号链接路径分量。release 禁止 group／other 写入，debug 跳过权限位校验；Node 不修改部署权限。
-根目录不能与 Node／process 状态或已配置的 Worktree checkout 重叠。文件系统须支持 Unix birth time：
-使用设备、inode、创建时间识别根和新建目标。身份缺失或替换保持 Unknown，数据库预留本身不证明目录归属。
-这是无需 root、信任同用户的保护，不是对抗同 UID 恶意代码的隔离。
+Node 在 `<repository_root>/.ora-transport/` 下的私有裸传输仓库中拉取冻结的快照。git-access 证书与
+clone 执行的 `Ora-Execution-Id` 仅经调用参数传入；禁用 credential helper、重定向、hooks 与环境中的
+Git 配置。拉到的提交必须等于 `base_commit`。
 
-显式 Git 配置可指定 CA 证书和非交互部署凭据 helper。Run 环境只保存配置路径，不继承 Worktree 环境
-或环境 HOME。Clone 输出直接丢弃，认证诊断不会进入 journal 输出。
-SSH 使用 `{"kind":"configured","program":"/usr/bin/ssh","config":"/home/node/deployment/ssh_config"}`；
-部署文件指定身份和 known hosts，Node 强制 batch mode 与严格主机密钥检查。未知主机密钥由部署处理，
-Node 不交互接受。
+传输仓库不含凭据，交给工作负载用户后，由 host 管理的命令初始化 checkout、从本地传输仓库把对象取入
+Workspace 分支并检出。只有本地取入命令允许 file 协议。checkout 包含完整历史、独立对象库，没有 remote、
+凭据配置或远端跟踪 ref。成功前核对目录身份、分支、已跟踪文件干净且 HEAD 等于基础提交。
+传输仓库用完删除，启动时清理残留；例外是工作负载序列尚未完成本地取入的 clone：这一步之前不会再拉取
+快照，它的 Run 也可能仍在 guardian 下读取传输仓库。
 
-每次受理独占新建目录，每个执行最多一个持久变更 Run。Git 执行非本地、完整历史、单分支 clone，
-禁用 template、递归子模块、LFS smudge／process filter、hooks 和交互提示。同名 tag 不能满足分支请求。
-核实普通非 shallow checkout、独立对象、原来源／分支、HEAD 与已获取远端分支 commit 相同及 tracked 文件干净。
+## 恢复与失败
 
-每次尝试结束（Git 自行退出、停止宽限或命令期限到期后收尾，或重启后恢复）都先关闭原受管 scope，
-再按 host 观察归类：以退出码结束且收尾完成，按退出码继续核实；被信号终止且收尾完成，以 `interrupted`
-失败结束并保留目录，因为 Git 尚未给出结论、不可能成功；退出或收尾事实缺失时保持 Unknown。
-Node 正常停止时在退出前就保存中断终态，强杀后由恢复得到同样结果。之后才核实原生目录证据并读取仓库事实。
-进程证据缺失不允许新 Run。没有 Run 的预留，仅在持久阶段证明从未派发时才可继续。已知失败保留目录；重试必须使用新 operation／execution，
-获得新目录。终态重放只使用原持久结果和事件，即使离线或文件被用户编辑，也不再检查或 clone。
+每条工作负载命令先持久关联再派发。命令完成后先关闭原 Scope、确认清理，再核实仓库。已确认的信号
+终止报告 `interrupted`；缺少进程或目录证据时保持 Unknown 并保留目录。已知失败保留预留；业务重试使用
+新的执行身份与目标目录。终态重放直接返回原结果，不重新核实或拉取。
 
-真实 Linux host／guardian 测试覆盖 TLS clone、部署凭据、分支缺失／仅有 tag、认证失败、checkout 扩展禁用、
-结果重放、已存在／替换路径、获取期间 Node 强杀／正常停止／命令超时判为中断、guardian 丢失保持 Unknown、SSH 未知主机拒绝／成功及终态／outbox 写入失败恢复。
-Linux 验收需安装 OpenSSH client／server 并由系统预备 `/run/sshd`；fixture daemon 以普通测试用户在临时端口运行。
-CI 部署的是测试依赖，不是生产 Node 服务。这不代表 Controller 投递／重连验收或跨平台 Node 运行时完成。
+快照拉取只修改私有传输仓库，所以重启后可以重做；持久次数跨重启最多三轮。每轮对网络与 5xx 故障
+最多尝试三次，间隔 5/30 秒。快照不存在或无权为 `snapshot_unavailable`；提交不符为
+`base_commit_mismatch`；网络重试耗尽为 `source_unavailable`。本地命令受 `command_timeout_ms`
+约束，网络命令受 `network_timeout_ms` 约束（默认 600000，范围 1..1200000）。清理未知不能触发重派。
 
-参见[持久记录](persistence/repository-acquisition.zh.md)和[运行时责任](runtime.zh.md)。
+## Agent 协作
+
+`agent.ora_git_directory` 指定 Node 所有的 socket 目录，通常为 `/run/ora-git`。Node 为每个会话创建随机
+socket，只把 `ORA_GIT_SOCKET` 交给工作负载。请求归属由 socket 决定，对端必须是工作负载 UID。Node 停止、
+收到 `EndSession`（会话尚未处理时即生效）或会话已结束后，请求返回 `no_session`。每个会话一次只运行一个
+请求，并发请求返回 `busy`。会话离开运行时，socket 立即拒绝新请求，但等待 Git 仍在运行的请求结束，
+因此会话记为结束、交付可能开始时，它请求的操作不再写 checkout 或 Git Server。连接在应答前被关闭时，
+客户端报告 `no_session`。
+
+镜像在工作负载 PATH 中提供 `ora-git`：
+
+- `info` 不访问网络，显示 Workspace 身份、分支与基线。
+- `list` 列出 upstream 与 Workspace ref，并附会话冻结目录中的 Issue、run 信息。
+- `fetch upstream` 与 `fetch workspace <uuid> [branch]` 只更新 `refs/remotes/ora/**`。
+- `push [branch]` 先在本地检查快进，再推送本 Workspace 的同名分支。
+
+推送用 `--force-with-lease` 声明 Node 账本的已知旧值，不信任 Agent 可改的跟踪 ref。旧值不符返回
+`conflict`，但远端已经是本次提交时按重放成功处理。非快进在发出 push 前拒绝。fetch 保留本地分支、HEAD、
+index、文件和配置。最终授权仍由 Git Server 按存活会话执行判定。CLI 不接受 URL、refspec 或 force 参数。
+
+参见[持久记录](persistence/repository-acquisition.zh.md)、[Revision 交付](revision-delivery.zh.md)
+与[运行时所有权](runtime.zh.md)。

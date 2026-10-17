@@ -32,11 +32,13 @@ impl WorkspaceCloud {
                 proto::DeliverRevisionSpec {
                     session_execution_id: format!("session-of-{run}"),
                     checkout_execution_id: state.clones[0].execution_id.clone(),
-                    base_commit: "0123456789abcdef0123456789abcdef01234567".into(),
+                    base_commit: BASE_COMMIT.into(),
                     revision_ref: format!("refs/ora/revisions/{run}"),
-                    bundle_key: format!("runs/{run}/revision.bundle"),
                     history_key: format!("runs/{run}/history.jsonl"),
                     prior_revision: None,
+                    git_repository_url: REPOSITORY.into(),
+                    delivery_ref: format!("refs/ora/deliveries/{run}"),
+                    workspace_ref: format!("refs/heads/workspaces/{WORKSPACE}/main"),
                 },
             )),
         };
@@ -123,10 +125,7 @@ impl WorkspaceCloud {
             return Err(conflict("dispatch_conflict"));
         }
         if message.checksums.is_empty()
-            || message
-                .checksums
-                .keys()
-                .any(|key| *key != spec.bundle_key && *key != spec.history_key)
+            || message.checksums.keys().any(|key| *key != spec.history_key)
         {
             return Err(Status::invalid_argument("invalid_upload_checksum"));
         }

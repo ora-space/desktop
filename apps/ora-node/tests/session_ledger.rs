@@ -35,6 +35,7 @@ fn runtime_ports_use_durable_ledger() {
                 },
                 initial_turn: turn.clone(),
                 prior_revision: None,
+                workspace_directory: vec![],
             },
         },
     };

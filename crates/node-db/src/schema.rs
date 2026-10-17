@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=9) {
+    if app != APPLICATION_ID || !matches!(version, 1..=10) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -78,6 +78,9 @@ pub(super) fn initialize(
     }
     if version >= 9 {
         expected.execute_batch(include_str!("revision.sql"))?;
+    }
+    if version >= 10 {
+        expected.execute_batch(include_str!("branch_heads.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -183,6 +186,19 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 9,
+        )?;
+        tx.commit()?;
+    }
+    if version < 10 {
+        // v10 adds the own-branch ledger. Clone, session and delivery records written before
+        // the switch to Git Server snapshots are not migrated: their inputs no longer decode, and
+        // the Workspaces they belong to are rebuilt rather than resumed.
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("branch_heads.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 10,
         )?;
         tx.commit()?;
     }

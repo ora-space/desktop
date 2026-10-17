@@ -22,7 +22,8 @@ async fn receive(stream: &mut tokio::net::UnixStream) -> NodeToControllerMessage
 fn plugin_result_replays_after_restart_until_exact_ack_and_remains_queryable() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = ipc::launch(&fixture, &config);
@@ -199,7 +200,7 @@ fn killed_download_recovers_original_input_and_cleans_temporary_package() {
             });
             (url, task)
         });
-        let https = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let https = GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &https);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = ipc::launch(&fixture, &config);

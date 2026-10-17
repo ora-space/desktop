@@ -1,13 +1,15 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
+#[path = "support/local_clone.rs"]
+mod local_clone;
 use ora_controller::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 use std::{fs, os::unix::fs::PermissionsExt};
 
-/// The embedding interface preserves durable intent across runtime shutdown and excludes duplicate owners.
+/// The runtime keeps held dispatches across shutdown and excludes duplicate owners.
 #[test]
-fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
+fn embedded_owner_reopens_held_dispatches_and_rejects_overlap() {
     ora_logging::with_trace_logging(|| {
         let root = tempfile::Builder::new()
             .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
@@ -100,43 +102,18 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
                     ControllerRuntime::<SqliteStore>::open(config.clone()),
                     Err(Error::AlreadyRunning)
                 ));
-                let handle = runtime.handle();
-                let spec = CloneExecutionSpec {
-                    node_id: NodeId::new("node"),
-                    repository: CloneRepositoryUrl::parse("https://example.com/repo.git").unwrap(),
-                    branch: BranchName::new("main"),
-                };
-                let command = handle
-                    .accept_clone(RequestId::new("request"), spec.clone())
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    handle
-                        .accept_clone(RequestId::new("request"), spec)
-                        .await
-                        .unwrap(),
-                    command
-                );
-                let expected = CloneOperation {
-                    command: command.clone(),
-                    result: None,
-                };
-                assert_eq!(handle.operations().await.unwrap(), vec![expected.clone()]);
-                assert_eq!(
-                    handle.operation(ExecutionId::new("absent")).await.unwrap(),
-                    None
-                );
+                let held = local_clone::seed(&config.home_directory, "request");
                 runtime.run(async {}).await.unwrap();
-                drop(handle);
                 drop(runtime);
-                let replacement = ControllerRuntime::<SqliteStore>::open(config).unwrap();
+                let replacement =
+                    SqliteStore::open(&config.home_directory, config.controller_id.clone())
+                        .unwrap();
                 assert_eq!(
                     replacement
-                        .handle()
-                        .operation(command.execution_id)
+                        .pending_dispatches(&NodeId::new("node"))
                         .await
                         .unwrap(),
-                    Some(expected)
+                    vec![held]
                 );
             });
     });

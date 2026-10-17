@@ -1,4 +1,4 @@
-//! Revision delivery responsibility: input, the plan frozen before the first upload, and the one
+//! Revision delivery responsibility: input, the plan frozen before the first push, and the one
 //! terminal event retained until acknowledged.
 //!
 //! Deliveries live in their own table rather than in `node_executions`: they share neither Thread
@@ -29,11 +29,12 @@ impl FrozenOutcome {
     }
 }
 
-/// Object bytes and declaration fixed before the first PUT; restarts reuse exactly these.
+/// The final commit, declaration and history bytes fixed before the first push or PUT; restarts
+/// push the same commit and upload the same bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeliveryPlan {
-    /// Single directory name under the Node's delivery root that holds the frozen objects.
+    /// Single directory name under the Node's delivery root that holds the frozen history.
     pub directory: String,
     pub outcome: FrozenOutcome,
 }
@@ -43,7 +44,7 @@ pub struct DeliveryPlan {
 pub enum DeliveryProgress {
     /// Nothing durable beyond the input: a restart prepares again from the checkout.
     Preparing,
-    /// Uploading the frozen objects.
+    /// Pushing the frozen final commit, then uploading the frozen history.
     Frozen(DeliveryPlan),
     Completed(RevisionExecutionResult),
 }
@@ -177,11 +178,10 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 result.node.node_id == self.node_id
                     && result.base_commit == spec.base_commit
                     && result.revision_ref == spec.revision_ref
-                    && result.bundle.key == spec.bundle_key
                     && result.history.key == spec.history_key
             }
             // Unchanged means no new commit beyond the base or, for a resumed session, beyond
-            // the prior Revision's final commit; any other commit would lose work unbundled.
+            // the prior Revision's final commit; any other commit is a delivered change.
             FrozenOutcome::Unchanged(result) => {
                 result.node.node_id == self.node_id
                     && result.base_commit == spec.base_commit
@@ -277,34 +277,6 @@ impl<G: WriteGuard> NodeDatabase<G> {
         match operation {
             Some(operation) => self.find_session(&OperationId::new(operation), execution),
             None => Ok(None),
-        }
-    }
-
-    /// Returns the checkout path and commit of a completed successful clone; any other clone
-    /// state, or another family's execution, leaves the delivery without a checkout.
-    pub fn delivery_checkout(
-        &self,
-        execution: &ExecutionId,
-    ) -> Result<Option<(std::path::PathBuf, CommitId)>, Error> {
-        let row: Option<(String, String)> = self
-            .connection
-            .query_row(
-                "SELECT target,progress FROM clone_executions WHERE execution=?1",
-                [execution.as_str()],
-                |r| Ok((r.get(/*idx*/ 0)?, r.get(/*idx*/ 1)?)),
-            )
-            .optional()?;
-        let Some((target, progress)) = row else {
-            return Ok(None);
-        };
-        match serde_json::from_str::<CloneProgress>(&progress)? {
-            CloneProgress::Completed(CloneExecutionResult::CloneReady(ready)) => Ok(Some((
-                serde_json::from_str::<CloneTarget>(&target)?.path,
-                ready.commit,
-            ))),
-            CloneProgress::Completed(CloneExecutionResult::CloneFailed(_))
-            | CloneProgress::Pending(_)
-            | CloneProgress::Unknown(_) => Ok(None),
         }
     }
 

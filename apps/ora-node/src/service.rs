@@ -86,7 +86,8 @@ pub struct ServiceConfig {
     #[serde(default)]
     pub control: Option<ControlConfig>,
     /// Dedicated git-access client identity for the platform Git Server, distinct from Node WSS
-    /// server TLS and model access; present only when the deployment enables the Git Server.
+    /// server TLS and model access. Required with a Cloud `control.target`; clone, Revision
+    /// delivery and restore are declared only with it.
     #[serde(default)]
     pub git_access: Option<crate::GitAccessConfig>,
     pub recovery_interval_ms: u64,
@@ -107,6 +108,11 @@ pub struct AgentConfig {
     /// it; the Node only validates it and manages its children.
     #[serde(default)]
     pub workload_directory: Option<PathBuf>,
+    /// Directory for the per-session `ora-git` sockets, normally `/run/ora-git`. The Node owns it
+    /// (`0711`) and clears it when it starts; without it, or without git-access, sessions get no
+    /// `ora-git`.
+    #[serde(default)]
+    pub ora_git_directory: Option<PathBuf>,
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
@@ -133,8 +139,6 @@ struct SessionInfo {
     agents: Option<agents::SessionHost>,
     /// Upload grants bypass admission and land here; grant requests leave through the session.
     grants: crate::revision::GrantStore,
-    /// Download grants of restoring sessions, handled like upload grants.
-    downloads: crate::revision::DownloadGrants,
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,
@@ -182,6 +186,16 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
     {
         proxy.validate().map_err(io::Error::other)?;
     }
+    // A Cloud Node without the git-access identity could never clone or deliver, so it refuses
+    // to start instead of failing every Workspace later (Node delivery push ADR D7).
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|control| control.target.is_some())
+        && config.git_access.is_none()
+    {
+        return Err(io::Error::other("git_access_required"));
+    }
     if let Some(git_access) = &config.git_access {
         git_access.validate().map_err(io::Error::other)?;
     }
@@ -225,3 +239,6 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
         .map_err(io::Error::other)?;
     result
 }
+
+#[cfg(test)]
+mod tests;

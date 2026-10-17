@@ -23,11 +23,11 @@ Sandbox Server:
 | `ORA_NODE_CONFIG`          | The complete Node service configuration as JSON; empty refuses to start.                                                                   |
 | `/var/lib/ora`             | Mount point of the Workspace volume. Every state path in the configuration (Node home, process host directory, clone root) lives below it. |
 | `/etc/ora/clone.gitconfig` | Clone Git configuration; the image ships an empty, root-owned file without credentials.                                                    |
-| User                       | Services run as `node` (UID 1000), matching `process.expected_uid`.                                                                        |
+| User                       | Node and process host run as root; Agent workloads run as `node` (UID 1000).                                                               |
 
-The entrypoint runs under `tini` as PID 1. As root it only sets the volume root to `node` with mode
-`0700` (never its contents), creates the clone root the Node requires to exist, and writes the
-configuration to `/run/ora/node.json`; it then drops to `node`. It starts the process host with
+The entrypoint runs under `tini` as PID 1. As root it keeps the volume root root-owned with mode
+`0711` (never rewriting its contents), creates the clone root the Node requires to exist, and writes the
+configuration and service identities to the private management tmpfs under `/run/ora`. It starts the process host with
 `create` when the host directory is missing and `recover` otherwise, so the same Workspace volume
 keeps its host journal across containers, and a failed recovery never falls back to creating a new
 host. It waits until the host socket accepts connections (a leftover socket file does not count)
@@ -38,6 +38,9 @@ after the Node exits is the host stopped. Guardians are not stopped: their journ
 volume and the next container recovers them. The Sandbox Server's stop timeout must therefore exceed
 the Node's `shutdown_grace_ms + cleanup_timeout_ms`. If the Node exits on its own, the host is
 stopped too and the container exits with the Node's status.
+
+`ora-git` is installed at `/usr/local/bin/ora-git` on the workload PATH. It sends fixed requests
+to the current session’s `ORA_GIT_SOCKET`; Git Server credentials stay with the Node.
 
 Binaries live under the root-owned `/opt/ora/bin`, which the release host requires for the guardian.
 The image also ships `/opt/ora/bin/deno`, the runtime every plugin runs on: its version is

@@ -1,0 +1,23 @@
+[package]
+name = "ora-git"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "ora_git"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ora-git"
+path = "src/main.rs"
+
+[dependencies]
+ora-node-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

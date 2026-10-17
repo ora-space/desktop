@@ -16,4 +16,4 @@ Cloud 在 SQL 事务外检查对象存在、大小和存储 SHA-256，重查租�
 
 此配套仅同步生成协议消费。生产 Rust Controller 已按 [Agent 中继](controller/agent-relay.zh.md) 转交交付与摘要绑定授权；生产 Node 交付、其账本/日志卫生与端到端重启验收仍属于 C/D。真实 PostgreSQL/Git/RustFS 的交付验收目前使用 Cloud Go Controller/Node 替身，证明 A，不代表生产 C/D 或 B 界面已完成。
 
-续接运行在不改变已发布字段的前提下扩展同一契约：`AgentSessionSpec.prior_revision`（field 6）指明前序 Revision 及其已校验的 bundle 对象，`DeliverRevisionSpec.prior_revision`（field 7）只带其最终提交，`RevisionUnchanged.final_commit` 可以等于该前序最终提交。`AgentRunService.GrantRevisionDownload` 为已登记且无结果的会话签发只读取该 bundle 的内存级 `GET` 授权。Controller 的转交见 [Agent 中继](controller/agent-relay.zh.md#续接会话与下载授权)，Node 的恢复见 [Revision 交付](node/revision-delivery.zh.md#续接前序-revision)。
+交付现在经 Git 完成：Revision 的提交推送到 Git Server，`GrantRevisionUpload` 只为 `history_key` 处的会话历史签发授权，`checksums` 不能含其他键。续接运行：`AgentSessionSpec.prior_revision`（field 6）指明前序 Revision 及 Node 拉取它所用的 Git Server 仓库地址、交付 ref 与基础提交，`DeliverRevisionSpec.prior_revision`（field 7）只带其身份与最终提交，`RevisionUnchanged.final_commit` 可以等于该前序最终提交。没有下载授权，`GrantRevisionDownload` 已删除。Controller 的转交见 [Agent 中继](controller/agent-relay.zh.md#续接会话)，Node 的恢复见 [Revision 交付](node/revision-delivery.zh.md#续接前序-revision)。

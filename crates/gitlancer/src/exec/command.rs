@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::exec::env::GitEnv;
 
@@ -17,6 +18,9 @@ pub struct GitCommand {
     pub args: Vec<String>,
     pub env: GitEnv,
     pub intent: GitIntent,
+    /// How long this command may run, when its caller has a tighter or looser limit than the
+    /// runner's budget for its intent; runners without time budgets ignore it.
+    pub time_limit: Option<Duration>,
 }
 
 impl GitCommand {
@@ -27,6 +31,13 @@ impl GitCommand {
             args,
             env,
             intent,
+            time_limit: None,
         }
+    }
+
+    /// Bounds this command by `limit` instead of the runner's budget for its intent.
+    pub fn with_time_limit(mut self, limit: Duration) -> Self {
+        self.time_limit = Some(limit);
+        self
     }
 }

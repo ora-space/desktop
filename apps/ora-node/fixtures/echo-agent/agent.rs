@@ -213,7 +213,7 @@ impl EchoAgent {
             .await?;
             return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
         }
-        if text.contains("[commit]") {
+        if text.contains("[commit-host]") {
             let spawn = json!({
                 "jsonrpc": JSON_RPC_VERSION,
                 "id": SPAWN_REQUEST_ID,
@@ -230,6 +230,15 @@ impl EchoAgent {
                 session_id,
             });
             return Ok(());
+        }
+        if text.contains("[write]")
+            || text.contains("[commit]")
+            || text.contains("[push]")
+            || text.contains("[fetch ")
+        {
+            let answer = git_markers(&cwd, &text)?;
+            message(output, &session_id, &answer).await?;
+            return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
         }
         let answer = if text.contains("[env]") {
             let cwd = std::env::current_dir().unwrap_or_default();
@@ -317,4 +326,104 @@ fn record_pid() {
     {
         let _ = writeln!(file, "{}", std::process::id());
     }
+}
+
+/// Executes the collaboration markers in task order, excluding the contextual material the host
+/// appends. Commands use argument arrays so task text never becomes shell code.
+fn git_markers(cwd: &std::path::Path, prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let task = prompt.split("\n\nContext\n").next().unwrap_or(prompt);
+    let mut rest = task;
+    let mut results = Vec::new();
+    while let Some(open) = rest.find('[') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find(']') else { break };
+        let marker = &rest[..close];
+        rest = &rest[close + 1..];
+        let result = match marker {
+            "write" => {
+                std::fs::write(cwd.join("echo.txt"), format!("{task}\n"))?;
+                continue;
+            }
+            "commit" => {
+                let added = git_command(cwd, &["add", "-A"])?;
+                if !added.status.success() {
+                    added
+                } else {
+                    git_command(
+                        cwd,
+                        &[
+                            "-c",
+                            "user.name=echo",
+                            "-c",
+                            "user.email=echo@ora.invalid",
+                            "commit",
+                            "-m",
+                            &format!("echo: {task}"),
+                        ],
+                    )?
+                }
+            }
+            "push" => ora_git_command(cwd, &["push"])?,
+            _ => {
+                let Some(workspace) = marker.strip_prefix("fetch ") else {
+                    continue;
+                };
+                let fetched = ora_git_command(cwd, &["fetch", "workspace", workspace])?;
+                if !fetched.status.success() {
+                    fetched
+                } else {
+                    git_command(
+                        cwd,
+                        &[
+                            "-c",
+                            "user.name=echo",
+                            "-c",
+                            "user.email=echo@ora.invalid",
+                            "merge",
+                            "--no-edit",
+                            &format!("refs/remotes/ora/workspaces/{workspace}/main"),
+                        ],
+                    )?
+                }
+            }
+        };
+        let code = if result.status.success() {
+            "ok".to_owned()
+        } else {
+            String::from_utf8_lossy(&result.stderr)
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("ora-git: ")
+                        .and_then(|s| s.split(':').next())
+                })
+                .unwrap_or("git_failed")
+                .to_owned()
+        };
+        results.push(format!("[{marker}: {code}]"));
+    }
+    Ok(format!("echo: {task} {}", results.join(" ")))
+}
+
+/// Runs fixture Git without emitting diagnostics on the plugin protocol stream.
+fn git_command(cwd: &std::path::Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    // The session's Git identity reaches the agent as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, which
+    // would win over `user.*`; the markers commit as the fixed echo identity instead.
+    std::process::Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "echo")
+        .env("GIT_AUTHOR_EMAIL", "echo@ora.invalid")
+        .env("GIT_COMMITTER_NAME", "echo")
+        .env("GIT_COMMITTER_EMAIL", "echo@ora.invalid")
+        .output()
+}
+
+/// Runs the `ora-git` CLI through this fixture's own executable, which is always built with the
+/// tests; the session socket in the environment is inherited unchanged.
+fn ora_git_command(cwd: &std::path::Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(std::env::current_exe()?)
+        .current_dir(cwd)
+        .arg("ora-git")
+        .args(args)
+        .output()
 }

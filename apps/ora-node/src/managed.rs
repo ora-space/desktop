@@ -2,7 +2,8 @@
 mod delivery;
 mod repository;
 mod transport;
-pub(crate) use repository::{AttemptSettlement, CloneHost};
+pub(crate) use delivery::AsNode;
+pub(crate) use repository::{AttemptSettlement, CloneHost, RunAs};
 
 use crate::git::ExecutionGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};
@@ -47,6 +48,13 @@ impl ProcessConfig {
         } else {
             self.command_timeout_ms
         })
+    }
+
+    /// The budget of one command: its own time limit when it names one, else its intent's.
+    fn budget_for(&self, command: &GitCommand) -> Duration {
+        command
+            .time_limit
+            .unwrap_or_else(|| self.command_budget(command.intent))
     }
 
     fn isolate_workload(&self, spec: &mut RunSpec) {
@@ -334,7 +342,7 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
             let result = self.runtime.block_on(transport::execute(
                 &client,
                 &intent,
-                command.intent,
+                self.config.budget_for(command),
                 &self.config,
                 &self.shutdown,
             ));
@@ -370,7 +378,7 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
         let result = self.runtime.block_on(transport::execute(
             &client,
             &attempt.intent,
-            command.intent,
+            self.config.budget_for(command),
             &self.config,
             &self.shutdown,
         ));

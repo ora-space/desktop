@@ -20,9 +20,15 @@ fn deliver() -> DeliverRevisionMessage {
                 checkout_execution_id: ExecutionId::new("clone"),
                 base_commit: CommitId::new(BASE),
                 revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
-                bundle_key: ObjectKey::new("runs/1/revision.bundle"),
                 history_key: ObjectKey::new("runs/1/history.jsonl"),
                 prior_revision: None,
+                git_repository_url: GitRepositoryUrl::parse("https://git.example.test/t/p.git")
+                    .unwrap(),
+                delivery_ref: DeliveryRef::parse("refs/ora/deliveries/work-1").unwrap(),
+                workspace_ref: WorkspaceRef::parse(
+                    "refs/heads/workspaces/4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a/main",
+                )
+                .unwrap(),
             },
         },
     }
@@ -46,11 +52,6 @@ fn plan() -> DeliveryPlan {
             final_commit: CommitId::new(FINAL),
             base_commit: spec.base_commit,
             revision_ref: spec.revision_ref,
-            bundle: StoredObject {
-                key: spec.bundle_key,
-                size: 10,
-                sha256: Sha256Digest::new(DIGEST),
-            },
             history: StoredObject {
                 key: spec.history_key,
                 size: 0,
@@ -176,7 +177,7 @@ fn freezing_requires_the_inputs_keys_ref_and_base() {
     let FrozenOutcome::Delivered(result) = &mut other_key.outcome else {
         unreachable!("the fixture is delivered")
     };
-    result.bundle.key = ObjectKey::new("runs/1/elsewhere");
+    result.history.key = ObjectKey::new("runs/1/elsewhere");
     let mut escaping = plan();
     escaping.directory = "../frozen".into();
     for invalid in [other_key, escaping] {
@@ -293,7 +294,7 @@ fn sessions_and_deliveries_stay_separate() {
         Some(session.clone())
     );
     assert_eq!(db.delivery_session(&deliver().execution_id).unwrap(), None);
-    assert_eq!(db.delivery_checkout(&session.execution_id).unwrap(), None);
+    assert_eq!(db.cloned_checkout(&session.execution_id).unwrap(), None);
     assert!(matches!(
         db.find_session(&deliver().operation_id, &deliver().execution_id),
         Err(Error::IdentityConflict)
@@ -365,5 +366,5 @@ fn migrates_v8_without_losing_sessions() {
         .unwrap()
         .pragma_query_value(/*schema_name*/ None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
 }

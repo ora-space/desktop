@@ -1,187 +1,180 @@
-//! Restoring a session's prior Revision into its checkout before the agent starts (Node restore
-//! ADR D2-D4).
+//! Restoring a session's prior Revision into its checkout before the agent starts (Node delivery
+//! push ADR D5, D6; Node clone ADR D9).
 //!
-//! The restorer asks the Controller for a read grant, downloads the bundle into a Node-private
-//! directory under the Node home (`revision-restores/<sha256(execution)>/`, directories `0700`,
-//! the file `0600`), verifies its size and SHA-256 against the session input, and then runs the
-//! Git steps with delivery's hardened policy on a blocking thread. The grant wait and the download
-//! share one deadline. The directory is removed when the restore ends, whatever the outcome, and
-//! the whole root is cleared when the Node starts, since no restore survives a restart.
+//! The Node fetches the prior delivery ref from the Git Server into a transport repository that
+//! borrows the checkout's objects, negotiating from the clone's base commit so only what the
+//! checkout lacks is sent, and checks that it is the prior final commit. The workload user then
+//! takes the objects from the transport repository into the checkout and moves the Workspace
+//! branch there. Everything runs on a blocking thread; the transport repository is removed when
+//! the restore ends, whatever the outcome.
 
-mod bundle;
-mod download;
 mod git;
-mod grants;
-
-pub(crate) use download::{HttpDownloader, ObjectDownloader};
-pub(crate) use grants::DownloadGrants;
 
 use super::snapshot::DeliveryGit;
-use crate::session::{PriorRevisionRestore, RestoreFailure, RestoreRequest, Restored};
-use download::{DownloadJob, download};
+use crate::git_server::{GitServerAccess, GitServerFailure, TimeLimit, TransportRepository};
+use crate::session::{
+    PriorRevisionRestore, RestoreCancel, RestoreFailure, RestoreRequest, Restored,
+};
 use git::GitRestore;
 use gitlancer::GitRunner;
-use ora_node_protocol::NodeId;
-use std::fs;
-use std::io;
-use std::os::unix::fs::DirBuilderExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// Directory under the Node home holding one private directory per running restore.
-pub(crate) const RESTORE_ROOT: &str = "revision-restores";
-/// File name of the downloaded bundle inside a restore's directory.
-const BUNDLE_FILE: &str = "prior.bundle";
+/// Kind of the transport repositories restores use.
+const TRANSPORT_KIND: &str = "restore";
+/// The fetch from the Git Server and the workload's import share this deadline, retries included
+/// (Node delivery push ADR D5); `network_timeout_ms` does not apply.
+const RESTORE_LIMIT: Duration = Duration::from_secs(5 * 60);
 
-/// Timing of a restore's download; tests shorten it, production uses [`RestorePolicy::DEFAULT`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RestorePolicy {
-    /// Bounds the grant wait and the download together; the Agent is waiting meanwhile.
-    pub(crate) deadline: Duration,
-    /// Network failures and 5xx answers retried before the restore fails.
-    pub(crate) retries: u32,
-    /// How often an unanswered grant request is repeated while waiting.
-    pub(crate) resend: Duration,
-    /// Pause before retrying a failed download.
-    pub(crate) backoff: Duration,
-    /// A grant expiring sooner than this is treated as already expired.
-    pub(crate) expiry_margin: Duration,
-}
+/// The workload user's Git and the Node identity's Git a restore runs.
+type RestoreGit<R, N> = (DeliveryGit<R>, N);
 
-impl RestorePolicy {
-    pub(crate) const DEFAULT: Self = Self {
-        deadline: Duration::from_secs(/*secs*/ 5 * 60),
-        retries: 3,
-        resend: Duration::from_secs(/*secs*/ 2),
-        backoff: Duration::from_millis(/*millis*/ 500),
-        expiry_margin: Duration::from_secs(/*secs*/ 5),
-    };
-}
-
-/// The production restore: download through `D`, Git through `R` with delivery's policy.
-pub(crate) struct RevisionRestorer<R, D> {
+/// The production restore: Git Server access through `N` as the Node, checkout Git through `R`
+/// with delivery's policy as the workload user.
+pub(crate) struct RevisionRestorer<R: Send + 'static, N: Send + 'static> {
     /// One restore's Git at a time: a host-backed runner drives its own runtime, which concurrent
     /// blocking threads must not share.
-    git: Arc<Mutex<DeliveryGit<R>>>,
-    downloader: D,
-    grants: DownloadGrants,
-    node: NodeId,
-    root: PathBuf,
+    /// Taken out only when the restorer is dropped.
+    git: Arc<Mutex<Option<RestoreGit<R, N>>>>,
+    access: GitServerAccess,
+    /// The clone repository root, whose transport directory holds the restore's repository.
+    repository_root: PathBuf,
     /// The workload user restore Git runs as, when the deployment separates it from the Node.
     owner: Option<u32>,
-    policy: RestorePolicy,
+    /// Ends the waits between Git Server attempts when the Node stops.
+    shutdown: crate::Shutdown,
+    limit: Duration,
 }
 
-impl<R, D> RevisionRestorer<R, D> {
+impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
     pub(crate) fn new(
         git: DeliveryGit<R>,
-        downloader: D,
-        grants: DownloadGrants,
-        node: NodeId,
-        root: PathBuf,
+        node: N,
+        access: GitServerAccess,
+        repository_root: PathBuf,
         owner: Option<u32>,
-        policy: RestorePolicy,
+        shutdown: crate::Shutdown,
     ) -> Self {
         Self {
-            git: Arc::new(Mutex::new(git)),
-            downloader,
-            grants,
-            node,
-            root,
+            git: Arc::new(Mutex::new(Some((git, node)))),
+            access,
+            repository_root,
             owner,
-            policy,
+            shutdown,
+            limit: RESTORE_LIMIT,
+        }
+    }
+
+    /// The same restorer with a shorter deadline, for tests that run it out.
+    #[cfg(test)]
+    pub(super) fn within(mut self, limit: Duration) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl<R: Send + 'static, N: Send + 'static> Drop for RevisionRestorer<R, N> {
+    /// Host-backed runners own synchronous runtimes, and the last session handle may be released
+    /// on an async worker; those runtimes are retired on a joined thread that may block.
+    fn drop(&mut self) {
+        let git = self
+            .git
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(git) = git {
+            let _ = std::thread::spawn(move || drop(git)).join();
         }
     }
 }
 
-impl<R, D> PriorRevisionRestore for RevisionRestorer<R, D>
+impl<R, N> PriorRevisionRestore for RevisionRestorer<R, N>
 where
     R: GitRunner + Send + 'static,
-    D: ObjectDownloader,
+    N: GitRunner + Send + 'static,
 {
-    /// Downloads and verifies the bundle within the deadline, then restores it with Git.
-    async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
-        let scratch = ora_utils::hash::sha256_hex(request.execution.as_str().as_bytes());
-        let directory = PrivateDirectory::create(&self.root.join(&scratch)).map_err(|error| {
-            ora_logging::ora_warn!(execution_id = %request.execution.as_str(), error = %error, "restore directory could not be created");
-            RestoreFailure::Unavailable
-        })?;
-        let job = DownloadJob {
-            operation: request.operation.clone(),
-            execution: request.execution.clone(),
-            node_id: self.node.clone(),
-            bundle: request.prior.bundle.clone(),
-            destination: directory.0.join(BUNDLE_FILE),
-        };
-        let downloaded = tokio::time::timeout(
-            self.policy.deadline,
-            download(&self.downloader, &self.grants, &job, self.policy),
-        )
-        .await;
-        match downloaded {
-            Ok(Ok(())) => {}
-            Ok(Err(failure)) => {
-                ora_logging::ora_warn!(execution_id = %request.execution.as_str(), failure = %failure, "prior bundle was not downloaded");
-                return Err(RestoreFailure::Unavailable);
-            }
-            Err(_elapsed) => {
-                ora_logging::ora_warn!(execution_id = %request.execution.as_str(), "prior bundle was not downloaded before the restore deadline");
-                return Err(RestoreFailure::Unavailable);
-            }
-        }
+    /// Fetches, verifies and checks out the prior final commit on a blocking thread, which
+    /// starts no further Git once the Node stops or the session is cancelled.
+    async fn restore(
+        &self,
+        request: RestoreRequest,
+        cancel: RestoreCancel,
+    ) -> Result<Restored, RestoreFailure> {
         let git = Arc::clone(&self.git);
+        let deadline = Instant::now() + self.limit;
+        let access = self.access.limited(TimeLimit::Until(deadline));
+        let root = self.repository_root.clone();
         let owner = self.owner;
-        let bundle = job.destination;
-        let restored = tokio::task::spawn_blocking(move || {
+        let shutdown = self.shutdown.clone();
+        tokio::task::spawn_blocking(move || {
+            let stopping = || shutdown.requested() || cancel.requested();
             let git = git.lock().unwrap_or_else(PoisonError::into_inner);
-            git.restore(&GitRestore {
+            let Some((workload, node)) = git.as_ref() else {
+                return Err(RestoreFailure::Unavailable);
+            };
+            let execution = request.execution.as_str();
+            let transport =
+                TransportRepository::create(node, &root, TRANSPORT_KIND, &request.execution)
+                    .and_then(|transport| {
+                        transport.borrow_objects(&request.checkout.join(".git"))?;
+                        transport.negotiate_from(node, &[&request.base_commit])?;
+                        Ok(transport)
+                    })
+                    .map_err(|error| {
+                        ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be prepared");
+                        RestoreFailure::Unavailable
+                    })?;
+            let prior = &request.prior;
+            access
+                .fetch(
+                    node,
+                    &transport,
+                    &prior.git_repository_url,
+                    &request.execution,
+                    &[format!("{}:refs/ora/prior", prior.delivery_ref.as_str())],
+                    &stopping,
+                )
+                .map_err(|failure| {
+                    ora_logging::ora_warn!(execution_id = %execution, failure = ?failure, "prior delivery ref was not fetched");
+                    match failure {
+                        // The Git Server answers missing and unreadable refs the same way: the
+                        // prior Revision's Git content is permanently out of reach.
+                        GitServerFailure::Denied | GitServerFailure::MissingRef => {
+                            RestoreFailure::BaseUnavailable
+                        }
+                        GitServerFailure::Unavailable | GitServerFailure::Stopped => {
+                            RestoreFailure::Unavailable
+                        }
+                    }
+                })?;
+            // A delivery ref only ever gets created, so another commit is a defect; it stays
+            // retryable instead of making Cloud give up on the Revision.
+            match transport.commit_of(node, "refs/ora/prior") {
+                Ok(Some(commit)) if commit == prior.final_commit => {}
+                Ok(_) | Err(_) => {
+                    ora_logging::ora_warn!(execution_id = %execution, "prior delivery ref does not hold the prior final commit");
+                    return Err(RestoreFailure::Unavailable);
+                }
+            }
+            if stopping() {
+                return Err(RestoreFailure::Unavailable);
+            }
+            transport.hand_over(owner).map_err(|error| {
+                ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be handed over");
+                RestoreFailure::Unavailable
+            })?;
+            workload.restore(&GitRestore {
                 checkout: &request.checkout,
-                bundle: &bundle,
-                prior: &request.prior,
-                scratch: &scratch,
-                owner,
+                transport: transport.path(),
+                prior,
+                branch: &request.branch,
+                base_commit: &request.base_commit,
+                deadline,
+                stopping: &stopping,
             })
         })
-        .await;
-        // The blocking step has finished either way, so nothing reads the directory anymore.
-        drop(directory);
-        restored.unwrap_or(Err(RestoreFailure::Unavailable))
+        .await
+        .unwrap_or(Err(RestoreFailure::Unavailable))
     }
 }
-
-/// Removes every restore directory a previous Node process left: no restore survives a restart.
-pub(crate) fn purge(root: &Path) -> io::Result<()> {
-    match fs::remove_dir_all(root) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-/// One restore's Node-private directory, removed when dropped.
-struct PrivateDirectory(PathBuf);
-
-impl PrivateDirectory {
-    /// Creates the directory (and the root) owner-only, discarding what an earlier attempt left.
-    fn create(path: &Path) -> io::Result<Self> {
-        purge(path)?;
-        fs::DirBuilder::new()
-            .recursive(/*recursive*/ true)
-            .mode(/*mode*/ 0o700)
-            .create(path)?;
-        Ok(Self(path.to_path_buf()))
-    }
-}
-
-impl Drop for PrivateDirectory {
-    /// A failure is only logged; the next Node start clears the root anyway.
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
-            ora_logging::ora_warn!(path = %self.0.display(), error = %error, "restore directory was not removed");
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests;

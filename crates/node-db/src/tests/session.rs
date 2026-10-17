@@ -28,6 +28,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
                     }],
                 },
                 prior_revision: None,
+                workspace_directory: Vec::new(),
             },
         },
     }
@@ -359,4 +360,47 @@ fn concurrent_journals_share_sequences_and_owner_lease() {
     drop(keep);
     let db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     assert_eq!(db.pending_events().unwrap().len(), 40);
+}
+
+/// A session stops running for local requests as soon as an `EndSession` is accepted, before it
+/// is executed, and stays so once it ends; a turn does not change that.
+#[test]
+fn session_stops_running_once_an_end_is_requested() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )
+    .unwrap();
+    db.accept_session(&command()).unwrap();
+    let journal = db.session_journal().unwrap();
+    let execution = command().execution_id;
+    let unknown = ExecutionId::new("other");
+    let mut observed = vec![
+        journal.session_running(&unknown).unwrap(),
+        journal.session_running(&execution).unwrap(),
+    ];
+    db.accept_session_command(&turn("turn")).unwrap();
+    observed.push(journal.session_running(&execution).unwrap());
+    let end = SessionCommandInput::EndSession(EndSessionMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: command().operation_id,
+        execution_id: execution.clone(),
+        payload: EndSession {
+            node_id: NodeId::new("node"),
+            command_id: CommandId::new("end"),
+            reason: EndSessionReason::Cancelled,
+        },
+    });
+    db.accept_session_command(&end).unwrap();
+    observed.push(journal.session_running(&execution).unwrap());
+    journal
+        .settle_command(
+            &execution,
+            end.command_id(),
+            SessionCommandSettlement::Executed,
+        )
+        .unwrap();
+    observed.push(journal.session_running(&execution).unwrap());
+    assert_eq!(observed, vec![false, true, true, false, false]);
 }

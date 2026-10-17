@@ -37,6 +37,7 @@ pub(super) fn start() -> Case {
                         },
                         initial_turn: turn("turn-1", "Fix the failing login test."),
                         prior_revision: None,
+                        workspace_directory: Vec::new(),
                     },
                 },
             },
@@ -110,6 +111,66 @@ async fn start_agent_session_round_trips() -> Result<(), TestError> {
         ],
     )
     .await
+}
+
+/// The Workspace directory crosses as given; only its identities are checked, so `ora-git list`
+/// never attaches one Workspace's Issue to another's branches.
+#[tokio::test]
+async fn workspace_directory_round_trips_and_rejects_ambiguous_identities() -> Result<(), TestError>
+{
+    let main = "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a";
+    let run = "5d4c3b2a-1f0e-4d8c-9b7a-6f5e4d3c2b1a";
+    let mut case = start();
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) =
+        &mut case.message
+    else {
+        panic!("fixture must be a session start")
+    };
+    command.payload.spec.workspace_directory = vec![
+        WorkspaceListing {
+            workspace_id: run.to_owned(),
+            kind: "run".to_owned(),
+            issue_id: Some("issue-1".to_owned()),
+            issue_title: Some("Fix the login test".to_owned()),
+            issue_run_id: Some("run-1".to_owned()),
+            run_status: Some("completed".to_owned()),
+        },
+        WorkspaceListing {
+            workspace_id: main.to_owned(),
+            kind: "main".to_owned(),
+            issue_id: None,
+            issue_title: None,
+            issue_run_id: None,
+            run_status: None,
+        },
+    ];
+    case.wire["payload"]["spec"]["workspace_directory"] = json!([
+        {"workspace_id": run, "kind": "run", "issue_id": "issue-1",
+            "issue_title": "Fix the login test", "issue_run_id": "run-1",
+            "run_status": "completed"},
+        {"workspace_id": main, "kind": "main"}
+    ]);
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    for directory in [
+        json!([{"workspace_id": "workspace-1", "kind": "main"}]),
+        json!([{"workspace_id": main.to_uppercase(), "kind": "main"}]),
+        json!([{"workspace_id": main, "kind": "main"}, {"workspace_id": main, "kind": "run"}]),
+        json!((0..101)
+            .map(|index| json!({"workspace_id": format!("{index:08x}-0000-4000-8000-000000000000"), "kind": "run"}))
+            .collect::<Vec<_>>()),
+    ] {
+        let mut wire = case.wire.clone();
+        wire["payload"]["spec"]["workspace_directory"] = directory;
+        reject_semantics(
+            Peer::Controller,
+            &wire,
+            "workspace directory",
+            MessageValidationError::InvalidWorkspaceDirectory,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// An optional model binding crosses the control wire as an opaque reference, never credentials.

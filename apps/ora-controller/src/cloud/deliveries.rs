@@ -92,6 +92,10 @@ impl CloudStore {
             .delivery_record(session, &event.operation_id, &event.execution_id)
             .await?;
         if !mapping::accepts(&command, &event.payload) {
+            ora_logging::ora_error!(
+                execution_id = %event.execution_id.as_str(),
+                "delivery result contradicts its dispatched input; it is neither taken over nor acknowledged"
+            );
             return Err(Error::Conflict);
         }
         let epoch = self.epoch()?;
@@ -144,11 +148,11 @@ impl CloudStore {
             Err(Error::Conflict) => return Ok(self.not_grantable(execution)),
             Err(error) => return Err(error),
         };
-        let spec = &command.payload.spec;
+        // Grants exist only for the session history: a delivery over Git uploads nothing else.
         if record.result.is_some()
             || checksums
                 .keys()
-                .any(|key| *key != spec.bundle_key && *key != spec.history_key)
+                .any(|key| *key != command.payload.spec.history_key)
         {
             return Ok(self.not_grantable(execution));
         }

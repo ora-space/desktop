@@ -110,7 +110,6 @@ pub async fn take_over<S: CoordinationStore>(
         | NodeToControllerMessage::AgentSessionEnded(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)
         | NodeToControllerMessage::SessionCommandRejected(_)
-        | NodeToControllerMessage::UploadGrantNeeded(_)
-        | NodeToControllerMessage::DownloadGrantNeeded(_) => Err(Error::Conflict),
+        | NodeToControllerMessage::UploadGrantNeeded(_) => Err(Error::Conflict),
     }
 }

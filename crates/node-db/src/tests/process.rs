@@ -115,7 +115,7 @@ fn exact_version_one_upgrade_preserves_execution_and_event_history() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement;
+            "DROP TABLE IF EXISTS workspace_branch_heads; DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement;
              DROP TABLE process_terminations;
              DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding;
              DROP TABLE process_outcomes; DROP TABLE process_attempts; DROP TABLE managed_executions;

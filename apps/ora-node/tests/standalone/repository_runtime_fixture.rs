@@ -120,6 +120,25 @@ pub(super) struct RuntimeStore {
     current: Arc<Mutex<Option<(NodeRuntimeIdentity, bool)>>>,
 }
 impl RuntimeStore {
+    /// Seeds pre-existing coordination evidence; no product intake is exposed.
+    pub(super) async fn seed_clone(
+        &self,
+        request: RequestId,
+        spec: CloneExecutionSpec,
+    ) -> Result<CloneRepositoryMessage, ora_controller::Error> {
+        let suffix = request.as_str();
+        Ok(seed_dispatch(
+            &self.root.join("controller"),
+            CloneRepositoryMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                request_id: None,
+                operation_id: OperationId::new(format!("op-{suffix}")),
+                execution_id: ExecutionId::new(format!("exec-{suffix}")),
+                payload: CloneRepository { spec },
+            },
+            request,
+        ))
+    }
     pub(super) fn new(inner: SqliteStore, root: &Path) -> Self {
         Self {
             inner,

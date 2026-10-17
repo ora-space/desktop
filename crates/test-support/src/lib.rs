@@ -1,5 +1,11 @@
 //! Shared fixtures for integration tests that exercise real Git repositories.
 
+// Only the Node's Linux-only tests use the double. It relies on Unix file modes for its hooks and
+// key, and on macOS Git refuses the push made with the PEM client identity it issues (Git's TLS
+// backend there differs from Linux OpenSSL), so it is built for Linux only, not half-working.
+#[cfg(all(feature = "git-server", target_os = "linux"))]
+pub mod git_server;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

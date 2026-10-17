@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Real Git and real HTTP coverage of preparation and upload, below the service composition.
+mod push;
+mod restore;
 mod snapshot;
 mod upload;
 

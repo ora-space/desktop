@@ -3,7 +3,7 @@
 
 use crate::{
     ExecutionId, MessageValidationError, ModelBindingId, NodeId, NodeRuntimeIdentity, PluginId,
-    PluginVersion, PriorRevision, TurnId,
+    PluginVersion, PriorRevision, TurnId, is_canonical_uuid,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -14,6 +14,28 @@ use serde_json::{Map, Value};
 pub const MAX_THREAD_RECORD_BYTES: usize = 256 * 1024;
 /// Largest total text of one user turn, matching Cloud's public message limit.
 pub const MAX_USER_TURN_TEXT_BYTES: usize = 64 * 1024;
+/// Most Workspaces Cloud lists in a session's directory.
+pub const MAX_WORKSPACE_DIRECTORY: usize = 100;
+
+/// One Workspace of the session's Project as Cloud saw it when it released the session, so
+/// `ora-git list` can name branches by Issue and run. It never takes part in a decision: which
+/// branches a session may read or write is the Git Server's call alone.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceListing {
+    pub workspace_id: String,
+    /// `main`, `isolated` or `run`, shown as given.
+    pub kind: String,
+    /// The remaining fields describe run Workspaces only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_status: Option<String>,
+}
 
 /// Commit identity exported to the Agent's process tree as `GIT_AUTHOR_*` and `GIT_COMMITTER_*`.
 /// It is never written into a Git configuration.
@@ -103,6 +125,9 @@ pub struct AgentSessionSpec {
     /// starts, and only a Node advertising `revision_restore` is sent such a session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prior_revision: Option<PriorRevision>,
+    /// The Project's Workspaces, newest first, fixed when the session was released.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_directory: Vec<WorkspaceListing>,
 }
 
 impl AgentSessionSpec {
@@ -135,6 +160,16 @@ impl AgentSessionSpec {
         self.initial_turn.validate()?;
         if let Some(prior) = &self.prior_revision {
             prior.validate()?;
+        }
+        // Distinct canonical IDs keep `ora-git list` from attaching one Workspace's Issue to
+        // another's branches; the text fields are shown as given.
+        let mut seen = std::collections::HashSet::new();
+        if self.workspace_directory.len() > MAX_WORKSPACE_DIRECTORY
+            || !self.workspace_directory.iter().all(|listing| {
+                is_canonical_uuid(&listing.workspace_id) && seen.insert(&listing.workspace_id)
+            })
+        {
+            return Err(MessageValidationError::InvalidWorkspaceDirectory);
         }
         Ok(())
     }

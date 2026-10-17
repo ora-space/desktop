@@ -15,8 +15,34 @@ pub struct CloneTarget {
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum ClonePhase {
     Reserved,
-    DirectoryCreated { identity: String },
-    Dispatched { identity: String },
+    DirectoryCreated {
+        identity: String,
+    },
+    /// The Node fetches the snapshot into its transport repository. `attempts` counts the
+    /// passes started, recorded before each starts: a restart discards the transport repository
+    /// and starts another pass, and the count bounds how often that can happen.
+    Fetching {
+        identity: String,
+        attempts: u32,
+    },
+    /// The workload command `step` of the fixed checkout sequence is recorded or running; the
+    /// commands before it exited successfully.
+    Dispatched {
+        identity: String,
+        step: u32,
+    },
+}
+
+impl ClonePhase {
+    /// The created directory's recorded identity, once the execution got that far.
+    pub fn identity(&self) -> Option<&str> {
+        match self {
+            Self::Reserved => None,
+            Self::DirectoryCreated { identity }
+            | Self::Fetching { identity, .. }
+            | Self::Dispatched { identity, .. } => Some(identity),
+        }
+    }
 }
 
 /// Unknown retains the last durable phase, never authorizing a new clone attempt.
@@ -25,7 +51,8 @@ pub enum ClonePhase {
 pub enum CloneProgress {
     Pending(ClonePhase),
     Unknown(ClonePhase),
-    Completed(CloneExecutionResult),
+    // Boxed: the result repeats the snapshot input, which would inflate every pending record.
+    Completed(Box<CloneExecutionResult>),
 }
 
 impl CloneProgress {
@@ -33,9 +60,11 @@ impl CloneProgress {
     pub fn state(&self) -> ExecutionState {
         match self {
             Self::Pending(ClonePhase::Reserved) => ExecutionState::Accepted,
-            Self::Pending(ClonePhase::DirectoryCreated { .. } | ClonePhase::Dispatched { .. }) => {
-                ExecutionState::Running
-            }
+            Self::Pending(
+                ClonePhase::DirectoryCreated { .. }
+                | ClonePhase::Fetching { .. }
+                | ClonePhase::Dispatched { .. },
+            ) => ExecutionState::Running,
             Self::Unknown(_) => ExecutionState::Unknown,
             Self::Completed(result) => {
                 ExecutionState::Completed(ExecutionResult::Clone(result.clone()))
@@ -52,6 +81,14 @@ impl CloneProgress {
             ExecutionState::Completed(_) => "completed",
         }
     }
+}
+
+/// A successful clone's checkout as session, delivery and `ora-git` use it: where it is and the
+/// snapshot input it was made from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClonedCheckout {
+    pub path: PathBuf,
+    pub spec: CloneExecutionSpec,
 }
 
 /// Durable acquisition responsibility, including the destination retained after failure.

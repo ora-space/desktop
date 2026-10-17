@@ -126,6 +126,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
             checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
             prior_revision: None,
+            workspace_directory: vec![],
             git_identity: identity(),
             initial_turn: turn("turn-1", "read the repository"),
         },
@@ -475,7 +476,7 @@ async fn agent_commits_carry_the_session_identity_without_touching_git_config() 
     let fixture = Fixture::new();
     let config = std::fs::read(fixture.checkout().join(".git").join("config")).unwrap();
     let sessions = fixture.sessions(PLUGIN_VERSION);
-    fixture.start(&sessions, PLUGIN_VERSION, "[commit]");
+    fixture.start(&sessions, PLUGIN_VERSION, "[commit-host]");
     fixture.command(
         &sessions,
         "command-2",

@@ -11,24 +11,13 @@ pub struct CloneConfig {
     pub repository_root: PathBuf,
     pub git_config: PathBuf,
     pub search_path: Vec<PathBuf>,
-    pub ssh: CloneSsh,
-}
-
-/// HTTPS-only deployments need not install SSH identities or a client configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CloneSsh {
-    Disabled,
-    Configured { program: PathBuf, config: PathBuf },
 }
 
 impl CloneConfig {
-    /// Cloud currently supports anonymous HTTPS plus a CA reference. Static SSH/helper credentials
-    /// cannot substitute for the controlled credential-resolution capability that is not installed.
+    /// Cloud clones reach only the Git Server, with the Node's git-access identity on the command
+    /// line; the workload configuration may hold nothing but an HTTPS CA reference, so no
+    /// deployment credential or helper can enter the workload's Git.
     pub(crate) fn validate_cloud_policy(&self) -> Result<(), Error> {
-        if !matches!(self.ssh, CloneSsh::Disabled) {
-            return Err(Error::Configuration("controlled repository credentials are unavailable; static SSH credentials are forbidden".into()));
-        }
         let content = std::fs::read_to_string(&self.git_config)
             .map_err(|e| Error::Configuration(e.to_string()))?;
         let mut http = false;
@@ -89,12 +78,6 @@ impl CloneConfig {
             open_trusted_path(path, uid, TrustedPathKind::Directory)
                 .map_err(|e| Error::Configuration(e.to_string()))?;
         }
-        if let CloneSsh::Configured { program, config } = &self.ssh {
-            for path in [program, config] {
-                open_trusted_path(path, uid, TrustedPathKind::File)
-                    .map_err(|e| Error::Configuration(e.to_string()))?;
-            }
-        }
         self.environment()?;
         Ok(())
     }
@@ -110,7 +93,7 @@ impl CloneConfig {
             .map_err(|e| Error::Configuration(e.to_string()))?
             .into_string()
             .map_err(|_| Error::Configuration("clone search path must be UTF-8".into()))?;
-        let mut env = GitEnv::default()
+        Ok(GitEnv::default()
             .with_variable("PATH", search_path)
             .with_variable("GIT_CONFIG_NOSYSTEM", "1")
             .with_variable("GIT_CONFIG_GLOBAL", utf8(&self.git_config)?)
@@ -118,35 +101,19 @@ impl CloneConfig {
             .with_variable("GIT_ASKPASS", "")
             .with_variable("SSH_ASKPASS", "")
             .with_variable("GIT_LFS_SKIP_SMUDGE", "1")
-            .with_variable("GIT_OPTIONAL_LOCKS", "0");
-        if let CloneSsh::Configured { program, config } = &self.ssh {
-            let parts = [
-                utf8(program)?,
-                "-F".into(),
-                utf8(config)?,
-                "-oBatchMode=yes".into(),
-                "-oStrictHostKeyChecking=yes".into(),
-            ];
-            let command = shlex::try_join(parts.iter().map(String::as_str))
-                .map_err(|e| Error::Configuration(e.to_string()))?;
-            env = env
-                .with_variable("GIT_SSH_COMMAND", command)
-                .with_variable("GIT_SSH_VARIANT", "ssh");
-        }
-        Ok(env)
+            .with_variable("GIT_OPTIONAL_LOCKS", "0"))
     }
 
     /// Applies fixed per-command policies without changing any user's repository configuration.
+    ///
+    /// SSH is never allowed: clones come only from the Git Server over HTTPS. The one workload
+    /// command that reads a transport repository allows `file` for itself alone.
     pub(super) fn constrain(&self, command: &mut GitCommand) {
-        let ssh = match self.ssh {
-            CloneSsh::Disabled => "protocol.ssh.allow=never",
-            CloneSsh::Configured { .. } => "protocol.ssh.allow=always",
-        };
         let mut prefix = Vec::new();
         for config in [
             "protocol.allow=never",
             "protocol.https.allow=always",
-            ssh,
+            "protocol.ssh.allow=never",
             "core.hooksPath=/dev/null",
             "core.askPass=",
             "submodule.recurse=false",

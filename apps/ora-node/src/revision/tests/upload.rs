@@ -1,5 +1,5 @@
 //! Uploads against a local HTTP object-store double: grant headers, grant requests, the 412 and
-//! retry rules, and a restart that resumes a partially uploaded delivery.
+//! retry rules, and a restart that resumes an uploaded delivery whose reply was lost.
 use super::super::grants::GrantStore;
 use super::super::upload::{HttpUploader, RetryPolicy, UploadEnd, UploadJob, upload};
 use super::*;
@@ -13,7 +13,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-const BUNDLE_KEY: &str = "runs/1/revision.bundle";
 const HISTORY_KEY: &str = "runs/1/history.jsonl";
 
 /// One PUT the object store received.
@@ -158,13 +157,9 @@ fn uploader() -> HttpUploader {
     )
 }
 
-/// A frozen delivered plan with a bundle and a history.
+/// A frozen delivered plan: only the history is uploaded.
 fn frozen(directory: &Path) -> UploadJob {
-    std::fs::write(directory.join(BUNDLE_FILE), b"bundle bytes").unwrap();
     std::fs::write(directory.join(HISTORY_FILE), b"{\"type\":\"turnEnded\"}\n").unwrap();
-    let object = |key, file| {
-        super::super::prepare::stored(&ObjectKey::new(key), &directory.join(file)).unwrap()
-    };
     UploadJob {
         operation: OperationId::new("deliver-op"),
         execution: ExecutionId::new("deliver-execution"),
@@ -178,8 +173,11 @@ fn frozen(directory: &Path) -> UploadJob {
             final_commit: CommitId::new("89abcdef0123456789abcdef0123456789abcdef"),
             base_commit: CommitId::new("0123456789abcdef0123456789abcdef01234567"),
             revision_ref: RevisionRef::new("refs/ora/revisions/run-1"),
-            bundle: object(BUNDLE_KEY, BUNDLE_FILE),
-            history: object(HISTORY_KEY, HISTORY_FILE),
+            history: super::super::prepare::stored(
+                &ObjectKey::new(HISTORY_KEY),
+                &directory.join(HISTORY_FILE),
+            )
+            .unwrap(),
         }),
     }
 }
@@ -213,7 +211,7 @@ async fn requested(
         .unwrap()
 }
 
-/// Without a valid grant the upload asks for one with every remaining frozen digest; an expired
+/// Without a valid grant the upload asks for one with the frozen history digest; an expired
 /// grant does not count. The grant's signed headers travel verbatim, and 412 counts as uploaded.
 #[tokio::test]
 async fn grant_requests_carry_frozen_checksums_and_headers_travel_verbatim() {
@@ -233,7 +231,7 @@ async fn grant_requests_carry_frozen_checksums_and_headers_travel_verbatim() {
         execution_id: job.execution.clone(),
         payload: UploadGrantNeeded {
             node_id: NodeId::new("node"),
-            checksums: checksums(&job, &[BUNDLE_KEY, HISTORY_KEY]),
+            checksums: checksums(&job, &[HISTORY_KEY]),
         },
     };
     assert_eq!(requested(&mut requests).await, expected);
@@ -242,43 +240,36 @@ async fn grant_requests_carry_frozen_checksums_and_headers_travel_verbatim() {
     offer(
         &grants,
         &job,
-        vec![
-            store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 1)),
-            store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600)),
-        ],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 1))],
     );
-    // The bundle grant expires inside the safety margin, so the Node asks again.
+    // The grant expires inside the safety margin, so the Node asks again.
     assert_eq!(requested(&mut requests).await, expected);
     assert_eq!(store.received(), vec![]);
     offer(
         &grants,
         &job,
-        vec![store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600))],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
     assert_eq!(running.await.unwrap(), UploadEnd::Uploaded);
     assert_eq!(grants.pending(), vec![]);
-    let put = |key: &str, body: &[u8]| Put {
-        path: key.to_owned(),
-        if_none_match: Some("*".into()),
-        checksum: Some(format!("signed-{key}")),
-        body: body.to_vec(),
-    };
     assert_eq!(
         store.received(),
-        vec![
-            put(BUNDLE_KEY, b"bundle bytes"),
-            put(HISTORY_KEY, b"{\"type\":\"turnEnded\"}\n"),
-        ]
+        vec![Put {
+            path: HISTORY_KEY.to_owned(),
+            if_none_match: Some("*".into()),
+            checksum: Some(format!("signed-{HISTORY_KEY}")),
+            body: b"{\"type\":\"turnEnded\"}\n".to_vec(),
+        }]
     );
 }
 
-/// Every failed PUT is an attempt; the third failure of one object fails the delivery.
+/// Every failed PUT is an attempt; the third failure fails the delivery.
 #[tokio::test]
 async fn three_failed_attempts_fail_the_upload() {
     let directory = tempfile::tempdir().unwrap();
     let job = frozen(directory.path());
     let store = ObjectStore::start().await;
-    store.answer(BUNDLE_KEY, &[500, 503, 500]);
+    store.answer(HISTORY_KEY, &[500, 503, 500]);
     let grants = GrantStore::new();
     let mut requests = grants.subscribe();
     let running = tokio::spawn({
@@ -289,7 +280,7 @@ async fn three_failed_attempts_fail_the_upload() {
     offer(
         &grants,
         &job,
-        vec![store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600))],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
     assert_eq!(running.await.unwrap(), UploadEnd::Failed);
     assert_eq!(
@@ -298,7 +289,7 @@ async fn three_failed_attempts_fail_the_upload() {
             .into_iter()
             .map(|put| put.path)
             .collect::<Vec<_>>(),
-        vec![BUNDLE_KEY; 3]
+        vec![HISTORY_KEY; 3]
     );
 }
 
@@ -308,7 +299,7 @@ async fn forbidden_grant_is_replaced() {
     let directory = tempfile::tempdir().unwrap();
     let job = frozen(directory.path());
     let store = ObjectStore::start().await;
-    store.answer(BUNDLE_KEY, &[403]);
+    store.answer(HISTORY_KEY, &[403]);
     let grants = GrantStore::new();
     let mut requests = grants.subscribe();
     let running = tokio::spawn({
@@ -319,36 +310,29 @@ async fn forbidden_grant_is_replaced() {
     offer(
         &grants,
         &job,
-        vec![
-            store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600)),
-            store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600)),
-        ],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
-    // After the 403 only the bundle is requested again: the history grant is still held.
     loop {
         let request = requested(&mut requests).await;
         if store.received().len() == 1 {
-            assert_eq!(
-                request.payload.checksums,
-                checksums(&job, &[BUNDLE_KEY, HISTORY_KEY])
-            );
+            assert_eq!(request.payload.checksums, checksums(&job, &[HISTORY_KEY]));
             break;
         }
     }
     offer(
         &grants,
         &job,
-        vec![store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600))],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
     assert_eq!(running.await.unwrap(), UploadEnd::Uploaded);
-    assert_eq!(store.received().len(), 3);
+    assert_eq!(store.received().len(), 2);
 }
 
-/// A restart after the bundle was stored sends the identical frozen bytes again, accepts the
-/// store's 412 for it, and finishes with the declaration frozen before the first PUT; grants from
-/// the old process are gone and must be requested again.
+/// A restart after the history was stored but its reply lost sends the identical frozen bytes
+/// again, accepts the store's 412, and finishes with the declaration frozen before the first
+/// push; grants from the old process are gone and must be requested again.
 #[tokio::test]
-async fn restart_after_partial_upload_reuses_frozen_bytes() {
+async fn restart_after_a_lost_reply_reuses_frozen_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let job = frozen(directory.path());
     let declaration = job.outcome.clone();
@@ -360,21 +344,9 @@ async fn restart_after_partial_upload_reuses_frozen_bytes() {
         async move { upload(&uploader(), &grants, &job, POLICY).await }
     });
     requested(&mut requests).await;
-    offer(
-        &first,
-        &job,
-        vec![store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600))],
-    );
-    // The bundle is stored, then the upload waits for a history grant that never comes.
-    loop {
-        let request = requested(&mut requests).await;
-        if request.payload.checksums == checksums(&job, &[HISTORY_KEY]) {
-            break;
-        }
-    }
     interrupted.abort();
     assert!(interrupted.await.unwrap_err().is_cancelled());
-    store.answer(BUNDLE_KEY, &[412]);
+    store.answer(HISTORY_KEY, &[412]);
     let restarted = GrantStore::new();
     let mut requests = restarted.subscribe();
     let resumed = tokio::spawn({
@@ -383,20 +355,15 @@ async fn restart_after_partial_upload_reuses_frozen_bytes() {
     });
     assert_eq!(
         requested(&mut requests).await.payload.checksums,
-        checksums(&job, &[BUNDLE_KEY, HISTORY_KEY])
+        checksums(&job, &[HISTORY_KEY])
     );
     offer(
         &restarted,
         &job,
-        vec![
-            store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600)),
-            store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600)),
-        ],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
     assert_eq!(resumed.await.unwrap(), UploadEnd::Uploaded);
-    let received = store.received();
-    assert_eq!(received.len(), 3);
-    assert_eq!(received[0], received[1]);
+    assert_eq!(store.received().len(), 1);
     assert_eq!(job.outcome, declaration);
 }
 
@@ -406,7 +373,7 @@ async fn changed_frozen_bytes_fail_without_uploading() {
     ora_logging::initialize_test_clock();
     let directory = tempfile::tempdir().unwrap();
     let job = frozen(directory.path());
-    std::fs::write(directory.path().join(BUNDLE_FILE), b"other bytes").unwrap();
+    std::fs::write(directory.path().join(HISTORY_FILE), b"other bytes").unwrap();
     let grants = GrantStore::new();
     let mut requests = grants.subscribe();
     assert_eq!(
@@ -434,7 +401,7 @@ async fn foreign_grants_are_ignored() {
     offer(
         &grants,
         &other,
-        vec![store.grant(BUNDLE_KEY, Duration::from_secs(/*secs*/ 3600))],
+        vec![store.grant(HISTORY_KEY, Duration::from_secs(/*secs*/ 3600))],
     );
     offer(
         &grants,

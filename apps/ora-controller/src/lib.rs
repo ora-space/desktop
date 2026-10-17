@@ -25,9 +25,7 @@ pub use coordination::take_over;
 pub use deployment::{DeploymentConfig, NodeHosting, SingleNodeConfig};
 use ora_node_protocol::*;
 #[cfg(target_os = "linux")]
-pub use runtime::{
-    ControllerHandle, ControllerRuntime, Persistence, RuntimeConfig, SubstrateConfig,
-};
+pub use runtime::{ControllerRuntime, Persistence, RuntimeConfig, SubstrateConfig};
 #[cfg(target_os = "linux")]
 pub use service::Service;
 #[cfg(target_os = "linux")]
@@ -37,7 +35,7 @@ pub use session::{
 pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
-pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome, GrantOutcome, GrantRequest};
+pub use store::{CoordinationStore, ExecutionOutcome, GrantOutcome, GrantRequest};
 
 /// Persistence failures never authorize dispatch or acknowledgement. The classes an adapter must
 /// distinguish are fixed here: a conflict is never retried as-is, an unavailable authority means
@@ -84,7 +82,6 @@ pub trait WriteGuard: Send + 'static {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WritePoint {
-    Accept,
     Takeover,
     Receipt,
     /// Final takeover boundary inside the open transaction, before SQLite commit or any Ack.
@@ -96,12 +93,4 @@ impl WriteGuard for DurableWrites {
     fn before_write(&self, _point: WritePoint) -> Result<(), Error> {
         Ok(())
     }
-}
-
-/// An accepted operation and its durable terminal fact as the local catalogue keeps it, at full wire
-/// fidelity; no result means awaiting reconciliation, not failure.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CloneOperation {
-    pub command: CloneRepositoryMessage,
-    pub result: Option<CloneExecutionResult>,
 }

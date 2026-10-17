@@ -59,9 +59,9 @@ async fn ask(
 fn paused_clone_git_leaves_admission_prompt_and_dispatches_each_clone_once() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
-        server.paused.store(true, Ordering::SeqCst);
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        server.pause(true);
         let config = configuration(&fixture, &server);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let mut child = ipc::launch_with_deadline(
@@ -145,12 +145,14 @@ fn paused_clone_git_leaves_admission_prompt_and_dispatches_each_clone_once() {
                     .await,
                     ExecutionState::Accepted
                 );
-                server.paused.store(false, Ordering::SeqCst);
+                server.pause(false);
                 let mut ready = Vec::new();
                 // The Node's read deadline is also the Controller's liveness deadline, so keep
                 // polling like a Controller would while waiting for the results.
                 let mut poll = tokio::time::interval(Duration::from_millis(/*millis*/ 500));
-                timeout(Duration::from_secs(/*secs*/ 60), async {
+                // A snapshot clone is about ten host-managed Git Runs (transport, fetch, three
+                // workload steps, inspection), each with its own setup on a busy machine.
+                timeout(Duration::from_secs(/*secs*/ 180), async {
                     while ready.len() < 2 {
                         let message = tokio::select! {
                             _ = poll.tick() => {
@@ -196,8 +198,8 @@ fn paused_clone_git_leaves_admission_prompt_and_dispatches_each_clone_once() {
                     journal.attempts(&command.execution_id).unwrap().len(),
                     journal.pending(&command.execution_id).unwrap().len()
                 ),
-                (1, 0),
-                "{} must have one dispatched, cleaned Run",
+                (3, 0),
+                "{} must have one cleaned Run per workload step",
                 command.execution_id.as_str()
             );
         }

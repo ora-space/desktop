@@ -1,6 +1,6 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
-use ora_controller::{CloneIntake, CoordinationStore, ExecutionOutcome, SqliteStore};
+use ora_controller::{CoordinationStore, ExecutionOutcome, SqliteStore};
 use pretty_assertions::assert_eq;
 use std::{
     process::{Command, Stdio},
@@ -135,16 +135,16 @@ pub(super) fn launch(fixture: &Fixture, proxy: &Proxy) -> ChildGuard {
 fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let home = fixture.path().join("controller");
         let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
-        let command = block_on(owner.accept_request(
+        let command = seed_dispatch(
+            &home,
+            request(&server, "client", "main"),
             RequestId::new("client-request"),
-            request(&server, "unused", "main").payload.spec,
-        ))
-        .unwrap();
+        );
         drop(owner);
         let mut node = super::ipc::launch(&fixture, &clone);
         until(|| {
@@ -170,7 +170,7 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
             vec![]
         );
         drop(owner);
-        server.reject_auth.store(true, Ordering::SeqCst);
+        server.reject_auth(true);
         // Draining observations does not acknowledge them; the original Node outbox remains authoritative.
         while proxy.acknowledgements.try_recv().is_ok() {}
         proxy.drop_ack.store(false, Ordering::SeqCst);
@@ -208,7 +208,8 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
                 .attempts(&command.execution_id)
                 .unwrap()
                 .len(),
-            1
+            // One Run per workload step of the clone; the takeover repeated none.
+            3
         );
         assert!(database.pending_events().unwrap().is_empty());
         assert_eq!(first.execution_id, command.execution_id);

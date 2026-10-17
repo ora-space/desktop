@@ -31,13 +31,17 @@ mod repository;
 mod resources;
 pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, WorktreeGit};
 #[cfg(target_os = "linux")]
-pub use repository::{CloneConfig, CloneSsh};
+pub use repository::CloneConfig;
 #[cfg(target_os = "linux")]
 mod git_access;
+#[cfg(target_os = "linux")]
+mod git_server;
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
 mod model_proxy;
+#[cfg(target_os = "linux")]
+mod ora_git;
 #[cfg(target_os = "linux")]
 mod revision;
 #[cfg(target_os = "linux")]
@@ -55,8 +59,8 @@ pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, Servi
 #[cfg(target_os = "linux")]
 pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
-    PriorRevisionRestore, QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand,
-    SessionConfig, SessionHost, SessionLedger, SessionWorkload,
+    PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored,
+    SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
@@ -105,6 +109,10 @@ pub enum Error {
 pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, C = LocalClock> {
     #[cfg(target_os = "linux")]
     repository_config: Option<CloneConfig>,
+    #[cfg(target_os = "linux")]
+    git_access: Option<GitAccessConfig>,
+    #[cfg(target_os = "linux")]
+    git_server_retry: git_server::RetryPolicy,
     home_directory: PathBuf,
     database: NodeDatabase<W>,
     identity: NodeRuntimeIdentity,
@@ -179,6 +187,10 @@ impl Node {
             .map_err(|e| Error::Configuration(e.to_string()))?;
         Ok(Node {
             repository_config: None,
+            #[cfg(target_os = "linux")]
+            git_access: None,
+            #[cfg(target_os = "linux")]
+            git_server_retry: git_server::RetryPolicy::DEFAULT,
             home_directory: node.home_directory,
             database: node.database,
             identity: node.identity,
@@ -249,6 +261,10 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         Ok(Self {
             #[cfg(target_os = "linux")]
             repository_config: None,
+            #[cfg(target_os = "linux")]
+            git_access: None,
+            #[cfg(target_os = "linux")]
+            git_server_retry: git_server::RetryPolicy::DEFAULT,
             home_directory: config.home_directory,
             database,
             identity,

@@ -24,17 +24,17 @@ minicloud 由浏览器直连 Controller 承载的接口，与 Controller 只拨�
   [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)接收 Cloud 受理的 clone。
 
 保留稳定执行身份、派发前持久责任、进程恢复交接、结果可查询及持久接管后确认等可靠性原则。
-信任体系和 Strong 继续延期；私有仓库访问使用 Node 可信部署提供的非交互凭据。
+信任体系和 Strong 继续延期；clone 只从 Git Server 读取，凭 Node 的 git-access 身份，不使用部署凭据。
 现有 Backend、Worktree 数据与文件布局保持不变。
 
 ## 已批准边界与后续设计
 
-| 主题     | 已批准政策／剩余工作                                                     |
-| -------- | ------------------------------------------------------------------------ |
-| 输入     | HTTPS 与显式 SSH、部署凭据、明确分支；返回实际获取的 commit              |
-| 本地资源 | Node 在注入根下分配独占目标，保留失败／未知残留                          |
-| Git 范围 | 单分支完整历史并 checkout；禁用 hooks，不递归初始化 submodule 或下载 LFS |
-| 协调     | 本机 IPC、Controller 持久接管、原执行重放和经 Cloud 的受理已实现         |
+| 主题     | 已批准政策／剩余工作                                                                   |
+| -------- | -------------------------------------------------------------------------------------- |
+| 输入     | 经 HTTPS 以 git-access 身份读取 Git Server 快照，不用 SSH 与部署凭据；结果等于基础提交 |
+| 本地资源 | Node 在注入根下分配独占目标，保留失败／未知残留                                        |
+| Git 范围 | 单分支完整历史并 checkout；禁用 hooks，不递归初始化 submodule 或下载 LFS               |
+| 协调     | 本机 IPC、Controller 持久接管、原执行重放和经 Cloud 的受理已实现                       |
 
 已讨论接受的 Worktree 管理命令禁用 hooks 和清理未知时的仓库级门禁尚未实现；
 不能直接把其讨论结论当作当前代码行为或完整 clone 故障模型。

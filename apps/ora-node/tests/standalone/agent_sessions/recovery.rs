@@ -7,8 +7,8 @@ use pretty_assertions::assert_eq;
 fn killed_session_replays_and_ends_before_accepting_commands() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let root = prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);
@@ -78,8 +78,8 @@ fn killed_session_replays_and_ends_before_accepting_commands() {
 fn service_shutdown_stops_the_active_agent_and_persists_its_end() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let root = prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);

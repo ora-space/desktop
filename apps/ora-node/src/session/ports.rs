@@ -11,6 +11,8 @@ use ora_node_protocol::{
 use std::error::Error;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One session command the protocol side accepted and persisted.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,8 +81,9 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
 ///
 /// Session and delivery both go through here, so neither ever composes a checkout path itself.
 pub trait CheckoutResolver: Send + Sync + 'static {
-    /// Returns the checkout, or `None` when the execution did not leave one.
-    fn checkout(&self, clone_execution: &ExecutionId) -> Option<PathBuf>;
+    /// Returns the checkout and the snapshot input it was made from, or `None` when the
+    /// execution did not leave one.
+    fn checkout(&self, clone_execution: &ExecutionId) -> Option<ora_node_db::ClonedCheckout>;
 }
 
 /// The installed plugins a session may run, as the plugin installer maintains them.
@@ -103,21 +106,42 @@ pub struct HistoryUnavailable;
 /// One prior Revision to restore into a session's checkout.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreRequest {
-    /// The session's operation, which the download grant exchange is addressed by.
     pub operation: OperationId,
+    /// The session execution, whose ID the Git Server authorizes the fetch by.
     pub execution: ExecutionId,
     /// The checkout the session resolved; nothing has been handed to the workload user yet.
     pub checkout: PathBuf,
+    /// The checkout's Workspace branch short name, which moves to the prior final commit.
+    pub branch: String,
+    /// The clone's base commit: the snapshot the prior Revision's base is judged against.
+    pub base_commit: CommitId,
     pub prior: PriorRevision,
+}
+
+/// Tells a running restore that its session is ending: the Node stops or an `EndSession`
+/// arrived before the agent started.
+#[derive(Clone, Debug, Default)]
+pub struct RestoreCancel(Arc<AtomicBool>);
+
+impl RestoreCancel {
+    /// Asks the restore to stop at its next step.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the restore was asked to stop.
+    pub fn requested(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// What a successful restore left: the checkout's branch at the prior final commit, clean.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Restored {
-    /// Every base commit of the prior Revision is still in `origin/<branch>`.
-    OnRemoteHistory,
-    /// The remote history was rewritten: `origin/<branch>` no longer contains `base_commit`, a
-    /// base of the restored `final_commit`.
+    /// The prior Revision's base commit is in the history of this Workspace's snapshot.
+    OnSnapshotHistory,
+    /// The external repository's history was rewritten: this Workspace's snapshot does not
+    /// contain `base_commit`, the base the restored `final_commit` was built on.
     Diverged {
         final_commit: CommitId,
         base_commit: CommitId,
@@ -128,12 +152,12 @@ pub enum Restored {
 /// Why a prior Revision could not be restored; the session ends `agent_failed` with this detail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RestoreFailure {
-    /// The bundle could not be obtained or verified, or does not hold the prior final commit.
-    /// Possibly transient: Cloud offers the same Revision to the next run.
+    /// The prior final commit could not be fetched, verified or checked out. Possibly transient:
+    /// Cloud offers the same Revision to the next run.
     #[error("prior Revision is unavailable")]
     Unavailable,
-    /// A base commit the bundle needs is neither in the checkout nor fetchable from `origin`.
-    /// Only a rewritten remote history causes it, so Cloud stops offering this Revision.
+    /// The Git Server has no readable delivery ref for the prior Revision, so its Git content is
+    /// permanently out of reach and Cloud stops offering it.
     #[error("the prior Revision's base commit is unavailable")]
     BaseUnavailable,
 }
@@ -152,14 +176,19 @@ impl RestoreFailure {
 ///
 /// The session driver calls it at most once per session, after resolving the checkout and before
 /// handing the checkout to the workload user or starting any plugin, and only when the session
-/// input names a prior Revision. Implementations obtain and verify the bundle, run Git with the
+/// input names a prior Revision. Implementations fetch and verify the prior commit, run Git with the
 /// deployment's hardened policy off the async workers, and leave nothing behind on failure but
 /// what Git itself wrote into the checkout; the driver ends the session on any failure.
+///
+/// Once `cancel` is set, implementations start no further Git and return as soon as what they
+/// already started has ended: the driver awaits that before the session may end, so a delivery
+/// never reads a checkout a restore is still writing.
 pub trait PriorRevisionRestore: Send + Sync + 'static {
     /// Leaves the checkout's branch at the prior final commit, or says why it could not.
     fn restore(
         &self,
         request: RestoreRequest,
+        cancel: RestoreCancel,
     ) -> impl Future<Output = Result<Restored, RestoreFailure>> + Send;
 }
 
@@ -167,9 +196,13 @@ pub trait PriorRevisionRestore: Send + Sync + 'static {
 /// one that arrives anyway cannot be restored and ends as unavailable.
 impl<R: PriorRevisionRestore> PriorRevisionRestore for Option<R> {
     /// Delegates to the configured restorer, if any.
-    async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
+    async fn restore(
+        &self,
+        request: RestoreRequest,
+        cancel: RestoreCancel,
+    ) -> Result<Restored, RestoreFailure> {
         match self {
-            Some(restorer) => restorer.restore(request).await,
+            Some(restorer) => restorer.restore(request, cancel).await,
             None => Err(RestoreFailure::Unavailable),
         }
     }
