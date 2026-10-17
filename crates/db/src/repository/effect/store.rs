@@ -343,8 +343,7 @@ impl<Clock: TimestampSource> EffectRepository for SqliteEffectRepository<Clock> 
         &self,
         finalization: ora_effect::TargetRecoveryFinalization,
     ) -> Result<(), RepositoryError> {
-        super::recovery::finalize_target_recovery(self, finalization)
-            .map_err(RepositoryError::new)
+        super::recovery::finalize_target_recovery(self, finalization).map_err(RepositoryError::new)
     }
 
     fn complete_artifact_cleanup(

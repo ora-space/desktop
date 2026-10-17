@@ -2,8 +2,8 @@ use super::{ReadyConsumer, declaration, fixture, package_fingerprint};
 use crate::{PluginSkillProjection, SqliteEffectRepository, SqliteSkillRepository};
 use ora_domain::PluginId;
 use ora_effect::*;
-use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
 use ora_effect::{EffectRecoverer, RecoveryOutcome};
+use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
 use pretty_assertions::assert_eq;
 use rusqlite::params;
 
@@ -85,8 +85,7 @@ fn converged_target(
     let skills = SqliteSkillRepository::with_clock(pool.clone(), clock.clone());
     skills
         .replace_plugin_skills(
-            &PluginId::new("official", "skill-pack")
-                .unwrap_or_else(|e| panic!("plugin: {e}")),
+            &PluginId::new("official", "skill-pack").unwrap_or_else(|e| panic!("plugin: {e}")),
             "1.0.0",
             &[skill_package(directory, "skill-review", manifest)],
             110,
@@ -192,12 +191,7 @@ fn recovery_replays_a_proven_applied_leftover_and_resumes_scheduling() {
     assert_eq!(quarantined, 1);
     assert_eq!(
         quarantine_state(&pool, &target),
-        (
-            "recovery_required".to_string(),
-            "blocked".to_string(),
-            1,
-            1
-        )
+        ("recovery_required".to_string(), "blocked".to_string(), 1, 1)
     );
 
     // The materialized package proves the exact planned state, so the journal finalizes.
@@ -287,7 +281,10 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
             SkillDirectoryResourceAdapter.observe(resource)
         }
 
-        fn apply(&self, _operation: &EffectOperation) -> Result<ApplyReceipt, ResourceAdapterError> {
+        fn apply(
+            &self,
+            _operation: &EffectOperation,
+        ) -> Result<ApplyReceipt, ResourceAdapterError> {
             Err(ResourceAdapterError::new(std::io::Error::other(
                 "simulated crash before apply",
             )))
@@ -325,8 +322,7 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
     let updated = b"---\nname: review\ndescription: Reviews changes\n---\nupdated\n";
     SqliteSkillRepository::with_clock(pool.clone(), clock.clone())
         .replace_plugin_skills(
-            &PluginId::new("official", "skill-pack")
-                .unwrap_or_else(|e| panic!("plugin: {e}")),
+            &PluginId::new("official", "skill-pack").unwrap_or_else(|e| panic!("plugin: {e}")),
             "1.1.0",
             &[skill_package(directory.path(), "skill-review", updated)],
             150,
@@ -349,7 +345,10 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
         &clock,
     )
     .reconcile(&target, &claim, LocalTimestamp::from_millis(170));
-    assert!(failed.is_err(), "the simulated crash must fail the reconcile");
+    assert!(
+        failed.is_err(),
+        "the simulated crash must fail the reconcile"
+    );
 
     // The worker lease expires before explicit recovery runs, exactly like a restart.
     clock.set(200);
@@ -371,7 +370,10 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
     );
     assert_eq!(state.1, "pending");
     assert_eq!(state.2, 0);
-    assert_eq!(state.3, 1, "the closed journal grants no additional ledger row");
+    assert_eq!(
+        state.3, 1,
+        "the closed journal grants no additional ledger row"
+    );
 
     // The next ordinary reconcile re-plans from the unchanged baseline and converges.
     let outcomes = reconcile_due(&repository, &clock, &worker, 180);
@@ -427,12 +429,7 @@ fn recovery_refuses_drifted_state_and_keeps_the_quarantine() {
     assert!(matches!(error, RecoveryError::NotRecoverable { .. }));
     assert_eq!(
         quarantine_state(&pool, &target),
-        (
-            "recovery_required".to_string(),
-            "blocked".to_string(),
-            1,
-            1
-        ),
+        ("recovery_required".to_string(), "blocked".to_string(), 1, 1),
         "the quarantine is preserved without guessing"
     );
     let status = repository
@@ -491,11 +488,7 @@ fn recovery_of_a_retiring_target_advances_the_epoch_and_finishes_retirement() {
         .unwrap_or_else(|e| panic!("load retired Target: {e}"));
     assert_eq!(
         retired,
-        (
-            "retiring".to_string(),
-            "recovery_required".to_string(),
-            2
-        ),
+        ("retiring".to_string(), "recovery_required".to_string(), 2),
         "retirement marks the Target and advances the epoch without clearing recovery"
     );
 
@@ -512,7 +505,11 @@ fn recovery_of_a_retiring_target_advances_the_epoch_and_finishes_retirement() {
 
     // The retiring Target converges its empty contribution and finishes retirement.
     let outcomes = reconcile_due(&repository, &clock, &worker, 210);
-    assert_eq!(outcomes.len(), 1, "the retiring Target is claimed: {outcomes:?}");
+    assert_eq!(
+        outcomes.len(),
+        1,
+        "the retiring Target is claimed: {outcomes:?}"
+    );
     let (_, outcome) = match outcomes.into_iter().next() {
         Some(Ok((target, outcome))) => (target, outcome),
         Some(Err((target, error))) => panic!("retiring reconcile {target}: {error:?}"),
@@ -547,7 +544,11 @@ fn recovery_of_a_retiring_target_advances_the_epoch_and_finishes_retirement() {
                 .map_err(Into::into)
         })
         .unwrap_or_else(|e| panic!("load remaining rows: {e}"));
-    assert_eq!(remaining, (0, 0, 0, 0), "retirement removed every owned row");
+    assert_eq!(
+        remaining,
+        (0, 0, 0, 0),
+        "retirement removed every owned row"
+    );
 }
 
 /// Recovering a healthy Target changes nothing and reports that no journal needed closing.

@@ -42,10 +42,11 @@ pub use planner::{
 };
 pub use ports::{
     ApplyReceipt, AttemptFinalization, CleanupReceipt, ConsumerAdapter, ConsumerAdapterError,
-    EffectRepository, PreparedOperation, ProjectionCommit, RecoveryAttemptClosure,
-    RecoveryAttemptJournal, RecoveryOperationClosure, ReconcileSnapshot, RelatedTargetSnapshot,
-    ReplaceDesiredStateOutcome, RepositoryError, ResourceAdapter, ResourceAdapterError,
-    TargetRecoveryFinalization, TargetRecoveryJournal, TargetStatusView, VerificationReceipt,
+    EffectRepository, PreparedOperation, ProjectionCommit, ReconcileSnapshot,
+    RecoveryAttemptClosure, RecoveryAttemptJournal, RecoveryOperationClosure,
+    RelatedTargetSnapshot, ReplaceDesiredStateOutcome, RepositoryError, ResourceAdapter,
+    ResourceAdapterError, TargetRecoveryFinalization, TargetRecoveryJournal, TargetStatusView,
+    VerificationReceipt,
 };
 pub use projection::{
     ManagedItem, ObservedItem, OwnershipEvidence, PreservedItem, ResolvedMaterialization,

@@ -1,7 +1,6 @@
 use super::Migration;
 
-const UP_STATEMENTS: &[&str] = &[
-    r#"
+const UP_STATEMENTS: &[&str] = &[r#"
 CREATE TABLE effect_target_status_staging_v0016 (
     target_id TEXT PRIMARY KEY,
     desired_generation INTEGER NOT NULL,
@@ -230,11 +229,9 @@ ON effect_operation_artifacts
 BEGIN
     SELECT RAISE(ABORT, 'Effect operation artifact authority is immutable');
 END;
-"#,
-];
+"#];
 
-const DOWN_STATEMENTS: &[&str] = &[
-    r#"
+const DOWN_STATEMENTS: &[&str] = &[r#"
 -- A closed-without-effect journal cannot exist in the pre-recovery schema: its evidence
 -- stays intact by returning the row to explicit manual recovery, which a later upgrade
 -- can prove and close again. The pre-0016 application never claims a Target with
@@ -466,8 +463,7 @@ ON effect_operation_artifacts
 BEGIN
     SELECT RAISE(ABORT, 'Effect operation artifact authority is immutable');
 END;
-"#,
-];
+"#];
 
 /// Adds the `finalized_without_effect` operation phase used by the explicit recovery exit.
 ///
@@ -661,12 +657,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             closed,
-            (
-                "finalized_without_effect".to_string(),
-                None,
-                Some(9),
-                None
-            )
+            ("finalized_without_effect".to_string(), None, Some(9), None)
         );
         // The schema still refuses a finalized row without apply evidence.
         assert!(connection
@@ -678,7 +669,9 @@ mod tests {
 
         // Downgrade maps the closure back to explicit recovery and restores the old CHECKs.
         for statement in DOWN_STATEMENTS {
-            connection.execute_batch(statement).expect("apply downgrade");
+            connection
+                .execute_batch(statement)
+                .expect("apply downgrade");
         }
         let reverted: (String, Option<i64>, Option<i64>, Option<i64>) = connection
             .query_row(
@@ -692,13 +685,15 @@ mod tests {
             reverted,
             ("recovery_required".to_string(), None, None, Some(9))
         );
-        assert!(connection
-            .execute(
-                "UPDATE effect_operations SET phase = 'finalized_without_effect'
+        assert!(
+            connection
+                .execute(
+                    "UPDATE effect_operations SET phase = 'finalized_without_effect'
                  WHERE id = 'operation-quarantined'",
-                [],
-            )
-            .is_err());
+                    [],
+                )
+                .is_err()
+        );
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT
@@ -712,14 +707,16 @@ mod tests {
             .unwrap();
         assert_eq!(counts, (2, 1, 1));
         // Foreign keys still guard the rebuilt tables after the round trip.
-        assert!(connection
-            .execute(
-                "INSERT INTO effect_operation_artifacts VALUES (
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO effect_operation_artifacts VALUES (
                      'artifact-2', 'missing-operation', 'staging', 1, '{}', 'fp', 'retained', 5, 6
                  )",
-                params![],
-            )
-            .is_err());
+                    params![],
+                )
+                .is_err()
+        );
     }
 
     /// Re-running the upgrade after a downgrade is idempotent for the row content.
@@ -739,10 +736,14 @@ mod tests {
             )
             .expect("close the quarantined journal");
         for statement in DOWN_STATEMENTS {
-            connection.execute_batch(statement).expect("apply downgrade");
+            connection
+                .execute_batch(statement)
+                .expect("apply downgrade");
         }
         for statement in UP_STATEMENTS {
-            connection.execute_batch(statement).expect("re-apply upgrade");
+            connection
+                .execute_batch(statement)
+                .expect("re-apply upgrade");
         }
         let phase: String = connection
             .query_row(

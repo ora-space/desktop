@@ -158,9 +158,7 @@ pub enum RecoveryOutcome {
         closed_without_effect: usize,
     },
     /// No quarantined journal remained, so recovery changed no durable state.
-    AlreadyHealthy {
-        target: EffectTargetId,
-    },
+    AlreadyHealthy { target: EffectTargetId },
 }
 
 /// Reports why one Target's recovery could not close its quarantined journals.

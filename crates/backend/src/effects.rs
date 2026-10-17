@@ -2,8 +2,8 @@ use crate::BackendError;
 use crate::effect_worker::EffectWorkerHandle;
 use ora_application::EffectService;
 use ora_contracts::{
-    EmptyErrorParams, GetEffectTargetStatusRequest, GetEffectTargetStatusResponse,
-    PublicError, RecoverEffectTargetRequest, RecoverEffectTargetResponse,
+    EmptyErrorParams, GetEffectTargetStatusRequest, GetEffectTargetStatusResponse, PublicError,
+    RecoverEffectTargetRequest, RecoverEffectTargetResponse,
 };
 use ora_db::{RepositoryPool, SqliteEffectRepository};
 use ora_effect::{EffectRecoverer, EffectTargetId, RecoveryError, RecoveryOutcome};
@@ -60,12 +60,13 @@ impl Effects {
                 PublicError::EffectTargetNotFound(EmptyErrorParams {}),
                 "Effect Target does not exist",
             ),
-            RecoveryError::NotRecoverable { resource, operation } => BackendError::new(
+            RecoveryError::NotRecoverable {
+                resource,
+                operation,
+            } => BackendError::new(
                 crate::error::ErrorClassification::Unprocessable,
                 PublicError::EffectTargetNotRecoverable(EmptyErrorParams {}),
-                format!(
-                    "operation {operation} on Resource {resource} proves neither exact state"
-                ),
+                format!("operation {operation} on Resource {resource} proves neither exact state"),
             ),
             error @ (RecoveryError::Repository(_)
             | RecoveryError::Resource(_)

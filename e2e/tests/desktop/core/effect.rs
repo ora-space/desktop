@@ -9,7 +9,8 @@ mod tests {
         GetAgentRuntimeStatusRequest, GetEffectTargetStatusRequest, GetSkillImportSessionRequest,
         ListSkillsRequest, ListWorkspacesRequest, PluginDataDisposition, PrepareSkillImportRequest,
         RecoverEffectTargetRequest, ScanPluginsRequest, SkillImportProgress, SkillImportResult,
-        SkillImportResultStatus, SkillImportSessionStatus, SkillImportSource, UninstallPluginRequest,
+        SkillImportResultStatus, SkillImportSessionStatus, SkillImportSource,
+        UninstallPluginRequest,
     };
     use pretty_assertions::assert_eq;
     use std::fs;
@@ -470,10 +471,9 @@ mod tests {
                     target_id: target_id.clone(),
                 })
                 .is_ok_and(|response| {
-                    response
-                        .status
-                        .as_ref()
-                        .is_some_and(|status| status.phase == EffectTargetPhaseDto::RecoveryRequired)
+                    response.status.as_ref().is_some_and(|status| {
+                        status.phase == EffectTargetPhaseDto::RecoveryRequired
+                    })
                 })
         })?;
 

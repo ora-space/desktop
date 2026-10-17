@@ -236,10 +236,8 @@ fn statuses_leave_manual_recovery_only_through_the_explicit_resume_paths() {
         .unwrap_or_else(|error| panic!("resume retiring target: {error}"));
     assert_eq!(target.phase(), &TargetPhase::Retiring);
 
-    let mut resource = ResourceStatus::pending(
-        EffectResourceId::new("resource-1"),
-        Generation::new(1),
-    );
+    let mut resource =
+        ResourceStatus::pending(EffectResourceId::new("resource-1"), Generation::new(1));
     assert_eq!(
         resource.resume_from_recovery(),
         Err(StatusTransitionError::NotInRecovery)

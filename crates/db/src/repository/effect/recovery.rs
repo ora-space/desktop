@@ -13,8 +13,9 @@ use crate::DatabaseError;
 use crate::TimestampSource;
 use ora_effect::{
     CleanupReceipt, ConditionOwner, Digest, EffectOperation, EffectTargetId, LocalTimestamp,
-    OperationArtifact, ProjectionDigest, RecoveryAttemptJournal, ReconcileAttempt,
-    ReconcileAttemptId, ReconcileAttemptIntent, TargetRecoveryFinalization, TargetRecoveryJournal,
+    OperationArtifact, ProjectionDigest, ReconcileAttempt, ReconcileAttemptId,
+    ReconcileAttemptIntent, RecoveryAttemptJournal, TargetRecoveryFinalization,
+    TargetRecoveryJournal,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,12 +59,9 @@ pub(super) fn load_target_recovery<Clock: TimestampSource>(
             return Ok(None);
         }
         let target = load_target(connection, target_id)?;
-        let target_status = load_target_status(connection, target_id)?
-            .ok_or_else(|| {
-                DatabaseError::CorruptEffectState(format!(
-                    "Effect Target {target_id} has no status"
-                ))
-            })?;
+        let target_status = load_target_status(connection, target_id)?.ok_or_else(|| {
+            DatabaseError::CorruptEffectState(format!("Effect Target {target_id} has no status"))
+        })?;
         let attempts = load_recovery_attempts(connection, target_id)?;
         Ok(Some(TargetRecoveryJournal {
             target,
@@ -126,14 +124,13 @@ fn load_recovery_attempts(
              WHERE attempt_id = ?1 ORDER BY sequence",
         )?;
         let mut resource_projections = BTreeSet::new();
-        let mut projection_rows =
-            projection_statement.query(params![attempt_id.as_str()])?;
+        let mut projection_rows = projection_statement.query(params![attempt_id.as_str()])?;
         while let Some(row) = projection_rows.next()? {
             let digest: String = row.get(0)?;
-            resource_projections.insert(ProjectionDigest::new(
-                Digest::parse(&digest)
-                    .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
-            ));
+            resource_projections
+                .insert(ProjectionDigest::new(Digest::parse(&digest).map_err(
+                    |error| DatabaseError::CorruptEffectState(error.to_string()),
+                )?));
         }
         drop(projection_rows);
         drop(projection_statement);
@@ -425,7 +422,6 @@ pub(super) fn mark_artifact_cleanup_failed<Clock: TimestampSource>(
     })
 }
 
-
 /// Atomically closes quarantined journals by exact evidence and reschedules the Target.
 ///
 /// Every supplied closure was proven by a Resource adapter before this transaction opened.
@@ -457,8 +453,7 @@ pub(super) fn finalize_target_recovery<Clock: TimestampSource>(
 
         let mut affected_resources = BTreeSet::new();
         for closure in attempts {
-            let expected_operations: BTreeSet<_> =
-                closure.attempt.operations().iter().collect();
+            let expected_operations: BTreeSet<_> = closure.attempt.operations().iter().collect();
             let supplied_operations: BTreeSet<_> = closure
                 .operations
                 .iter()
@@ -663,8 +658,9 @@ fn apply_recovery_ledger(
             Ok(())
         }
         ora_effect::ExactPlannedState::Missing => {
-            let ora_effect::ExactPreviousState::Present { managed_identity, .. } =
-                operation.expected()
+            let ora_effect::ExactPreviousState::Present {
+                managed_identity, ..
+            } = operation.expected()
             else {
                 return Err(DatabaseError::CorruptEffectState(format!(
                     "delete operation {} lacks previous ownership",
