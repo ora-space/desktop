@@ -227,6 +227,19 @@ mod tests {
         PluginId::new(PluginNamespace::official(), "ora-space.claude").unwrap()
     }
 
+    /// Returns the temporary root with every symlink resolved, in plain form.
+    ///
+    /// macOS hands out temporary directories under `/var/folders`, where `/var` is itself a
+    /// symlink, and the staging and commit paths deliberately reject a link anywhere in the
+    /// chain — so the tests anchor on the resolved path. Windows `canonicalize` answers with a
+    /// `\\?\`-prefixed verbatim path the same checks reject, so the prefix is stripped after
+    /// resolution: the path is link-free either way and reads the same on every platform.
+    fn symlink_free_root(temp_dir: &TempDir) -> std::path::PathBuf {
+        let resolved = temp_dir.path().canonicalize().unwrap();
+        let text = resolved.to_str().unwrap();
+        std::path::PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(text))
+    }
+
     /// Verifies an extracted package with a matching declaration passes inspection.
     #[test]
     fn inspects_a_package_matching_the_plan_association() {
@@ -252,6 +265,7 @@ mod tests {
     #[test]
     fn prepares_a_release_matching_the_frozen_association() {
         let temp_dir = TempDir::new().unwrap();
+        let root = symlink_free_root(&temp_dir);
         let release_path = temp_dir.path().join("release.orax");
         write_orax_zip(
             &release_path,
@@ -273,12 +287,12 @@ mod tests {
             &plugin_id(),
             &"0.3.18".parse().unwrap(),
             crate::ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
+            &root,
             Default::default(),
             Some(&expectation),
         ))
         .unwrap();
-        let committed = prepared.commit(temp_dir.path()).unwrap();
+        let committed = prepared.commit(&root).unwrap();
         assert_eq!(
             fs::read(committed.join("assets").join("config.json")).unwrap(),
             DECLARATION
@@ -290,6 +304,7 @@ mod tests {
     #[test]
     fn rejects_a_release_whose_declaration_differs_from_the_plan() {
         let temp_dir = TempDir::new().unwrap();
+        let root = symlink_free_root(&temp_dir);
         let reformatted = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["openai-completions"],"modelCardinality":"single"}}}"#;
         let release_path = temp_dir.path().join("release.orax");
         write_orax_zip(
@@ -312,7 +327,7 @@ mod tests {
             &plugin_id(),
             &"0.3.18".parse().unwrap(),
             crate::ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
+            &root,
             Default::default(),
             Some(&expectation),
         ))
@@ -329,6 +344,7 @@ mod tests {
     #[test]
     fn prepares_a_declaring_package_without_an_association() {
         let temp_dir = TempDir::new().unwrap();
+        let root = symlink_free_root(&temp_dir);
         let release_path = temp_dir.path().join("release.orax");
         write_orax_zip(
             &release_path,
@@ -346,7 +362,7 @@ mod tests {
             &plugin_id(),
             &"0.3.18".parse().unwrap(),
             crate::ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
+            &root,
             Default::default(),
             None,
         ))
