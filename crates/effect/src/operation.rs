@@ -96,6 +96,14 @@ pub enum OperationProgress {
         applied_at: LocalTimestamp,
         finalized_at: LocalTimestamp,
     },
+    /// Closed by recovery after the adapter proved the exact expected baseline, so the
+    /// planned effect never became durable ownership and no ledger row may claim it.
+    FinalizedWithoutEffect {
+        prepared_at: LocalTimestamp,
+        /// Retains known apply evidence; external state later proved to be the baseline again.
+        applied_at: Option<LocalTimestamp>,
+        finalized_at: LocalTimestamp,
+    },
     RecoveryRequired {
         prepared_at: LocalTimestamp,
         /// Retains known apply evidence instead of erasing it when recovery becomes necessary.
@@ -261,7 +269,9 @@ impl EffectOperation {
                 prepared_at,
                 applied_at,
             } => (prepared_at, Some(applied_at)),
-            OperationProgress::Finalized { .. } | OperationProgress::RecoveryRequired { .. } => {
+            OperationProgress::Finalized { .. }
+            | OperationProgress::FinalizedWithoutEffect { .. }
+            | OperationProgress::RecoveryRequired { .. } => {
                 return Err(OperationTransitionError::CannotRequireRecovery);
             }
         };
@@ -269,6 +279,56 @@ impl EffectOperation {
             prepared_at,
             applied_at,
             detected_at: detected_at.max(applied_at.unwrap_or(prepared_at)),
+        };
+        Ok(())
+    }
+
+    /// Finalizes a recovering operation whose adapter proved its exact planned state.
+    ///
+    /// A Prepared journal can still prove the planned state when the process died between
+    /// the external apply and persisting Applied; the detection time is then the latest
+    /// honest bound on when that apply can have happened.
+    pub fn finalize_recovered(
+        &mut self,
+        finalized_at: LocalTimestamp,
+    ) -> Result<(), OperationTransitionError> {
+        let OperationProgress::RecoveryRequired {
+            prepared_at,
+            applied_at,
+            detected_at,
+        } = self.progress
+        else {
+            return Err(OperationTransitionError::ExpectedRecoveryRequired);
+        };
+        let applied_at = applied_at.unwrap_or(detected_at.max(prepared_at));
+        self.progress = OperationProgress::Finalized {
+            prepared_at,
+            applied_at,
+            finalized_at: finalized_at.max(applied_at),
+        };
+        Ok(())
+    }
+
+    /// Closes a recovering operation whose adapter proved the exact expected baseline.
+    ///
+    /// The planned effect is absent, so the journal closes without granting ownership;
+    /// normal reconciliation re-plans from the baseline against current Desired State.
+    pub fn close_without_effect(
+        &mut self,
+        finalized_at: LocalTimestamp,
+    ) -> Result<(), OperationTransitionError> {
+        let OperationProgress::RecoveryRequired {
+            prepared_at,
+            applied_at,
+            detected_at,
+        } = self.progress
+        else {
+            return Err(OperationTransitionError::ExpectedRecoveryRequired);
+        };
+        self.progress = OperationProgress::FinalizedWithoutEffect {
+            prepared_at,
+            applied_at,
+            finalized_at: finalized_at.max(detected_at),
         };
         Ok(())
     }
@@ -434,6 +494,31 @@ impl ReconcileAttempt {
         })
     }
 
+    /// Restores a persisted attempt journal together with its durable phase evidence.
+    ///
+    /// Recovery needs the complete immutable intent of a quarantined attempt so it can
+    /// validate every closure against exactly the operation set the attempt owns.
+    pub fn restore(
+        identity: ReconcileAttemptId,
+        intent: ReconcileAttemptIntent,
+        phase: ReconcileAttemptPhase,
+    ) -> Result<Self, OperationTransitionError> {
+        if intent.operations.is_empty() {
+            return Err(OperationTransitionError::EmptyAttemptOperations);
+        }
+        Ok(Self {
+            identity,
+            target: intent.target,
+            generation: intent.generation,
+            consumer_revision: intent.consumer_revision,
+            target_projection: intent.target_projection,
+            resource_projections: intent.resource_projections,
+            coordination: intent.coordination,
+            operations: intent.operations,
+            phase,
+        })
+    }
+
     pub fn identity(&self) -> &ReconcileAttemptId {
         &self.identity
     }
@@ -527,6 +612,18 @@ impl ReconcileAttempt {
         }
     }
 
+    /// Closes a quarantined attempt after every operation journal closed by exact evidence.
+    ///
+    /// Unlike the linear worker phases, recovery closes a RecoveryRequired attempt directly:
+    /// adapter proofs replace the coordination and activation barriers a crashed attempt
+    /// never completed, and the next ordinary reconcile re-establishes those contracts.
+    pub fn finalize_recovered(&mut self) -> Result<(), OperationTransitionError> {
+        self.transition(
+            ReconcileAttemptPhase::RecoveryRequired,
+            ReconcileAttemptPhase::Finalized,
+        )
+    }
+
     /// Enforces the linear attempt state machine so callers cannot skip durable evidence stages.
     fn transition(
         &mut self,
@@ -616,6 +713,8 @@ pub enum OperationTransitionError {
     ExpectedPrepared,
     #[error("operation must be Applied before finalization")]
     ExpectedApplied,
+    #[error("operation must be RecoveryRequired before a recovery closure")]
+    ExpectedRecoveryRequired,
     #[error("a Finalized or already-recovering operation cannot enter recovery")]
     CannotRequireRecovery,
     #[error("coordination plan must cover at least one Resource")]

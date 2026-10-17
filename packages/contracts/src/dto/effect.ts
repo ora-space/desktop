@@ -129,6 +129,20 @@ export type GetEffectTargetStatusResponse = {
 };
 
 /**
+ * Controlled recovery closes a quarantined Target's journals by exact adapter evidence.
+ */
+export type RecoverEffectTargetRequest = { targetId: string };
+
+export type RecoverEffectTargetResponse = {
+  /**
+   * False when the Target held no quarantined journal, so recovery changed nothing.
+   */
+  recovered: boolean;
+  finalizedOperations: number;
+  closedWithoutEffectOperations: number;
+};
+
+/**
  * Complete replacement request using optimistic generation compare-and-swap.
  */
 export type ReplaceEffectStateRequest = {

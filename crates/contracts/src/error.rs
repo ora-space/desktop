@@ -175,6 +175,8 @@ pub enum PublicError {
     AgentNotFound(EmptyErrorParams),
     PluginNotFound(EmptyErrorParams),
     PluginHostIncompatible(EmptyErrorParams),
+    EffectTargetNotFound(EmptyErrorParams),
+    EffectTargetNotRecoverable(EmptyErrorParams),
     PluginPackageInvalid(PluginPackageInvalidParams),
     PackMemberDuplicate(PackMemberParams),
     PackSelfReference(PackMemberParams),
@@ -327,6 +329,8 @@ impl PublicError {
                 "plugin_configuration_recovery_not_required"
             }
             Self::ProjectNotFound(_) => "project_not_found",
+            Self::EffectTargetNotFound(_) => "effect_target_not_found",
+            Self::EffectTargetNotRecoverable(_) => "effect_target_not_recoverable",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ScheduledTaskNotFound(_) => "scheduled_task_not_found",
             Self::ScheduledTaskConflict(_) => "scheduled_task_conflict",
@@ -541,6 +545,8 @@ mod tests {
                 field_errors: Vec::new(),
             }),
             PublicError::PluginConfigurationRecoveryNotRequired(empty),
+            PublicError::EffectTargetNotFound(empty),
+            PublicError::EffectTargetNotRecoverable(empty),
             PublicError::ProjectNotFound(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ScheduledTaskNotFound(empty),
@@ -678,6 +684,8 @@ mod tests {
                 | PublicError::ConfigurationLoadFailed(_)
                 | PublicError::PluginConfigurationValidation(_)
                 | PublicError::PluginConfigurationRecoveryNotRequired(_)
+                | PublicError::EffectTargetNotFound(_)
+                | PublicError::EffectTargetNotRecoverable(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ScheduledTaskNotFound(_)
@@ -781,7 +789,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 115);
+        assert_eq!(samples.len(), 117);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

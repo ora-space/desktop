@@ -268,13 +268,13 @@ impl Backend {
                 pool.clone(),
                 skills_root,
                 clock,
-                effect_reconcile,
+                effect_reconcile.clone(),
             )),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run,
             app_events,
-            effect: Effects::new(pool),
+            effect: Effects::new(pool, effect_reconcile),
         })
     }
 

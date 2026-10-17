@@ -44,6 +44,7 @@ pub(super) fn prepare_attempt<Clock: TimestampSource>(
                 OperationProgress::Prepared { prepared_at } => Some(*prepared_at),
                 OperationProgress::Applied { .. }
                 | OperationProgress::Finalized { .. }
+                | OperationProgress::FinalizedWithoutEffect { .. }
                 | OperationProgress::RecoveryRequired { .. } => None,
             })
             .ok_or_else(|| {

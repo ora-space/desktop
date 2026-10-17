@@ -218,6 +218,24 @@ pub struct RetryEffectTargetResponse {
     pub requested: bool,
 }
 
+/// Controlled recovery closes a quarantined Target's journals by exact adapter evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "effect.ts")]
+pub struct RecoverEffectTargetRequest {
+    pub target_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "effect.ts")]
+pub struct RecoverEffectTargetResponse {
+    /// False when the Target held no quarantined journal, so recovery changed nothing.
+    pub recovered: bool,
+    pub finalized_operations: usize,
+    pub closed_without_effect_operations: usize,
+}
+
 /// Exports Effect contract bindings beside the other transport-neutral DTO families.
 pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     EffectConsumerRefDto::export_all(config)?;
@@ -240,5 +258,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     GetEffectTargetStatusResponse::export_all(config)?;
     RetryEffectTargetRequest::export_all(config)?;
     RetryEffectTargetResponse::export_all(config)?;
+    RecoverEffectTargetRequest::export_all(config)?;
+    RecoverEffectTargetResponse::export_all(config)?;
     Ok(())
 }

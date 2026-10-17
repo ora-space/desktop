@@ -141,6 +141,14 @@ impl ResourceAdapter for TimedResource {
         Ok(receipt)
     }
 
+    /// Delegates baseline verification; the timed fixture never exercises recovery.
+    fn verify_expected(
+        &self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, ResourceAdapterError> {
+        SkillDirectoryResourceAdapter.verify_expected(operation)
+    }
+
     /// Retains real artifact cleanup so the test exercises the complete mutation path.
     fn cleanup(
         &self,

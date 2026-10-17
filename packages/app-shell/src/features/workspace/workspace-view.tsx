@@ -49,6 +49,7 @@ import { useChatStore } from "../../chat-store-context";
 import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
+import { AgentEffectRecoveryBanner } from "../chat/agent-effect-recovery-banner";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
 import { SessionMcpHealthBanner } from "../chat/session-mcp-health-banner";
 import {
@@ -741,6 +742,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         </div>
         <SessionAgentBanner session={session} />
         <SessionMcpHealthBanner session={session} />
+        <AgentEffectRecoveryBanner readiness={agentEffectReadiness} />
         <SessionHistoryNotices session={session} />
         <WorkspaceReviewLayout context={reviewContext}>
           <WorkspaceChatPane

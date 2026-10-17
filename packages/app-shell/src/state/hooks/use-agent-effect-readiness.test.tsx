@@ -184,6 +184,50 @@ describe("useAgentEffectReadiness", () => {
       expect(result.current).toEqual({
         kind: "failed",
         message: "Effect recovery is required.",
+        targetId: status.status!.targetId,
+        recoveryRequired: true,
+      }),
+    );
+  });
+
+  it("keeps other manual failures recoverable only when the Target is quarantined", async () => {
+    const status = await readyEffectHandlers().getEffectTargetStatus();
+    // A manual blocking Condition on a non-quarantined Target (for example a deleted
+    // Worktree) still fails the gate, but no recovery command can close it yet.
+    const getEffectTargetStatus = vi.fn(async () => ({
+      status: {
+        ...status.status!,
+        phase: "current_with_issues" as const,
+        conditions: [
+          {
+            id: "condition-1",
+            ownerKind: "target",
+            ownerId: status.status!.targetId,
+            subjectKind: "operation",
+            subjectId: "operation-1",
+            code: "recovery_required",
+            impact: "blocking" as const,
+            retry: "manual" as const,
+            generation: 1n,
+            message: "A Managed Item changed outside Ora.",
+            firstObservedAt: 1n,
+            lastObservedAt: 1n,
+          },
+        ],
+      },
+    }));
+    const plugins = createPluginMemory();
+    const { result } = renderHookWithClient(
+      () => useAgentEffectReadiness("workspace-1", AGENT_REF.claude),
+      createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
+    );
+
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        kind: "failed",
+        message: "A Managed Item changed outside Ora.",
+        targetId: status.status!.targetId,
+        recoveryRequired: false,
       }),
     );
   });

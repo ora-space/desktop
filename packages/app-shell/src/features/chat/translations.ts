@@ -290,6 +290,10 @@ export const chatTranslations = {
     "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
     "chat.agentEffectsNotReady": "Agent 正在同步项目技能，完成后即可发送",
     "chat.agentEffectsFailed": "Agent 技能同步失败，需要恢复：{{message}}",
+    "chat.agentEffectRecovery.title": "Agent 技能同步需要手动恢复",
+    "chat.agentEffectRecovery.action": "恢复",
+    "chat.agentEffectRecovery.pending": "正在恢复…",
+    "chat.agentEffectRecovery.refused": "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",
@@ -652,6 +656,11 @@ export const chatTranslations = {
     "chat.agentEffectsNotReady": "The agent is syncing project Skills",
     "chat.agentEffectsFailed":
       "Agent Skill sync failed and needs recovery: {{message}}",
+    "chat.agentEffectRecovery.title": "Agent Skill sync needs manual recovery",
+    "chat.agentEffectRecovery.action": "Recover",
+    "chat.agentEffectRecovery.pending": "Recovering…",
+    "chat.agentEffectRecovery.refused":
+      "Recovery did not complete: {{message}}. External state no longer matches the journal; check the workspace directory and try again.",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",
     "chat.collapseCode": "Collapse code",

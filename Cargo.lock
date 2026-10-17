@@ -3783,6 +3783,7 @@ dependencies = [
  "ora-plugin-registry",
  "ora-utils",
  "pretty_assertions",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

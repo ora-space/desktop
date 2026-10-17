@@ -52,6 +52,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflow-execution-scopes.md).
 - The unpublished Loop branch previously used `0011`. Startup recognizes its exact SQL snapshot,
   installs upstream `0011`/`0012`, and adopts it as `0013` atomically, preserving live scope history.
+- Migration `0016` adds the `finalized_without_effect` operation phase used by the explicit Effect
+  recovery exit. Its upgrade rebuilds the operation journal and its referencing status/artifact
+  tables through staging copies so every row and foreign key survives; the downgrade maps closed
+  journals back to explicit `recovery_required`, which a later upgrade can prove and close again.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
   Workspace seeds its new Scope from published Sources in the same transaction.
 

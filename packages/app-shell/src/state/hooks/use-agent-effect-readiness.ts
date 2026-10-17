@@ -6,7 +6,16 @@ import { useInstalledPlugins } from "./use-installed-plugins";
 
 /** Send-gate state derived from one complete persisted Effect Target. */
 export type AgentEffectReadiness =
-  { kind: "ready" } | { kind: "blocked" } | { kind: "failed"; message: string };
+  | { kind: "ready" }
+  | { kind: "blocked" }
+  | {
+      kind: "failed";
+      message: string;
+      /** The Target that must be recovered, when the failure is the recovery quarantine. */
+      targetId: string | null;
+      /** True only for the manual-recovery quarantine the recoverTarget command can close. */
+      recoveryRequired: boolean;
+    };
 
 /** Cadence used only while the send gate is still waiting on Target evidence. */
 const BLOCKED_POLL_INTERVAL_MS = 1_000;
@@ -98,9 +107,18 @@ export function useAgentEffectReadiness(
   if (!managedAgent || workspaceId === undefined) return { kind: "ready" };
   const status = query.data?.status;
   // A first prompt must not race the initial status query: no Target evidence is not readiness.
-  if (status === undefined) return { kind: "blocked" };
+  if (status == null) return { kind: "blocked" };
   if (isEffectTargetReady(status)) return { kind: "ready" };
   const failure = effectTargetFailureMessage(status);
-  if (failure !== null) return { kind: "failed", message: failure };
+  if (failure !== null) {
+    return {
+      kind: "failed",
+      message: failure,
+      targetId: status.targetId,
+      // Other manual blocking Conditions need different remedies (for example a deleted
+      // Worktree); only the recovery quarantine has a controlled recovery command.
+      recoveryRequired: status.phase === "recovery_required",
+    };
+  }
   return { kind: "blocked" };
 }

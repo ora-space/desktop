@@ -309,6 +309,28 @@ impl SkillDirectoryResourceAdapter {
         })
     }
 
+    /// Verifies the exact expected baseline so recovery can close a journal without effect.
+    fn verify_expected_operation(
+        self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, SkillDirectoryError> {
+        let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
+            return Err(SkillDirectoryError::UnsupportedAdapterPlan);
+        };
+        if !state_matches_expected(operation, plan)? {
+            return Err(SkillDirectoryError::ExpectedVerificationFailed {
+                operation: operation.identity().clone(),
+            });
+        }
+        Ok(VerificationReceipt {
+            operation: operation.identity().clone(),
+            proof: AdapterReceipt {
+                version: 1,
+                payload: json!({ "state": "expected" }),
+            },
+        })
+    }
+
     /// Cleans only the exact path/fingerprint pair granted by durable Artifact authority.
     fn cleanup_artifact(
         self,
@@ -382,6 +404,15 @@ impl ResourceAdapter for SkillDirectoryResourceAdapter {
             .map_err(ResourceAdapterError::new)
     }
 
+    fn verify_expected(
+        &self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, ResourceAdapterError> {
+        (*self)
+            .verify_expected_operation(operation)
+            .map_err(ResourceAdapterError::new)
+    }
+
     fn cleanup(
         &self,
         artifact: &OperationArtifact,
@@ -435,6 +466,8 @@ pub enum SkillDirectoryError {
     RecoveryRequired { operation: EffectOperationId },
     #[error("operation {operation} did not reach exact planned state")]
     VerificationFailed { operation: EffectOperationId },
+    #[error("operation {operation} did not stay at its exact expected baseline")]
+    ExpectedVerificationFailed { operation: EffectOperationId },
     #[error("artifact {artifact} no longer matches its cleanup authority")]
     ArtifactFingerprintMismatch { artifact: ArtifactId },
     #[error("Effect Resource filesystem operation failed: {path:?}")]

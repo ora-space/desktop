@@ -110,6 +110,7 @@ export const tauriCommands = {
   readPluginReadme: "read_plugin_readme",
   readProjectFile: "read_project_file",
   readWorkspaceFile: "read_workspace_file",
+  recoverEffectTarget: "recover_effect_target",
   renameSession: "rename_session",
   renameWorkflowRun: "rename_workflow_run",
   resetPluginConfiguration: "reset_plugin_configuration",

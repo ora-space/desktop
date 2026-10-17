@@ -5,6 +5,9 @@ export const commonTranslations = {
       "内部错误。请提供请求编号 {{requestId}} 以便排查。",
     "errors.invalid_request": "请求内容无效。",
     "errors.resource_in_use": "资源正在使用中，暂时无法删除。",
+    "errors.effect_target_not_found": "要恢复的 Agent 技能同步对象不存在。",
+    "errors.effect_target_not_recoverable":
+      "外部状态与同步记录不一致，无法自动恢复。请检查工作区目录后重试。",
     "errors.scheduled_task_conflict":
       "该定时任务刚被其他窗口修改，请刷新后重试。",
     "errors.open_location_failed": "无法使用 {{target}} 打开所选位置。",
@@ -43,6 +46,10 @@ export const commonTranslations = {
     "errors.invalid_request": "The request is invalid.",
     "errors.resource_in_use":
       "The resource is currently in use and cannot be deleted.",
+    "errors.effect_target_not_found":
+      "The agent Skill sync target to recover does not exist.",
+    "errors.effect_target_not_recoverable":
+      "External state no longer matches the sync journal, so it cannot be recovered automatically. Check the workspace directory and try again.",
     "errors.scheduled_task_conflict":
       "This scheduled task was just modified elsewhere. Refresh and try again.",
     "errors.open_location_failed":
