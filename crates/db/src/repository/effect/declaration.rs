@@ -100,9 +100,13 @@ impl<Clock: TimestampSource> SqliteEffectRepository<Clock> {
                      WHERE id = ?1",
                     params![&target_id, written_at.millis()],
                 )?;
+                // A quarantined Target keeps its recovery phase: clearing the link here
+                // would violate the status CHECK, and the Target still owes explicit
+                // recovery before its retirement can converge.
                 transaction.execute(
                     "UPDATE effect_target_status
-                     SET phase = 'retiring', status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
+                     SET phase = CASE WHEN phase = 'recovery_required' THEN phase ELSE 'retiring' END,
+                         status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
                      WHERE target_id = ?1",
                     params![&target_id, written_at.millis()],
                 )?;
@@ -467,9 +471,12 @@ fn retire_target(
         "UPDATE effect_targets SET lifecycle = 'retiring', updated_at = MAX(updated_at, ?2) WHERE id = ?1",
         params![target_id, updated_at],
     )?;
+    // A quarantined Target keeps its recovery phase for the same reason as Consumer
+    // retirement: the Target still owes explicit recovery before it can converge.
     transaction.execute(
         "UPDATE effect_target_status
-         SET phase = 'retiring', status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
+         SET phase = CASE WHEN phase = 'recovery_required' THEN phase ELSE 'retiring' END,
+             status_version = status_version + 1, updated_at = MAX(updated_at, ?2)
          WHERE target_id = ?1",
         params![target_id, updated_at],
     )?;
