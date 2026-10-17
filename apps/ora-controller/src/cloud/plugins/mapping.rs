@@ -65,6 +65,10 @@ pub(in crate::cloud) fn from_input(
                                     plugin_id: PluginId::new(p.plugin_id.clone()),
                                     version: PluginVersion::new(p.version.clone()),
                                     release,
+                                    // Cloud's contract carries no declaration association yet:
+                                    // the catalog snapshot slice extends the proto and maps it
+                                    // through here. Until then no plan binds a declaration.
+                                    agent_configuration: None,
                                 })
                             })
                             .collect::<Result<_, Error>>()?,
