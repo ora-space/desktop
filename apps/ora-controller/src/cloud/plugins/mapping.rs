@@ -61,14 +61,23 @@ pub(in crate::cloud) fn from_input(
                                     },
                                     _ => return Err(Error::Conflict),
                                 };
+                                let agent_configuration =
+                                    p.agent_configuration.as_ref().map(|agent| {
+                                        PluginAgentConfiguration {
+                                            schema_version: agent.schema_version,
+                                            declaration_sha256: Sha256Digest::new(
+                                                agent.declaration_sha256.clone(),
+                                            ),
+                                        }
+                                    });
                                 Ok(PluginInstall {
                                     plugin_id: PluginId::new(p.plugin_id.clone()),
                                     version: PluginVersion::new(p.version.clone()),
                                     release,
-                                    // Cloud's contract carries no declaration association yet:
-                                    // the catalog snapshot slice extends the proto and maps it
-                                    // through here. Until then no plan binds a declaration.
-                                    agent_configuration: None,
+                                    // The association is Cloud's frozen declaration binding for
+                                    // this exact release; it crosses verbatim because the Node
+                                    // re-proves it against the package's own bytes.
+                                    agent_configuration,
                                 })
                             })
                             .collect::<Result<_, Error>>()?,

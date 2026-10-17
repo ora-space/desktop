@@ -3,9 +3,11 @@
 English | [中文](agent-configuration-declarations.zh.md)
 
 `ora-plugin-config::compile_agent_configuration` validates an immutable Agent declaration without
-reading user configuration, running a process, or making a network request. It is a separate
-compiler API: the installed configuration dispatcher and the existing configuration store do not
-accept this shape yet. Successful compilation is not installation, authorization, or runtime readiness.
+reading user configuration, running a process, or making a network request. Since the release
+consumers landed, the installed configuration dispatcher recognizes this shape and package
+validation compiles it for `agent`-kind packages; the local configuration store and its editor
+still serve only the version-one shapes. Successful compilation is not installation,
+authorization, or runtime readiness.
 
 ## Input
 
@@ -66,7 +68,26 @@ The [shared vectors](../crates/plugin-config/tests/fixtures/agent-configuration-
 literal `source` strings and expected compiled objects or error categories. Source strings keep
 the same bytes on LF and CRLF checkouts. The Rust tests use the public compiler and additionally
 check raw-byte and Setting-count boundaries, nested duplicate keys, invalid UTF-8, safe diagnostics,
-legacy fingerprint behavior and rejection by the old installed configuration dispatcher.
+legacy fingerprint behavior and the dispatcher's shape routing. The Cloud marketplace sync ships
+a Go mirror of this compiler constrained by the same vector file; keeping the fixture and its
+Cloud copy in one change is what makes the two languages drift-proof.
 
 Run `cargo test -p ora-plugin-config --locked` and
 `cargo clippy -p ora-plugin-config --locked -- -D warnings` for this crate.
+
+## Release association and install verification
+
+A marketplace release manifest carries the publication association in a release-form-only
+`[agent_configuration]` section: the declaration schema version, the SHA-256 of the exact
+declaration bytes every package of the release must contain, and the registry-entry-relative
+path of the static copy the marketplace sync reads. Only an `agent` listing that declares a
+release source may carry it, the installed manifest form never does, and unknown keys inside the
+section fail the listing. The copy-path grammar excludes separators, escapes, absolute locations,
+parent segments and non-ASCII, so a validated path resolves containably inside the checkout.
+
+Both install paths prove the association against the package's own bytes before anything
+commits. The marketplace path derives the expectation from the listing's section; the Node path
+receives it frozen on Cloud's install plan. The package's in-archive `assets/config.json` must
+compile and fingerprint to exactly the associated digest, or the package is rejected while it is
+still staged. A package may carry a declaration without an association — it is inert package
+metadata until a release binds it — and a mismatched association never installs as that release.

@@ -312,6 +312,22 @@ pub struct PluginInstall {
     pub universal: ::core::option::Option<PluginDownload>,
     #[prost(message, repeated, tag="4")]
     pub targets: ::prost::alloc::vec::Vec<PluginTargetDownload>,
+    /// The Agent declaration association the catalog entry declared, when it declared one: the
+    /// package's in-archive declaration bytes must compile and fingerprint to this digest.
+    #[prost(message, optional, tag="5")]
+    pub agent_configuration: ::core::option::Option<PluginAgentConfiguration>,
+}
+/// The declaration identity one install plan freezes from Cloud's catalog snapshot. The plugin
+/// id, version, target, and package digest all live on the surrounding plan, which is what makes
+/// this a binding to an exact release rather than a free-floating schema claim.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginAgentConfiguration {
+    /// Declaration schema version the associated copy declares.
+    #[prost(uint32, tag="1")]
+    pub schema_version: u32,
+    /// Lowercase hexadecimal SHA-256 of the exact declaration bytes.
+    #[prost(string, tag="2")]
+    pub declaration_sha256: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PluginRemoval {
