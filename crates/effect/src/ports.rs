@@ -102,6 +102,48 @@ pub struct AttemptFinalization {
     pub conditions: Vec<ConditionProposal>,
 }
 
+/// Complete durable evidence one Target needs before its recovery can be decided.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetRecoveryJournal {
+    pub target: EffectTarget,
+    pub target_status: TargetStatus,
+    /// Every quarantined attempt journal that keeps the Target out of scheduling.
+    pub attempts: Vec<RecoveryAttemptJournal>,
+}
+
+/// One quarantined attempt with its operation journals and retained cleanup artifacts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryAttemptJournal {
+    pub attempt: ReconcileAttempt,
+    pub operations: Vec<EffectOperation>,
+    pub artifacts: Vec<OperationArtifact>,
+}
+
+/// One operation journal closed by exact external adapter evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecoveryOperationClosure {
+    /// The adapter proved the exact planned state, so the effect landed and keeps its ledger.
+    Finalized(EffectOperation),
+    /// The adapter proved the exact expected baseline, so the journal closes without effect.
+    ClosedWithoutEffect(EffectOperation),
+}
+
+/// One quarantined attempt together with a closure for every operation it owns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryAttemptClosure {
+    pub attempt: ReconcileAttempt,
+    pub operations: Vec<RecoveryOperationClosure>,
+}
+
+/// Atomic recovery finalization for one Target, derived only from adapter evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetRecoveryFinalization {
+    pub target: EffectTargetId,
+    /// Closed attempts with per-operation evidence; empty when only stale state remains.
+    pub attempts: Vec<RecoveryAttemptClosure>,
+    pub finalized_at: LocalTimestamp,
+}
+
 /// Deep persistence interface for Desired replacement and durable reconcile state transitions.
 ///
 /// Implementations must enforce Scope isolation and fencing in every write. Preparing attempts,
@@ -226,6 +268,18 @@ pub trait EffectRepository {
         &self,
         detected_at: LocalTimestamp,
     ) -> Result<usize, RepositoryError>;
+
+    /// Loads one Target with every quarantined journal that blocks its recovery.
+    fn load_target_recovery(
+        &self,
+        target: &EffectTargetId,
+    ) -> Result<Option<TargetRecoveryJournal>, RepositoryError>;
+
+    /// Atomically closes quarantined journals by exact evidence and reschedules the Target.
+    fn finalize_target_recovery(
+        &self,
+        finalization: TargetRecoveryFinalization,
+    ) -> Result<(), RepositoryError>;
 
     /// Deletes durable artifact authority after the adapter proves the exact artifact absent.
     fn complete_artifact_cleanup(
@@ -356,6 +410,15 @@ pub trait ResourceAdapter {
 
     /// Verifies that external state equals the operation's exact planned state.
     fn verify(
+        &self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, ResourceAdapterError>;
+
+    /// Verifies that external state equals the operation's exact expected baseline.
+    ///
+    /// Recovery uses this proof to close a journal without effect: the planned mutation
+    /// never became durable, so ownership must not be granted and no replay may run.
+    fn verify_expected(
         &self,
         operation: &EffectOperation,
     ) -> Result<VerificationReceipt, ResourceAdapterError>;

@@ -7,6 +7,7 @@ mod planner;
 mod ports;
 mod projection;
 mod reconcile;
+mod recovery;
 mod status;
 mod target;
 
@@ -41,9 +42,10 @@ pub use planner::{
 };
 pub use ports::{
     ApplyReceipt, AttemptFinalization, CleanupReceipt, ConsumerAdapter, ConsumerAdapterError,
-    EffectRepository, PreparedOperation, ProjectionCommit, ReconcileSnapshot,
-    RelatedTargetSnapshot, ReplaceDesiredStateOutcome, RepositoryError, ResourceAdapter,
-    ResourceAdapterError, TargetStatusView, VerificationReceipt,
+    EffectRepository, PreparedOperation, ProjectionCommit, RecoveryAttemptClosure,
+    RecoveryAttemptJournal, RecoveryOperationClosure, ReconcileSnapshot, RelatedTargetSnapshot,
+    ReplaceDesiredStateOutcome, RepositoryError, ResourceAdapter, ResourceAdapterError,
+    TargetRecoveryFinalization, TargetRecoveryJournal, TargetStatusView, VerificationReceipt,
 };
 pub use projection::{
     ManagedItem, ObservedItem, OwnershipEvidence, PreservedItem, ResolvedMaterialization,
@@ -54,6 +56,7 @@ pub use reconcile::{
     EffectReconciler, ReconcileError, ReconcileOutcome, recovery_condition,
     resource_recovery_condition,
 };
+pub use recovery::{EffectRecoverer, RecoveryError, RecoveryOutcome};
 pub use status::{
     AdapterReceipt, AttemptReadinessReceipt, BackoffPolicy, ConditionGeneration, ConditionImpact,
     ConditionOwner, ConditionProposal, ConditionRetry, ConditionSubject, EffectCondition,

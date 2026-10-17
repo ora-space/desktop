@@ -225,6 +225,27 @@ impl TargetStatus {
         self.advance_version()
     }
 
+    /// Resumes ordinary scheduling after recovery closed every quarantined journal.
+    ///
+    /// Watermarks stay untouched: readiness may only advance through a fresh reconcile that
+    /// proves the complete projection again, never through the recovery closure itself.
+    pub fn resume_from_recovery(&mut self) -> Result<(), StatusTransitionError> {
+        if !matches!(self.phase, TargetPhase::RecoveryRequired(_)) {
+            return Err(StatusTransitionError::NotInRecovery);
+        }
+        self.phase = TargetPhase::Pending;
+        self.advance_version()
+    }
+
+    /// Resumes a retiring Target's cleanup convergence after recovery closed its journals.
+    pub fn resume_retiring_from_recovery(&mut self) -> Result<(), StatusTransitionError> {
+        if !matches!(self.phase, TargetPhase::RecoveryRequired(_)) {
+            return Err(StatusTransitionError::NotInRecovery);
+        }
+        self.phase = TargetPhase::Retiring;
+        self.advance_version()
+    }
+
     /// Advances optimistic status version with every atomic domain transition.
     fn advance_version(&mut self) -> Result<(), StatusTransitionError> {
         self.version = self.version.next()?;
@@ -352,6 +373,15 @@ impl ResourceStatus {
         operation: EffectOperationId,
     ) -> Result<(), StatusTransitionError> {
         self.phase = ResourcePhase::RecoveryRequired(operation);
+        self.advance_version()
+    }
+
+    /// Resumes ordinary convergence after every quarantined journal on the Resource closed.
+    pub fn resume_from_recovery(&mut self) -> Result<(), StatusTransitionError> {
+        if !matches!(self.phase, ResourcePhase::RecoveryRequired(_)) {
+            return Err(StatusTransitionError::NotInRecovery);
+        }
+        self.phase = ResourcePhase::Pending;
         self.advance_version()
     }
 
@@ -577,6 +607,8 @@ pub enum StatusTransitionError {
     MismatchedReadinessReceipt,
     #[error("condition code must not be empty")]
     EmptyConditionCode,
+    #[error("status is not in manual recovery")]
+    NotInRecovery,
     #[error(transparent)]
     Identity(#[from] crate::IdentityError),
 }
