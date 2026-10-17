@@ -22,12 +22,12 @@ mod tests;
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
 pub use hook::{InstalledHookDescriptor, validate_executable_containment};
 pub use install::{
-    HostTarget, InstallError, InstalledPackage, Installer, ResolvedReleaseSource, UpdateError,
-    select_release,
+    ExpectedAgentDeclaration, HostTarget, InstallError, InstalledPackage, Installer,
+    ResolvedReleaseSource, UpdateError, select_release,
 };
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
-pub use ora_plugin_manifest::HookTarget;
+pub use ora_plugin_manifest::{HookTarget, Sha256Digest};
 pub use planned::{PreparedPlugin, inspect_planned_package};
 pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,

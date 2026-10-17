@@ -5,11 +5,12 @@ plugin-global Stored Setting Values. Its public API compiles `assets/config.json
 effective values and Configuration Completeness, and persists revisioned `store.json` files under
 `<data-dir>/plugins/data/<namespace>/<name>/`.
 
-Store paths follow the same `<namespace>/<name>` segments as [`PluginId`](../../domain/src/plugin_id.rs),
+Store paths follow the same `<namespace>/<name>` segments as [`PluginId`](../domain/src/plugin_id.rs),
 including dotted name segments such as `ora-space.tavily-search`; they are not restricted to hyphen-only
-[`Slug`](../../utils/src/slug.rs) spelling.
+[`Slug`](../utils/src/slug.rs) spelling.
 
-`assets/config.json` has three mutually exclusive shapes, distinguished by top-level keys.
+The installed `assets/config.json` dispatcher supports three mutually exclusive version-one
+shapes, distinguished by top-level keys.
 Without `transport` or `hook`, the file is a settings-only Setting Declaration. With `transport`,
 it is an MCP Configuration: the same settings subset plus exactly one MCP Transport (`stdio`
 with a package-contained command, or `http` with an HTTPS URL and credential-free headers). With
@@ -31,6 +32,23 @@ Setting-reference prefix/suffix on args, env, and headers — must not contain c
 
 The crate does not render UI, expose filesystem paths to frontend callers, or start plugins.
 ACP `mcpServers` mapping and live Session refresh belong to `ora-backend` Session setup.
+
+## Agent declaration compiler
+
+`compile_agent_configuration` is a separate, side-effect-free entry point for a version-two
+Agent declaration. It reuses the scalar Settings compiler, validates the model-access capability,
+and fingerprints the exact input bytes. Its diagnostics do not echo rejected values.
+The existing `compile_configuration_file` dispatcher and configuration store still accept only
+their existing shapes; this compiler alone does not enable package installation, personal
+configuration, or model execution. Consumers must bind the declaration to the exact release and
+negotiate model access before connecting that route.
+
+The byte-stable JSON input/output vectors in
+[`tests/fixtures/agent-configuration-contract.json`](tests/fixtures/agent-configuration-contract.json)
+are consumed by the Rust tests and can be reused by other language implementations. Each `source`
+is a JSON string so checkout line-ending conversion cannot change its declaration fingerprint.
+See the [declaration format](../../docs/agent-configuration-declarations.md) for the supported
+shape, version and error boundaries.
 
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that
 cannot be traversed as a directory (`NotADirectory`), is reported as undeclared rather than as a

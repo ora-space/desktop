@@ -13,10 +13,10 @@ pub use agent_session::{
 };
 pub use execution::ExecutionResult;
 pub use plugin::{
-    InstallPluginsSpec, PluginDownload, PluginExecutionResult, PluginFailureCode, PluginId,
-    PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease, PluginRemoval,
-    PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed, PluginsFailureCode,
-    RemovePluginsSpec, Sha256Digest,
+    InstallPluginsSpec, PluginAgentConfiguration, PluginDownload, PluginExecutionResult,
+    PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease,
+    PluginRemoval, PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed,
+    PluginsFailureCode, RemovePluginsSpec, Sha256Digest,
 };
 pub use repository::{CloneExecutionSpec, CloneRepositoryUrl, InvalidCloneRepositoryUrl};
 pub use repository_result::{

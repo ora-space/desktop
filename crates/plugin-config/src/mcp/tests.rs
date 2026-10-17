@@ -38,7 +38,9 @@ fn compiles_http_configuration_with_header_setting_reference() {
 
     let compiled = match compile_configuration_file(source).expect("compile MCP configuration") {
         CompiledConfigurationFile::Mcp(compiled) => compiled,
-        CompiledConfigurationFile::Settings(_) | CompiledConfigurationFile::Hook(_) => {
+        CompiledConfigurationFile::Settings(_)
+        | CompiledConfigurationFile::Hook(_)
+        | CompiledConfigurationFile::Agent(_) => {
             panic!("expected the MCP shape")
         }
     };
@@ -113,7 +115,9 @@ fn compiles_stdio_configuration_with_arguments_and_environment() {
 
     let compiled = match compile_configuration_file(source).expect("compile MCP configuration") {
         CompiledConfigurationFile::Mcp(compiled) => compiled,
-        CompiledConfigurationFile::Settings(_) | CompiledConfigurationFile::Hook(_) => {
+        CompiledConfigurationFile::Settings(_)
+        | CompiledConfigurationFile::Hook(_)
+        | CompiledConfigurationFile::Agent(_) => {
             panic!("expected the MCP shape")
         }
     };
@@ -168,7 +172,9 @@ fn compiles_mcp_configuration_without_settings() {
 
     let compiled = match compile_configuration_file(source).expect("compile MCP configuration") {
         CompiledConfigurationFile::Mcp(compiled) => compiled,
-        CompiledConfigurationFile::Settings(_) | CompiledConfigurationFile::Hook(_) => {
+        CompiledConfigurationFile::Settings(_)
+        | CompiledConfigurationFile::Hook(_)
+        | CompiledConfigurationFile::Agent(_) => {
             panic!("expected the MCP shape")
         }
     };

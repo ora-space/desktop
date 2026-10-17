@@ -199,6 +199,7 @@ fn command(archive: &std::path::Path, version: &str) -> PluginCommand {
                             ),
                         },
                     },
+                    agent_configuration: None,
                 }],
             },
         },
@@ -522,4 +523,210 @@ async fn unmatched_target_never_downloads() {
         })
     );
     assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+/// One valid Agent declaration, exactly the bytes a release would associate.
+const DECLARATION: &[u8] = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}}}"#;
+
+/// The same declaration, reformatted: identical semantics, different bytes and digest.
+const REFORMATTED_DECLARATION: &[u8] = br#"{
+  "schemaVersion": 2,
+  "agent": {
+    "modelAccess": {
+      "contractVersion": 1,
+      "protocols": ["anthropic-messages"],
+      "modelCardinality": "single"
+    }
+  }
+}"#;
+
+/// An agent archive that also ships `assets/config.json`, the file a release binds.
+fn declared_archive(
+    root: &std::path::Path,
+    name: &str,
+    version: &str,
+    declaration: &[u8],
+) -> PathBuf {
+    let path = root.join(name);
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    for (name, contents) in [
+        (
+            "orax.toml",
+            format!(
+                "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"agent\"\nversion = \"{version}\"\ndescription = \"test\"\n"
+            )
+            .into_bytes(),
+        ),
+        ("main.js", b"throw new Error('never executed');".to_vec()),
+        ("assets/config.json", declaration.to_vec()),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&contents).unwrap();
+    }
+    zip.finish().unwrap();
+    path
+}
+
+/// An install plan whose frozen association binds `declaration`'s exact bytes.
+fn declared_command(archive: &std::path::Path, version: &str, declaration: &[u8]) -> PluginCommand {
+    let mut input = command(archive, version);
+    let PluginCommand::Install(ref mut message) = input else {
+        unreachable!()
+    };
+    message.payload.spec.plugins[0].agent_configuration = Some(PluginAgentConfiguration {
+        schema_version: 2,
+        declaration_sha256: Sha256Digest::new(ora_utils::hash::sha256_hex(declaration)),
+    });
+    input
+}
+
+/// A plan whose association binds these declaration bytes installs a package carrying exactly
+/// them; the Node proves the binding before anything is published.
+#[tokio::test]
+async fn a_frozen_declaration_association_installs_the_package_it_binds() {
+    let root = tempfile::tempdir().unwrap();
+    let source = declared_archive(root.path(), "matching.orax", "1.0.0", DECLARATION);
+    let installer = PluginInstaller::new(
+        root.path().join("home"),
+        ArchiveDownload {
+            archive: source.clone(),
+            count: Arc::default(),
+        },
+        /*host_target*/ None,
+    );
+    assert_eq!(
+        installer
+            .execute(&declared_command(&source, "1.0.0", DECLARATION), &node())
+            .await,
+        result(PluginItemOutcome::Installed {
+            version: PluginVersion::new("1.0.0")
+        })
+    );
+    let installed = installer
+        .catalog()
+        .installed(
+            &PluginId::new("official/ora-space.echo"),
+            &PluginVersion::new("1.0.0"),
+        )
+        .unwrap();
+    assert_eq!(
+        std::fs::read(installed.join("assets").join("config.json")).unwrap(),
+        DECLARATION,
+        "the verified declaration bytes land in the installed package"
+    );
+}
+
+/// Every way a package can fail its frozen association rejects the plan before publishing:
+/// different bytes with the same semantics, a schema version the plan did not freeze, and a
+/// package carrying no declaration at all.
+#[tokio::test]
+async fn declaration_mismatches_fail_the_install_without_residue() {
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::level_filters::LevelFilter::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let reformatted_archive = declared_archive(
+        root.path(),
+        "reformatted.orax",
+        "1.0.0",
+        REFORMATTED_DECLARATION,
+    );
+    let declared_archive_path =
+        declared_archive(root.path(), "declared.orax", "1.0.0", DECLARATION);
+    let bare_archive = archive(root.path(), "1.0.0");
+    let mut wrong_version = declared_command(&declared_archive_path, "1.0.0", DECLARATION);
+    let PluginCommand::Install(ref mut message) = wrong_version else {
+        unreachable!()
+    };
+    message.payload.spec.plugins[0]
+        .agent_configuration
+        .as_mut()
+        .unwrap()
+        .schema_version = 3;
+    let mismatches: [(&str, PathBuf, PluginCommand); 3] = [
+        (
+            "reformatted bytes are a different declaration identity",
+            reformatted_archive.clone(),
+            declared_command(&reformatted_archive, "1.0.0", DECLARATION),
+        ),
+        (
+            "a schema version the plan did not freeze",
+            declared_archive_path.clone(),
+            wrong_version,
+        ),
+        (
+            "a package with no declaration to verify",
+            bare_archive.clone(),
+            declared_command(&bare_archive, "1.0.0", DECLARATION),
+        ),
+    ];
+    for (index, (context, source, input)) in mismatches.into_iter().enumerate() {
+        let home = root.path().join(format!("home-{index}"));
+        let installer = PluginInstaller::new(
+            home.clone(),
+            ArchiveDownload {
+                archive: source.clone(),
+                count: Arc::default(),
+            },
+            /*host_target*/ None,
+        );
+        assert_eq!(
+            installer.execute(&input, &node()).await,
+            result(PluginItemOutcome::Failed {
+                failure: PluginFailureCode::InvalidPackage
+            }),
+            "{context}"
+        );
+        assert!(
+            installer
+                .catalog()
+                .installed(
+                    &PluginId::new("official/ora-space.echo"),
+                    &PluginVersion::new("1.0.0")
+                )
+                .is_none(),
+            "{context}: nothing may publish"
+        );
+        assert_eq!(
+            std::fs::read_dir(home.join("plugins").join(".node-installs"))
+                .unwrap()
+                .count(),
+            0,
+            "{context}: staging must be empty"
+        );
+    }
+}
+
+/// A package may ship a declaration while its plan binds none: the bytes are inert metadata
+/// until a release association says otherwise.
+#[tokio::test]
+async fn an_unassociated_declaration_installs_as_inert_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let source = declared_archive(root.path(), "inert.orax", "1.0.0", DECLARATION);
+    let installer = PluginInstaller::new(
+        root.path().join("home"),
+        ArchiveDownload {
+            archive: source.clone(),
+            count: Arc::default(),
+        },
+        /*host_target*/ None,
+    );
+    assert_eq!(
+        installer.execute(&command(&source, "1.0.0"), &node()).await,
+        result(PluginItemOutcome::Installed {
+            version: PluginVersion::new("1.0.0")
+        })
+    );
+    let installed = installer
+        .catalog()
+        .installed(
+            &PluginId::new("official/ora-space.echo"),
+            &PluginVersion::new("1.0.0"),
+        )
+        .unwrap();
+    assert!(installed.join("assets").join("config.json").is_file());
 }

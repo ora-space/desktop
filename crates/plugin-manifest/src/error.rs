@@ -118,6 +118,15 @@ pub enum ManifestField {
     Artifact,
     /// The `artifact.target` field.
     ArtifactTarget,
+    /// The whole `[agent_configuration]` section, used when its presence disagrees with the
+    /// manifest form, the plugin kind, or the declared release source.
+    AgentConfiguration,
+    /// The `agent_configuration.schema_version` field.
+    AgentConfigurationSchemaVersion,
+    /// The `agent_configuration.declaration_sha256` field.
+    AgentConfigurationDeclarationSha256,
+    /// The `agent_configuration.copy` field.
+    AgentConfigurationCopy,
     /// The whole `[[pack.members]]` array, used when its presence disagrees with `kind`.
     PackMembers,
     /// The `identifier` field of the member at `index` in `[[pack.members]]`.
@@ -171,6 +180,14 @@ impl fmt::Display for ManifestField {
             }
             Self::Artifact => formatter.write_str("artifact"),
             Self::ArtifactTarget => formatter.write_str("artifact.target"),
+            Self::AgentConfiguration => formatter.write_str("agent_configuration"),
+            Self::AgentConfigurationSchemaVersion => {
+                formatter.write_str("agent_configuration.schema_version")
+            }
+            Self::AgentConfigurationDeclarationSha256 => {
+                formatter.write_str("agent_configuration.declaration_sha256")
+            }
+            Self::AgentConfigurationCopy => formatter.write_str("agent_configuration.copy"),
             Self::PackMembers => formatter.write_str("pack.members"),
             Self::PackMemberIdentifier { index } => {
                 write!(formatter, "pack.members[{index}].identifier")
@@ -244,6 +261,14 @@ pub enum InvalidFieldReason {
     TargetsNotAllowedOnInstalled,
     #[error("installed `[artifact]` is not allowed on a release manifest")]
     ArtifactNotAllowedOnRelease,
+    #[error("`[agent_configuration]` is not allowed on an installed manifest")]
+    AgentConfigurationNotAllowedOnInstalled,
+    #[error("`[agent_configuration]` requires the listing to declare a release package")]
+    DeclarationRequiresRelease,
+    #[error("schema version must be a positive integer")]
+    InvalidSchemaVersion,
+    #[error("path must be '/'-separated segments matching [A-Za-z0-9][A-Za-z0-9._-]*")]
+    InvalidCopyPath,
     #[error("invalid slug: {0}")]
     InvalidSlug(#[from] SlugError),
     #[error("value is declared more than once")]

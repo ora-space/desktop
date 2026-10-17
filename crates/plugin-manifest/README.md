@@ -38,6 +38,15 @@ forms accept an optional human-readable `title` that falls back to the identifie
   is a legitimate universal package with no target to declare. Universal and targeted forms may
   not coexist. Which form an agent's package was built from is not a build-time fact for the plugin
   code inside it; it learns that at spawn time from `ora-plugin-lifecycle` instead.
+- Carry the release-form-only `[agent_configuration]` publication association for `agent`
+  listings that declare a release source: the declaration schema version, the SHA-256 of the exact
+  declaration bytes every package of the release must contain, and the registry-entry-relative
+  path of the static copy a marketplace sync reads. The installed form never carries it, unknown
+  keys inside the section fail the listing, and the copy-path grammar excludes separators,
+  escapes, absolute locations, parent segments and non-ASCII so a validated path resolves
+  containably inside the publishing checkout. The declaration version is data, not policy: the
+  manifest resolver does not own the declaration version domain, and consumers with the compiler
+  at hand reject versions they cannot compile instead of treating the section as absent.
 - Report structural failures with the TOML path of the offending value and semantic failures with
   a typed `ManifestField`, including the index of a webview origin or download rule.
 - Attribute every failure to the field a user must fix through `ManifestError::field_path()`. A

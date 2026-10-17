@@ -121,6 +121,8 @@ struct Node {
     /// Ends the current session once, as a dropped connection would.
     disconnect: Arc<AtomicBool>,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
+    /// The translated plugin commands this Node received, for verbatim preservation checks.
+    plugins_received: Arc<Mutex<Vec<PluginCommand>>>,
     timeline: Timeline,
 }
 
@@ -224,6 +226,10 @@ impl Node {
                         ControllerToNodeMessage::UploadGrant(grant) => { self.deliveries.grant(grant, &self.timeline); None }
                         ControllerToNodeMessage::DownloadGrant(answer) => { self.restores.answer(answer, &self.timeline); None }
                         ControllerToNodeMessage::ControlledPlugins(envelope) => {
+                            self.plugins_received
+                                .lock()
+                                .unwrap()
+                                .push(envelope.command.clone());
                             let event = plugins::complete(self, &envelope, &identity);
                             results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
                             Some(NodeToControllerMessage::PluginsResult(event))
@@ -342,6 +348,7 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                 restores: restores::RestoreNode::default(),
                 disconnect: Arc::new(AtomicBool::new(false)),
                 plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
+                plugins_received: Arc::new(Mutex::new(Vec::new())),
                 timeline: timeline.clone(),
             };
             let router_url = node.clone().serve().await;

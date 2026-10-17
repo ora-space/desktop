@@ -5,7 +5,9 @@ mod config;
 pub use catalog::{DirectoryPluginCatalog, PluginUseLease};
 pub use config::PluginConfig;
 use ora_node_protocol::*;
-use ora_plugin_manager::{InstallError, Installer, ResolvedReleaseSource};
+use ora_plugin_manager::{
+    ExpectedAgentDeclaration, InstallError, Installer, ResolvedReleaseSource,
+};
 use ora_utils::http::{DownloadError, DownloadOptions, DownloadSource, HttpDownload};
 use std::path::PathBuf;
 
@@ -163,6 +165,13 @@ impl<D: HttpDownload> PluginInstaller<D> {
             }
             None => ResolvedReleaseSource::universal(DownloadSource::Url(url), digest),
         };
+        // Cloud froze the declaration association into the plan when the selected catalog entry
+        // declared one; an absent association installs without a declaration binding to prove.
+        let declaration = plugin
+            .agent_configuration
+            .as_ref()
+            .map(declaration_expectation)
+            .transpose()?;
         let prepared = self
             .installer
             .prepare_release(
@@ -171,10 +180,57 @@ impl<D: HttpDownload> PluginInstaller<D> {
                 source,
                 &self.catalog.staging_root(),
                 self.download_options,
+                declaration.as_ref(),
             )
             .await
             .map_err(failure)?;
         self.catalog.publish(&id, &version, prepared)
+    }
+}
+
+/// Maps the plan's frozen declaration association to the installer's expectation.
+///
+/// Message validation already proved the wire digest is 64 canonical lowercase hex characters,
+/// which is exactly what the package world's digest type parses, so the error arm is a fail-closed
+/// guard for a plan that skipped validation rather than an expected outcome.
+fn declaration_expectation(
+    plan: &PluginAgentConfiguration,
+) -> Result<ExpectedAgentDeclaration, PluginFailureCode> {
+    let digest = ora_plugin_manager::Sha256Digest::parse(plan.declaration_sha256.as_str())
+        .map_err(|_| PluginFailureCode::InvalidPackage)?;
+    Ok(ExpectedAgentDeclaration::new(plan.schema_version, digest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A canonical wire digest: 64 lowercase hexadecimal characters.
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// A plan association maps losslessly onto the installer's expectation.
+    #[test]
+    fn maps_a_plan_association_to_the_installer_expectation() {
+        let expectation = declaration_expectation(&PluginAgentConfiguration {
+            schema_version: 2,
+            declaration_sha256: Sha256Digest::new(DIGEST),
+        })
+        .unwrap();
+        assert_eq!(expectation.schema_version(), 2);
+        assert_eq!(expectation.declaration_sha256().to_string(), DIGEST);
+    }
+
+    /// A digest that is not canonical hexadecimal fails the plan as an invalid package instead of
+    /// installing with a binding nobody could prove.
+    #[test]
+    fn rejects_a_non_canonical_digest() {
+        assert_eq!(
+            declaration_expectation(&PluginAgentConfiguration {
+                schema_version: 2,
+                declaration_sha256: Sha256Digest::new("not a digest"),
+            }),
+            Err(PluginFailureCode::InvalidPackage)
+        );
     }
 }
 

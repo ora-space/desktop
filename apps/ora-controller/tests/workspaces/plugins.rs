@@ -96,9 +96,21 @@ fn input() -> proto::ExecutionInput {
                         sha256: "a".repeat(64),
                     }),
                     targets: vec![],
+                    agent_configuration: Some(proto::PluginAgentConfiguration {
+                        schema_version: 2,
+                        declaration_sha256: "b".repeat(64),
+                    }),
                 }],
             },
         )),
+    }
+}
+
+/// The declaration identity the fixture freezes, in the Node's plan vocabulary.
+fn expected_agent_configuration() -> PluginAgentConfiguration {
+    PluginAgentConfiguration {
+        schema_version: 2,
+        declaration_sha256: Sha256Digest::new("b".repeat(64)),
     }
 }
 
@@ -114,6 +126,17 @@ fn plugin_step_preserves_input_and_advances_only_after_terminal_items() {
             let records = world.cloud.plugin_records();
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].input, Some(input()));
+            // The frozen declaration association crosses the Controller's translation verbatim,
+            // so the Node receives exactly the identity Cloud froze with the selected release.
+            let received = world.node.plugins_received.lock().unwrap().clone();
+            assert_eq!(received.len(), 1);
+            let PluginCommand::Install(message) = &received[0] else {
+                panic!("expected installation")
+            };
+            assert_eq!(
+                message.payload.spec.plugins[0].agent_configuration,
+                Some(expected_agent_configuration())
+            );
             assert!(matches!(
                 records[0].result.as_ref().unwrap().outcome,
                 Some(proto::execution_result::Outcome::PluginsResult(_))

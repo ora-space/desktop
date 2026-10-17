@@ -27,6 +27,7 @@ fn install() -> Case {
                                 release: PluginRelease::Universal {
                                     download: download("https://example.com/claude-code.tgz"),
                                 },
+                                agent_configuration: None,
                             },
                             PluginInstall {
                                 plugin_id: PluginId::new("ora.1a2b/image-tools"),
@@ -37,6 +38,7 @@ fn install() -> Case {
                                         download: download("https://example.com/image-tools.tgz"),
                                     }],
                                 },
+                                agent_configuration: None,
                             },
                         ],
                     },
@@ -139,6 +141,38 @@ fn result_cases(result: PluginExecutionResult, wire: Value) -> [Case; 2] {
     ]
 }
 
+/// An install that also freezes an Agent declaration association on the universal plugin.
+fn install_with_agent_configuration() -> Case {
+    let mut case = install();
+    let Message::Controller(ControllerToNodeMessage::InstallPlugins(message)) = &mut case.message
+    else {
+        unreachable!("install() builds an install command");
+    };
+    message.payload.spec.plugins[0].agent_configuration = Some(PluginAgentConfiguration {
+        schema_version: 2,
+        declaration_sha256: Sha256Digest::new(DIGEST),
+    });
+    let wire = json!({
+        "message_type": "install_plugins",
+        "protocol_version": 1,
+        "operation_id": "operation-1",
+        "execution_id": "execution-plugins",
+        "payload": {"spec": {"node_id": "node-1", "plugins": [
+            {"plugin_id": "ora.1a2b/claude-code", "version": "1.2.0",
+             "agent_configuration": {"schema_version": 2, "declaration_sha256": DIGEST},
+             "release": {"kind": "universal", "download":
+                {"url": "https://example.com/claude-code.tgz", "sha256": DIGEST}}},
+            {"plugin_id": "ora.1a2b/image-tools", "version": "0.3.1",
+             "release": {"kind": "targets", "targets": [{"target": "x86_64-unknown-linux-gnu",
+                "download": {"url": "https://example.com/image-tools.tgz", "sha256": DIGEST}}]}}
+        ]}}
+    });
+    Case {
+        message: case.message,
+        wire,
+    }
+}
+
 /// The install command has a fixed wire shape and the shared envelope guarantees.
 #[tokio::test]
 async fn install_plugins_round_trips_with_both_release_shapes() -> Result<(), TestError> {
@@ -160,6 +194,41 @@ async fn install_plugins_round_trips_with_both_release_shapes() -> Result<(), Te
         ],
     )
     .await
+}
+
+/// A plan may freeze the declaration association one catalog entry declared.
+#[tokio::test]
+async fn install_plugins_round_trips_an_agent_declaration_association() -> Result<(), TestError> {
+    let case = install_with_agent_configuration();
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    Ok(())
+}
+
+/// Rejects declaration associations a Node could not prove against any package.
+#[tokio::test]
+async fn install_plugins_rejects_unprovable_agent_declarations() -> Result<(), TestError> {
+    let base = install_with_agent_configuration().wire;
+    let cases: [(&str, Value, MessageValidationError); 2] = [
+        (
+            "/payload/spec/plugins/0/agent_configuration/schema_version",
+            json!(0),
+            MessageValidationError::EmptyField {
+                field: "agent_configuration.schema_version",
+            },
+        ),
+        (
+            "/payload/spec/plugins/0/agent_configuration/declaration_sha256",
+            json!(DIGEST.to_uppercase()),
+            MessageValidationError::InvalidSha256,
+        ),
+    ];
+    for (path, value, expected) in cases {
+        let mut wire = base.clone();
+        replace(&mut wire, path, value);
+        reject_semantics(Peer::Controller, &wire, path, expected).await?;
+    }
+    Ok(())
 }
 
 /// Rejects payloads a Node could not verify before download, in both directions of the codec.

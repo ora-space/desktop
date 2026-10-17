@@ -3,7 +3,7 @@ use crate::{
     HookTargetError, InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError,
     Origin, PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
     PluginName, PluginReleaseSource, PluginWebview, PluginWorkbench, ReleaseLocator, RepositoryUrl,
-    RuleField, Sha256Digest, StartUrl,
+    RuleField, Sha256Digest, Sha256DigestError, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -101,6 +101,7 @@ fn parses_complete_manifest_into_full_domain_object() {
             sha256: success(Sha256Digest::parse(DIGEST), "digest"),
         }),
         artifact: None,
+        agent_configuration: None,
         pack: None,
         marketplace_visible: true,
     };
@@ -1603,4 +1604,196 @@ description = "RTK command rewrite hook"
             kind: PluginKind::Hook
         }
     ));
+}
+
+/// One release-form agent listing with the publication association parses into the domain model.
+#[test]
+fn parses_agent_configuration_association_on_release_listing() {
+    let source = r#"resolver = 1
+identifier = "ora-space.claude"
+kind = "agent"
+version = "0.3.18"
+description = "Ora Space Claude Code Agent"
+url = "https://example.com/claude.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+
+[agent_configuration]
+schema_version = 2
+declaration_sha256 = "FEAB001D7E9FF4CE66011EBD70791DE93EB1554D34D3EA44C33D102A25C1BE0A"
+copy = "agent-configuration.json"
+"#;
+    let manifest = success(PluginManifest::parse(source), "agent listing");
+    let association = manifest
+        .agent_configuration()
+        .expect("association must parse");
+    assert_eq!(association.schema_version(), 2);
+    assert_eq!(
+        association.declaration_sha256().to_string(),
+        DIGEST.to_lowercase()
+    );
+    assert_eq!(association.copy(), "agent-configuration.json");
+}
+
+/// A targeted agent release may carry the same association: every target's package must contain
+/// the same declaration bytes, which the installer verifies per package digest.
+#[test]
+fn parses_agent_configuration_association_on_targeted_release() {
+    let source = r#"resolver = 1
+identifier = "ora-space.claude"
+kind = "agent"
+version = "0.3.18"
+description = "Ora Space Claude Code Agent"
+
+[[targets]]
+target = "x86_64-pc-windows-msvc"
+url = "https://example.com/claude-win.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+
+[agent_configuration]
+schema_version = 2
+declaration_sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+copy = "nested/agent.json"
+"#;
+    let manifest = success(PluginManifest::parse(source), "targeted agent listing");
+    assert!(manifest.agent_configuration().is_some());
+}
+
+/// Only an agent listing may declare the association; other kinds are rejected so a section on a
+/// mismatched listing can never be reinterpreted as a personal-model capability.
+#[test]
+fn rejects_agent_configuration_on_non_agent_kind() {
+    let source = r#"resolver = 1
+identifier = "user.tool"
+kind = "mcp"
+version = "1.0.0"
+description = "An MCP plugin"
+url = "https://example.com/tool.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+
+[agent_configuration]
+schema_version = 2
+declaration_sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+copy = "agent-configuration.json"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(source) else {
+        panic!("expected kind rejection");
+    };
+    assert_eq!(field, ManifestField::AgentConfiguration);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::NotAllowedForKind {
+            kind: PluginKind::Mcp
+        }
+    ));
+}
+
+/// An installed manifest repeats no marketplace copy locator: the in-package declaration is the
+/// record, so a section there can only disagree with the bytes shipped beside it.
+#[test]
+fn rejects_agent_configuration_on_installed_manifest() {
+    let source = r#"resolver = 1
+identifier = "ora-space.claude"
+kind = "agent"
+version = "0.3.18"
+description = "Ora Space Claude Code Agent"
+
+[agent_configuration]
+schema_version = 2
+declaration_sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+copy = "agent-configuration.json"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(source)
+    else {
+        panic!("expected installed-form rejection");
+    };
+    assert_eq!(field, ManifestField::AgentConfiguration);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::AgentConfigurationNotAllowedOnInstalled
+    ));
+}
+
+/// The association binds declaration bytes to exact package digests, so a listing that declares
+/// no release at all has nothing to bind and is rejected rather than indexed as decoration.
+#[test]
+fn rejects_agent_configuration_without_release_source() {
+    let source = r#"resolver = 1
+identifier = "ora-space.claude"
+kind = "agent"
+version = "0.3.18"
+description = "Ora Space Claude Code Agent"
+
+[agent_configuration]
+schema_version = 2
+declaration_sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+copy = "agent-configuration.json"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(source) else {
+        panic!("expected missing-release rejection");
+    };
+    assert_eq!(field, ManifestField::AgentConfiguration);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::DeclarationRequiresRelease
+    ));
+}
+
+/// Each association field has its own bounded failure: zero version, malformed digest, and copy
+/// paths that could escape the registry entry are all rejected with the offending field named.
+#[test]
+fn rejects_invalid_agent_configuration_fields() {
+    let base = r#"resolver = 1
+identifier = "ora-space.claude"
+kind = "agent"
+version = "0.3.18"
+description = "Ora Space Claude Code Agent"
+url = "https://example.com/claude.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+
+[agent_configuration]
+"#;
+    let cases: [(&str, &str, ManifestField, fn(&InvalidFieldReason) -> bool); 4] = [
+        (
+            "schema_version = 0\ndeclaration_sha256 = \"feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a\"\ncopy = \"agent-configuration.json\"\n",
+            "zero schema version",
+            ManifestField::AgentConfigurationSchemaVersion,
+            |reason| matches!(reason, InvalidFieldReason::InvalidSchemaVersion),
+        ),
+        (
+            "schema_version = 2\ndeclaration_sha256 = \"not-a-digest\"\ncopy = \"agent-configuration.json\"\n",
+            "malformed digest",
+            ManifestField::AgentConfigurationDeclarationSha256,
+            |reason| {
+                matches!(
+                    reason,
+                    InvalidFieldReason::InvalidSha256(Sha256DigestError::InvalidLength {
+                        actual_bytes: 12,
+                        ..
+                    })
+                )
+            },
+        ),
+        (
+            "schema_version = 2\ndeclaration_sha256 = \"feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a\"\ncopy = \"../escape.json\"\n",
+            "parent escape",
+            ManifestField::AgentConfigurationCopy,
+            |reason| matches!(reason, InvalidFieldReason::InvalidCopyPath),
+        ),
+        (
+            "schema_version = 2\ndeclaration_sha256 = \"feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a\"\ncopy = \"/absolute.json\"\n",
+            "absolute path",
+            ManifestField::AgentConfigurationCopy,
+            |reason| matches!(reason, InvalidFieldReason::InvalidCopyPath),
+        ),
+    ];
+    for (section, label, expected_field, reason_matches) in cases {
+        let Err(ManifestError::InvalidField { field, reason }) =
+            PluginManifest::parse(&format!("{base}{section}"))
+        else {
+            panic!("expected rejection for {label}");
+        };
+        assert_eq!(field, expected_field, "{label}");
+        assert!(reason_matches(&reason), "{label}");
+    }
 }

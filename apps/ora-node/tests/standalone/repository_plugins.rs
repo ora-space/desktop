@@ -222,6 +222,7 @@ fn killed_download_recovers_original_input_and_cleans_temporary_package() {
                                 ),
                             },
                         },
+                        agent_configuration: None,
                     }],
                 },
             },

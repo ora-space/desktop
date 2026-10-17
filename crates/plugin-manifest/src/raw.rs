@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::agent_configuration::RawAgentConfiguration;
 use crate::pack::RawPack;
 use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
@@ -24,6 +25,8 @@ pub(crate) struct RawPluginManifest {
     pub(crate) targets: Option<Vec<RawReleaseTarget>>,
     #[serde(default)]
     pub(crate) artifact: Option<RawArtifact>,
+    #[serde(default)]
+    pub(crate) agent_configuration: Option<RawAgentConfiguration>,
     #[serde(default)]
     pub(crate) pack: Option<RawPack>,
     #[serde(default)]
@@ -53,6 +56,11 @@ pub(crate) struct RawInstalledManifest {
     pub(crate) targets: Option<Vec<RawReleaseTarget>>,
     #[serde(default)]
     pub(crate) artifact: Option<RawArtifact>,
+    // The release-form publication association is parsed here only so the installed form can
+    // reject it explicitly; a package that repeated its own marketplace copy locator would carry
+    // a second, unverifiable claim about bytes the host has directly beside it.
+    #[serde(default)]
+    pub(crate) agent_configuration: Option<RawAgentConfiguration>,
     #[serde(default)]
     pub(crate) pack: Option<RawPack>,
     #[serde(default)]
@@ -100,6 +108,7 @@ pub(crate) struct RawMetadata {
     pub(crate) webview: Option<RawWebview>,
     pub(crate) targets: Option<Vec<RawReleaseTarget>>,
     pub(crate) artifact: Option<RawArtifact>,
+    pub(crate) agent_configuration: Option<RawAgentConfiguration>,
     pub(crate) pack: Option<RawPack>,
     pub(crate) marketplace_visible: Option<bool>,
 }
@@ -124,6 +133,7 @@ impl RawPluginManifest {
             webview: self.webview,
             targets: self.targets,
             artifact: self.artifact,
+            agent_configuration: self.agent_configuration,
             pack: self.pack,
             marketplace_visible: self.marketplace_visible,
         };
@@ -150,6 +160,7 @@ impl RawInstalledManifest {
             webview: self.webview,
             targets: self.targets,
             artifact: self.artifact,
+            agent_configuration: self.agent_configuration,
             pack: self.pack,
             marketplace_visible: self.marketplace_visible,
         };
