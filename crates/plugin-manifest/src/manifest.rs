@@ -1,3 +1,4 @@
+use crate::agent_configuration::{PluginAgentConfiguration, validate_agent_configuration};
 use crate::pack::compile_pack;
 use crate::raw::{
     RawArtifact, RawHead, RawInstalledManifest, RawMetadata, RawPluginManifest, RawReleaseTarget,
@@ -43,6 +44,7 @@ pub struct PluginManifest {
     pub(crate) webview: Option<PluginWebview>,
     pub(crate) release_source: Option<PluginReleaseSource>,
     pub(crate) artifact: Option<PluginArtifact>,
+    pub(crate) agent_configuration: Option<PluginAgentConfiguration>,
     pub(crate) pack: Option<PluginPack>,
     pub(crate) marketplace_visible: bool,
 }
@@ -186,6 +188,12 @@ impl PluginManifest {
             .artifact
             .map(PluginArtifact::try_from)
             .transpose()?;
+        let agent_configuration = validate_agent_configuration(
+            metadata.agent_configuration,
+            kind,
+            matches!(form, ManifestForm::Installed),
+            release_source.is_some(),
+        )?;
         let pack = compile_pack(kind, metadata.pack, ManifestField::PackMembers)?;
         let marketplace_visible = match metadata.marketplace_visible {
             None => true,
@@ -222,6 +230,7 @@ impl PluginManifest {
             webview,
             release_source,
             artifact,
+            agent_configuration,
             pack,
             marketplace_visible,
         })
@@ -312,6 +321,13 @@ impl PluginManifest {
     /// unique exact-target artifacts. `None` means a manifest that declares neither form.
     pub fn release_source(&self) -> Option<&PluginReleaseSource> {
         self.release_source.as_ref()
+    }
+
+    /// Returns the release-form Agent configuration publication association, present only on
+    /// marketplace listings of `agent` plugins that also declare a release source. Installed
+    /// manifests never carry it: the in-package `assets/config.json` is the declaration of record.
+    pub fn agent_configuration(&self) -> Option<&PluginAgentConfiguration> {
+        self.agent_configuration.as_ref()
     }
 
     /// Returns the installed artifact self-declaration carried inside a targeted package.

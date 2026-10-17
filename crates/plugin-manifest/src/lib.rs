@@ -1,6 +1,7 @@
 //! Parses and validates the `orax.toml` manifest of one Ora plugin, both in its marketplace
 //! release form and in the form shipped inside an installed package.
 
+mod agent_configuration;
 mod enums;
 mod error;
 mod locator;
@@ -14,6 +15,7 @@ mod urls;
 mod webview;
 mod workbench;
 
+pub use agent_configuration::{MAX_COPY_PATH_BYTES, PluginAgentConfiguration};
 pub use enums::{PluginKind, PluginKindError};
 pub use error::{InvalidFieldReason, ManifestError, ManifestField, RuleField};
 pub use locator::{ObjectKey, ObjectKeyError, ReleaseLocator, ReleaseLocatorError};
