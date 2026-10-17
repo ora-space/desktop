@@ -109,6 +109,7 @@ desktop_command_registry! {
     commands::files::read_project_file,
     commands::workflow::read_workflow_import,
     commands::files::read_workspace_file,
+    commands::effect::recover_effect_target,
     commands::session::rename_session,
     commands::workflow_run::rename_workflow_run,
     commands::plugin::reset_plugin_configuration,

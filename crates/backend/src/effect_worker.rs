@@ -66,6 +66,14 @@ impl EffectWorkerHandle {
     pub(crate) fn notify(&self) {
         self.wake.notify();
     }
+
+    /// Builds a handle that wakes nothing, for surfaces tested without a worker thread.
+    #[cfg(test)]
+    pub(crate) fn detached() -> Self {
+        Self {
+            wake: Arc::new(WakeSignal::default()),
+        }
+    }
 }
 
 /// Claims and reconciles Target obligations without retaining a second state machine in memory.

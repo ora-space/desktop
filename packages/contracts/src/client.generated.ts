@@ -29,6 +29,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
     },
     effect: {
       getTargetStatus: (request, options) => executeOperation("getEffectTargetStatus", request, transport, options),
+      recoverTarget: (request, options) => executeOperation("recoverEffectTarget", request, transport, options),
     },
     fileSystem: {
       copyProjectEntry: (request, options) => executeOperation("copyProjectEntry", request, transport, options),

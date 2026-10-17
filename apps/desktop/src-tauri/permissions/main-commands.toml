@@ -112,6 +112,7 @@ commands.allow = [
     "read_project_file",
     "read_workflow_import",
     "read_workspace_file",
+    "recover_effect_target",
     "rename_session",
     "rename_workflow_run",
     "reset_plugin_configuration",
