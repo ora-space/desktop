@@ -19,7 +19,7 @@ uses each service is in [Controller](controller.md) and [Agent relay](agent-rela
 | `ControllerLeaseService` | `AcquireLease`, `RenewLease`, `ReleaseLease` | One global coordination lease; its `epoch` fences every write |
 | `ExecutionService` | `ClaimWork`, `RecordDispatch`, `TakeOverNodeEvent`, `RecordQueriedResult`, `GetDispatch`, `ListPendingDispatches` | Writes carry a `submission_id`: identical content replays the original result, different content fails with `ABORTED` + `CONFLICT`. Dispatch only after `RecordDispatch`, acknowledge only after `TakeOverNodeEvent`; `RecordQueriedResult` never authorizes an acknowledgement |
 | `ControlSignalService` | `Watch` (server stream) | `WorkAvailable`, `OperationAvailable`, `Drain`, `NodeAssignment`; at most once, not persisted, changes no ownership |
-| `WorkspaceOperationService` | `ClaimOperation`, `PlanEffect`, `RecordEffectResult`, `AdvanceOperation`, `DeferOperation`, `ListLiveSandboxes` | Writes fenced by `epoch` and the operation `version`; the clone and plugin steps dispatch through `ExecutionService` with the operation's id |
+| `WorkspaceOperationService` | `ClaimOperation`, `PlanEffect`, `RecordEffectResult`, `AdvanceOperation`, `DeferOperation`, `RecordProvisioningFact`, `ListLiveSandboxes` | Writes fenced by `epoch` and the operation `version`; the clone and plugin steps dispatch through `ExecutionService` with the operation's id; `RecordProvisioningFact` is the only entry still open to a creation Cloud abandoned after its blocked deadline, and it receipts one late observation on the residual ledger without reopening anything |
 | `NodeReportService` | `RegisterNode`, `ReportNodeStatus`, `ReportNodeIdle`, `EndNode` | Sandbox Nodes the Controller holds sessions with; `RegisterNode` is idempotent per (sandbox, incarnation) and a second live incarnation conflicts until the first ends |
 | `AgentRunService` | `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload`, `GrantRevisionDownload` | Thread relay and Revision grants |
 | `RuntimeControlService` | `ListBindings`, `AcknowledgeBinding`, `GetExecutionPermit`, `GetEffectPermit`, `ListForceStops`, `ConfirmForceStop` | Fenced runtime control, see [Runtime control](runtime-control.md) |
@@ -28,8 +28,9 @@ Failures use the gRPC status code as the primary classification with an attached
 `ErrorDetail { ErrorCode }`. The Rust side maps them once, inside the Cloud RPC adapter, to the
 coordination classes (conflict, missing, unavailable, unknown, stale eligibility), so coordination
 logic never sees gRPC. Cloud answers a stale operation snapshot (`stale_operation`) with the same
-`FAILED_PRECONDITION` as a stale lease; the adapter classifies it as a conflict, so only the lease
-verdict drops the held epoch.
+`FAILED_PRECONDITION` as a stale lease; the adapter keeps it apart from both the lease verdict and an
+ordinary conflict, so only the lease verdict drops the held epoch, and only an effect observation the
+closed operation can no longer take is handed over as a provisioning fact.
 
 ## Revision upload checksums
 

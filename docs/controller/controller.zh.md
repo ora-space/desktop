@@ -106,4 +106,6 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 `effects_url` 是 Substrate 的 effect API（`GET`/`PUT /effects/{id}`）。Controller 在写入 effect 之前先读取，超时或服务端错误之后重新读取同一个 id，所以回复丢失的 effect 永远不会以新身份发送第二次。effect 失败以 `external_failure` 推迟，超时以 `substrate_timeout` 推迟，终止未得到确认以 `termination_unconfirmed` 阻塞。Node 协议拒绝的 ref（例如 `HEAD`）会让 clone 步骤在不派发的情况下阻塞。
 
+效果结果是已关闭操作仍可触达的唯一去处。`RecordEffectResult` 收到 `stale_operation` 时（Cloud 已按 blocked 截止放弃该运行 Workspace 的创建，或快照已被后继推进），Controller 以当前租约把同一观测改经 `RecordProvisioningFact` 提交；Cloud 按原操作与 effect 校验后补记到该创建的残留账本，本轮随即结束，不重开任何东西。仅对本轮过期的快照会被拒绝，仍按普通冲突重新领取解决。
+
 沙盒 Node 目标只来自 Cloud 的沙盒行；NodeId 与静态 Node 冲突的沙盒被拒绝，Controller 从不自己重建沙盒。握手之后它用 `RegisterNode` 登记 Node incarnation，每十秒报告一次已连接，会话丢失时报告一次断开（Controller 自己停止它时不报告），并在登记新 incarnation 之前结束旧的。第一次持有某个租约 epoch 时，它调用 `ListLiveSandboxes`，为列出的每个沙盒启动会话，并停止不在列表中的会话，所以重启后的 Controller 在认领操作之前就会重新连上。路由细节见[沙盒路由](../operations/sandbox-routing.zh.md)。

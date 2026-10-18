@@ -175,6 +175,14 @@ timed-out one with `substrate_timeout`, and an unconfirmed termination blocks wi
 `termination_unconfirmed`. A clone whose ref the Node protocol refuses (such as `HEAD`) blocks the
 step without a dispatch.
 
+The effect result is where a closed operation can still be reached. When `RecordEffectResult` is
+answered with `stale_operation` — Cloud abandoned the run Workspace's creation after its blocked
+deadline, or another holder moved the snapshot past this round — the Controller submits the same
+observation through `RecordProvisioningFact` under the lease it holds. Cloud validates it against
+the original operation and effect and receipts it on the abandoned creation's residual ledger; the
+round then ends, and nothing is reopened. A snapshot that was only stale to this round is refused,
+which stays an ordinary conflict resolved by claiming again.
+
 Sandbox Node targets come only from Cloud's sandbox rows; a sandbox whose NodeId collides with a
 static Node is refused, and the Controller never recreates a sandbox on its own. After a handshake it
 registers the Node incarnation with `RegisterNode`, reports it connected every ten seconds, reports it
