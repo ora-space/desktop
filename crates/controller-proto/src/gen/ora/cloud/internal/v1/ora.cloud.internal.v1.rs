@@ -1497,6 +1497,51 @@ pub struct DeferOperationResponse {
     #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RecordProvisioningFactRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    /// The abandoned create_workspace operation the fact belongs to.
+    #[prost(string, tag="3")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(enumeration="ProvisioningFactKind", tag="4")]
+    pub kind: i32,
+    /// EFFECT facts: the effect's id, state, Substrate identity and evidence.
+    #[prost(string, tag="5")]
+    pub effect_id: ::prost::alloc::string::String,
+    #[prost(enumeration="EffectState", tag="6")]
+    pub state: i32,
+    #[prost(string, tag="7")]
+    pub external_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="8")]
+    pub evidence: ::core::option::Option<EffectEvidence>,
+    /// Optional reason when an EFFECT fact's state is FAILED.
+    #[prost(string, optional, tag="9")]
+    pub failure: ::core::option::Option<::prost::alloc::string::String>,
+    /// CLONE and PLUGIN facts: the execution's identity and terminal result.
+    #[prost(string, tag="13")]
+    pub execution_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="10")]
+    pub execution_result: ::core::option::Option<ExecutionResult>,
+    /// CREATION facts: the creation's real outcome and an optional bounded detail.
+    #[prost(enumeration="ProvisioningOutcome", tag="11")]
+    pub outcome: i32,
+    #[prost(string, tag="12")]
+    pub detail: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RecordProvisioningFactResponse {
+    #[prost(message, optional, tag="1")]
+    pub operation: ::core::option::Option<Operation>,
+    /// The stored effect, for EFFECT facts.
+    #[prost(message, optional, tag="2")]
+    pub effect: ::core::option::Option<Effect>,
+    /// The stored execution, for CLONE and PLUGIN facts.
+    #[prost(message, optional, tag="3")]
+    pub execution: ::core::option::Option<ExecutionRecord>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListLiveSandboxesRequest {
     #[prost(int64, tag="1")]
@@ -1849,6 +1894,77 @@ impl DeferReason {
             "DEFER_REASON_CLONE_RESULT_UNKNOWN" => Some(Self::CloneResultUnknown),
             "DEFER_REASON_PLUGIN_EXECUTION_FAILED" => Some(Self::PluginExecutionFailed),
             "DEFER_REASON_PLUGIN_RESULT_UNKNOWN" => Some(Self::PluginResultUnknown),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ProvisioningFactKind {
+    Unspecified = 0,
+    /// A Substrate effect of the creation, identified by effect_id; carries the same state,
+    /// external identity and evidence RecordEffectResultRequest carries.
+    Effect = 1,
+    /// The clone execution the creation dispatched, identified by execution_id.
+    Clone = 2,
+    /// A plugin execution of the creation's plugin step, identified by execution_id.
+    Plugin = 3,
+    /// The creation's own real outcome, carried by outcome.
+    Creation = 4,
+}
+impl ProvisioningFactKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PROVISIONING_FACT_KIND_UNSPECIFIED",
+            Self::Effect => "PROVISIONING_FACT_KIND_EFFECT",
+            Self::Clone => "PROVISIONING_FACT_KIND_CLONE",
+            Self::Plugin => "PROVISIONING_FACT_KIND_PLUGIN",
+            Self::Creation => "PROVISIONING_FACT_KIND_CREATION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PROVISIONING_FACT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "PROVISIONING_FACT_KIND_EFFECT" => Some(Self::Effect),
+            "PROVISIONING_FACT_KIND_CLONE" => Some(Self::Clone),
+            "PROVISIONING_FACT_KIND_PLUGIN" => Some(Self::Plugin),
+            "PROVISIONING_FACT_KIND_CREATION" => Some(Self::Creation),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ProvisioningOutcome {
+    Unspecified = 0,
+    /// The Workspace really came up.
+    Ready = 1,
+    /// The creation really failed.
+    Failed = 2,
+}
+impl ProvisioningOutcome {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PROVISIONING_OUTCOME_UNSPECIFIED",
+            Self::Ready => "PROVISIONING_OUTCOME_READY",
+            Self::Failed => "PROVISIONING_OUTCOME_FAILED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PROVISIONING_OUTCOME_UNSPECIFIED" => Some(Self::Unspecified),
+            "PROVISIONING_OUTCOME_READY" => Some(Self::Ready),
+            "PROVISIONING_OUTCOME_FAILED" => Some(Self::Failed),
             _ => None,
         }
     }

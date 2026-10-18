@@ -2641,6 +2641,35 @@ pub mod workspace_operation_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        pub async fn record_provisioning_fact(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RecordProvisioningFactRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RecordProvisioningFactResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/ora.cloud.internal.v1.WorkspaceOperationService/RecordProvisioningFact",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "ora.cloud.internal.v1.WorkspaceOperationService",
+                        "RecordProvisioningFact",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_live_sandboxes(
             &mut self,
             request: impl tonic::IntoRequest<super::ListLiveSandboxesRequest>,
@@ -2719,6 +2748,13 @@ pub mod workspace_operation_service_server {
             request: tonic::Request<super::DeferOperationRequest>,
         ) -> std::result::Result<
             tonic::Response<super::DeferOperationResponse>,
+            tonic::Status,
+        >;
+        async fn record_provisioning_fact(
+            &self,
+            request: tonic::Request<super::RecordProvisioningFactRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RecordProvisioningFactResponse>,
             tonic::Status,
         >;
         async fn list_live_sandboxes(
@@ -3038,6 +3074,57 @@ pub mod workspace_operation_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeferOperationSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/ora.cloud.internal.v1.WorkspaceOperationService/RecordProvisioningFact" => {
+                    #[allow(non_camel_case_types)]
+                    struct RecordProvisioningFactSvc<T: WorkspaceOperationService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: WorkspaceOperationService,
+                    > tonic::server::UnaryService<super::RecordProvisioningFactRequest>
+                    for RecordProvisioningFactSvc<T> {
+                        type Response = super::RecordProvisioningFactResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RecordProvisioningFactRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as WorkspaceOperationService>::record_provisioning_fact(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RecordProvisioningFactSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

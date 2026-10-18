@@ -111,11 +111,12 @@ impl RuntimeControlService for WorkspaceCloud {
         request: Request<proto::GetEffectPermitRequest>,
     ) -> Result<Response<proto::GetEffectPermitResponse>, Status> {
         let message = request.into_inner();
-        let state = self.lock();
-        let (_, effect) = state
+        let mut state = self.lock();
+        let (operation, effect) = state
             .effects
             .iter()
-            .find(|(_, e)| e.id == message.effect_id)
+            .find(|(_, effect)| effect.id == message.effect_id)
+            .map(|(operation, effect)| (operation.clone(), effect.clone()))
             .ok_or_else(|| conflict("stale_effect"))?;
         let sandbox_id = match effect.request.as_ref().and_then(|r| r.request.as_ref()) {
             Some(EffectRequest::SandboxEnsure(_)) => effect.id.clone(),
@@ -126,6 +127,14 @@ impl RuntimeControlService for WorkspaceCloud {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
+        // The permit is still issued when the operation closes here: it was valid when granted, so
+        // the Substrate is asked for the effect and its result is what arrives too late.
+        if let Some((pending, closure)) = state.close_at_permit.clone()
+            && pending == operation
+        {
+            state.close_at_permit = None;
+            Self::close(&mut state, &operation, closure)?;
+        }
         Ok(Response::new(proto::GetEffectPermitResponse {
             permit: Some(proto::RuntimeEffectPermit {
                 tenant_id: "tenant".into(),
