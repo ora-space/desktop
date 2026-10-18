@@ -156,6 +156,17 @@ enum Carried {
     Done,
     /// The operation was parked in `retry_wait` or `blocked`; the round ends.
     Parked,
+    /// Cloud no longer drives the operation and the observed fact was receipted as a late
+    /// provisioning fact on the abandoned creation's residual ledger; the round ends without
+    /// advancing or reopening anything.
+    Abandoned,
+}
+
+impl Carried {
+    /// Whether Cloud still drives the operation, so the round may go on to the next step.
+    fn continues(&self) -> bool {
+        matches!(self, Self::Done)
+    }
 }
 
 /// One claimed operation and the snapshot it was claimed with. Writes update `operation`, so each
@@ -188,7 +199,7 @@ impl<'a> Round<'a> {
     /// Reconciles effects of earlier epochs, brings the sandbox targets in line with the snapshot,
     /// then runs the current step.
     async fn run(&mut self) -> Result<(), Error> {
-        if let Carried::Parked = self.reconcile().await? {
+        if !self.reconcile().await?.continues() {
             return Ok(());
         }
         match self.operation.step() {
@@ -219,10 +230,16 @@ impl<'a> Round<'a> {
             .cloned()
             .collect();
         for effect in stale {
-            match self.fleet.deployment().substrate.get(&effect).await {
-                Ok(Some(observation)) => self.record(&effect.id, Some(&observation)).await?,
-                Ok(None) => self.record(&effect.id, None).await?,
+            let observation = match self.fleet.deployment().substrate.get(&effect).await {
+                Ok(observation) => observation,
                 Err(error) => return self.park_on(&effect, &error).await,
+            };
+            if !self
+                .record(&effect.id, observation.as_ref())
+                .await?
+                .continues()
+            {
+                return Ok(Carried::Abandoned);
             }
         }
         Ok(Carried::Done)
@@ -256,12 +273,14 @@ impl<'a> Round<'a> {
         response.effect.ok_or(Error::Conflict)
     }
 
-    /// `RecordEffectResult`; `None` reports that the Substrate has no record of the effect.
+    /// `RecordEffectResult`; `None` reports that the Substrate has no record of the effect. A
+    /// stale operation snapshot means Cloud no longer drives the operation, so the observation is
+    /// handed over as a late provisioning fact instead of being dropped.
     async fn record(
         &mut self,
         effect: &str,
         observation: Option<&Observation>,
-    ) -> Result<(), Error> {
+    ) -> Result<Carried, Error> {
         let (state, external_id, evidence, failure) = match observation {
             None => (proto::EffectState::Absent, String::new(), None, None),
             Some(Observation::Running { external_id }) => {
@@ -305,9 +324,69 @@ impl<'a> Round<'a> {
                 store.operations().record_effect_result(request).await
             }
         })
+        .await;
+        match response {
+            Ok(response) => {
+                self.update(response.operation)?;
+                Ok(Carried::Done)
+            }
+            // Cloud closed the operation's own actions: it abandoned the creation after its
+            // blocked deadline, or a successor moved the snapshot past this round. The dedicated
+            // entry is the only one that can still take the observation.
+            Err(fault::Verdict::StaleOperation) => {
+                self.hand_over_late_effect(effect, state, &external_id, evidence, failure)
+                    .await?;
+                Ok(Carried::Abandoned)
+            }
+            Err(verdict) => Err(store.settle(verdict)),
+        }
+    }
+
+    /// `RecordProvisioningFact` for an observation `RecordEffectResult` could no longer take. Cloud
+    /// validates the fact against the original operation and effect, stores it under the current
+    /// lease and receipts it on the abandoned creation's residual ledger; an operation that was
+    /// only stale to this round is refused, which stays an ordinary conflict.
+    async fn hand_over_late_effect(
+        &self,
+        effect: &str,
+        state: proto::EffectState,
+        external_id: &str,
+        evidence: Option<proto::EffectEvidence>,
+        failure: Option<String>,
+    ) -> Result<(), Error> {
+        let (store, epoch) = (self.store, self.epoch);
+        let operation = self.operation.id.clone();
+        fault::write(|submission_id| {
+            let request = proto::RecordProvisioningFactRequest {
+                submission_id,
+                epoch,
+                operation_id: operation.clone(),
+                kind: proto::ProvisioningFactKind::Effect as i32,
+                effect_id: effect.into(),
+                state: state as i32,
+                external_id: external_id.into(),
+                evidence: evidence.clone(),
+                failure: failure.clone(),
+                // EFFECT facts carry no execution or creation outcome.
+                execution_id: String::new(),
+                execution_result: None,
+                outcome: proto::ProvisioningOutcome::Unspecified as i32,
+                detail: String::new(),
+            };
+            async move {
+                let request = store.request(request);
+                store.operations().record_provisioning_fact(request).await
+            }
+        })
         .await
+        .map(drop)
         .map_err(|verdict| store.settle(verdict))?;
-        self.update(response.operation)
+        ora_logging::ora_info!(
+            operation_id = %operation,
+            effect_id = %effect,
+            "Cloud abandoned the operation; the late effect fact was receipted on the residual ledger"
+        );
+        Ok(())
     }
 
     /// `AdvanceOperation`.
@@ -395,7 +474,13 @@ impl<'a> Round<'a> {
             Ok(observation) => observation,
             Err(error) => return self.park_on(&effect, &error).await,
         };
-        self.record(&effect.id, Some(&observation)).await?;
+        if !self
+            .record(&effect.id, Some(&observation))
+            .await?
+            .continues()
+        {
+            return Ok(Carried::Abandoned);
+        }
         match observation {
             Observation::Succeeded { .. } => Ok(Carried::Done),
             Observation::Failed { failure, .. } => {

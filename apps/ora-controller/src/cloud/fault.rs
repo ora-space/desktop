@@ -24,6 +24,10 @@ pub(super) enum Verdict {
     Conflict,
     /// A delayed control acknowledgement names a version that has already moved on.
     StaleRuntimeBinding,
+    /// The operation is no longer running under the presented snapshot: Cloud parked or settled it.
+    /// Its own actions are closed to this round; only a late fact about an abandoned creation may
+    /// still be receipted, and everything else stays a conflict.
+    StaleOperation,
     /// The lease epoch is not current or another holder owns the lease.
     Stale(Detail),
     /// Nothing was committed and the same call may be retried later.
@@ -94,10 +98,10 @@ pub(super) fn classify(status: &Status) -> Verdict {
             Verdict::Conflict
         }
         // Cloud reports an operation that is no longer running under this epoch, or whose version
-        // moved on, with the same status as a stale lease. Only the lease verdict may drop the
-        // epoch; a stale operation snapshot is a conflict the operation driver resolves by
-        // claiming again.
-        Code::FailedPrecondition if status.message() == STALE_OPERATION => Verdict::Conflict,
+        // moved on, with the same status as a stale lease, so the message has to tell them apart.
+        // Only the lease verdict may drop the epoch; a stale operation snapshot ends this round
+        // and, for an abandoned creation, hands the observed fact over on the residual ledger.
+        Code::FailedPrecondition if status.message() == STALE_OPERATION => Verdict::StaleOperation,
         Code::FailedPrecondition => Verdict::Stale(detail),
         // Cloud authenticates no Controller at this stage, so a refusal means the deployments
         // disagree; nothing was committed and the call is retried like an outage.
@@ -265,14 +269,15 @@ mod tests {
             detail.to_string(),
             "ERROR_CODE_STALE_CONTROLLER (FailedPrecondition): stale_controller"
         );
-        // A stale operation snapshot shares the lease's status code but never drops the lease.
+        // A stale operation snapshot shares the lease's status code but never drops the lease, and
+        // is kept apart from a plain conflict so the operation driver can hand a late fact over.
         assert_eq!(
             classify(&cloud_status(
                 Code::FailedPrecondition,
                 "stale_operation",
                 ErrorCode::StaleController,
             )),
-            Verdict::Conflict
+            Verdict::StaleOperation
         );
         assert!(matches!(
             classify(&Status::unavailable("persistence unavailable")),
@@ -296,7 +301,10 @@ mod tests {
         /// Renders the carried detail so tests can pin the message shape without matching structure.
         fn to_string_for_test(&self) -> String {
             match self {
-                Self::NotFound | Self::Conflict | Self::StaleRuntimeBinding => format!("{self:?}"),
+                Self::NotFound
+                | Self::Conflict
+                | Self::StaleRuntimeBinding
+                | Self::StaleOperation => format!("{self:?}"),
                 Self::Stale(detail) | Self::Unavailable(detail) | Self::Unknown(detail) => {
                     detail.to_string()
                 }

@@ -229,10 +229,14 @@ impl CloudStore {
 
     /// Applies a verdict's side effects and turns it into the interface error. A stale verdict
     /// forgets the held lease so the claim loop re-acquires. `NotFound` reaches here only where a
-    /// fact was required, which the interface defines as a conflict.
+    /// fact was required, which the interface defines as a conflict, and so does a stale operation
+    /// snapshot wherever the caller had no late fact to hand over.
     fn settle(&self, verdict: Verdict) -> Error {
         match verdict {
-            Verdict::NotFound | Verdict::Conflict | Verdict::StaleRuntimeBinding => Error::Conflict,
+            Verdict::NotFound
+            | Verdict::Conflict
+            | Verdict::StaleRuntimeBinding
+            | Verdict::StaleOperation => Error::Conflict,
             Verdict::Stale(detail) => {
                 ora_logging::ora_warn!(detail = %detail, "Cloud lease is no longer current");
                 self.set_lease(None);
