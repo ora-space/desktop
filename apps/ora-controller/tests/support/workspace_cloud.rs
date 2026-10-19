@@ -130,6 +130,13 @@ pub enum Event {
         kind: &'static str,
         state: &'static str,
     },
+    /// Cloud accepted a late provisioning fact on an abandoned creation's residual ledger.
+    ProvisioningFact {
+        kind: &'static str,
+        state: &'static str,
+    },
+    /// Cloud refused a late provisioning fact because the operation was not an abandoned creation.
+    RefusedProvisioningFact,
     Advanced {
         to: &'static str,
     },
@@ -208,6 +215,27 @@ struct Op {
     steps: &'static [proto::OperationStep],
 }
 
+/// How the fake closes an operation once its next effect permit is issued, standing in for Cloud
+/// closing it while the effect is in flight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Closure {
+    /// Cloud's blocked deadline abandons the creation: the operation fails with
+    /// `provisioning_result_unknown` and an open residual ledger still takes late facts.
+    Abandoned,
+    /// Another actor settles the operation, so nothing about it may be received later.
+    Failed(&'static str),
+}
+
+/// One late fact the fake receipted on an abandoned creation's residual ledger.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResidualFact {
+    pub operation: String,
+    /// The fact's stable identity, keyed as the real ledger keys it (`effect:<id>`).
+    pub key: String,
+    pub state: String,
+    pub external_id: String,
+}
+
 struct State {
     ops: Vec<Op>,
     workspace: proto::OperationWorkspace,
@@ -219,6 +247,12 @@ struct State {
     agents: agents::AgentState,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
     next_id: u64,
+    /// The creation the fake closes when its next effect permit is issued, and how.
+    close_at_permit: Option<(String, Closure)>,
+    /// The abandoned creations whose residual ledgers are still open.
+    ledgers: Vec<String>,
+    /// The late facts those ledgers hold.
+    residual_facts: Vec<ResidualFact>,
 }
 
 /// Shared handle to the fake; clones serve the same authority.
@@ -267,6 +301,18 @@ pub fn kind_name(kind: proto::EffectKind) -> &'static str {
     }
 }
 
+/// The state word the timeline and the fake's residual ledger record for an effect fact.
+fn effect_state_name(state: proto::EffectState) -> &'static str {
+    match state {
+        proto::EffectState::Succeeded => "succeeded",
+        proto::EffectState::Failed => "failed",
+        proto::EffectState::Running => "running",
+        proto::EffectState::Planned
+        | proto::EffectState::Absent
+        | proto::EffectState::Unspecified => "absent",
+    }
+}
+
 fn conflict(code: &str) -> Status {
     Status::aborted(code.to_owned())
 }
@@ -296,6 +342,9 @@ impl WorkspaceCloud {
                 agents: agents::AgentState::default(),
                 subscriber: None,
                 next_id: 100,
+                close_at_permit: None,
+                ledgers: Vec::new(),
+                residual_facts: Vec::new(),
             })),
             timeline,
         }
@@ -387,6 +436,60 @@ impl WorkspaceCloud {
             .find(|op| op.operation.id == id)
             .map(|op| op.operation.clone())
             .unwrap()
+    }
+
+    /// Closes `operation` when its next effect permit is issued, the way Cloud closes it while the
+    /// permitted effect is still in flight. Only `Closure::Abandoned` leaves a residual ledger that
+    /// still accepts late facts.
+    pub fn close_at_next_effect_permit(&self, operation: &str, closure: Closure) {
+        self.lock().close_at_permit = Some((operation.into(), closure));
+    }
+
+    /// The late facts the fake receipted on abandoned creations' residual ledgers.
+    pub fn residual_facts(&self) -> Vec<ResidualFact> {
+        self.lock().residual_facts.clone()
+    }
+
+    /// The stored effect of `kind` for `operation`, as the real Cloud holds it.
+    pub fn effect(&self, operation: &str, kind: proto::EffectKind) -> Option<proto::Effect> {
+        Self::effect_of(&self.lock(), operation, kind)
+    }
+
+    /// Closes one operation the way Cloud does while an effect is in flight: the operation leaves
+    /// `running`, so every one of its own actions is stale and only an abandoned creation's
+    /// residual ledger still accepts late facts.
+    fn close(state: &mut State, operation: &str, closure: Closure) -> Result<(), Status> {
+        let index = state
+            .ops
+            .iter()
+            .position(|op| op.operation.id == operation)
+            .ok_or_else(|| Status::not_found("not_found"))?;
+        let id = {
+            let op = &mut state.ops[index].operation;
+            op.state = proto::OperationState::Failed as i32;
+            op.version += 1;
+            op.error_code = Some(match closure {
+                Closure::Abandoned => "provisioning_result_unknown".into(),
+                Closure::Failed(code) => code.to_owned(),
+            });
+            op.id.clone()
+        };
+        if closure == Closure::Abandoned {
+            state.ledgers.push(id);
+        }
+        Ok(())
+    }
+
+    /// Whether `operation` is a creation the fake abandoned and whose residual ledger is still
+    /// open: exactly what accepts late provisioning facts.
+    fn abandoned(state: &State, operation: &str) -> bool {
+        state.ledgers.iter().any(|ledger| ledger == operation)
+            && state.ops.iter().any(|op| {
+                op.operation.id == operation
+                    && op.operation.kind() == proto::OperationKind::CreateWorkspace
+                    && op.operation.state() == proto::OperationState::Failed
+                    && op.operation.error_code.as_deref() == Some("provisioning_result_unknown")
+            })
     }
 
     /// Registers an execution to `node` that has no result, as a dispatch still in flight.
@@ -797,16 +900,78 @@ impl WorkspaceOperationService for WorkspaceCloud {
         };
         self.timeline.push(Event::Recorded {
             kind: kind_name(effect.kind()),
-            state: match message.state() {
-                proto::EffectState::Succeeded => "succeeded",
-                proto::EffectState::Failed => "failed",
-                proto::EffectState::Running => "running",
-                _ => "absent",
-            },
+            state: effect_state_name(message.state()),
         });
         Ok(Response::new(proto::RecordEffectResultResponse {
             effect: Some(effect),
             operation: Some(operation),
+        }))
+    }
+
+    async fn record_provisioning_fact(
+        &self,
+        request: Request<proto::RecordProvisioningFactRequest>,
+    ) -> Result<Response<proto::RecordProvisioningFactResponse>, Status> {
+        let message = request.into_inner();
+        if message.epoch != EPOCH {
+            return Err(Status::failed_precondition("stale_controller"));
+        }
+        let (operation, effect, state) = {
+            let mut state = self.lock();
+            let index = state
+                .ops
+                .iter()
+                .position(|op| op.operation.id == message.operation_id)
+                .ok_or_else(|| Status::not_found("not_found"))?;
+            // Only a creation Cloud itself abandoned accepts late facts; a merely stale round's
+            // observation stays a conflict the caller resolves by claiming again.
+            if !Self::abandoned(&state, &message.operation_id) {
+                drop(state);
+                self.timeline.push(Event::RefusedProvisioningFact);
+                return Err(conflict("operation_not_abandoned"));
+            }
+            match message.kind() {
+                proto::ProvisioningFactKind::Effect => {
+                    let (_, effect) = state
+                        .effects
+                        .iter_mut()
+                        .find(|(owner, effect)| {
+                            owner == &message.operation_id && effect.id == message.effect_id
+                        })
+                        .ok_or_else(|| Status::not_found("not_found"))?;
+                    if message.state() != proto::EffectState::Absent {
+                        effect.state = message.state;
+                        effect.external_id = Some(message.external_id.clone());
+                        effect.evidence = message.evidence.clone();
+                        effect.failure = message.failure.clone();
+                    }
+                    effect.reconciled_epoch = message.epoch;
+                    let effect = effect.clone();
+                    state.residual_facts.push(ResidualFact {
+                        operation: message.operation_id.clone(),
+                        key: format!("effect:{}", effect.id),
+                        state: effect_state_name(message.state()).into(),
+                        external_id: message.external_id.clone(),
+                    });
+                    (
+                        state.ops[index].operation.clone(),
+                        Some(effect),
+                        effect_state_name(message.state()),
+                    )
+                }
+                // The Controller only carries effect observations today; the real Cloud also
+                // takes clone, plugin and creation facts from a creation that dispatched them.
+                _ => return Err(conflict("invalid_fact_kind")),
+            }
+        };
+        self.timeline.push(Event::ProvisioningFact {
+            kind: "effect",
+            state,
+        });
+        Ok(Response::new(proto::RecordProvisioningFactResponse {
+            operation: Some(operation),
+            effect,
+            execution: None,
         }))
     }
 

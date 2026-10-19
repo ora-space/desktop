@@ -41,7 +41,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use workspace_cloud::{Event, Timeline, WORKSPACE, WorkspaceCloud};
+use workspace_cloud::{Closure, Event, ResidualFact, Timeline, WORKSPACE, WorkspaceCloud};
 
 const NODE_PATH: &str = "/ora-node/v1";
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -450,6 +450,115 @@ fn create_and_stop_drive_the_workspace_sandbox_and_its_node() {
             "a deliberate stop must not be reported as a lost connection: {events:#?}"
         );
         assert_eq!(world.cloud.workspace().observed_state, "stopped");
+    });
+}
+
+/// A creation Cloud abandons after its blocked deadline closes the operation's own actions while
+/// the sandbox effect is still in flight. The Controller must not drop what the Substrate really
+/// did: it ends the round and hands the observation over as a late provisioning fact on the
+/// residual ledger, and nothing about the run is reopened.
+#[test]
+fn a_creation_abandoned_mid_flight_takes_the_late_sandbox_fact_over() {
+    scenario("main", |world| async move {
+        let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        // The fake abandons the creation when the Controller asks for the effect's permit, so the
+        // Substrate result arrives after Cloud closed every one of the operation's own actions.
+        world
+            .cloud
+            .close_at_next_effect_permit(&create, Closure::Abandoned);
+        world
+            .timeline
+            .until(|events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::ProvisioningFact { .. }))
+            })
+            .await;
+        let events = world.timeline.events();
+        assert!(events.contains(&Event::ProvisioningFact {
+            kind: "effect",
+            state: "succeeded",
+        }));
+        assert!(
+            !events.contains(&Event::Recorded {
+                kind: "sandbox_ensure",
+                state: "succeeded",
+            }),
+            "the late fact must not have been recorded as a live effect result: {events:#?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Advanced { .. })),
+            "nothing may advance after Cloud abandoned the creation: {events:#?}"
+        );
+        let ensure = world
+            .cloud
+            .effect(&create, proto::EffectKind::SandboxEnsure)
+            .unwrap();
+        assert_eq!(
+            world.cloud.residual_facts(),
+            vec![ResidualFact {
+                operation: create.clone(),
+                key: format!("effect:{}", ensure.id),
+                state: "succeeded".into(),
+                external_id: ensure.id.clone(),
+            }]
+        );
+        assert_eq!(ensure.state(), proto::EffectState::Succeeded);
+        let operation = world.cloud.operation(&create);
+        assert_eq!(
+            (operation.state(), operation.error_code.as_deref()),
+            (
+                proto::OperationState::Failed,
+                Some("provisioning_result_unknown")
+            )
+        );
+        // The residual Workspace is only recorded, never reused or opened for dispatch.
+        let workspace = world.cloud.workspace();
+        assert_eq!(
+            (workspace.observed_state.as_str(), workspace.admission_open),
+            ("provisioning", false)
+        );
+    });
+}
+
+/// An operation Cloud closes for another reason than the blocked deadline — an administrative force
+/// stop, say — is no abandoned creation: the handover is refused and no residual ledger is written,
+/// so a stale round cannot fabricate evidence about a creation Cloud settled another way.
+#[test]
+fn a_creation_closed_for_another_reason_refuses_the_late_fact() {
+    scenario("main", |world| async move {
+        let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        world
+            .cloud
+            .close_at_next_effect_permit(&create, Closure::Failed("administrative_force_stop"));
+        world
+            .timeline
+            .until(|events| events.contains(&Event::RefusedProvisioningFact))
+            .await;
+        assert_eq!(world.cloud.residual_facts(), Vec::new());
+        let operation = world.cloud.operation(&create);
+        assert_eq!(
+            (operation.state(), operation.error_code.as_deref()),
+            (
+                proto::OperationState::Failed,
+                Some("administrative_force_stop")
+            )
+        );
+        let events = world.timeline.events();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::ProvisioningFact { .. })),
+            "a refused handover must leave no fact behind: {events:#?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Advanced { .. })),
+            "nothing may advance after Cloud closed the operation: {events:#?}"
+        );
     });
 }
 

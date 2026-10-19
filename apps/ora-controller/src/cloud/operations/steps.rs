@@ -1,6 +1,6 @@
 //! What the Controller does in each operation step, and how the sandbox targets follow the
 //! snapshot. Every step either advances the operation or parks it; the next round claims again.
-use super::{Carried, NODE_WAIT, POLL, Round};
+use super::{NODE_WAIT, POLL, Round};
 use crate::{
     cloud::{
         claim,
@@ -130,7 +130,7 @@ impl Round<'_> {
         let effect = self
             .plan(proto::EffectKind::SandboxEnsure, &workspace)
             .await?;
-        if let Carried::Parked = self.carry(effect).await? {
+        if !self.carry(effect).await?.continues() {
             return Ok(());
         }
         self.advance().await
@@ -379,7 +379,7 @@ impl Round<'_> {
             let effect = self
                 .plan(proto::EffectKind::SandboxTerminate, &workspace.id)
                 .await?;
-            if let Carried::Parked = self.carry(effect).await? {
+            if !self.carry(effect).await?.continues() {
                 return Ok(());
             }
         }
@@ -392,7 +392,7 @@ impl Round<'_> {
             let effect = self
                 .plan(proto::EffectKind::WorkspaceDataDelete, &workspace.id)
                 .await?;
-            if let Carried::Parked = self.carry(effect).await? {
+            if !self.carry(effect).await?.continues() {
                 return Ok(());
             }
         }

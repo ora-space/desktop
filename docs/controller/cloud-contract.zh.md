@@ -11,12 +11,12 @@
 | `ControllerLeaseService` | `AcquireLease`、`RenewLease`、`ReleaseLease` | 一个全局协调租约；它的 `epoch` 为每次写入设置栅栏 |
 | `ExecutionService` | `ClaimWork`、`RecordDispatch`、`TakeOverNodeEvent`、`RecordQueriedResult`、`GetDispatch`、`ListPendingDispatches` | 写入带 `submission_id`：相同内容回放原结果，不同内容以 `ABORTED` + `CONFLICT` 失败。只有 `RecordDispatch` 之后才派发，只有 `TakeOverNodeEvent` 之后才确认；`RecordQueriedResult` 从不授权确认 |
 | `ControlSignalService` | `Watch`（服务端流） | `WorkAvailable`、`OperationAvailable`、`Drain`、`NodeAssignment`；至多一次，不持久化，不改变任何归属 |
-| `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`、`ListLiveSandboxes` | 写入以 `epoch` 和操作的 `version` 设置栅栏；clone 和 plugin 步骤以操作的 id 通过 `ExecutionService` 派发 |
+| `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`、`RecordProvisioningFact`、`ListLiveSandboxes` | 写入以 `epoch` 和操作的 `version` 设置栅栏；clone 和 plugin 步骤以操作的 id 通过 `ExecutionService` 派发；`RecordProvisioningFact` 是 Cloud 按 blocked 截止放弃创建后唯一仍接受迟到事实的入口，把一条迟到观测补记到残留账本，不重开任何东西 |
 | `NodeReportService` | `RegisterNode`、`ReportNodeStatus`、`ReportNodeIdle`、`EndNode` | Controller 持有会话的沙盒 Node；`RegisterNode` 按（沙盒、incarnation）幂等，第一个结束之前第二个活跃的 incarnation 会冲突 |
 | `AgentRunService` | `TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
 | `RuntimeControlService` | `ListBindings`、`AcknowledgeBinding`、`GetExecutionPermit`、`GetEffectPermit`、`ListForceStops`、`ConfirmForceStop` | 带栅栏的运行时控制，见[运行时控制](runtime-control.zh.md) |
 
-失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它归为冲突，所以只有租约判定才会丢弃持有的 epoch。
+失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它与租约判定、普通冲突都区分开：只有租约判定才会丢弃持有的 epoch，也只有操作已关闭而无法接收的 effect 观测会改经 provisioning fact 补记。
 
 ## Revision 上传校验和
 
