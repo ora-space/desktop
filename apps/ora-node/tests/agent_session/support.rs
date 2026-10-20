@@ -420,6 +420,7 @@ impl Fixture {
                 agent_plugin_version: PluginVersion::new(version),
                 checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
                 model_binding_id: None,
+                agent_configuration: None,
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
                 prior_revision: prior,

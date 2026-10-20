@@ -79,6 +79,11 @@ pub(super) async fn batch(
             let capable = match family {
                 Targeted::Session => {
                     sandbox.advertises(NodeCapability::AgentSession)
+                        && match item.input.as_ref().and_then(|input| input.spec.as_ref()) {
+                            Some(proto::execution_input::Spec::AgentSession(spec)) => sandbox
+                                .accepts_agent_configuration(spec.agent_configuration.as_ref()),
+                            _ => false,
+                        }
                         && (!agents::mapping::resumes(item.input.as_ref())
                             || sandbox.advertises(NodeCapability::RevisionRestore))
                         && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),

@@ -38,6 +38,7 @@ ora-effect.workspace = true
 ora-history.workspace = true
 ora-plugin-lifecycle.workspace = true
 ora-plugin-manager.workspace = true
+ora-plugin-config.workspace = true
 ora-plugin-registry.workspace = true
 semver.workspace = true
 url.workspace = true

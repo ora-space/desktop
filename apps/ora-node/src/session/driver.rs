@@ -113,6 +113,13 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
+    let protocols = match &spec.agent_configuration {
+        Some(configuration) => match shared.catalog.model_protocols(configuration) {
+            Some(protocols) => Some(protocols),
+            None => return SessionEnd::agent_failed("agent_model_configuration_invalid"),
+        },
+        None => None,
+    };
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
@@ -151,8 +158,23 @@ where
             let Some(config) = shared.config.model_proxy.clone() else {
                 return SessionEnd::agent_failed("model_proxy_unavailable");
             };
-            match ModelAccess::open(config, binding, execution, &shared.config.home_directory).await
-            {
+            let opened = match &spec.agent_configuration {
+                Some(configuration) => {
+                    ModelAccess::open_declared(
+                        config,
+                        binding,
+                        execution,
+                        &shared.config.home_directory,
+                        configuration.clone(),
+                    )
+                    .await
+                }
+                None => {
+                    ModelAccess::open(config, binding, execution, &shared.config.home_directory)
+                        .await
+                }
+            };
+            match opened {
                 Ok(access) => Some(access),
                 Err(error) if error.0 == "model_session_ending" => {
                     return match super::model::reconcile(
@@ -180,6 +202,15 @@ where
         None => None,
     };
     if let Some(access) = &mut model_access
+        && let Some(context) = &access.model_context
+        && !protocols
+            .as_ref()
+            .is_some_and(|protocols| protocols.contains(&context.configuration.protocol))
+    {
+        access.close().await;
+        return SessionEnd::agent_failed("agent_model_protocol_mismatch");
+    }
+    if let Some(access) = &mut model_access
         && let Err(error) = placement.publish_model_ca(access)
     {
         access.close().await;
@@ -190,7 +221,12 @@ where
         .map(|access| access.environment.clone())
         .unwrap_or_default();
     let taps = GenerationTaps::default();
-    let launcher = placement.launcher(&spec.git_identity, &package_root, environment);
+    let isolation = if spec.agent_configuration.is_some() {
+        super::process::ModelProcessIsolation::Isolated
+    } else {
+        super::process::ModelProcessIsolation::Ambient
+    };
+    let launcher = placement.launcher(&spec.git_identity, &package_root, environment, isolation);
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
@@ -230,6 +266,9 @@ where
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
+            model_context: model_access
+                .as_ref()
+                .and_then(|access| access.model_context.clone()),
         }),
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),

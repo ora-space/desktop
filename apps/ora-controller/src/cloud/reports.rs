@@ -99,6 +99,18 @@ async fn register(
     let epoch = store.epoch()?;
     let binding = &sandbox.binding;
     let model_proxy = sandbox.advertised_model_proxy();
+    let model_adapter =
+        sandbox
+            .advertised_model_adapter()
+            .map(|capability| proto::ModelAdapterCapabilities {
+                contract_version: capability.contract_version,
+                target: capability.target,
+                protocols: capability
+                    .protocols
+                    .into_iter()
+                    .map(|protocol| protocol.as_str().to_owned())
+                    .collect(),
+            });
     let response = fault::write(|submission_id| async move {
         let request = store.request(proto::RegisterNodeRequest {
             submission_id,
@@ -111,6 +123,7 @@ async fn register(
             }),
             protocol_version: u32::from(CURRENT_PROTOCOL_VERSION.value()),
             model_proxy,
+            model_adapter: model_adapter.clone(),
         });
         store.nodes().register_node(request).await
     })

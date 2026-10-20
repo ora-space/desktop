@@ -109,7 +109,7 @@ impl Node {
                             self.hellos.fetch_add(1, Ordering::SeqCst);
                             Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
-                                payload: HelloAccepted { thread_previews: false,
+                                payload: HelloAccepted { model_adapter: None, thread_previews: false,
                                     selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: identity.clone(),
                                     capabilities: vec![NodeCapability::RepositoryClone, NodeCapability::RuntimeControl],

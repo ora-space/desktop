@@ -93,6 +93,14 @@ pub trait PluginCatalog: Send + Sync + 'static {
 
     /// Returns the package directory of exactly this installed version, if present.
     fn installed(&self, plugin_id: &PluginId, version: &PluginVersion) -> Option<PathBuf>;
+
+    /// Proves package receipt, declaration and settings before granting model authority.
+    fn model_protocols(
+        &self,
+        _configuration: &ora_plugin_protocol::AgentModelConfiguration,
+    ) -> Option<Vec<ora_plugin_protocol::AgentModelProtocol>> {
+        None
+    }
 }
 
 /// The session history of an execution cannot be delivered yet, or at all.

@@ -13,6 +13,7 @@ mod ledger;
 mod model;
 mod ports;
 mod preview;
+mod process;
 mod queue;
 mod resume;
 mod thread;

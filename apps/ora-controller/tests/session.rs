@@ -65,6 +65,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                             &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
                                 payload: HelloAccepted {
+                                    model_adapter: None,
                                     thread_previews: false,
                                     selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: NodeRuntimeIdentity {
@@ -138,7 +139,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 assert!(matches!(read_controller_message(&mut stream).await.unwrap(), Some(ControllerToNodeMessage::Hello(_))));
                 let identity = NodeRuntimeIdentity { node_id: endpoint.node_id.clone(), incarnation_id: NodeIncarnationId::new("current") };
-                write_node_message(&mut stream, &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: HelloAccepted { thread_previews: false, selected_version: CURRENT_PROTOCOL_VERSION, node: identity.clone(), capabilities: vec![NodeCapability::RepositoryClone] } })).await.unwrap();
+                write_node_message(&mut stream, &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: HelloAccepted { model_adapter: None, thread_previews: false, selected_version: CURRENT_PROTOCOL_VERSION, node: identity.clone(), capabilities: vec![NodeCapability::RepositoryClone] } })).await.unwrap();
                 let mut retries = 0;
                 let mut queries = 0;
                 while queries < 4 {
@@ -186,7 +187,7 @@ fn idle_session_sends_one_heartbeat_per_query_tick() {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 assert!(matches!(read_controller_message(&mut stream).await.unwrap(), Some(ControllerToNodeMessage::Hello(_))));
                 let identity = NodeRuntimeIdentity { node_id: endpoint.node_id.clone(), incarnation_id: NodeIncarnationId::new("current") };
-                write_node_message(&mut stream, &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: HelloAccepted { thread_previews: false, selected_version: CURRENT_PROTOCOL_VERSION, node: identity.clone(), capabilities: vec![NodeCapability::RepositoryClone] } })).await.unwrap();
+                write_node_message(&mut stream, &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: HelloAccepted { model_adapter: None, thread_previews: false, selected_version: CURRENT_PROTOCOL_VERSION, node: identity.clone(), capabilities: vec![NodeCapability::RepositoryClone] } })).await.unwrap();
                 let expected = ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: ControllerId::new("owner") } });
                 for _ in 0..5 {
                     let message = timeout(Duration::from_millis(/*millis*/ 500), read_controller_message(&mut stream)).await.unwrap().unwrap().unwrap();
@@ -337,6 +338,7 @@ fn controller_closes_with_the_reason_code() {
                             NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
                                 payload: HelloAccepted {
+                                    model_adapter: None,
                                     thread_previews: false,
                                     selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: NodeRuntimeIdentity {

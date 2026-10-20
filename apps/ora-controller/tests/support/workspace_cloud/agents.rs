@@ -65,6 +65,7 @@ impl WorkspaceCloud {
                         agent_plugin_version: "1.2.3".into(),
                         checkout_execution_id: state.clones[0].execution_id.clone(),
                         model_binding_id: binding.into(),
+                        agent_configuration: None,
                         git_identity: Some(proto::GitIdentity {
                             name: "User".into(),
                             email: "user@example.com".into(),

@@ -1,6 +1,8 @@
 //! Short-lived platform model grants owned by one live agent session, never by its ledger.
 
+mod adapter;
 mod opencode;
+use adapter::ModelAdapter;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -241,6 +243,7 @@ fn valid_grant_id(id: &str) -> bool {
 /// A renewable grant and isolated OpenCode state whose owner is exactly one live conversation.
 pub(super) struct ModelAccess {
     pub(super) environment: BTreeMap<String, String>,
+    pub(super) model_context: Option<ora_plugin_protocol::AgentModelContext>,
     _home: tempfile::TempDir,
     client: ModelClient,
     grant: String,
@@ -284,16 +287,60 @@ impl ModelAccess {
         execution: &ExecutionId,
         node_home: &std::path::Path,
     ) -> Result<Self, ModelAccessError> {
+        Self::open_for(
+            config,
+            binding,
+            execution,
+            node_home,
+            ModelAdapter::LegacyOpenCode,
+        )
+        .await
+    }
+
+    /// Freezes no token on disk: only the plugin's live startup receives model authority.
+    pub(super) async fn open_declared(
+        config: ModelProxyConfig,
+        binding: &ModelBindingId,
+        execution: &ExecutionId,
+        node_home: &std::path::Path,
+        configuration: ora_plugin_protocol::AgentModelConfiguration,
+    ) -> Result<Self, ModelAccessError> {
+        Self::open_for(
+            config,
+            binding,
+            execution,
+            node_home,
+            ModelAdapter::Declared(configuration),
+        )
+        .await
+    }
+
+    /// The grant owner and renewal path are shared; only legacy configuration is CLI-specific.
+    async fn open_for(
+        config: ModelProxyConfig,
+        binding: &ModelBindingId,
+        execution: &ExecutionId,
+        node_home: &std::path::Path,
+        adapter: ModelAdapter,
+    ) -> Result<Self, ModelAccessError> {
         let client = ModelClient::open(config)?;
         let grant = client.grant(binding, execution).await?;
-        let setup = opencode::environment(&grant, &client.config.ca_cert, node_home);
-        let (environment, home) = match setup {
-            Ok(setup) => setup,
+        let setup = adapter.prepare(&grant, &client.config.ca_cert, node_home);
+        let adapter::AdapterState {
+            mut environment,
+            home,
+            model_context,
+        } = match setup {
+            Ok(state) => state,
             Err(error) => {
                 client.revoke(&grant.grant_id, execution).await;
                 return Err(error);
             }
         };
+        environment.insert(
+            "NODE_EXTRA_CA_CERTS".into(),
+            client.config.ca_cert.to_string_lossy().into_owned(),
+        );
         let (failure, status) = watch::channel(ModelAccessStatus::Active);
         let renewal_client = client.clone();
         let renewal_grant = grant.grant_id.clone();
@@ -320,6 +367,7 @@ impl ModelAccess {
         });
         Ok(Self {
             environment,
+            model_context,
             _home: home,
             client,
             grant: grant.grant_id,

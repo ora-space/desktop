@@ -222,6 +222,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             agent_plugin_version: PluginVersion::new("1.0.0"),
             checkout_execution_id: ExecutionId::new("clone-1"),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
+            agent_configuration: None,
             prior_revision: None,
             git_identity: GitIdentity {
                 name: "User".into(),

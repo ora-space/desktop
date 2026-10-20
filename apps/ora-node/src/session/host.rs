@@ -146,10 +146,15 @@ pub(super) struct SessionPlugin {
     pub(super) lifecycle: SessionLifecycle,
     pub(super) taps: GenerationTaps,
     pub(super) plugin_id: PluginId,
+    pub(super) model_context: Option<ora_plugin_protocol::AgentModelContext>,
 }
 
 impl AgentAttach for SessionPlugin {
     type StopError = PluginLifecycleError;
+
+    fn model_context(&self) -> Option<ora_plugin_protocol::AgentModelContext> {
+        self.model_context.clone()
+    }
 
     /// The session verified this plugin's version before composing the runtime, so it is the
     /// whole answer; any other installed plugin stays invisible and never starts.

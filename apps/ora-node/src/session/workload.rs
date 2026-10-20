@@ -16,13 +16,14 @@
 //! by name but cannot list or replace them. It lives exactly as long as the session's plugin.
 
 use super::host::{SessionEnvironment, SessionLauncher};
+use super::process::ModelProcessIsolation;
 use ora_logging::ora_warn;
 use ora_node_protocol::{ExecutionId, GitIdentity};
 use ora_plugin_lifecycle::{
     DenoPluginRuntimeLauncher, LaunchedRuntime, PluginLaunchRequest, PluginLogSetup,
     PluginRuntimeFailure, PluginRuntimeLauncher, PluginRuntimeTimeouts,
 };
-use ora_process::{ProcessIdentity, TokioProcessSpawner};
+use ora_process::ProcessIdentity;
 use std::fs;
 use std::future::Future;
 use std::io;
@@ -98,15 +99,18 @@ impl SessionPlacement {
         &self,
         git_identity: &GitIdentity,
         package_root: &Path,
-        runtime: std::collections::BTreeMap<String, String>,
+        mut runtime: std::collections::BTreeMap<String, String>,
+        isolation: ModelProcessIsolation,
     ) -> SessionLauncher {
+        isolation.extend_environment(&mut runtime);
         let environment = SessionEnvironment::new(git_identity, runtime);
         match self {
             Self::Shared => PackageViewLauncher {
                 inner: DenoPluginRuntimeLauncher::with_environment_provider(
                     PluginRuntimeTimeouts::default(),
                     environment,
-                ),
+                )
+                .with_spawner(isolation.spawner(ProcessIdentity::Inherit)),
                 location: PackageLocation::Installed,
             },
             Self::Separate {
@@ -117,7 +121,7 @@ impl SessionPlacement {
                     PluginRuntimeTimeouts::default(),
                     environment.with_home(&directory.home),
                 )
-                .with_spawner(TokioProcessSpawner::running_as(*identity)),
+                .with_spawner(isolation.spawner(*identity)),
                 location: PackageLocation::View {
                     installed: package_root.to_path_buf(),
                     view: directory.package.clone(),

@@ -41,7 +41,7 @@ pub use runtime_control::{
 use serde::{Deserialize, Serialize};
 pub use session::{
     ControllerHeartbeat, ControllerHeartbeatMessage, Heartbeat, HeartbeatMessage, Hello,
-    HelloAccepted, HelloAcceptedMessage, HelloMessage, NodeCapability,
+    HelloAccepted, HelloAcceptedMessage, HelloMessage, ModelAdapterCapabilities, NodeCapability,
 };
 pub use validation::MessageValidationError;
 pub use validation::ValidateMessage;

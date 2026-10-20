@@ -125,6 +125,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
             agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
             checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
+            agent_configuration: None,
             prior_revision: None,
             git_identity: identity(),
             initial_turn: turn("turn-1", "read the repository"),

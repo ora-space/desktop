@@ -46,6 +46,30 @@ pub struct HelloAccepted {
     pub selected_version: ProtocolVersion,
     pub node: NodeRuntimeIdentity,
     pub capabilities: Vec<NodeCapability>,
+    /// Optional, exact declared-model adapter capability; older Nodes honestly omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_adapter: Option<ModelAdapterCapabilities>,
+}
+
+/// The execution target and protocol surface validated by this Node incarnation at startup.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelAdapterCapabilities {
+    pub contract_version: u32,
+    pub target: String,
+    pub protocols: Vec<ora_plugin_protocol::AgentModelProtocol>,
+}
+
+impl ModelAdapterCapabilities {
+    /// Compares immutable execution requirements against this incarnation's advertised surface.
+    pub fn supports(&self, target: &str, version: u32, protocol: &str) -> bool {
+        self.target == target
+            && self.contract_version == version
+            && self
+                .protocols
+                .iter()
+                .any(|accepted| accepted.as_str() == protocol)
+    }
 }
 
 /// Liveness signal from the current Node incarnation.
@@ -141,6 +165,21 @@ impl ValidateMessage for HelloAcceptedMessage {
             });
         }
         let mut capabilities = HashSet::with_capacity(payload.capabilities.len());
+        if let Some(adapter) = &payload.model_adapter
+            && (!payload.capabilities.contains(&NodeCapability::ModelProxy)
+                || adapter.contract_version != 1
+                || !matches!(
+                    adapter.target.as_str(),
+                    "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+                )
+                || adapter.protocols.is_empty()
+                || adapter.protocols.len() > 2
+                || (adapter.protocols.len() == 2 && adapter.protocols[0] == adapter.protocols[1]))
+        {
+            return Err(MessageValidationError::EmptyField {
+                field: "model_adapter",
+            });
+        }
         if payload.thread_previews && !payload.capabilities.contains(&NodeCapability::AgentSession)
         {
             return Err(MessageValidationError::InvalidThreadPreview);
