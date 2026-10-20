@@ -12,6 +12,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Repository fixtures exercise Git semantics; native host tests own process deadline evidence.
+impl super::RestoreGitRunner for CliGitRunner {
+    /// Checks fixture execution timing while the supervised production runner performs real closure.
+    fn run_bounded_before(
+        &self,
+        command: &gitlancer::GitCommand,
+        stdout: usize,
+        stderr: usize,
+        deadline: std::time::Instant,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        super::runner::check(deadline)?;
+        let result = gitlancer::GitRunner::run_bounded(self, command, stdout, stderr);
+        super::runner::check(deadline)?;
+        result
+    }
+}
+
 const REVISION_REF: &str = "refs/ora/revisions/run-1";
 
 /// Runs fixture Git with an isolated configuration; this is setup, not the code under test.

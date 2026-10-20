@@ -54,7 +54,9 @@ JSONL，通过 Cloud 签名的授权上传到对象存储。同一个 Issue 之�
 恢复期间重启，会话以 `interrupted` 结束。
 
 **下载。** Node 发送 `download_grant_needed`，每 2 秒以及每次新连接时重复，并且只接受针对它自己
-`prior_revision.bundle.key` 的 `download_grant { granted }`；`refused` 让恢复失败。等待和下载共享一个 5 分钟的截止时间。
+`prior_revision.bundle.key` 的 `download_grant { granted }`；`refused` 让恢复失败。下载与下面的全部 Git 步骤（包括祖先检查）
+共用一个绝对截止，默认 5 分钟，通过 Node 服务配置 `"restore": { "deadline_ms": 300000 }` 调整。该值必须是正整数，
+表示有限且可表达的时长；非法配置拒绝服务启动。授权续期、重试、退避、下载完成以及等待恢复 Git 锁都不重置截止。
 bundle 通过一次预签名的 `GET`（header 原样，不跟随重定向，错误中不出现 URL）下载到
 `<home>/revision-restores/<sha256(execution)>/prior.bundle`（目录 `0700`，文件 `0600`），大小受声明值限制，并与声明的大小和
 SHA-256 核对。网络错误、429 和 5xx 重试三次；403 丢弃授权并重新请求一次；其他情况都失败。之后删除这个目录。
@@ -70,6 +72,12 @@ SHA-256 核对。网络错误、429 和 5xx 重试三次；403 丢弃授权并�
 4. 在 clone 的分支上执行 `checkout --force -B <branch> <final_commit>`；`origin/<branch>` 不受影响。
 5. 如果某个前置 commit 不是 `refs/remotes/origin/<branch>` 的祖先，说明远端历史被改写了，会在第一个轮次后追加一段固定的
    英文说明，指明恢复的 commit、它的基础和 `origin/<branch>`。
+
+每条受管 Git 命令使用自身命令截止和恢复截止中更早的值。到期后不再启动新命令；进行中的 host 交换同样受这个截止约束，
+不能因更长的传输超时推迟关闭请求。执行到期后的清理与原 Scope 关闭确认使用独立的清理预算。迟到的祖先检查不能把已经到期的
+恢复改判成功。到期不是停止证据：未知停止证据的持久责任、交付隔离和残留证据上限仍是
+[已批准的恢复截止 ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md)
+的独立落地义务。
 
 ## Git Server 访问材料
 

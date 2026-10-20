@@ -11,6 +11,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tracing::instrument::WithSubscriber;
+
+#[path = "deadline.rs"]
+mod deadline;
 
 /// Serves `body` to every GET, after the scripted statuses run out.
 #[derive(Clone)]
@@ -97,6 +101,94 @@ const POLICY: RestorePolicy = RestorePolicy {
     backoff: Duration::from_millis(/*millis*/ 10),
     expiry_margin: Duration::from_secs(/*secs*/ 5),
 };
+
+/// Makes the final ancestor check cross the shared restore deadline after a fast download.
+struct SlowAncestor(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl gitlancer::GitRunner for SlowAncestor {
+    /// Keeps real Git and repositories while delaying only the final restore step.
+    fn run(
+        &self,
+        command: &gitlancer::GitCommand,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        if command.args.iter().any(|arg| arg == "merge-base") {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(/*millis*/ 5200));
+        }
+        gitlancer::GitRunner::run(&CliGitRunner, command)
+    }
+}
+
+impl super::super::RestoreGitRunner for SlowAncestor {
+    /// Simulates a slow execution at the supervision boundary; a late result is not success.
+    fn run_bounded_before(
+        &self,
+        command: &gitlancer::GitCommand,
+        stdout: usize,
+        stderr: usize,
+        deadline: std::time::Instant,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        let output = gitlancer::GitRunner::run_bounded(self, command, stdout, stderr)?;
+        super::super::runner::check(deadline)?;
+        Ok(output)
+    }
+}
+
+/// Download success must not reset the clock or let a late ancestor check report success.
+#[tokio::test]
+async fn restore_deadline_includes_the_final_ancestor_check() {
+    async {
+        let world = World::new();
+        let checkout = world.clone_into("deadline-checkout");
+        let store = ObjectStore::start(fs::read(world.bundle()).unwrap(), &[]).await;
+        let grants = DownloadGrants::new();
+        controller(
+            &grants,
+            &store,
+            world.prior.bundle.key.clone(),
+            /*refuse*/ false,
+        );
+        let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let restorer = RevisionRestorer::new(
+            DeliveryGit::new(
+                SlowAncestor(Arc::clone(&reached)),
+                GitPolicy {
+                    env: GitEnv::automation_defaults()
+                        .with_variable("GIT_CONFIG_NOSYSTEM", "1")
+                        .with_variable("GIT_CONFIG_GLOBAL", "/dev/null"),
+                    config_args: vec![],
+                },
+            ),
+            HttpDownloader::new(
+                ReqwestFetcher::new(ProxyConfig::default()),
+                FetchOptions {
+                    connect_timeout: Duration::from_secs(/*secs*/ 5),
+                    total_timeout: Duration::from_secs(/*secs*/ 10),
+                },
+            ),
+            grants,
+            NodeId::new("node"),
+            world.path("deadline-home").join(RESTORE_ROOT),
+            /*owner*/ None,
+            RestorePolicy {
+                deadline: Duration::from_secs(/*secs*/ 5),
+                ..POLICY
+            },
+        );
+        assert_eq!(
+            restorer.restore(request(&world, checkout)).await,
+            Err(RestoreFailure::Unavailable)
+        );
+        assert!(reached.load(std::sync::atomic::Ordering::SeqCst));
+    }
+    .with_subscriber(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .finish(),
+    )
+    .await;
+}
 
 /// The restorer under test, with Node home `home`.
 fn restorer(

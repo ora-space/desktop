@@ -33,8 +33,8 @@ pub(crate) struct GitPolicy {
 
 /// Runs delivery Git with the deployment's policy, whatever runner executes it.
 pub(crate) struct DeliveryGit<R> {
-    runner: R,
-    policy: GitPolicy,
+    pub(super) runner: R,
+    pub(super) policy: GitPolicy,
 }
 
 /// What the snapshot produced; a bundle exists exactly when the final commit is neither the base
@@ -206,6 +206,17 @@ impl<R: GitRunner> DeliveryGit<R> {
         args: &[&str],
         variables: &[(&str, &str)],
     ) -> Result<String, GitExecError> {
+        self.output_command(checkout, args, variables, GitIntent::Mutating)
+    }
+
+    /// Keeps intent explicit when restore fetches missing prerequisites over the network.
+    pub(super) fn output_command(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        variables: &[(&str, &str)],
+        intent: GitIntent,
+    ) -> Result<String, GitExecError> {
         let mut env = self.policy.env.clone();
         for (name, value) in variables {
             env = env.with_variable(*name, *value);
@@ -215,7 +226,7 @@ impl<R: GitRunner> DeliveryGit<R> {
             full.extend(["-c".to_owned(), config.to_owned()]);
         }
         full.extend(args.iter().map(|arg| (*arg).to_owned()));
-        let command = GitCommand::new(checkout.to_path_buf(), full, env, GitIntent::Mutating);
+        let command = GitCommand::new(checkout.to_path_buf(), full, env, intent);
         let output = self
             .runner
             .run_bounded(&command, OUTPUT_LIMIT, OUTPUT_LIMIT)?;

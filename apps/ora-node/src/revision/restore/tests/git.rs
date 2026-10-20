@@ -15,6 +15,7 @@ fn restore(
         bundle: &world.bundle(),
         prior,
         scratch: "session",
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(/*secs*/ 30),
         // Unprivileged tests can only hand the copy to themselves; that still runs the chown.
         owner: Some(std::os::unix::fs::MetadataExt::uid(
             &fs::metadata(checkout).unwrap(),

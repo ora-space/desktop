@@ -5,39 +5,43 @@
 //! directory under the Node home (`revision-restores/<sha256(execution)>/`, directories `0700`,
 //! the file `0600`), verifies its size and SHA-256 against the session input, and then runs the
 //! Git steps with delivery's hardened policy on a blocking thread. The grant wait and the download
-//! share one deadline. The directory is removed when the restore ends, whatever the outcome, and
+//! and all Git steps share one absolute deadline. The directory is removed when the restore ends, and
 //! the whole root is cleared when the Node starts, since no restore survives a restart.
 
 mod bundle;
+mod config;
 mod download;
 mod git;
 mod grants;
+mod runner;
 
+pub use config::RestoreConfig;
 pub(crate) use download::{HttpDownloader, ObjectDownloader};
 pub(crate) use grants::DownloadGrants;
+pub(crate) use runner::RestoreGitRunner;
 
 use super::snapshot::DeliveryGit;
 use crate::session::{PriorRevisionRestore, RestoreFailure, RestoreRequest, Restored};
 use download::{DownloadJob, download};
 use git::GitRestore;
-use gitlancer::GitRunner;
 use ora_node_protocol::NodeId;
 use std::fs;
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 /// Directory under the Node home holding one private directory per running restore.
 pub(crate) const RESTORE_ROOT: &str = "revision-restores";
 /// File name of the downloaded bundle inside a restore's directory.
 const BUNDLE_FILE: &str = "prior.bundle";
 
-/// Timing of a restore's download; tests shorten it, production uses [`RestorePolicy::DEFAULT`].
+/// One restore's execution timing; cleanup retains its separate managed-process budget.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RestorePolicy {
-    /// Bounds the grant wait and the download together; the Agent is waiting meanwhile.
+    /// Bounds download and all Git steps together; none reset this budget.
     pub(crate) deadline: Duration,
     /// Network failures and 5xx answers retried before the restore fails.
     pub(crate) retries: u32,
@@ -51,7 +55,7 @@ pub(crate) struct RestorePolicy {
 
 impl RestorePolicy {
     pub(crate) const DEFAULT: Self = Self {
-        deadline: Duration::from_secs(/*secs*/ 5 * 60),
+        deadline: Duration::from_millis(config::DEFAULT_DEADLINE_MS),
         retries: 3,
         resend: Duration::from_secs(/*secs*/ 2),
         backoff: Duration::from_millis(/*millis*/ 500),
@@ -97,11 +101,14 @@ impl<R, D> RevisionRestorer<R, D> {
 
 impl<R, D> PriorRevisionRestore for RevisionRestorer<R, D>
 where
-    R: GitRunner + Send + 'static,
+    R: RestoreGitRunner + Send + 'static,
     D: ObjectDownloader,
 {
-    /// Downloads and verifies the bundle within the deadline, then restores it with Git.
+    /// Shares one cutoff across download, waiting for Git and every supervised Git command.
     async fn restore(&self, request: RestoreRequest) -> Result<Restored, RestoreFailure> {
+        if self.policy.deadline.is_zero() {
+            return Err(RestoreFailure::Unavailable);
+        }
         let scratch = ora_utils::hash::sha256_hex(request.execution.as_str().as_bytes());
         let directory = PrivateDirectory::create(&self.root.join(&scratch)).map_err(|error| {
             ora_logging::ora_warn!(execution_id = %request.execution.as_str(), error = %error, "restore directory could not be created");
@@ -114,9 +121,13 @@ where
             bundle: request.prior.bundle.clone(),
             destination: directory.0.join(BUNDLE_FILE),
         };
-        let downloaded = tokio::time::timeout(
-            self.policy.deadline,
-            download(&self.downloader, &self.grants, &job, self.policy),
+        // The bundle path's approved clock starts immediately before the first grant exchange.
+        let deadline = Instant::now()
+            .checked_add(self.policy.deadline)
+            .ok_or(RestoreFailure::Unavailable)?;
+        let downloaded = tokio::time::timeout_at(
+            deadline.into(),
+            download(&self.downloader, &self.grants, &job, self.policy, deadline),
         )
         .await;
         match downloaded {
@@ -130,22 +141,28 @@ where
                 return Err(RestoreFailure::Unavailable);
             }
         }
-        let git = Arc::clone(&self.git);
+        let git = tokio::time::timeout_at(deadline.into(), Arc::clone(&self.git).lock_owned())
+            .await
+            .map_err(|_| RestoreFailure::Unavailable)?;
         let owner = self.owner;
         let bundle = job.destination;
+        let dispatcher = tracing::dispatcher::get_default(Clone::clone);
         let restored = tokio::task::spawn_blocking(move || {
-            let git = git.lock().unwrap_or_else(PoisonError::into_inner);
-            git.restore(&GitRestore {
-                checkout: &request.checkout,
-                bundle: &bundle,
-                prior: &request.prior,
-                scratch: &scratch,
-                owner,
+            tracing::dispatcher::with_default(&dispatcher, || {
+                let result = git.restore(&GitRestore {
+                    checkout: &request.checkout,
+                    bundle: &bundle,
+                    prior: &request.prior,
+                    scratch: &scratch,
+                    owner,
+                    deadline,
+                });
+                // A canceled async caller cannot delete bytes still read by the blocking command.
+                drop(directory);
+                result
             })
         })
         .await;
-        // The blocking step has finished either way, so nothing reads the directory anymore.
-        drop(directory);
         restored.unwrap_or(Err(RestoreFailure::Unavailable))
     }
 }

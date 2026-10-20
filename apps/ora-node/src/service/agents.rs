@@ -38,6 +38,7 @@ pub(super) fn restorer(
     node: &ManagedNode,
     agent: Option<&AgentConfig>,
     downloads: DownloadGrants,
+    restore_policy: RestorePolicy,
 ) -> Result<Option<Restorer>, crate::Error> {
     let root = node.home_directory().join(RESTORE_ROOT);
     purge_restores(&root).map_err(ora_node_db::Error::from)?;
@@ -56,7 +57,7 @@ pub(super) fn restorer(
         node.node_id().clone(),
         root,
         node.git.runner().process_config().workload_uid,
-        RestorePolicy::DEFAULT,
+        restore_policy,
     )))
 }
 

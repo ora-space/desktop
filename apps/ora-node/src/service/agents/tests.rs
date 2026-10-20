@@ -122,3 +122,24 @@ fn the_workload_follows_the_process_workload_user() {
         )
     );
 }
+
+/// An invalid restore budget is rejected before opening state, even without Agent admission.
+#[tokio::test]
+async fn serve_refuses_zero_restore_budget_before_opening_node_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let mut config = config(
+        temporary.path(),
+        /*workload_uid*/ None,
+        /*workload_directory*/ None,
+    );
+    config.restore.deadline_ms = 0;
+    let home = config.node.home_directory.clone();
+    let error = crate::serve(config, Shutdown::default())
+        .await
+        .err()
+        .ok_or("invalid restore configuration was accepted")?;
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(!home.exists());
+    Ok(())
+}

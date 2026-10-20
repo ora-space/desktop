@@ -51,6 +51,8 @@ pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
 pub use model_proxy::ModelProxyConfig;
 #[cfg(target_os = "linux")]
+pub use revision::RestoreConfig;
+#[cfg(target_os = "linux")]
 pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, ServiceConfig, serve};
 #[cfg(target_os = "linux")]
 pub use session::{

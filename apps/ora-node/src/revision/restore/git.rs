@@ -7,13 +7,15 @@
 //! `refs/ora/revisions/` are.
 use super::super::snapshot::DeliveryGit;
 use super::bundle::{BundleHeader, read_header};
+use super::runner::{RestoreCommands, RestoreGitRunner, check};
 use crate::session::{RestoreFailure, Restored};
-use gitlancer::{GitExecError, GitRunner};
+use gitlancer::{GitExecError, GitIntent, GitRunner};
 use ora_node_protocol::{CommitId, PriorRevision};
 use std::fs;
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Background maintenance a fetch could start in the checkout; nothing may outlive the restore.
 const QUIET_FETCH: [&str; 4] = ["-c", "gc.auto=0", "-c", "maintenance.auto=false"];
@@ -28,12 +30,29 @@ pub(crate) struct GitRestore<'a> {
     pub(crate) scratch: &'a str,
     /// The workload user restore Git runs as, when the deployment separates it from the Node.
     pub(crate) owner: Option<u32>,
+    /// Created before download and never reset by waiting for this blocking execution.
+    pub(crate) deadline: Instant,
 }
 
-impl<R: GitRunner> DeliveryGit<R> {
+impl<R: RestoreGitRunner> DeliveryGit<R> {
     /// Restores the prior Revision into the checkout and reports whether its base commits are
     /// still on the remote branch. Blocking: callers keep it off the async workers.
     pub(crate) fn restore(&self, request: &GitRestore<'_>) -> Result<Restored, RestoreFailure> {
+        check(request.deadline).map_err(failed)?;
+        DeliveryGit::new(
+            RestoreCommands {
+                runner: &self.runner,
+                deadline: request.deadline,
+            },
+            self.policy.clone(),
+        )
+        .restore_steps(request)
+    }
+}
+
+impl<R: GitRunner> DeliveryGit<R> {
+    /// Runs only through the deadline-aware view, preserving the hardened command builder.
+    fn restore_steps(&self, request: &GitRestore<'_>) -> Result<Restored, RestoreFailure> {
         let checkout = request.checkout;
         let final_commit = &request.prior.final_commit;
         // 1. The header decides which failure a missing commit is, before Git reads the pack.
@@ -71,7 +90,7 @@ impl<R: GitRunner> DeliveryGit<R> {
             let mut fetch = QUIET_FETCH.to_vec();
             fetch.extend(["fetch", "--no-tags", "origin"]);
             fetch.extend(missing.iter().map(CommitId::as_str));
-            if let Err(error) = self.output(checkout, &fetch, &[]) {
+            if let Err(error) = self.output_command(checkout, &fetch, &[], GitIntent::Network) {
                 ora_logging::ora_warn!(error = %error, "base commits of the prior Revision could not be fetched");
                 // Only the remote's own answer that it has no such object is permanent; a network
                 // or access failure must not make Cloud refuse the Revision for every later run.
@@ -132,7 +151,7 @@ impl<R: GitRunner> DeliveryGit<R> {
         )
         .map_err(failed)?;
         // 6. A base the remote branch lost means its history was rewritten since.
-        Ok(self.divergence(checkout, &header, branch))
+        self.divergence(checkout, &header, branch)
     }
 
     /// The commits among `commits` the checkout does not have.
@@ -153,9 +172,14 @@ impl<R: GitRunner> DeliveryGit<R> {
         Ok(missing)
     }
 
-    /// Names the first base commit `origin/<branch>` no longer contains. A runner failure here
-    /// only loses the note, so it is logged and treated as no divergence.
-    fn divergence(&self, checkout: &Path, header: &BundleHeader, branch: &str) -> Restored {
+    /// Names the first base commit `origin/<branch>` no longer contains. Ordinary diagnostic
+    /// failures only lose the note; timeout or failed supervision cannot report restore success.
+    fn divergence(
+        &self,
+        checkout: &Path,
+        header: &BundleHeader,
+        branch: &str,
+    ) -> Result<Restored, RestoreFailure> {
         let remote = format!("refs/remotes/origin/{branch}");
         for base in &header.prerequisites {
             match self.output(
@@ -165,19 +189,20 @@ impl<R: GitRunner> DeliveryGit<R> {
             ) {
                 Ok(_) => {}
                 Err(GitExecError::NonZeroExit { .. }) => {
-                    return Restored::Diverged {
+                    return Ok(Restored::Diverged {
                         final_commit: header.final_commit.clone(),
                         base_commit: base.clone(),
                         branch: branch.to_owned(),
-                    };
+                    });
                 }
+                Err(error @ GitExecError::OutputReadFailed { .. }) => return Err(failed(error)),
                 Err(error) => {
                     ora_logging::ora_warn!(error = %error, "remote history of the restored Revision could not be checked");
-                    return Restored::OnRemoteHistory;
+                    return Ok(Restored::OnRemoteHistory);
                 }
             }
         }
-        Restored::OnRemoteHistory
+        Ok(Restored::OnRemoteHistory)
     }
 }
 

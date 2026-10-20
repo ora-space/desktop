@@ -10,6 +10,7 @@ use ora_node_protocol::{ExecutionId, NodeId, ObjectDownloadGrant, OperationId, S
 use ora_utils::http::{FetchError, FetchOptions, FetchOutcome, FileFetch, ReqwestFetcher};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Reads one object with one grant.
 ///
@@ -73,6 +74,8 @@ pub(crate) struct DownloadJob {
 /// Why the bundle could not be downloaded; every case fails the restore as unavailable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DownloadFailure {
+    #[error("the restore execution deadline expired")]
+    Deadline,
     #[error("Cloud refused the download grant")]
     Refused,
     #[error("the object store refused the download")]
@@ -90,6 +93,7 @@ pub(crate) async fn download<D: ObjectDownloader>(
     grants: &DownloadGrants,
     job: &DownloadJob,
     policy: RestorePolicy,
+    deadline: Instant,
 ) -> Result<(), DownloadFailure> {
     let registration = grants.register(
         job.operation.clone(),
@@ -100,9 +104,18 @@ pub(crate) async fn download<D: ObjectDownloader>(
     let mut failures = 0;
     let mut renewed = false;
     loop {
-        let grant = wait_for_grant(grants, &registration, policy).await?;
+        if Instant::now() >= deadline {
+            return Err(DownloadFailure::Deadline);
+        }
+        let grant = wait_for_grant(grants, &registration, policy, deadline).await?;
+        if Instant::now() >= deadline {
+            return Err(DownloadFailure::Deadline);
+        }
         // A failed attempt never leaves bytes behind, but a cancelled one may have.
         let _ = std::fs::remove_file(&job.destination);
+        if Instant::now() >= deadline {
+            return Err(DownloadFailure::Deadline);
+        }
         let fetched = downloader
             .get(&grant, &job.destination, job.bundle.size)
             .await;
@@ -147,6 +160,12 @@ pub(crate) async fn download<D: ObjectDownloader>(
         if failures > policy.retries {
             return Err(DownloadFailure::Exhausted);
         }
+        if Instant::now()
+            .checked_add(policy.backoff)
+            .is_none_or(|next| next >= deadline)
+        {
+            return Err(DownloadFailure::Deadline);
+        }
         tokio::time::sleep(policy.backoff).await;
     }
 }
@@ -157,10 +176,14 @@ async fn wait_for_grant(
     grants: &DownloadGrants,
     registration: &DownloadRegistration,
     policy: RestorePolicy,
+    deadline: Instant,
 ) -> Result<ObjectDownloadGrant, DownloadFailure> {
     let mut offers = grants.offers();
     let mut requested: Option<tokio::time::Instant> = None;
     loop {
+        if Instant::now() >= deadline {
+            return Err(DownloadFailure::Deadline);
+        }
         offers.borrow_and_update();
         match registration.answer(policy.expiry_margin) {
             Some(Answer::Granted(grant)) => return Ok(grant),

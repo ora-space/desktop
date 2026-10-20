@@ -68,7 +68,13 @@ process ever started. A restart during a restore ends the session `interrupted`.
 
 **Download.** The Node sends `download_grant_needed`, repeating every 2 s and on every new connection,
 and accepts only `download_grant { granted }` for its own `prior_revision.bundle.key`; `refused` fails the
-restore. Waiting and downloading share one 5-minute deadline. The bundle is fetched with one presigned
+restore. Download and every Git step below, including the ancestor check, share one absolute deadline.
+It defaults to five minutes and is configured in the Node service file as
+`"restore": { "deadline_ms": 300000 }`. The value must be a positive integer representing a finite,
+representable duration; invalid values refuse service startup. Grant renewal, retries, backoff,
+download completion and waiting for the restore Git lock never reset this cutoff.
+
+The bundle is fetched with one presigned
 `GET` (headers verbatim, no redirects, no URL in errors) into
 `<home>/revision-restores/<sha256(execution)>/prior.bundle` (directories `0700`, file `0600`), bounded by
 and checked against the declared size and SHA-256. Network errors, 429 and 5xx retry three times; a 403
@@ -89,6 +95,14 @@ disabled):
 5. If a prerequisite is not an ancestor of `refs/remotes/origin/<branch>`, the remote history was
    rewritten, and one fixed English note naming the restored commit, its base and `origin/<branch>` is
    appended to the first turn.
+
+Each supervised Git command receives the earlier of its own command deadline and the restore cutoff.
+No new command starts after expiry; a pending host exchange is bounded by that same cutoff, so it
+cannot defer the close request until a longer transport timeout. Cleanup and original Scope closure
+use their independent cleanup budget after execution expires. A late ancestor check cannot turn an
+expired restore into success. Expiry is not proof that a process stopped: durable unconfirmed-stop
+ownership, delivery isolation and the residual-evidence bound remain separate obligations of the
+[approved restore deadline ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md).
 
 ## Git Server access material
 

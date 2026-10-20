@@ -18,9 +18,10 @@ mod upload;
 
 pub(crate) use grants::GrantStore;
 pub(crate) use prepare::{Preparation, prepare};
+pub use restore::RestoreConfig;
 pub(crate) use restore::{
-    DownloadGrants, HttpDownloader, RESTORE_ROOT, RestorePolicy, RevisionRestorer,
-    purge as purge_restores,
+    DownloadGrants, HttpDownloader, RESTORE_ROOT, RestoreGitRunner, RestorePolicy,
+    RevisionRestorer, purge as purge_restores,
 };
 pub(crate) use snapshot::{DeliveryGit, GitPolicy};
 pub(crate) use upload::{HttpUploader, ObjectUploader, RetryPolicy, UploadEnd, UploadJob, upload};

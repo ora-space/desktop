@@ -47,7 +47,72 @@ pub(super) async fn execute(
     shutdown: &Shutdown,
 ) -> io::Result<GitOutput> {
     let started = Instant::now();
-    let budget = config.command_budget(command_intent);
+    observe(
+        client,
+        intent,
+        config,
+        shutdown,
+        started,
+        Cutoff::Command(started + config.command_budget(command_intent)),
+    )
+    .await
+}
+
+/// An absolute restore cutoff also bounds in-flight IPC; cleanup is performed by the caller
+/// outside this timeout and must still close the original Scope after a lost Start reply.
+pub(super) async fn execute_before(
+    client: &ProcessHost,
+    intent: &HostRunIntent,
+    command_intent: GitIntent,
+    config: &ProcessConfig,
+    shutdown: &Shutdown,
+    restore_deadline: Instant,
+) -> io::Result<GitOutput> {
+    let started = Instant::now();
+    let deadline = restore_deadline.min(started + config.command_budget(command_intent));
+    tokio::time::timeout_at(
+        deadline.into(),
+        observe(
+            client,
+            intent,
+            config,
+            shutdown,
+            started,
+            Cutoff::Restore(deadline),
+        ),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Git completion deadline expired"))?
+}
+
+/// Restore clips admission and IPC as well as completion; ordinary command semantics stay local.
+#[derive(Clone, Copy)]
+enum Cutoff {
+    Command(Instant),
+    Restore(Instant),
+}
+
+impl Cutoff {
+    /// A ready IPC response must not admit another restore operation after its absolute cutoff.
+    fn check_exchange(self) -> io::Result<()> {
+        match self {
+            Self::Command(_) => Ok(()),
+            Self::Restore(deadline) => check(deadline),
+        }
+    }
+}
+
+/// Only execution and output collection consume this cutoff, never the subsequent close barrier.
+async fn observe(
+    client: &ProcessHost,
+    intent: &HostRunIntent,
+    config: &ProcessConfig,
+    shutdown: &Shutdown,
+    started: Instant,
+    cutoff: Cutoff,
+) -> io::Result<GitOutput> {
+    let (Cutoff::Command(deadline) | Cutoff::Restore(deadline)) = cutoff;
+    cutoff.check_exchange()?;
     match client
         .execute(HostOperation::CreateScope {
             scope: intent.scope,
@@ -57,6 +122,7 @@ pub(super) async fn execute(
         HostReply::Scope(_) => {}
         other => return Err(io::Error::other(format!("Scope rejected: {other:?}"))),
     }
+    cutoff.check_exchange()?;
     match client
         .execute(HostOperation::Start {
             intent: intent.clone(),
@@ -67,7 +133,7 @@ pub(super) async fn execute(
         other => return Err(io::Error::other(format!("Run rejected: {other:?}"))),
     }
     let outcome = loop {
-        if started.elapsed() >= budget
+        if Instant::now() >= deadline
             || shutdown.expired(Duration::from_millis(config.shutdown_grace_ms))
         {
             return Err(io::Error::new(
@@ -80,6 +146,7 @@ pub(super) async fn execute(
             .await?
         {
             HostReply::Run(view) => {
+                cutoff.check_exchange()?;
                 if let Some(snapshot) = view.last_observed
                     && matches!(snapshot.cleanup, CleanupState::Complete(_))
                 {
@@ -116,6 +183,7 @@ pub(super) async fn execute(
     {
         let mut bytes = Vec::new();
         loop {
+            cutoff.check_exchange()?;
             match client
                 .execute(HostOperation::Output {
                     run: intent.run,
@@ -130,6 +198,7 @@ pub(super) async fn execute(
                         return Err(io::Error::other("Git output is truncated or unavailable"));
                     }
                     bytes.extend(output.bytes);
+                    cutoff.check_exchange()?;
                     if output.state == OutputState::Eof && bytes.len() == output.retained {
                         break;
                     }
@@ -140,7 +209,7 @@ pub(super) async fn execute(
                     )));
                 }
             }
-            if started.elapsed() >= budget {
+            if Instant::now() >= deadline {
                 return Err(io::Error::other("Git output EOF is unverified"));
             }
             tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;
@@ -154,4 +223,16 @@ pub(super) async fn execute(
         stderr,
         started.elapsed().as_millis() as u64,
     ))
+}
+
+/// Refuses an expired admission even if the inner future would be immediately ready.
+fn check(deadline: Instant) -> io::Result<()> {
+    if Instant::now() >= deadline {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Git completion deadline expired",
+        ))
+    } else {
+        Ok(())
+    }
 }

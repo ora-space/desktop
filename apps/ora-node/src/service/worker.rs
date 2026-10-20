@@ -68,8 +68,13 @@ pub(super) fn run(
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
         let downloads = crate::revision::DownloadGrants::new();
-        let restorer = agents::restorer(&node, config.agent.as_ref(), downloads.clone())
-            .map_err(|e| e.to_string())?;
+        let restorer = agents::restorer(
+            &node,
+            config.agent.as_ref(),
+            downloads.clone(),
+            config.restore.policy().map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
         let agents = agents::open(
             &mut node,
             config.agent.as_ref(),

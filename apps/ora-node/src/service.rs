@@ -73,6 +73,9 @@ pub enum ControlListen {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// One restore cutoff across grant waits, download and supervised Git commands.
+    #[serde(default)]
+    pub restore: crate::RestoreConfig,
     /// Plugin transfer timing is selected by deployment and defaults to the original policy.
     #[serde(default)]
     pub plugins: crate::PluginConfig,
@@ -150,6 +153,7 @@ impl Drop for StopOnDrop {
 
 /// Runs independent control-session and execution lifecycles while retaining the Node lease until cleanup finishes.
 pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> {
+    config.restore.policy()?;
     let _stop = StopOnDrop(shutdown.clone());
     if config.recovery_interval_ms == 0 {
         return Err(io::Error::other("recovery interval must be positive"));
