@@ -262,6 +262,25 @@ impl Fixture {
             .unwrap();
         LinuxPidFd::from_observation(&linux_process(pid).unwrap()).unwrap()
     }
+    /// Pins this fixture's managed Git so tests observe its termination instead of assuming it.
+    pub fn live_git(&self) -> LinuxPidFd {
+        let mut git = None;
+        until(|| {
+            git = linux_process_snapshot()
+                .unwrap()
+                .flatten()
+                .find_map(|stat| {
+                    (fs::read_link(Path::new("/proc").join(stat.pid.to_string()).join("exe"))
+                        .ok()
+                        .as_deref()
+                        == Some(self.path().join("git").as_path()))
+                    .then(|| LinuxPidFd::from_observation(&stat).ok())
+                    .flatten()
+                });
+            git.is_some()
+        });
+        git.unwrap()
+    }
     /// Simulates loss of this deployment's guardians without signaling any workload by a numeric PID.
     pub fn kill_guardians(&self) {
         for stat in linux_process_snapshot().unwrap().flatten() {

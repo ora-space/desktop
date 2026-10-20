@@ -102,7 +102,13 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         let record = seed(&fixture, &config, &command);
         let mut child = launch(&fixture, &config, "clone-first");
         until(|| record.target.path.join(".git").is_dir());
+        let git = fixture.live_git();
         child.kill();
+        // The Node's exit reaches the guardian at its next reconciliation, which then terminates
+        // Git. Resume the remote only after that termination: a Git still blocked on the paused
+        // remote can otherwise finish inside that window, and recovery would correctly accept the
+        // resulting exit code as a completed clone instead of observing a termination.
+        until(|| git.has_exited().unwrap());
         server.paused.store(false, Ordering::SeqCst);
         let mut replacement = launch(&fixture, &config, "clone-replacement");
         until(|| {
