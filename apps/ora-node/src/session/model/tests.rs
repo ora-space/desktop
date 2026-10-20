@@ -218,7 +218,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         execution.clone(),
         AgentSessionSpec {
             node_id: node.node_id.clone(),
-            agent_plugin_id: PluginId::new("official/ora-space.echo"),
+            agent_plugin_id: PluginId::new("official/ora-space.opencode"),
             agent_plugin_version: PluginVersion::new("1.0.0"),
             checkout_execution_id: ExecutionId::new("clone-1"),
             model_binding_id: Some(ModelBindingId::new("binding-1")),

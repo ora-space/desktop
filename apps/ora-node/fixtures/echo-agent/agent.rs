@@ -9,9 +9,9 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AgentListModelsResult, AgentStartResult, CHILDPROCESS_EXIT_METHOD, CHILDPROCESS_SPAWN_METHOD,
-    JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE, PluginRegistrationParams, REGISTER_METHOD,
-    SHUTDOWN_METHOD, read_message, write_message,
+    AgentListModelsResult, AgentModelApplied, AgentStartContext, AgentStartResult,
+    CHILDPROCESS_EXIT_METHOD, CHILDPROCESS_SPAWN_METHOD, JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE,
+    PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, read_message, write_message,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -36,6 +36,9 @@ struct PendingPrompt {
 /// Everything the fixture remembers between frames.
 #[derive(Default)]
 struct EchoAgent {
+    /// A generic adapter applies only non-secret options; the temporary token is never retained.
+    declared_settings: Option<String>,
+    prompt_count: u64,
     sessions: BTreeMap<String, PathBuf>,
     /// A `[hold]` prompt, answered when the host cancels it.
     held: Option<PendingPrompt>,
@@ -72,7 +75,23 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             (Some(CHILDPROCESS_EXIT_METHOD), None) => agent.commit_finished(&mut output).await?,
             (Some(method), Some(id)) => {
                 let result = match method {
-                    AGENT_START_METHOD => serde_json::to_value(AgentStartResult::acp_v1())?,
+                    AGENT_START_METHOD => {
+                        let context: AgentStartContext = serde_json::from_value(params)?;
+                        let mut result = AgentStartResult::acp_v1();
+                        if let Some(context) = context.model_context {
+                            let frozen = context.configuration;
+                            let settings: Value = serde_json::from_str(&frozen.settings_json)?;
+                            agent.declared_settings = Some(frozen.settings_json);
+                            if settings.get("acknowledge").and_then(Value::as_bool) != Some(false) {
+                                result.model_applied = Some(AgentModelApplied {
+                                    adapter_version: frozen.adapter_version,
+                                    declaration_fingerprint: frozen.declaration_fingerprint,
+                                    configuration_revision: frozen.configuration_revision,
+                                });
+                            }
+                        }
+                        serde_json::to_value(result)?
+                    }
                     AGENT_STOP_METHOD => json!({}),
                     AGENT_LIST_MODELS_METHOD => {
                         serde_json::to_value(AgentListModelsResult { models: Vec::new() })?
@@ -231,7 +250,15 @@ impl EchoAgent {
             });
             return Ok(());
         }
-        let answer = if text.contains("[env]") {
+        if self.declared_settings.is_some() {
+            self.prompt_count += 1;
+            std::fs::write("echo-agent.prompt-count", self.prompt_count.to_string())?;
+        }
+        let answer = if text.contains("[model-context]") {
+            self.declared_settings
+                .clone()
+                .unwrap_or_else(|| "no declared context".into())
+        } else if text.contains("[env]") {
             let cwd = std::env::current_dir().unwrap_or_default();
             let home = std::env::var("HOME").unwrap_or_default();
             format!("cwd={} home={home}", cwd.display())
