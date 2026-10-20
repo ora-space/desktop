@@ -59,26 +59,6 @@ fn process_group(pid: u32) -> u32 {
         .unwrap()
 }
 
-/// Pins the fixture's live Git process so cleanup can be asserted independently of Node's view.
-fn live_git(fixture: &Fixture) -> LinuxPidFd {
-    let mut git = None;
-    until(|| {
-        git = linux_process_snapshot()
-            .unwrap()
-            .flatten()
-            .find_map(|stat| {
-                let executable = std::path::Path::new("/proc")
-                    .join(stat.pid.to_string())
-                    .join("exe");
-                (fs::read_link(executable).ok().as_ref() == Some(&fixture.path().join("git")))
-                    .then(|| LinuxPidFd::from_observation(&stat).ok())
-                    .flatten()
-            });
-        git.is_some()
-    });
-    git.unwrap()
-}
-
 /// The composed executable hosts its Node: Controller death leaves Node and Git running, a live
 /// endpoint refuses a second hosting Controller, and normal stop retires sessions and Node in order.
 #[test]
@@ -231,7 +211,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
         let interrupted = accept(&home, &source, "hosted-interrupted");
         controller = launch(&fixture, &config);
         let third = hosted_node(&node_config);
-        let git = live_git(&fixture);
+        let git = fixture.live_git();
         controller.terminate();
         assert!(controller.0.try_wait().unwrap().unwrap().success());
         assert!(third.0.has_exited().unwrap());
