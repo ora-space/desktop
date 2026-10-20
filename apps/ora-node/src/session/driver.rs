@@ -113,13 +113,14 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
-    let protocols = match &spec.agent_configuration {
-        Some(configuration) => match shared.catalog.model_protocols(configuration) {
-            Some(protocols) => Some(protocols),
-            None => return SessionEnd::agent_failed("agent_model_configuration_invalid"),
-        },
-        None => None,
-    };
+    if let Some(configuration) = &spec.agent_configuration {
+        let Some(protocols) = shared.catalog.model_protocols(configuration) else {
+            return SessionEnd::agent_failed("agent_model_configuration_invalid");
+        };
+        if !protocols.contains(&configuration.protocol) {
+            return SessionEnd::agent_failed("agent_model_protocol_mismatch");
+        }
+    }
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
@@ -158,6 +159,11 @@ where
             let Some(config) = shared.config.model_proxy.clone() else {
                 return SessionEnd::agent_failed("model_proxy_unavailable");
             };
+            if spec.agent_configuration.is_none()
+                && spec.agent_plugin_id.as_str() != crate::model_proxy::LEGACY_MODEL_PLUGIN
+            {
+                return SessionEnd::agent_failed("agent_model_configuration_required");
+            }
             let opened = match &spec.agent_configuration {
                 Some(configuration) => {
                     ModelAccess::open_declared(
@@ -201,15 +207,6 @@ where
         }
         None => None,
     };
-    if let Some(access) = &mut model_access
-        && let Some(context) = &access.model_context
-        && !protocols
-            .as_ref()
-            .is_some_and(|protocols| protocols.contains(&context.configuration.protocol))
-    {
-        access.close().await;
-        return SessionEnd::agent_failed("agent_model_protocol_mismatch");
-    }
     if let Some(access) = &mut model_access
         && let Err(error) = placement.publish_model_ca(access)
     {

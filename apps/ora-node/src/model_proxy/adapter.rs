@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, path::Path};
 /// A declaration selects the generic live startup RPC; absence retains existing OpenCode behavior.
 pub(super) enum ModelAdapter {
     LegacyOpenCode,
-    Declared(AgentModelConfiguration),
+    Declared(Box<AgentModelConfiguration>),
 }
 
 /// The owning ModelAccess retains the private directory until all plugin processes have ended.
@@ -37,6 +37,7 @@ impl ModelAdapter {
                 })
             }
             Self::Declared(configuration) => {
+                let configuration = *configuration;
                 let protocol = match grant.protocol {
                     Protocol::OpenaiCompletions => AgentModelProtocol::OpenaiCompletions,
                     Protocol::AnthropicMessages => AgentModelProtocol::AnthropicMessages,

@@ -25,6 +25,28 @@ impl DirectoryPluginCatalog {
             .join(format!("{version}.json"))
     }
 
+    /// Retires proof before package mutation, so a failed new receipt cannot certify new bytes as old.
+    pub(super) fn clear_package_record(
+        &self,
+        id: &ora_domain::PluginId,
+        version: &semver::Version,
+    ) -> std::io::Result<()> {
+        let path = self.receipt_path(id, version);
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("invalid receipt path"))?;
+        match ora_utils::path::check_directory_without_symlinks(parent) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => std::fs::remove_file(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Called only after digest-verified archive publication, under the catalog's use lock.
     pub(super) fn record_package(
         &self,

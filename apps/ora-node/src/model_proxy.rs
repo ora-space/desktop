@@ -3,6 +3,8 @@
 mod adapter;
 mod opencode;
 use adapter::ModelAdapter;
+/// Only historical OpenCode bindings may use the pre-declaration compatibility route.
+pub(super) const LEGACY_MODEL_PLUGIN: &str = "official/ora-space.opencode";
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -310,7 +312,7 @@ impl ModelAccess {
             binding,
             execution,
             node_home,
-            ModelAdapter::Declared(configuration),
+            ModelAdapter::Declared(Box::new(configuration)),
         )
         .await
     }

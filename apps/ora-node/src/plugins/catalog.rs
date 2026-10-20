@@ -107,6 +107,8 @@ impl DirectoryPluginCatalog {
         if uses.contains_key(&id.canonical()) {
             return Err(PluginFailureCode::PluginInUse);
         }
+        self.clear_package_record(id, version)
+            .map_err(|_| PluginFailureCode::InstallFailed)?;
         let destination = prepared.commit(&self.home).map_err(super::failure)?;
         // Retire only version directories belonging to this plugin; its data/config live elsewhere.
         let parent = destination

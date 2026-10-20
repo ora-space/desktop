@@ -135,7 +135,17 @@ pub(super) async fn start_agent(
         .await
         .map_err(|error| {
             if expected.is_some() {
-                PluginAgentError::Failed("agent_model_adapter_failed".into())
+                match error {
+                    PluginRuntimeError::Remote {
+                        code: AGENT_NOT_INSTALLED_CODE,
+                        ..
+                    } => PluginAgentError::AgentNotInstalled,
+                    PluginRuntimeError::Remote {
+                        code: AGENT_UNUSABLE_CODE,
+                        ..
+                    } => PluginAgentError::AgentUnusable("agent_model_adapter_failed".into()),
+                    _ => PluginAgentError::Failed("agent_model_adapter_failed".into()),
+                }
             } else {
                 error.into()
             }
