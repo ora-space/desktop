@@ -11,40 +11,40 @@ import { scheduledTaskKeys } from "../hooks/use-scheduled-tasks";
 import { useUiStore } from "../stores/ui-store";
 import { notifyFailedScheduledFact } from "./scheduled-task-events";
 
-const SEEN_STORAGE_KEY = "ora.scheduledTaskFactsSeenAt";
 const SEEN_FACTS_STORAGE_KEY = "ora.scheduledTaskFactsSeen";
 const SEEN_FACTS_INITIALIZED_STORAGE_KEY =
   "ora.scheduledTaskFactsSeenInitialized";
 const MAX_SEEN_FACTS = 1_000;
 
-/** Reads the timestamp up to which persisted facts were already surfaced to the user. */
-function readSeenBaseline(): number {
+/**
+ * Exact per-fact deduplication ledger. Keys are deterministic fact identities
+ * (`run:{runId}` or `missed:{taskId}:{scheduledAt}`); values are the persisted
+ * timestamps for diagnostic purposes only — they are never compared against each
+ * other or against wall clocks for suppression decisions.
+ *
+ * Why no timestamp baseline or per-task watermarks: timestamps from concurrent
+ * transactions cannot reliably indicate commit ordering across tasks. A global or
+ * per-task timestamp watermark would let a newer fact's advance silently absorb an
+ * older unseen fact from a different task (the root cause of three P2 review
+ * findings on ora-space/desktop#707). Key-based dedup alone avoids this: a fact is
+ * suppressed if and only if its exact key has been claimed before, regardless of
+ * any clock. The accepted trade-off is that the bounded map (MAX_SEEN_FACTS) may
+ * evict very old entries after extended outages, causing a re-notification — this
+ * duplicates rather than drops, which is the preferred failure mode.
+ */
+const seenFacts = readSeenFactsOnce();
+
+/** Clears the in-session fact ledger (test isolation). */
+export function resetScheduledFactSeen(): void {
+  for (const key of Object.keys(seenFacts)) delete seenFacts[key];
   try {
-    const raw = window.localStorage.getItem(SEEN_STORAGE_KEY);
-    if (raw === null) return 0;
-    const value = Number(raw);
-    return Number.isFinite(value) ? value : 0;
+    window.localStorage.removeItem(SEEN_FACTS_STORAGE_KEY);
   } catch {
-    return 0;
+    // Best effort.
   }
 }
 
-/** Persists the surfaced timestamp; a lost write can only repeat a notification. */
-function writeSeenBaseline(at: number): void {
-  try {
-    window.localStorage.setItem(SEEN_STORAGE_KEY, String(at));
-  } catch {
-    // Best effort: surfacing must not depend on storage availability.
-  }
-}
-
-/** Advances the durable notification baseline without allowing a concurrent path to regress it. */
-function advanceSeenBaseline(at: number): void {
-  if (at > readSeenBaseline()) writeSeenBaseline(at);
-}
-
-/** Stores exact facts so one task's live event cannot suppress another task's history. */
-function readSeenFacts(): Record<string, number> {
+function readSeenFactsOnce(): Record<string, number> {
   try {
     const raw = window.localStorage.getItem(SEEN_FACTS_STORAGE_KEY);
     if (raw === null) return {};
@@ -62,7 +62,7 @@ function readSeenFacts(): Record<string, number> {
   }
 }
 
-function writeSeenFacts(facts: Record<string, number>): void {
+function persistSeenFacts(facts: Record<string, number>): void {
   try {
     const retained = Object.entries(facts)
       .sort(([, left], [, right]) => right - left)
@@ -77,11 +77,12 @@ function writeSeenFacts(facts: Record<string, number>): void {
 }
 
 function hasSeenFact(key: string): boolean {
-  return Object.hasOwn(readSeenFacts(), key);
+  return Object.hasOwn(seenFacts, key);
 }
 
 function markFactSeen(key: string, seenAt: number): void {
-  writeSeenFacts({ ...readSeenFacts(), [key]: seenAt });
+  seenFacts[key] = seenAt;
+  persistSeenFacts(seenFacts);
 }
 
 function seenFactsInitialized(): boolean {
@@ -98,7 +99,7 @@ function markSeenFactsInitialized(): void {
   try {
     window.localStorage.setItem(SEEN_FACTS_INITIALIZED_STORAGE_KEY, "1");
   } catch {
-    // The legacy baseline remains a safe fallback when storage is unavailable.
+    // The migration will repeat on the next pass if storage is unavailable.
   }
 }
 
@@ -120,7 +121,19 @@ function factKey(
   if (entry.kind === "missed") {
     return `missed:${taskId}:${entry.scheduledAt}`;
   }
-  return entry.failureReason === null ? null : `run:${taskId}:${entry.id}`;
+  return entry.failureReason === null ? null : `run:${entry.id}`;
+}
+
+function eventFactKey(
+  event: Extract<
+    ScheduledTaskEvent,
+    { kind: "run_finished" | "occurrence_missed" }
+  >,
+): string | null {
+  if (event.kind === "occurrence_missed") {
+    return `missed:${event.taskId}:${event.scheduledAt}`;
+  }
+  return event.failureReason === null ? null : `run:${event.runId}`;
 }
 
 function liveFact(
@@ -147,20 +160,14 @@ function liveFact(
 }
 
 /**
- * Serializes every baseline-advancing pass.
- *
- * The startup surface and the live-event dedupe both read, decide, and advance the same
- * durable baseline. Running them concurrently would let a live event advance the baseline
- * over older facts the in-flight surface has not shown yet, silently dropping them (the
- * dedupe must only prevent repeats, never lose facts). One shared chain keeps each pass's
- * reads and baseline write contiguous; live toasts may wait one surface pass, which is
- * bounded by the per-task history reads.
+ * Serializes every deduplication pass so the startup surface and the live-event
+ * claim cannot interleave their read-check-mark sequences.
  */
-let baselineChain: Promise<void> = Promise.resolve();
+let dedupChain: Promise<void> = Promise.resolve();
 
-function serializeBaselineTurn<T>(turn: () => Promise<T>): Promise<T> {
-  const result = baselineChain.then(turn, turn);
-  baselineChain = result.then(
+function serializeDedupTurn<T>(turn: () => Promise<T>): Promise<T> {
+  const result = dedupChain.then(turn, turn);
+  dedupChain = result.then(
     () => undefined,
     () => undefined,
   );
@@ -170,6 +177,9 @@ function serializeBaselineTurn<T>(turn: () => Promise<T>): Promise<T> {
 /**
  * Claims one persisted fact for a live event. The caller surfaces the toast only when this
  * returns true, so a startup pass and the live stream cannot toast the same fact twice.
+ * When the history refresh fails the fact still surfaces but stays unclaimed, so a later
+ * startup pass may repeat it — a registered trade-off, since a duplicate beats a silent
+ * loss.
  */
 export function markScheduledTaskHistorySeen(
   client: ContractsClient,
@@ -179,7 +189,7 @@ export function markScheduledTaskHistorySeen(
     { kind: "run_finished" | "occurrence_missed" }
   >,
 ): Promise<boolean> {
-  return serializeBaselineTurn(async () => {
+  return serializeDedupTurn(async () => {
     try {
       const entries = await client.scheduledTask
         .listHistory({ taskId: event.taskId })
@@ -196,7 +206,9 @@ export function markScheduledTaskHistorySeen(
       markFactSeen(key, surfaceableFactAt(fact) ?? Date.now());
       return true;
     } catch {
-      // The event remains actionable even when its history refresh is temporarily unavailable.
+      // The event remains actionable even when its history refresh is temporarily
+      // unavailable, so it surfaces without being claimed here. The later startup
+      // pass may repeat it — a registered trade-off: a duplicate beats a silent loss.
       return true;
     }
   });
@@ -208,8 +220,9 @@ let startupSurfaceQueuedPromise: Promise<void> | null = null;
 /**
  * Surfaces persisted Scheduled Task facts that were recorded while the shell could not
  * receive application events: startup-recovered missed occurrences and interrupted failed
- * runs. Exact fact keys prevent duplicate notifications; the first run on an install adopts
- * the existing history as already seen instead of replaying it as a notification storm.
+ * runs. Exact per-fact keys prevent duplicate notifications; the first run on an install
+ * adopts the existing history as already seen instead of replaying it as a notification
+ * storm.
  *
  * A request made while a pass is in flight queues exactly one follow-up pass instead of
  * reusing the in-flight promise: facts persisted during the first pass (for example while
@@ -230,7 +243,7 @@ export function surfaceStartupScheduledFacts(
     }
     return startupSurfaceQueuedPromise;
   }
-  const surface = serializeBaselineTurn(() =>
+  const surface = serializeDedupTurn(() =>
     surfaceStartupScheduledFactsOnce(client, queryClient, platform),
   );
   startupSurfaceInFlight = surface;
@@ -247,19 +260,12 @@ async function surfaceStartupScheduledFactsOnce(
   platform: PlatformAdapter | null,
 ): Promise<void> {
   const t = appI18n.t.bind(appI18n);
-  // The very first run on an install adopts the existing history as already seen instead of
-  // replaying every historical failure as a notification storm.
+  // The very first run on an install adopts the existing history as already seen instead
+  // of replaying every historical failure as a notification storm. Subsequent passes
+  // only surface facts whose exact key has not been claimed — no timestamp watermark is
+  // involved, so facts committed out of clock order across tasks can never be silently
+  // absorbed by another task's advancement.
   const migrateOnly = !seenFactsInitialized();
-  const legacyBaseline = migrateOnly ? readSeenBaseline() : 0;
-  let newest = legacyBaseline;
-  let historiesComplete = true;
-  const seen = readSeenFacts();
-  let seenDirty = false;
-  const hasSeen = (key: string): boolean => Object.hasOwn(seen, key);
-  const markSeen = (key: string, seenAt: number): void => {
-    seen[key] = seenAt;
-    seenDirty = true;
-  };
 
   let tasks: ScheduledTask[];
   try {
@@ -282,24 +288,19 @@ async function surfaceStartupScheduledFactsOnce(
             .then((r) => r.entries),
       });
     } catch {
-      historiesComplete = false;
       continue;
     }
-    const baseline = readSeenBaseline();
     for (const entry of entries) {
       const factAt = surfaceableFactAt(entry);
       const key = factKey(task.id, entry);
-      if (factAt === null || key === null || hasSeen(key)) continue;
-      if (migrateOnly || factAt <= baseline) {
-        // Facts recorded before this feature (or already covered by the legacy baseline,
-        // including entries evicted from the bounded seen map) are adopted as seen without
-        // replaying them as notifications. The baseline still advances so these facts stay
-        // suppressed even when the bounded seen map later evicts them.
-        newest = Math.max(newest, factAt);
-        markSeen(key, factAt);
+      if (factAt === null || key === null || hasSeenFact(key)) continue;
+      if (migrateOnly) {
+        // First run on an install: adopt every existing fact as seen without
+        // surfacing, so the user is not notified about failures that predate
+        // the feature's activation.
+        markFactSeen(key, factAt);
         continue;
       }
-      newest = Math.max(newest, factAt);
       const title =
         entry.kind === "missed"
           ? t("scheduledTask.notificationMissedTitle")
@@ -315,11 +316,9 @@ async function surfaceStartupScheduledFactsOnce(
         () =>
           useUiStore.getState().openScheduledTaskHistory({ taskId: task.id }),
       );
-      markSeen(key, factAt);
+      markFactSeen(key, factAt);
     }
   }
 
-  if (seenDirty) writeSeenFacts(seen);
-  if (newest > legacyBaseline) advanceSeenBaseline(newest);
-  if (historiesComplete) markSeenFactsInitialized();
+  markSeenFactsInitialized();
 }
