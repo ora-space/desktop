@@ -196,7 +196,10 @@ export function markScheduledTaskHistorySeen(
       markFactSeen(key, surfaceableFactAt(fact) ?? Date.now());
       return true;
     } catch {
-      // The event remains actionable even when its history refresh is temporarily unavailable.
+      // The event remains actionable even when its history refresh is temporarily unavailable:
+      // the toast fires, the fact is not marked seen, and a later startup pass may surface it
+      // again. This is an accepted trade-off — a duplicate notification is preferred over a
+      // silently dropped one (ora-space/circus#333).
       return true;
     }
   });
@@ -248,8 +251,11 @@ async function surfaceStartupScheduledFactsOnce(
 ): Promise<void> {
   const t = appI18n.t.bind(appI18n);
   // The very first run on an install adopts the existing history as already seen instead of
-  // replaying every historical failure as a notification storm.
+  // replaying every historical failure as a notification storm. The pass start time bounds the
+  // adoption so that a partial history read (some tasks failing) does not silently absorb new
+  // facts that were persisted after the pass began (edge case from ora-space/circus#333).
   const migrateOnly = !seenFactsInitialized();
+  const passStartedAt = Date.now();
   const legacyBaseline = migrateOnly ? readSeenBaseline() : 0;
   let newest = legacyBaseline;
   let historiesComplete = true;
@@ -290,13 +296,18 @@ async function surfaceStartupScheduledFactsOnce(
       const factAt = surfaceableFactAt(entry);
       const key = factKey(task.id, entry);
       if (factAt === null || key === null || hasSeen(key)) continue;
+      // On the first run (migrate-only), adopt all facts. On subsequent passes, only adopt
+      // facts at or before the legacy baseline, and never silently absorb facts that appeared
+      // after this pass started — those will be surfaced by the next pass or by the live
+      // event stream instead.
       if (migrateOnly || factAt <= baseline) {
-        // Facts recorded before this feature (or already covered by the legacy baseline,
-        // including entries evicted from the bounded seen map) are adopted as seen without
-        // replaying them as notifications. The baseline still advances so these facts stay
-        // suppressed even when the bounded seen map later evicts them.
         newest = Math.max(newest, factAt);
         markSeen(key, factAt);
+        continue;
+      }
+      if (factAt > passStartedAt) {
+        // A fact that appeared after this pass started was persisted by a live path that
+        // already surfaced it (or will surface it). Do not silently absorb it here.
         continue;
       }
       newest = Math.max(newest, factAt);

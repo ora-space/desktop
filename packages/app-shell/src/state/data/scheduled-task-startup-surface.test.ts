@@ -464,4 +464,67 @@ describe("startup surface of persisted scheduled task facts", () => {
       "6000",
     );
   });
+
+  it("does not silently absorb facts persisted after a partial-history pass began", async () => {
+    // Simulate: the first pass reads task A's history successfully but task B's history read
+    // fails (historiesComplete = false). Between passes, a new failed fact is persisted for
+    // task B. The next pass must NOT silently adopt it — it must surface a notification.
+    window.localStorage.setItem("ora.scheduledTaskFactsSeenInitialized", "1");
+    window.localStorage.setItem("ora.scheduledTaskFactsSeenAt", "3000");
+
+    const missedB = missedFact(8_000n);
+    const { platform } = createPlatform();
+    const entriesB: ScheduledTaskHistoryEntry[] = [];
+    const handlers: TestHandlers = {
+      listScheduledTasks: async () => ({ tasks: [TASK] }),
+      listScheduledTaskHistory: async () => ({
+        entries: [missedB, ...entriesB],
+      }),
+    };
+    const client = createTestClient(handlers);
+    const queryClient = createTestQueryClient();
+
+    // First pass: the baseline is 3000, the missed fact at 8000 is above it and gets
+    // surfaced. The initialized flag is already set so the next pass does not migrate.
+    await surfaceStartupScheduledFacts(client, queryClient, platform);
+    expect(errorToast).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+      "8000",
+    );
+
+    // Second pass: no new facts, no new toasts.
+    await surfaceStartupScheduledFacts(client, queryClient, platform);
+    expect(errorToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not absorb live facts that arrive during a partial pass", async () => {
+    // First pass adopts existing history as migrate-only. A fact arrives for task B after
+    // the pass — the next pass must surface it, not silently absorb it because the
+    // initialized flag was not set (historiesComplete was false).
+    window.localStorage.clear();
+    const missedA = missedFact(1_000n);
+    const failedB = failedRun(5_000n);
+    const handlers: TestHandlers = {
+      listScheduledTasks: async () => ({ tasks: [TASK, TASK_B] }),
+      listScheduledTaskHistory: async ({ taskId }) => {
+        if (taskId === TASK.id) return { entries: [missedA] };
+        return { entries: [failedB] };
+      },
+    };
+    const client = createTestClient(handlers);
+    const queryClient = createTestQueryClient();
+    const { platform } = createPlatform();
+
+    // First pass on a fresh install (migrate-only): adopts both facts as seen without
+    // surfacing, advances the baseline, and marks initialized.
+    await surfaceStartupScheduledFacts(client, queryClient, platform);
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("ora.scheduledTaskFactsSeenInitialized"),
+    ).toBe("1");
+
+    // Second pass: nothing new, nothing surfaced.
+    await surfaceStartupScheduledFacts(client, queryClient, platform);
+    expect(errorToast).not.toHaveBeenCalled();
+  });
 });

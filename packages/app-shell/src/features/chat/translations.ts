@@ -293,7 +293,8 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.title": "Agent 技能同步需要手动恢复",
     "chat.agentEffectRecovery.action": "恢复",
     "chat.agentEffectRecovery.pending": "正在恢复…",
-    "chat.agentEffectRecovery.refused": "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
+    "chat.agentEffectRecovery.refused":
+      "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",

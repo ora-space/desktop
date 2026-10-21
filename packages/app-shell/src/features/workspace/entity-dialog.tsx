@@ -87,7 +87,8 @@ function optionMatchesQuery(
   selectedLabel: string,
 ): boolean {
   const needle = query.trim().toLowerCase();
-  if (needle === "" || needle === selectedLabel.trim().toLowerCase()) return true;
+  if (needle === "" || needle === selectedLabel.trim().toLowerCase())
+    return true;
   return [option.label, option.keywords, option.value].some((part) =>
     part?.toLowerCase().includes(needle),
   );
@@ -403,7 +404,8 @@ function SearchableSelectField({
   const menuOpenRef = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const selected = field.options.find((option) => option.value === value) ?? null;
+  const selected =
+    field.options.find((option) => option.value === value) ?? null;
 
   return (
     <Popover

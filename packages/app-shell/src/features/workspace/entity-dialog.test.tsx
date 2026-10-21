@@ -1,5 +1,11 @@
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -295,8 +301,12 @@ describe("EntityDialog searchable select", () => {
     const option = await screen.findByRole("option", { name: longName });
     expect(option.textContent).toBe(longName);
     expect(option.className).not.toContain("last-child]:hidden");
-    expect(option.querySelector("span")?.className).toContain("wrap-break-word");
-    expect(option.querySelector("span")?.className).toContain("whitespace-normal");
+    expect(option.querySelector("span")?.className).toContain(
+      "wrap-break-word",
+    );
+    expect(option.querySelector("span")?.className).toContain(
+      "whitespace-normal",
+    );
   });
 
   it("filters by the git branch name behind a task title", async () => {
@@ -353,7 +363,11 @@ describe("EntityDialog searchable select", () => {
           options: [
             { label: "main", value: "refs/heads/main", keywords: "main" },
             { label: chinese, value: "refs/heads/zh", keywords: chinese },
-            { label: unbroken, value: "refs/heads/unbroken", keywords: unbroken },
+            {
+              label: unbroken,
+              value: "refs/heads/unbroken",
+              keywords: unbroken,
+            },
           ],
         },
       ],
@@ -416,8 +430,14 @@ describe("EntityDialog searchable select", () => {
       fields: [{ ...branchFields[0]!, value: "refs/heads/long" }],
     });
     const input = screen.getByRole("combobox", { name: "Base branch" });
-    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 400 });
-    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+    Object.defineProperty(input, "scrollWidth", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(input, "clientWidth", {
+      configurable: true,
+      value: 80,
+    });
 
     await user.hover(input);
 
@@ -428,8 +448,14 @@ describe("EntityDialog searchable select", () => {
     const user = userEvent.setup();
     renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
     const input = screen.getByRole("combobox", { name: "Base branch" });
-    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 40 });
-    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+    Object.defineProperty(input, "scrollWidth", {
+      configurable: true,
+      value: 40,
+    });
+    Object.defineProperty(input, "clientWidth", {
+      configurable: true,
+      value: 80,
+    });
 
     await user.hover(input);
     await act(async () => {
