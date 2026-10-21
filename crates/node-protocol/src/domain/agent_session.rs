@@ -99,6 +99,9 @@ pub struct AgentSessionSpec {
     /// Only a binding reference crosses the control protocol; model credentials never do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_binding_id: Option<ModelBindingId>,
+    /// Frozen non-secret adapter input. Runtime authority is obtained separately over mTLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_configuration: Option<ora_plugin_protocol::AgentModelConfiguration>,
     pub git_identity: GitIdentity,
     pub initial_turn: UserTurn,
     /// The Revision this session resumes; the Node restores it into the checkout before the agent
@@ -125,6 +128,36 @@ impl AgentSessionSpec {
             });
         }
         self.git_identity.validate()?;
+        if let Some(configuration) = &self.agent_configuration {
+            let digest = |value: &str| {
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            };
+            if self.model_binding_id.is_none()
+                || configuration.plugin_id != self.agent_plugin_id.as_str()
+                || configuration.plugin_version != self.agent_plugin_version.as_str()
+                || configuration.schema_version != 2
+                || configuration.adapter_version != 1
+                || configuration.configuration_revision > 9_007_199_254_740_991
+                || configuration.settings_json.len() > 256 * 1024
+                || serde_json::from_str::<serde_json::Map<String, Value>>(
+                    &configuration.settings_json,
+                )
+                .is_err()
+                || configuration.model.id.is_empty()
+                || configuration.model.context_window == 0
+                || configuration.model.max_tokens == 0
+                || configuration.target.is_empty()
+                || !digest(&configuration.package_sha256)
+                || !digest(&configuration.declaration_fingerprint)
+            {
+                return Err(MessageValidationError::EmptyField {
+                    field: "agent_configuration",
+                });
+            }
+        }
         if self
             .model_binding_id
             .as_ref()

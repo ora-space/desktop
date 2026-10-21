@@ -36,6 +36,11 @@ pub(in crate::cloud) fn start(
                 checkout_execution_id: ExecutionId::new(spec.checkout_execution_id.clone()),
                 model_binding_id: (!spec.model_binding_id.is_empty())
                     .then(|| ModelBindingId::new(spec.model_binding_id.clone())),
+                agent_configuration: spec
+                    .agent_configuration
+                    .as_ref()
+                    .map(agent_configuration)
+                    .transpose()?,
                 git_identity: GitIdentity {
                     name: identity.name.clone(),
                     email: identity.email.clone(),
@@ -47,6 +52,37 @@ pub(in crate::cloud) fn start(
     };
     command.validate()?;
     Ok(command)
+}
+
+/// JSON settings preserve their number lexemes; only non-secret admission data is translated.
+fn agent_configuration(
+    input: &proto::AgentModelConfiguration,
+) -> Result<ora_node_protocol::AgentModelConfiguration, Error> {
+    if input.settings_json.len() > 256 * 1024 {
+        return Err(Error::Conflict);
+    }
+    Ok(ora_node_protocol::AgentModelConfiguration {
+        plugin_id: input.plugin_id.clone(),
+        plugin_version: input.plugin_version.clone(),
+        target: input.target.clone(),
+        package_sha256: input.package_sha256.clone(),
+        schema_version: input.schema_version,
+        declaration_fingerprint: input.declaration_fingerprint.clone(),
+        adapter_version: input.adapter_version,
+        configuration_revision: input.configuration_revision,
+        settings_json: input.settings_json.clone(),
+        protocol: serde_json::from_value(serde_json::Value::String(input.protocol.clone()))
+            .map_err(|_| Error::Conflict)?,
+        model: {
+            let model = input.model.as_ref().ok_or(Error::Conflict)?;
+            ora_node_protocol::AgentBoundModel {
+                id: model.id.clone(),
+                name: model.name.clone(),
+                context_window: model.context_window,
+                max_tokens: model.max_tokens,
+            }
+        },
+    })
 }
 
 /// A session restores its prior Revision from exactly the object Cloud verified, so a prior
@@ -227,6 +263,7 @@ mod tests {
                 spec: Some(proto::execution_input::Spec::AgentSession(
                     proto::AgentSessionSpec {
                         model_binding_id: String::new(),
+                        agent_configuration: None,
                         agent_plugin_id: "official/ora-space.echo".into(),
                         agent_plugin_version: "1.2.3".into(),
                         checkout_execution_id: "clone".into(),

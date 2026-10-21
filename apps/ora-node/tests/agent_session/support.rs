@@ -241,6 +241,18 @@ impl PluginCatalog for Catalog {
             .get(&(plugin_id.clone(), version.clone()))
             .cloned()
     }
+
+    /// This execution fixture supplies validated catalog evidence; receipt validation has its own real-package tests.
+    fn model_protocols(
+        &self,
+        configuration: &ora_plugin_protocol::AgentModelConfiguration,
+    ) -> Option<Vec<ora_plugin_protocol::AgentModelProtocol>> {
+        self.installed(
+            &PluginId::new(&configuration.plugin_id),
+            &PluginVersion::new(&configuration.plugin_version),
+        )?;
+        Some(vec![configuration.protocol])
+    }
 }
 
 /// Answers every restore with a scripted result and records the requests it saw.
@@ -369,13 +381,28 @@ impl Fixture {
 
     /// Composes session execution as [`Self::sessions`] does, running agents per `workload`.
     pub fn sessions_with(&self, installed_version: &str, workload: SessionWorkload) -> Sessions {
+        self.sessions_configured(installed_version, workload, /*model_proxy*/ None)
+    }
+
+    /// Uses the production grant owner and startup channel with a synthetic mutually authenticated gateway.
+    pub fn sessions_with_model(&self, model_proxy: ora_node::ModelProxyConfig) -> Sessions {
+        self.sessions_configured(PLUGIN_VERSION, SessionWorkload::Shared, Some(model_proxy))
+    }
+
+    /// Composes the same real session runtime while explicitly varying its test-only grant boundary.
+    fn sessions_configured(
+        &self,
+        installed_version: &str,
+        workload: SessionWorkload,
+        model_proxy: Option<ora_node::ModelProxyConfig>,
+    ) -> Sessions {
         AgentSessions::new(
             SessionConfig {
                 home_directory: self.home(),
                 deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
                 timezone: chrono_tz::UTC,
                 agent_ready_timeout: Duration::from_secs(30),
-                model_proxy: None,
+                model_proxy,
                 workload,
             },
             self.node(),
@@ -420,6 +447,7 @@ impl Fixture {
                 agent_plugin_version: PluginVersion::new(version),
                 checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
                 model_binding_id: None,
+                agent_configuration: None,
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
                 prior_revision: prior,

@@ -31,6 +31,7 @@ pub(super) fn hello_accepted() -> Case {
             HelloAcceptedMessage {
                 protocol_version: CURRENT_PROTOCOL_VERSION,
                 payload: HelloAccepted {
+                    model_adapter: None,
                     thread_previews: false,
                     selected_version: CURRENT_PROTOCOL_VERSION,
                     node: node(),

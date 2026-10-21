@@ -30,6 +30,46 @@ pub struct CompiledAgentConfiguration {
     pub fingerprint: String,
 }
 
+/// Validates frozen effective settings using the same scalar and completeness rules as the editor.
+pub fn validate_agent_settings(
+    declaration: &CompiledAgentConfiguration,
+    settings: &serde_json::Map<String, Value>,
+) -> bool {
+    let values = match settings
+        .iter()
+        .map(|(key, value)| {
+            serde_json::from_value::<crate::SettingValue>(value.clone())
+                .map(|value| (key.clone(), value))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+    {
+        Ok(values) => values,
+        Err(_) => return false,
+    };
+    let compiled = crate::CompiledDeclaration {
+        schema_version: 1,
+        settings: declaration.settings.clone(),
+        fingerprint: declaration.fingerprint.clone(),
+    };
+    if !crate::values::validate_values(&compiled, &values).is_empty() {
+        return false;
+    }
+    let details = crate::values::details_from(
+        compiled,
+        crate::values::StoredConfiguration {
+            schema_version: 1,
+            revision: 0,
+            values,
+        },
+    );
+    matches!(
+        details.summary,
+        crate::ConfigurationSummary::Available {
+            completeness: crate::ConfigurationCompleteness::Complete
+        }
+    )
+}
+
 impl CompiledAgentConfiguration {
     /// The Settings subset this declaration contributes to the desktop-local value editor.
     ///

@@ -70,6 +70,7 @@ impl DirectoryPluginCatalog {
         id: &ora_domain::PluginId,
         version: &semver::Version,
         declaration: Option<&ExpectedAgentDeclaration>,
+        artifact: &super::model_configuration::PackageArtifact<'_>,
     ) -> Result<bool, PluginFailureCode> {
         let uses = self.uses();
         let path = self.path(id, version);
@@ -82,7 +83,11 @@ impl DirectoryPluginCatalog {
                 verify_agent_declaration(&path, expected)
                     .map_err(|_| PluginFailureCode::InvalidPackage)?;
             }
-            return Ok(true);
+            if declaration.is_none()
+                || self.package_recorded(id, version, artifact.sha256, artifact.target)
+            {
+                return Ok(true);
+            }
         }
         if uses.contains_key(&id.canonical()) {
             return Err(PluginFailureCode::PluginInUse);
@@ -96,11 +101,14 @@ impl DirectoryPluginCatalog {
         id: &ora_domain::PluginId,
         version: &semver::Version,
         prepared: PreparedPlugin,
+        artifact: &super::model_configuration::PackageArtifact<'_>,
     ) -> Result<(), PluginFailureCode> {
         let uses = self.uses();
         if uses.contains_key(&id.canonical()) {
             return Err(PluginFailureCode::PluginInUse);
         }
+        self.clear_package_record(id, version)
+            .map_err(|_| PluginFailureCode::InstallFailed)?;
         let destination = prepared.commit(&self.home).map_err(super::failure)?;
         // Retire only version directories belonging to this plugin; its data/config live elsewhere.
         let parent = destination
@@ -116,7 +124,8 @@ impl DirectoryPluginCatalog {
                     .map_err(|_| PluginFailureCode::InstallFailed)?;
             }
         }
-        Ok(())
+        self.record_package(id, version, artifact.sha256, artifact.target)
+            .map_err(|_| PluginFailureCode::InstallFailed)
     }
 
     /// Removes the requested package identity without following a link or deleting plugin data.
@@ -162,6 +171,13 @@ impl PluginCatalog for DirectoryPluginCatalog {
         ora_utils::path::check_directory_without_symlinks(&path).ok()?;
         inspect_planned_package(&path, &id, &version).ok()?;
         Some(path)
+    }
+
+    fn model_protocols(
+        &self,
+        configuration: &ora_plugin_protocol::AgentModelConfiguration,
+    ) -> Option<Vec<ora_plugin_protocol::AgentModelProtocol>> {
+        self.declared_protocols(configuration)
     }
 }
 

@@ -22,6 +22,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
                 agent_plugin_version: PluginVersion::new("1.0.0"),
                 checkout_execution_id: ExecutionId::new("clone-exec-agent"),
                 model_binding_id: None,
+                agent_configuration: None,
                 git_identity: GitIdentity {
                     name: "Test".into(),
                     email: "test@example.com".into(),

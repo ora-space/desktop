@@ -6,6 +6,8 @@
 
 ## Agent 来自插件
 
+Cloud 的声明式模型 adapter 运行在 prompt 之外携带冻结身份和保留数值原文的 Settings JSON。Node 在获取模型授权前校验管理端归属的包 digest 记录、安装声明、target 与协议。临时 token 只加入当前进程的 `agent/start` RPC，不进入 Controller 输入、ledger 或历史；插件必须应用上下文并确认相同版本、声明指纹和配置 revision 后才进入 ACP 初始化。未声明的旧 OpenCode 运行保留显式兼容路径。声明式插件及宿主管理的子进程从空环境启动，由各自 owner 显式提供必要进程变量、独立 HOME/状态目录、公共 CA 与 adapter 配置。
+
 每个 Agent 都由一个已安装的 `agent` 类型插件提供；Ora 不内置任何 Agent，用户安装提供 Agent 的包之前一个都没有（每个包一个 Agent）。插件完整拥有它的 Agent 进程：决定运行哪个 CLI，并通过 `agent/acp` 通知通道把 ACP 帧转给宿主。见 [`plugin_agent/README.md`](../../crates/agent-runtime/src/plugin_agent/README.md) 和[插件系统](../plugins/plugin-system.zh.md)。
 
 - **身份**：会话保存一个 `AgentRef`，即提供它的包的完整规范插件 id（`official/ora-space.claude`）。命名空间是身份的一部分，因为两个 marketplace 源可能发布相同的 identifier。没有 supervisor 认识的身份表示"当前未安装"，报告为 `agent_runtime_unavailable`。以更早、更短写法保存的值按原样携带，在用户重新选择 Agent 之前不匹配任何 Agent；没有任何东西会改写它们。

@@ -118,6 +118,7 @@ pub(super) struct Sandbox {
     pub(super) gate: sync::Mutex<Gate>,
     unresolved: Mutex<HashMap<ExecutionId, Instant>>,
     capabilities: Mutex<Vec<NodeCapability>>,
+    model_adapter: Mutex<Option<ora_node_protocol::ModelAdapterCapabilities>>,
     /// Cloud's Node records of this sandbox, from the latest snapshot.
     known: Mutex<Vec<proto::NodeRecord>>,
 }
@@ -146,6 +147,32 @@ impl Sandbox {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .contains(&NodeCapability::ModelProxy)
+    }
+
+    /// The registration report freezes the exact metadata negotiated by the live session.
+    pub(super) fn advertised_model_adapter(
+        &self,
+    ) -> Option<ora_node_protocol::ModelAdapterCapabilities> {
+        self.model_adapter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A claim cannot bypass the current session's target, adapter version or protocol.
+    pub(super) fn accepts_agent_configuration(
+        &self,
+        configuration: Option<&proto::AgentModelConfiguration>,
+    ) -> bool {
+        configuration.is_none_or(|configuration| {
+            self.advertised_model_adapter().is_some_and(|capability| {
+                capability.supports(
+                    &configuration.target,
+                    configuration.adapter_version,
+                    &configuration.protocol,
+                )
+            })
+        })
     }
 
     /// Whether a session is established right now.
@@ -196,6 +223,12 @@ impl Sandbox {
 }
 
 impl SessionObserver for Sandbox {
+    fn model_adapter(&self, capability: Option<&ora_node_protocol::ModelAdapterCapabilities>) {
+        *self
+            .model_adapter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = capability.cloned();
+    }
     fn capabilities(&self, capabilities: &[NodeCapability]) {
         *self
             .capabilities
@@ -299,6 +332,7 @@ impl Fleet {
             gate: sync::Mutex::new(Gate::Open),
             unresolved: Mutex::default(),
             capabilities: Mutex::default(),
+            model_adapter: Mutex::default(),
             known: Mutex::new(records),
         });
         let (stop, stopping) = watch::channel(false);

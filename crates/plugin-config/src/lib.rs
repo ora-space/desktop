@@ -12,7 +12,7 @@ mod windows_permissions;
 
 pub use agent::{
     AgentModelAccess, AgentModelCardinality, AgentModelProtocol, CompileAgentConfigurationError,
-    CompiledAgentConfiguration, compile_agent_configuration,
+    CompiledAgentConfiguration, compile_agent_configuration, validate_agent_settings,
 };
 pub use declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, MAX_SETTINGS,

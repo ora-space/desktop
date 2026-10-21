@@ -31,6 +31,7 @@ pub(super) fn start() -> Case {
                         agent_plugin_version: PluginVersion::new("1.2.0"),
                         checkout_execution_id: ExecutionId::new("execution-clone"),
                         model_binding_id: None,
+                        agent_configuration: None,
                         git_identity: GitIdentity {
                             name: "Ada Lovelace".to_owned(),
                             email: "ada@example.com".to_owned(),

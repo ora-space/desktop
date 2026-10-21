@@ -15,6 +15,15 @@ use crate::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokioProcessSpawner {
     identity: ProcessIdentity,
+    environment: ProcessEnvironment,
+}
+
+/// Whether host environment authority is inherited by every child of this spawner.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ProcessEnvironment {
+    #[default]
+    Inherit,
+    Empty,
 }
 
 impl TokioProcessSpawner {
@@ -25,7 +34,16 @@ impl TokioProcessSpawner {
     /// Creates a spawner whose children run as `identity` instead of inheriting this process's
     /// credentials. A child that cannot take the identity never executes: its spawn fails.
     pub fn running_as(identity: ProcessIdentity) -> Self {
-        Self { identity }
+        Self {
+            identity,
+            environment: ProcessEnvironment::Inherit,
+        }
+    }
+
+    /// Configures inheritance once for a scoped owner; explicit ProcessSpec envs still apply.
+    pub fn with_environment(mut self, environment: ProcessEnvironment) -> Self {
+        self.environment = environment;
+        self
     }
 }
 
@@ -72,6 +90,9 @@ impl ProcessSpawner for TokioProcessSpawner {
         })?;
         let reaper_registration = spec.reaper_registration();
         let mut command = Command::new(spec.program());
+        if let ProcessEnvironment::Empty = self.environment {
+            command.env_clear();
+        }
         command.args(spec.args_iter());
         ora_utils::process::hide_console_window(command.as_std_mut());
 

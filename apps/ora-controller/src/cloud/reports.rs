@@ -99,20 +99,36 @@ async fn register(
     let epoch = store.epoch()?;
     let binding = &sandbox.binding;
     let model_proxy = sandbox.advertised_model_proxy();
-    let response = fault::write(|submission_id| async move {
-        let request = store.request(proto::RegisterNodeRequest {
-            submission_id,
-            epoch,
-            sandbox_instance_id: binding.sandbox_id.clone(),
-            generation: binding.generation,
-            node: Some(proto::NodeIdentity {
-                node_id: node.node_id.as_str().into(),
-                node_incarnation_id: node.incarnation_id.as_str().into(),
-            }),
-            protocol_version: u32::from(CURRENT_PROTOCOL_VERSION.value()),
-            model_proxy,
-        });
-        store.nodes().register_node(request).await
+    let model_adapter =
+        sandbox
+            .advertised_model_adapter()
+            .map(|capability| proto::ModelAdapterCapabilities {
+                contract_version: capability.contract_version,
+                target: capability.target,
+                protocols: capability
+                    .protocols
+                    .into_iter()
+                    .map(|protocol| protocol.as_str().to_owned())
+                    .collect(),
+            });
+    let response = fault::write(|submission_id| {
+        let model_adapter = model_adapter.clone();
+        async move {
+            let request = store.request(proto::RegisterNodeRequest {
+                submission_id,
+                epoch,
+                sandbox_instance_id: binding.sandbox_id.clone(),
+                generation: binding.generation,
+                node: Some(proto::NodeIdentity {
+                    node_id: node.node_id.as_str().into(),
+                    node_incarnation_id: node.incarnation_id.as_str().into(),
+                }),
+                protocol_version: u32::from(CURRENT_PROTOCOL_VERSION.value()),
+                model_proxy,
+                model_adapter: model_adapter.clone(),
+            });
+            store.nodes().register_node(request).await
+        }
     })
     .await
     .map_err(|verdict| store.settle(verdict))?;

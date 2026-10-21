@@ -8,6 +8,8 @@ mod frame;
 mod identity;
 mod message;
 pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
+pub use ora_plugin_protocol::AgentBoundModel;
+pub use ora_plugin_protocol::AgentModelConfiguration;
 
 pub use domain::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, BranchName,
@@ -45,13 +47,13 @@ pub use message::{
     EnsureWorktreeMessage, EventAck, EventAckMessage, ExecutionState, ExecutionStatus,
     ExecutionStatusMessage, GetExecutionStatus, GetExecutionStatusMessage, Heartbeat,
     HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage, InstallPlugins,
-    InstallPluginsMessage, MessageValidationError, NodeCapability, NodeToControllerMessage,
-    PluginCommand, PluginsResultMessage, RemovePlugins, RemovePluginsMessage, RemoveWorktree,
-    RemoveWorktreeMessage, RevisionResultMessage, RuntimeBinding, RuntimeControlState,
-    SessionCommandAccepted, SessionCommandAcceptedMessage, SessionCommandRejected,
-    SessionCommandRejectedMessage, SessionCommandRejection, StartAgentSession,
-    StartAgentSessionMessage, SubmitUserTurn, SubmitUserTurnMessage, ThreadEventMessage,
-    UploadGrant, UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage, ValidateMessage,
-    WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
-    WorktreeRemovedMessage,
+    InstallPluginsMessage, MessageValidationError, ModelAdapterCapabilities, NodeCapability,
+    NodeToControllerMessage, PluginCommand, PluginsResultMessage, RemovePlugins,
+    RemovePluginsMessage, RemoveWorktree, RemoveWorktreeMessage, RevisionResultMessage,
+    RuntimeBinding, RuntimeControlState, SessionCommandAccepted, SessionCommandAcceptedMessage,
+    SessionCommandRejected, SessionCommandRejectedMessage, SessionCommandRejection,
+    StartAgentSession, StartAgentSessionMessage, SubmitUserTurn, SubmitUserTurnMessage,
+    ThreadEventMessage, UploadGrant, UploadGrantMessage, UploadGrantNeeded,
+    UploadGrantNeededMessage, ValidateMessage, WorktreeFailedMessage, WorktreeReadyMessage,
+    WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
 };

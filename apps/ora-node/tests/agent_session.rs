@@ -8,11 +8,170 @@ mod resume;
 #[path = "agent_session/support.rs"]
 mod support;
 
+use ora_node::ModelProxyConfig;
 use ora_node::{CommandSettlement, SessionCommand, SessionHost};
 use ora_node_protocol::{AgentSessionEndReason, AgentSessionEnded, EndSessionReason, TurnId};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use support::*;
+#[path = "../test-support/model_gateway.rs"]
+mod model_gateway;
+
+/// A binding alone cannot give another plugin OpenCode's legacy environment conversion.
+#[test]
+fn missing_declaration_cannot_enter_the_legacy_model_route() {
+    with_scoped_async_test(async {
+        use ora_node_protocol::{
+            AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
+        };
+        let fixture = Fixture::new();
+        let tls = tempfile::tempdir().unwrap();
+        let gateway = model_gateway::Gateway::new(tls.path());
+        let sessions = fixture.sessions_with_model(gateway.config.clone());
+        sessions.start(
+            OperationId::new(OPERATION),
+            ExecutionId::new(EXECUTION),
+            AgentSessionSpec {
+                node_id: fixture.node().node_id,
+                agent_plugin_id: PluginId::new(PLUGIN_ID),
+                agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+                checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+                model_binding_id: Some(ModelBindingId::new("binding-1")),
+                agent_configuration: None,
+                git_identity: identity(),
+                initial_turn: turn("turn-1", "must not be sent"),
+                prior_revision: None,
+            },
+        );
+        assert_eq!(
+            fixture.ended().await.detail,
+            Some("agent_model_configuration_required".into())
+        );
+        sessions.shutdown().await;
+        assert!(gateway.requests.lock().unwrap().is_empty());
+        assert!(fixture.plugin_pids().is_empty());
+    });
+}
+
+/// A non-CLI-specific plugin applies frozen scalar JSON before the first prompt, or gets no prompt.
+#[test]
+fn declared_adapter_confirmation_fences_the_first_prompt_without_persisting_authority() {
+    with_scoped_async_test(async {
+        use ora_node_protocol::{
+            AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
+        };
+        use ora_plugin_protocol::{AgentBoundModel, AgentModelConfiguration, AgentModelProtocol};
+        for (acknowledge, revoke) in [(true, false), (true, true), (false, false)] {
+            let fixture = Fixture::new();
+            let tls = tempfile::tempdir().unwrap();
+            let gateway = model_gateway::Gateway::new(tls.path());
+            let sessions = fixture.sessions_with_model(gateway.config.clone());
+            let configuration = AgentModelConfiguration {
+                plugin_id: PLUGIN_ID.into(),
+                plugin_version: PLUGIN_VERSION.into(),
+                target: ora_plugin_registry::current_host_target()
+                    .unwrap()
+                    .as_str()
+                    .into(),
+                package_sha256: "a".repeat(64),
+                schema_version: 2,
+                declaration_fingerprint: "b".repeat(64),
+                adapter_version: 1,
+                configuration_revision: 7,
+                settings_json: format!(
+                    "{{\"acknowledge\":{acknowledge},\"budget\":9007199254740993,\"ratio\":0.123456789012345678901,\"dialect\":\"first\"}}"
+                ),
+                protocol: AgentModelProtocol::OpenaiCompletions,
+                model: AgentBoundModel {
+                    id: "team/model".into(),
+                    name: "Fixture".into(),
+                    context_window: 32768,
+                    max_tokens: 1024,
+                },
+            };
+            sessions.start(
+                OperationId::new(OPERATION),
+                ExecutionId::new(EXECUTION),
+                AgentSessionSpec {
+                    node_id: fixture.node().node_id,
+                    agent_plugin_id: PluginId::new(PLUGIN_ID),
+                    agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+                    checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+                    model_binding_id: Some(ModelBindingId::new("binding-1")),
+                    agent_configuration: Some(configuration.clone()),
+                    git_identity: identity(),
+                    initial_turn: turn("turn-1", "[model-context]"),
+                    prior_revision: None,
+                },
+            );
+            if acknowledge {
+                until(|| {
+                    fixture
+                        .ledger
+                        .events()
+                        .iter()
+                        .any(|event| {
+                            serde_json::to_string(&event.record)
+                                .unwrap()
+                                .contains("dialect")
+                        })
+                        .then_some(())
+                })
+                .await;
+                if revoke {
+                    gateway
+                        .behavior
+                        .deny_renewal
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    fixture.command(
+                        &sessions,
+                        "end",
+                        SessionCommand::EndSession(EndSessionReason::UserEnded),
+                    );
+                }
+                assert_eq!(
+                    fixture.ended().await.reason,
+                    if revoke {
+                        AgentSessionEndReason::AgentFailed
+                    } else {
+                        AgentSessionEndReason::UserEnded
+                    }
+                );
+                assert_eq!(
+                    std::fs::read_to_string(fixture.package_root().join("echo-agent.prompt-count"))
+                        .unwrap(),
+                    "1"
+                );
+            } else {
+                assert_eq!(
+                    fixture.ended().await.reason,
+                    AgentSessionEndReason::AgentFailed
+                );
+                assert!(
+                    !fixture
+                        .package_root()
+                        .join("echo-agent.prompt-count")
+                        .exists()
+                );
+            }
+            sessions.shutdown().await;
+            let history = match sessions.sealed_history(&ExecutionId::new(EXECUTION)) {
+                Ok(path) => std::fs::read_to_string(path).unwrap(),
+                Err(_) if !acknowledge => String::new(),
+                Err(error) => panic!("started session history unavailable: {error}"),
+            };
+            assert!(!history.contains("synthetic-temporary-token"));
+            if acknowledge {
+                assert!(history.contains("9007199254740993"));
+                assert!(history.contains("0.123456789012345678901"));
+            }
+            assert!(gateway.requests.lock().unwrap().iter().any(|(request, _)| {
+                request.starts_with("DELETE /internal/v1/model-grants/grant-1")
+            }));
+        }
+    });
+}
 
 /// A committed end command wins over a racing ACP error even before its wake-up arrives.
 #[test]
@@ -125,6 +284,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
             agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
             checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
+            agent_configuration: None,
             prior_revision: None,
             git_identity: identity(),
             initial_turn: turn("turn-1", "read the repository"),

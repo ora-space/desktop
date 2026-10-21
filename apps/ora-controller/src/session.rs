@@ -120,6 +120,8 @@ pub(crate) trait SessionObserver: Send + Sync {
     fn established(&self, node: &NodeRuntimeIdentity);
     /// Records the negotiated capabilities before publishing the connected identity.
     fn capabilities(&self, _capabilities: &[NodeCapability]) {}
+    /// Records exact adapter requirements before the connected incarnation becomes visible.
+    fn model_adapter(&self, _capability: Option<&ora_node_protocol::ModelAdapterCapabilities>) {}
     /// The Node still answers `Unknown` for an execution after this connection retransmitted its
     /// original command once. It may be a retained uncertain attempt or a command the Node has not
     /// admitted yet; the owner decides how long that may last.
@@ -336,6 +338,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         .capabilities
         .contains(&NodeCapability::RevisionRestore);
     observer.capabilities(&hello.payload.capabilities);
+    observer.model_adapter(hello.payload.model_adapter.as_ref());
     let capabilities = hello.payload.capabilities;
     let identity = hello.payload.node;
     observer.established(&identity);
@@ -356,6 +359,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         identity.clone(),
         Duration::from_millis(config.query_interval_ms),
         capabilities,
+        hello.payload.model_adapter,
         commands.input.clone(),
         grants.input.clone(),
     );

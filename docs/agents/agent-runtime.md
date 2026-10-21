@@ -11,6 +11,8 @@ MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 
 ## Agents come from plugins
 
+Cloud executions with a declared model adapter carry an immutable configuration identity and exact Settings JSON separately from the prompt. Node verifies its management-owned archive receipt, installed declaration, target and protocol before acquiring model authority. The live `agent/start` RPC adds a temporary token; it is never part of the Controller input, ledger or history. An adapter must apply that context and return matching version/fingerprint/revision confirmation before ACP initialization. Older undeclared OpenCode runs retain their explicit compatibility route. Declared plugin/child environments start empty, with only process necessities, private HOME/state, public CA and explicit adapter variables supplied by their owners.
+
 Every agent is supplied by an installed `agent`-kind plugin; nothing is bundled, and Ora ships with
 no agents until the user installs packages that supply them (one agent per package). The plugin
 owns its agent process end to end: it decides which CLI to run and relays ACP frames to the host

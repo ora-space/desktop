@@ -298,6 +298,19 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: HelloAccepted {
+            model_adapter: info
+                .capabilities
+                .contains(&NodeCapability::ModelProxy)
+                .then(ora_plugin_registry::current_host_target)
+                .flatten()
+                .map(|target| ModelAdapterCapabilities {
+                    contract_version: 1,
+                    target: target.as_str().to_owned(),
+                    protocols: vec![
+                        ora_plugin_protocol::AgentModelProtocol::OpenaiCompletions,
+                        ora_plugin_protocol::AgentModelProtocol::AnthropicMessages,
+                    ],
+                }),
             thread_previews: hello.payload.thread_previews && info.agents.is_some(),
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),

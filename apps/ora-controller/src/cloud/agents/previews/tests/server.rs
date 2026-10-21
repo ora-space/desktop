@@ -118,6 +118,7 @@ impl ExecutionService for Server {
                             agent_plugin_version: "1.2.3".into(),
                             checkout_execution_id: "checkout".into(),
                             model_binding_id: String::new(),
+                            agent_configuration: None,
                             git_identity: Some(proto::GitIdentity {
                                 name: "User".into(),
                                 email: "user@example.com".into(),
