@@ -82,7 +82,10 @@ async fn run<S: CoordinationStore>(
             },
             _ = store.wait_agent_command_hint() => tick.reset_immediately(),
             _ = tick.tick() => {
-                let commands = store.pending_agent_commands(&node.node_id).await?;
+                let commands = store.pending_agent_commands(&node.node_id).await.map_err(|error| {
+                    ora_logging::ora_warn!(error = %error, "pending_agent_commands failed");
+                    error
+                })?;
                 let mut runs = HashSet::new();
                 for command in commands {
                     if !runs.insert(command.execution().clone()) { continue; }

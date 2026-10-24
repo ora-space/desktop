@@ -115,8 +115,11 @@ pub async fn take_over<S: CoordinationStore>(
                     return Err(Error::Conflict);
                 }
                 // A status for an unknown dispatch is a conflict even when it carries no result.
+                // Every family this Controller dispatches has to be named here: a family left out
+                // falls through to the clone lookup, and a live execution of that family then reads
+                // as a dispatch this Controller does not own.
                 ExecutionState::Unknown | ExecutionState::Accepted | ExecutionState::Running => {
-                    if store.original_agent_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_delivery_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_plugin_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() {
+                    if store.original_agent_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_delivery_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_plugin_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() && store.original_scheduled_artifacts_dispatch(session, &status.operation_id, &status.execution_id).await?.is_none() {
                         store.original_dispatch(session, &status.operation_id, &status.execution_id).await?;
                     }
                 }

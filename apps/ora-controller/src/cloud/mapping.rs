@@ -42,6 +42,17 @@ fn spec(input: Option<&proto::ExecutionInput>, node: &NodeId) -> Result<CloneExe
     clone_spec(clone, node)
 }
 
+/// Whether a recorded dispatch belongs to this adapter's clone family. Cloud's pending list holds
+/// every family, and each of the others has its own builder, so a record that reaches the clone
+/// path is decoded as a clone and refused as a conflict instead of being skipped: one pending
+/// execution of another family would make every connection end before it could be dispatched.
+pub(in crate::cloud) fn is_clone(record: &proto::ExecutionRecord) -> bool {
+    !super::plugins::mapping::is_plugin(record)
+        && !super::agents::mapping::is_agent(record)
+        && !super::deliveries::mapping::is_delivery(record)
+        && !super::deliveries::mapping::is_scheduled_artifacts(record)
+}
+
 /// The dispatched input as Cloud records it; the target Node travels beside it, not inside it.
 pub(super) fn input(spec: &CloneExecutionSpec) -> proto::ExecutionInput {
     proto::ExecutionInput {
@@ -287,6 +298,45 @@ mod tests {
                 clone_spec(&invalid, &NodeId::new("node")),
                 Err(Error::Conflict)
             ));
+        }
+    }
+
+    /// Cloud's pending list holds every family, and only clone records belong to this adapter's
+    /// list. A pending scheduled-artifact upload left in it is decoded as a clone and refused as a
+    /// conflict, which ends the session before the upload can ever be dispatched.
+    #[test]
+    fn only_clone_records_belong_to_the_clone_family() {
+        let record = |spec: proto::execution_input::Spec| proto::ExecutionRecord {
+            node_operation_id: "execution".into(),
+            operation_id: "operation".into(),
+            execution_id: "execution".into(),
+            node_id: "node".into(),
+            input: Some(proto::ExecutionInput { spec: Some(spec) }),
+            result: None,
+        };
+        let cases = [
+            (proto::execution_input::Spec::Clone(frozen()), true),
+            (
+                proto::execution_input::Spec::DeliverRevision(proto::DeliverRevisionSpec::default()),
+                false,
+            ),
+            (
+                proto::execution_input::Spec::DeliverScheduledArtifacts(
+                    proto::DeliverScheduledArtifactsSpec::default(),
+                ),
+                false,
+            ),
+            (
+                proto::execution_input::Spec::AgentSession(proto::AgentSessionSpec::default()),
+                false,
+            ),
+            (
+                proto::execution_input::Spec::InstallPlugins(proto::InstallPluginsSpec::default()),
+                false,
+            ),
+        ];
+        for (spec, clone) in cases {
+            assert_eq!(is_clone(&record(spec)), clone);
         }
     }
 

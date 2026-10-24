@@ -1,6 +1,6 @@
 //! CoordinationStore adaptation delegates session, delivery, plugin and runtime-control rules to
 //! their owners.
-use super::{CloudStore, agents, coordinate, deliveries, fault, mapping, plugins};
+use super::{CloudStore, agents, coordinate, fault, mapping};
 use crate::*;
 use ora_controller_proto::v1 as proto;
 use std::io;
@@ -314,11 +314,7 @@ impl CoordinationStore for CloudStore {
             .records
             .iter()
             // Every other family has its own pending list; only clones remain here.
-            .filter(|record| {
-                !plugins::mapping::is_plugin(record)
-                    && !agents::mapping::is_agent(record)
-                    && !deliveries::mapping::is_delivery(record)
-            })
+            .filter(|record| mapping::is_clone(record))
             .map(|record| mapping::command(record, node))
             .collect()
     }

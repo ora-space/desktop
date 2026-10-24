@@ -421,3 +421,135 @@ fn tenant_work_waits_until_the_configured_node_proves_its_identity() {
         controller.stop().await;
     });
 }
+
+/// A persisted upload has a distinct execution family even while its Node has no local record.
+fn artifact_record() -> ora_controller_proto::v1::ExecutionRecord {
+    use ora_controller_proto::v1 as proto;
+    proto::ExecutionRecord {
+        operation_id: "run".into(),
+        execution_id: "artifact-upload".into(),
+        node_id: "node".into(),
+        node_operation_id: "upload-attempt".into(),
+        input: Some(proto::ExecutionInput {
+            spec: Some(proto::execution_input::Spec::DeliverScheduledArtifacts(
+                proto::DeliverScheduledArtifactsSpec {
+                    session_execution_id: "ended-session".into(),
+                },
+            )),
+        }),
+        result: None,
+    }
+}
+
+/// Opens the production RPC adapter without starting unrelated claim or session workers.
+fn artifact_store(endpoint: &str) -> CloudStore {
+    CloudStore::open(&RuntimeConfig {
+        management_tls: None,
+        home_directory: PathBuf::from("unused-cloud-home"),
+        persistence: Persistence::Cloud {
+            endpoint: endpoint.into(),
+            claim_interval_ms: NEVER,
+            substrate: None,
+        },
+        protected_state_directories: Vec::new(),
+        controller_id: ControllerId::new("owner"),
+        nodes: vec![NodeTarget {
+            node_id: NodeId::new("node"),
+            endpoint: NodeEndpoint::Ipc {
+                path: PathBuf::from("unused-node.sock"),
+            },
+        }],
+        session: SessionConfig {
+            io_timeout_ms: 100,
+            query_interval_ms: 10,
+        },
+        reconnect_ms: 20,
+        timezone: "Asia/Shanghai".into(),
+    })
+    .unwrap()
+}
+
+/// A pending upload must not fail the clone poll that shares its Controller session.
+#[tokio::test]
+async fn scheduled_artifact_pending_dispatch_does_not_break_clone_poll() {
+    let cloud = FakeCloud::new();
+    cloud.seed_record(artifact_record());
+    let served = cloud.serve().await;
+    let store = artifact_store(&served.endpoint);
+    let node = NodeId::new("node");
+    assert_eq!(store.pending_dispatches(&node).await.unwrap(), vec![]);
+    assert_eq!(
+        store.pending_scheduled_artifacts(&node).await.unwrap(),
+        vec![DeliverScheduledArtifactsMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: OperationId::new("upload-attempt"),
+            execution_id: ExecutionId::new("artifact-upload"),
+            payload: DeliverScheduledArtifacts {
+                spec: DeliverScheduledArtifactsSpec {
+                    session_execution_id: ExecutionId::new("ended-session"),
+                },
+            },
+        }]
+    );
+}
+
+/// Reconnecting before acceptance, or during upload, must preserve the session and its dispatch.
+#[tokio::test]
+async fn scheduled_artifact_nonterminal_status_preserves_its_dispatch_family() {
+    let cloud = FakeCloud::new();
+    cloud.seed_record(artifact_record());
+    let served = cloud.serve().await;
+    let store = artifact_store(&served.endpoint);
+    let session = NodeRuntimeIdentity {
+        node_id: NodeId::new("node"),
+        incarnation_id: NodeIncarnationId::new("current"),
+    };
+    for state in [
+        ExecutionState::Unknown,
+        ExecutionState::Accepted,
+        ExecutionState::Running,
+    ] {
+        let mut status = ExecutionStatusMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: OperationId::new("upload-attempt"),
+            execution_id: ExecutionId::new("artifact-upload"),
+            payload: ExecutionStatus {
+                node: session.clone(),
+                state,
+                stop_unconfirmed: Vec::new(),
+            },
+        };
+        assert_eq!(
+            take_over(
+                &store,
+                &session,
+                &NodeToControllerMessage::ExecutionStatus(status.clone())
+            )
+            .await
+            .unwrap(),
+            None
+        );
+        // Recognizing a family must still reject a status for another dispatch or Node.
+        let mut another_node = status.clone();
+        another_node.payload.node.node_id = NodeId::new("another-node");
+        assert!(matches!(
+            take_over(
+                &store,
+                &session,
+                &NodeToControllerMessage::ExecutionStatus(another_node)
+            )
+            .await,
+            Err(Error::Conflict)
+        ));
+        status.operation_id = OperationId::new("another-attempt");
+        assert!(matches!(
+            take_over(
+                &store,
+                &session,
+                &NodeToControllerMessage::ExecutionStatus(status)
+            )
+            .await,
+            Err(Error::Conflict)
+        ));
+    }
+}

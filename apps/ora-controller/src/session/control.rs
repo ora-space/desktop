@@ -117,6 +117,13 @@ impl Control {
     }
 }
 
+/// Names the poll step that failed. Every one of these errors ends the whole session, and the
+/// conflict class they usually carry says nothing about which call produced it.
+fn step_failed(step: &'static str, error: Error) -> Error {
+    ora_logging::ora_warn!(step, error = %error, "session poll step failed");
+    error
+}
+
 /// Which optional execution families the Node negotiated and therefore may be polled.
 struct Polled {
     agents: bool,
@@ -143,7 +150,11 @@ async fn poll<S: CoordinationStore>(
     let mut cursor = 0usize;
     loop {
         tick.tick().await;
-        for binding in store.runtime_bindings(&node).await? {
+        let bindings = store
+            .runtime_bindings(&node)
+            .await
+            .map_err(|error| step_failed("runtime_bindings", error))?;
+        for binding in bindings {
             if output
                 .send(Action::Send(Box::new(
                     ControllerToNodeMessage::BindRuntime(binding),
@@ -156,14 +167,16 @@ async fn poll<S: CoordinationStore>(
         }
         let mut commands: Vec<_> = store
             .pending_dispatches(&node)
-            .await?
+            .await
+            .map_err(|error| step_failed("pending_dispatches", error))?
             .into_iter()
             .map(|c| (c.operation_id, c.execution_id))
             .collect();
         commands.extend(
             store
                 .pending_plugins(&node)
-                .await?
+                .await
+                .map_err(|error| step_failed("pending_plugins", error))?
                 .into_iter()
                 .map(|c| (c.operation_id().clone(), c.execution_id().clone())),
         );
@@ -171,7 +184,8 @@ async fn poll<S: CoordinationStore>(
             commands.extend(
                 store
                     .pending_agents(&node)
-                    .await?
+                    .await
+                    .map_err(|error| step_failed("pending_agents", error))?
                     .into_iter()
                     .map(|c| (c.operation_id, c.execution_id)),
             );
@@ -180,14 +194,16 @@ async fn poll<S: CoordinationStore>(
             commands.extend(
                 store
                     .pending_deliveries(&node)
-                    .await?
+                    .await
+                    .map_err(|error| step_failed("pending_deliveries", error))?
                     .into_iter()
                     .map(|c| (c.operation_id, c.execution_id)),
             );
             commands.extend(
                 store
                     .pending_scheduled_artifacts(&node)
-                    .await?
+                    .await
+                    .map_err(|error| step_failed("pending_scheduled_artifacts", error))?
                     .into_iter()
                     .map(|c| (c.operation_id, c.execution_id)),
             );

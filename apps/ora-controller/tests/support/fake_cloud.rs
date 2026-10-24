@@ -219,6 +219,11 @@ impl FakeCloud {
         self.lock().dispatched()
     }
 
+    /// Restores a durable dispatch before a replacement Controller reconciles its Node.
+    pub fn seed_record(&self, record: proto::ExecutionRecord) {
+        self.update(|state| state.dispatches.push(record));
+    }
+
     /// Queues a work item without a target, the shape tenant-level clones had. Cloud no longer
     /// hands such work out, and the Controller refuses it without registering anything; it only
     /// makes each claim observable.

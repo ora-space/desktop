@@ -343,8 +343,8 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             tokio::select! {
                 biased;
                 message = &mut read => break message?.ok_or_else(|| SessionError::Disconnected("Node closed the connection".into()))?,
-                result = relay.tasks.join_next(), if !relay.tasks.is_empty() => return Err(worker_failure(result)),
-                result = commands.tasks.join_next(), if !commands.tasks.is_empty() => return Err(worker_failure(result)),
+                result = relay.tasks.join_next(), if !relay.tasks.is_empty() => return Err(worker_failure("relay", result)),
+                result = commands.tasks.join_next(), if !commands.tasks.is_empty() => return Err(worker_failure("commands", result)),
                 Some(reply) = relay.outgoing.recv() => {
                     let ack = match reply {
                         relay::Receipt::Thread(ack) => ack,
@@ -360,12 +360,12 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 Some(reply) = commands.outgoing.recv(), if agent_capable => {
                     bounded(deadline, transmit(writer, &reply)).await?;
                 }
-                result = grants.tasks.join_next(), if !grants.tasks.is_empty() => return Err(worker_failure(result)),
+                result = grants.tasks.join_next(), if !grants.tasks.is_empty() => return Err(worker_failure("grants", result)),
                 // Grants go to the wire and nowhere else; the frame is never logged.
                 Some(grant) = grants.outgoing.recv(), if delivery_capable => {
                     bounded(deadline, transmit(writer, &grant)).await?;
                 }
-                result = control.tasks.join_next(), if !control.tasks.is_empty() => return Err(worker_failure(result)),
+                result = control.tasks.join_next(), if !control.tasks.is_empty() => return Err(worker_failure("control", result)),
                 Some(action) = control.outgoing.recv() => match action {
                     control::Action::Send(reply) => bounded(deadline, transmit(writer, &reply)).await?,
                     control::Action::Answered(execution) => observer.answered(&execution),
@@ -474,8 +474,14 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
 
 /// Worker failures end this connection without inventing an acknowledgement; reconnect replays.
 fn worker_failure(
+    worker: &'static str,
     result: Option<Result<Result<(), Error>, tokio::task::JoinError>>,
 ) -> SessionError {
+    // Naming the worker is what tells an operator which side of the session failed: every
+    // `Error::Conflict` reads the same, while the worker says where it came from.
+    if let Some(Ok(Err(error))) = &result {
+        ora_logging::ora_warn!(worker, error = %error, "session worker ended the session");
+    }
     match result {
         Some(Ok(Err(error))) => SessionError::Store(error),
         Some(Err(error)) => SessionError::Protocol(format!("session worker failed: {error}")),
