@@ -481,6 +481,9 @@ async fn report(store: CloudStore, sandbox: Arc<Sandbox>) {
 }
 
 #[cfg(test)]
+mod non_acceptance_tests;
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;

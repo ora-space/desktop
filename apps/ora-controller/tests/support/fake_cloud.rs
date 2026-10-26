@@ -69,6 +69,8 @@ pub struct State {
     pub dispatches: Vec<proto::ExecutionRecord>,
     pub execution_fences: Vec<proto::ExecutionFence>,
     pub non_acceptance_proofs: Vec<proto::ExecutionNonAcceptance>,
+    pub non_acceptance_attempts: usize,
+    reject_proof_writes: bool,
     watch: WatchPolicy,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
 }
@@ -127,6 +129,8 @@ impl FakeCloud {
                 dispatches: Vec::new(),
                 execution_fences: Vec::new(),
                 non_acceptance_proofs: Vec::new(),
+                non_acceptance_attempts: 0,
+                reject_proof_writes: false,
                 watch: WatchPolicy::Accept,
                 subscriber: None,
             })),
@@ -231,6 +235,16 @@ impl FakeCloud {
     /// Supplies immutable administrative-cut origins for the proof transport tests.
     pub fn seed_execution_fence(&self, fence: proto::ExecutionFence) {
         self.update(|state| state.execution_fences.push(fence));
+    }
+
+    /// Restores an already committed fact after the prior connection lost its success response.
+    pub fn seed_non_acceptance_proof(&self, proof: proto::ExecutionNonAcceptance) {
+        self.update(|state| state.non_acceptance_proofs.push(proof));
+    }
+
+    /// Refuses persistence before recording a proof, so a session must retain its Unknown state.
+    pub fn reject_execution_proofs(&self) {
+        self.update(|state| state.reject_proof_writes = true);
     }
 
     /// Queues a work item without a target, the shape tenant-level clones had. Cloud no longer

@@ -47,6 +47,10 @@ impl RuntimeControlService for FakeCloud {
     ) -> Result<Response<proto::RecordExecutionNonAcceptanceResponse>, Status> {
         let r = request.into_inner();
         self.update(|state| {
+            state.non_acceptance_attempts += 1;
+            if state.reject_proof_writes {
+                return Err(Status::unavailable("proof_write_failed"));
+            }
             if state.epoch != Some(r.epoch) {
                 return Err(Status::failed_precondition("stale_controller"));
             }
