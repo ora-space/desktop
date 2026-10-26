@@ -410,7 +410,7 @@ fn handle(
             Ok(node
                 .database
                 .fence_unaccepted_execution(&fence)?
-                .map(NodeToControllerMessage::ExecutionNotAccepted)
+                .map(|proof| NodeToControllerMessage::ExecutionNotAccepted(Box::new(proof)))
                 .into_iter()
                 .collect())
         }

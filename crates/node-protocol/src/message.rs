@@ -126,7 +126,7 @@ impl ValidateMessage for ControllerToNodeMessage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum NodeToControllerMessage {
-    ExecutionNotAccepted(ExecutionNonAcceptance),
+    ExecutionNotAccepted(Box<ExecutionNonAcceptance>),
     CloneResult(CloneResultMessage),
     HelloAccepted(HelloAcceptedMessage),
     Heartbeat(HeartbeatMessage),

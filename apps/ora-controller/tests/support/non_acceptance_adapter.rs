@@ -42,7 +42,8 @@ fn original_proof_round_trips_and_reconnect_reads_committed_fact() {
                     proof_id: "11111111-1111-4111-8111-111111111111".into(),
                     fence: original,
                 };
-                let message = NodeToControllerMessage::ExecutionNotAccepted(proof.clone());
+                let message =
+                    NodeToControllerMessage::ExecutionNotAccepted(Box::new(proof.clone()));
                 let ack = take_over(
                     &store,
                     &NodeRuntimeIdentity {

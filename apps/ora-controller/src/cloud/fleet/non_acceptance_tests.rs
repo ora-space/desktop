@@ -78,10 +78,10 @@ async fn peer(listener: UnixListener) {
                 }))
             }
             ControllerToNodeMessage::FenceUnacceptedExecution(fence) => Some(
-                NodeToControllerMessage::ExecutionNotAccepted(ExecutionNonAcceptance {
+                NodeToControllerMessage::ExecutionNotAccepted(Box::new(ExecutionNonAcceptance {
                     proof_id: "11111111-1111-4111-8111-111111111111".into(),
                     fence,
-                }),
+                })),
             ),
             ControllerToNodeMessage::EventAck(_) => {
                 panic!("non-acceptance proof must never produce an event ACK")
