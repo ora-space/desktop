@@ -9,6 +9,15 @@ pub async fn take_over<S: CoordinationStore>(
 ) -> Result<Option<EventAckMessage>, Error> {
     message.validate()?;
     match message {
+        NodeToControllerMessage::ExecutionNotAccepted(proof) => {
+            if proof.fence.origin.binding.node_id != session.node_id.as_str() {
+                return Err(Error::Conflict);
+            }
+            // A persisted original proof can be replayed by a later incarnation. Cloud checks the
+            // frozen original instance; this connection's empty ledger cannot substitute for it.
+            store.record_execution_non_acceptance(proof).await?;
+            Ok(None)
+        }
         NodeToControllerMessage::RuntimeControlState(state) => {
             if state.binding.node_id != session.node_id.as_str()
                 || state.binding.node_incarnation_id != session.incarnation_id.as_str()

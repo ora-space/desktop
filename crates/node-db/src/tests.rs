@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use pretty_assertions::assert_eq;
+mod non_acceptance;
 mod plugin;
 mod process;
 mod repository;
@@ -385,7 +386,7 @@ fn remove_revision_schema(path: &std::path::Path) {
 fn remove_branch_heads_schema(path: &std::path::Path) {
     Connection::open(path)
         .unwrap()
-        .execute_batch("DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
+        .execute_batch("DROP TRIGGER refuse_fenced_execution; DROP TABLE execution_non_acceptance; DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
         .unwrap();
 }
 

@@ -442,6 +442,7 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
     connection.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;
+        DROP TRIGGER refuse_fenced_execution; DROP TABLE execution_non_acceptance;
         DROP TABLE restore_process_attempts; DROP TABLE session_restores;
         CREATE TEMP TABLE v10_ids AS SELECT * FROM execution_identities;
         DROP TABLE execution_identities;

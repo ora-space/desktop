@@ -14,9 +14,16 @@ fn now_ms() -> Result<i64, Error> {
 // PostgreSQL issues deadlines. A two-second conservative margin refuses clocks that lag the
 // issuer and closes early instead of extending authority through transport delay or clock skew.
 fn live(permit: &RuntimeBinding) -> Result<(), Error> {
+    if permit.input_closed {
+        return Err(Error::InvalidTransition);
+    }
+    fresh_authority(permit)
+}
+
+/// Bounds a fact-query authority without treating closed input as permission to execute.
+pub(crate) fn fresh_authority(permit: &RuntimeBinding) -> Result<(), Error> {
     let now = now_ms()?;
-    if permit.input_closed
-        || permit.issued_at_ms > now + 2_000
+    if permit.issued_at_ms > now + 2_000
         || now - permit.issued_at_ms > 10_000
         || permit.expires_at_ms <= now + 2_000
     {

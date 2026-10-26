@@ -165,6 +165,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 let hello = ControllerToNodeMessage::Hello(HelloMessage {
                     protocol_version: CURRENT_PROTOCOL_VERSION,
                     payload: Hello {
+                        execution_non_acceptance: false,
                         thread_previews: false,
                         controller_id: ControllerId::new("owner"),
                         supported_versions: vec![CURRENT_PROTOCOL_VERSION],

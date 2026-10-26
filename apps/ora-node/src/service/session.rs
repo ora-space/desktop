@@ -313,7 +313,15 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             thread_previews: hello.payload.thread_previews && info.agents.is_some(),
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
-            capabilities: info.capabilities.clone(),
+            capabilities: info
+                .capabilities
+                .iter()
+                .copied()
+                .filter(|capability| {
+                    *capability != NodeCapability::ExecutionNonAcceptance
+                        || hello.payload.execution_non_acceptance
+                })
+                .collect(),
             model_adapter: info.model_adapter.clone(),
         },
     });
@@ -339,6 +347,16 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             let Some(message) = message else {
                 return Ok::<(), Failure>(());
             };
+            if matches!(
+                message,
+                ControllerToNodeMessage::FenceUnacceptedExecution(_)
+            ) && !hello.payload.execution_non_acceptance
+            {
+                return Err(Failure::local(
+                    CloseReason::ProtocolViolation,
+                    "execution non-acceptance was not negotiated",
+                ));
+            }
             // The per-frame deadline above is the Controller liveness deadline; its idle heartbeat
             // only renews it and must not queue behind Git in the worker.
             match &message {

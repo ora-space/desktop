@@ -55,6 +55,7 @@ fn reopen_after_v10_downgrade(
         .ok_or("missing v9 outbox columns")?;
     Connection::open(path)?.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
+        DROP TRIGGER refuse_fenced_execution; DROP TABLE execution_non_acceptance;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;
         DROP TABLE restore_process_attempts; DROP TABLE session_restores;
         CREATE TEMP TABLE v10_ids AS SELECT * FROM execution_identities;

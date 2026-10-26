@@ -1,5 +1,6 @@
 mod agent_session;
 mod execution;
+mod non_acceptance;
 mod plugin;
 mod repository;
 mod revision;
@@ -22,6 +23,7 @@ pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
     GetExecutionStatus, GetExecutionStatusMessage, StopContainment, StopUnconfirmed,
 };
+pub use non_acceptance::{ExecutionFence, ExecutionNonAcceptance, ExecutionOrigin};
 pub use plugin::{
     InstallPlugins, InstallPluginsMessage, PluginCommand, PluginsResultMessage, RemovePlugins,
     RemovePluginsMessage,
@@ -57,6 +59,7 @@ pub use worktree::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum ControllerToNodeMessage {
+    FenceUnacceptedExecution(ExecutionFence),
     Hello(HelloMessage),
     /// Sent on idle query ticks; the wire tag is shared with the Node heartbeat but directions
     /// decode through separate enums, so the two never mix.
@@ -91,6 +94,7 @@ impl ValidateMessage for ControllerToNodeMessage {
     /// Dispatches validation without introducing business rules into the codec.
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
+            Self::FenceUnacceptedExecution(message) => message.validate(),
             Self::Hello(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),
             Self::CloneRepository(message) => message.validate(),
@@ -122,6 +126,7 @@ impl ValidateMessage for ControllerToNodeMessage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum NodeToControllerMessage {
+    ExecutionNotAccepted(Box<ExecutionNonAcceptance>),
     CloneResult(CloneResultMessage),
     HelloAccepted(HelloAcceptedMessage),
     Heartbeat(HeartbeatMessage),
@@ -148,6 +153,7 @@ impl ValidateMessage for NodeToControllerMessage {
     /// Dispatches validation without introducing business rules into the codec.
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
+            Self::ExecutionNotAccepted(message) => message.validate(),
             Self::CloneResult(message) => message.validate(),
             Self::HelloAccepted(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),

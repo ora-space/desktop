@@ -660,7 +660,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let journal = db.process_journal().unwrap();
     journal
         .record_termination(attempt.intent.run, /*signal*/ 9)

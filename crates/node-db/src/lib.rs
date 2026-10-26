@@ -5,6 +5,7 @@ mod delivery;
 pub use delivery::EventCursor;
 mod execution;
 mod model;
+mod non_acceptance;
 mod plugin;
 mod process;
 pub use plugin::PluginExecution;

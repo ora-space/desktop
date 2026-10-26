@@ -36,7 +36,8 @@ pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 pub use store::{
-    ArtifactGrantOutcome, CoordinationStore, ExecutionOutcome, GrantOutcome, GrantRequest,
+    ArtifactGrantOutcome, CoordinationStore, ExecutionFenceBatch, ExecutionOutcome, GrantOutcome,
+    GrantRequest,
 };
 
 /// Persistence failures never authorize dispatch or acknowledgement. The classes an adapter must

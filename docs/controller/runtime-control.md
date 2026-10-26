@@ -63,6 +63,23 @@ A lower epoch, a different binding at the same epoch, a wrong incarnation or a w
 refused, both at the acceptance queue and at the first real mutation, and a restart never reopens an
 old entry from memory.
 
+## Non-acceptance proof for expired deliveries
+
+A Cloud business settlement is not a Node terminal. The Controller requests original dispatch
+fences only after opting in through Hello and negotiating `execution_non_acceptance`. Older
+Controllers receive no unfamiliar capability; an older Node keeps unknown responsibility without
+raw-command fallback or inferring non-acceptance from Unknown.
+
+The Node checks the complete identity ledger and writes an irreversible execution-intake fence in
+one SQLite writer transaction. Old permits, a new control epoch and restart cannot bypass it; its
+peer delivery family remains independent. Accepted/completed work produces no proof. An empty new
+incarnation cannot prove absence in the old instance, while a persisted original proof can replay.
+
+`RecordExecutionNonAcceptance` takes over a separate proof without a normal event ACK. Only commit
+success clears the corresponding unresolved observation; explicit committed proof identities
+recover lost responses. Global quiesce still closes dispatch and checks clones, plugins, sessions,
+Revision delivery, artifact uploads and all other unknown responsibilities.
+
 ## Force stop
 
 Emergency termination uses an independent effect permit lasting at most 10 seconds and never beyond

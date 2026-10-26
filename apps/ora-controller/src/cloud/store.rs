@@ -192,6 +192,17 @@ impl CoordinationStore for CloudStore {
     async fn acknowledge_runtime_binding(&self, state: &RuntimeControlState) -> Result<(), Error> {
         self.control_ack(state).await
     }
+
+    async fn execution_fences(&self, node: &NodeId) -> Result<ExecutionFenceBatch, Error> {
+        self.non_acceptance_fences(node).await
+    }
+
+    async fn record_execution_non_acceptance(
+        &self,
+        proof: &ExecutionNonAcceptance,
+    ) -> Result<(), Error> {
+        self.accept_non_acceptance(proof).await
+    }
     async fn dispatch_message(
         &self,
         command: CloneRepositoryMessage,

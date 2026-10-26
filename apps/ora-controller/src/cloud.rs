@@ -6,6 +6,7 @@ mod agents;
 mod claim;
 mod coordinate;
 mod deliveries;
+mod execution_fences;
 mod fault;
 mod fleet;
 mod force_stop;
@@ -308,7 +309,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn config(controller_id: &str) -> RuntimeConfig {
+    pub(super) fn config(controller_id: &str) -> RuntimeConfig {
         RuntimeConfig {
             management_tls: None,
             home_directory: "/nonexistent/controller".into(),

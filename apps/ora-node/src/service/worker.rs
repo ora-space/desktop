@@ -129,6 +129,9 @@ pub(super) fn run(
         NodeCapability::PluginInstall,
         NodeCapability::RuntimeControl,
     ];
+    if controlled {
+        capabilities.push(NodeCapability::ExecutionNonAcceptance);
+    }
     // Clones come only from the Git Server, which the Node reaches with its git-access identity.
     if node.git_server().is_some() {
         capabilities.insert(0, NodeCapability::RepositoryClone);
@@ -396,6 +399,20 @@ fn handle(
                 ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore stop origin could not be persisted");
             }
             Ok(replies)
+        }
+        Request::Message(ControllerToNodeMessage::FenceUnacceptedExecution(fence)) => {
+            if !controlled
+                || target.is_some_and(|scope| !scope.permits(&fence.authority))
+                || fence.authority.node_incarnation_id != node.identity().incarnation_id.as_str()
+            {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            Ok(node
+                .database
+                .fence_unaccepted_execution(&fence)?
+                .map(|proof| NodeToControllerMessage::ExecutionNotAccepted(Box::new(proof)))
+                .into_iter()
+                .collect())
         }
         Request::Message(ControllerToNodeMessage::BindRuntime(binding)) => {
             if target.is_some_and(|scope| !scope.permits(&binding)) {
