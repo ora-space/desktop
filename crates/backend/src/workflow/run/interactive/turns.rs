@@ -132,3 +132,60 @@ fn with_step_boundary(
     request.record_prompt = Some(recorded);
     request
 }
+
+#[cfg(test)]
+mod tests {
+    use super::with_step_boundary;
+    use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+    use ora_contracts::PromptSessionRequest;
+    use pretty_assertions::assert_eq;
+
+    /// Builds a text content block for the boundary assertions.
+    fn text(value: &str) -> ContentBlock {
+        ContentBlock::Text(TextContent::new(value.to_string()))
+    }
+
+    /// Builds a prompt request with an optional recorded turn.
+    fn request(
+        prompt: Vec<ContentBlock>,
+        record_prompt: Option<Vec<ContentBlock>>,
+    ) -> PromptSessionRequest {
+        PromptSessionRequest {
+            session_id: "session-1".to_string(),
+            prompt,
+            model: None,
+            record_prompt,
+        }
+    }
+
+    /// The boundary is a leading block and `record_prompt` keeps the user's original text.
+    #[test]
+    fn boundary_precedes_the_prompt_and_records_the_original_turn() {
+        let boundary = "<workflow_step_boundary>scope</workflow_step_boundary>";
+        let output = with_step_boundary(
+            request(vec![text("hello")], None),
+            Some(boundary.to_string()),
+        );
+        assert_eq!(output.prompt, vec![text(boundary), text("hello")]);
+        assert_eq!(output.record_prompt, Some(vec![text("hello")]));
+    }
+
+    /// An existing recorded turn (a role expansion) wins over the prompt being sent.
+    #[test]
+    fn boundary_preserves_an_existing_recorded_turn() {
+        let output = with_step_boundary(
+            request(vec![text("expanded")], Some(vec![text("original")])),
+            Some("boundary".to_string()),
+        );
+        assert_eq!(output.prompt.first(), Some(&text("boundary")));
+        assert_eq!(output.record_prompt, Some(vec![text("original")]));
+    }
+
+    /// An empty turn stays empty rather than letting the boundary alone pass as a user message.
+    #[test]
+    fn boundary_does_not_scope_an_empty_prompt() {
+        let output = with_step_boundary(request(Vec::new(), None), Some("boundary".to_string()));
+        assert!(output.prompt.is_empty());
+        assert_eq!(output.record_prompt, None);
+    }
+}
