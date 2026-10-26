@@ -1,23 +1,35 @@
 //! Resolve the whole fixed inventory; no latest-session lookup is permitted.
 use super::*;
 
+/// Pending writers may still settle; an unproven recovered terminal is a distinct condition.
+pub(super) enum Writers {
+    Stopped,
+    Pending,
+    Unconfirmed,
+}
+
 /// A durable frozen plan needs the writer fence again, but never the original history files.
 pub(super) fn writers_stopped(
     node: &ManagedNode,
     agents: Option<&SessionHost>,
     record: &RevisionDelivery,
-) -> Result<bool, crate::Error> {
+) -> Result<Writers, crate::Error> {
     let spec = &record.command.payload.spec;
     let Some(workflow) = &spec.workflow else {
-        return Ok(false);
+        return Ok(Writers::Unconfirmed);
     };
     let journal = node.database.session_journal()?;
     for attempt in &workflow.sessions {
         let Some(session) = node.database.delivery_session(&attempt.execution_id)? else {
-            return Ok(false);
+            return Ok(Writers::Unconfirmed);
         };
-        if !matches!(session.state, ExecutionState::Completed(_))
-            || session.command.payload.spec.checkout_execution_id != spec.checkout_execution_id
+        if !matches!(session.state, ExecutionState::Completed(_)) {
+            return Ok(Writers::Pending);
+        }
+        if !journal.writer_stop_confirmed(&attempt.execution_id)? {
+            return Ok(Writers::Unconfirmed);
+        }
+        if session.command.payload.spec.checkout_execution_id != spec.checkout_execution_id
             || session.command.payload.spec.prior_revision.is_some()
             || journal.restore_phase(&attempt.execution_id)?
                 == Some(ora_node_db::RestorePhase::LegacyUnknown)
@@ -26,10 +38,10 @@ pub(super) fn writers_stopped(
                 .is_empty()
             || agents.is_some_and(|agents| !agents.writers_settled(&attempt.execution_id))
         {
-            return Ok(false);
+            return Ok(Writers::Pending);
         }
     }
-    Ok(true)
+    Ok(Writers::Stopped)
 }
 
 /// Every attempt must be terminal on this Node and use the one frozen checkout.
@@ -78,7 +90,7 @@ pub(super) fn inputs(
             continue;
         }
         if let Some(agents) = agents
-            && agents.sealed_history(&attempt.execution_id).is_err()
+            && !agents.writers_settled(&attempt.execution_id)
         {
             return Ok(Inputs::Wait);
         }

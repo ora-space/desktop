@@ -441,7 +441,7 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
     let connection = rusqlite::Connection::open(home.join("ora-node.sqlite3"))?;
     connection.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
-        DROP TABLE IF EXISTS session_history_admissions;
+        DROP TABLE IF EXISTS session_writer_stops; DROP TABLE IF EXISTS session_history_admissions;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;
         DROP TABLE restore_process_attempts; DROP TABLE session_restores;
         CREATE TEMP TABLE v10_ids AS SELECT * FROM execution_identities;

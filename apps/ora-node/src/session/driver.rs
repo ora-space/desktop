@@ -85,6 +85,9 @@ where
         // A deliberate handover is not an actor failure and emits no terminal event.
         return true;
     }
+    if shared.ledger.confirm_writer_stop(&execution).is_err() {
+        return false;
+    }
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
             for queued in queued {

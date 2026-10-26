@@ -4,6 +4,8 @@
 
 ## 整次工作流交付
 
+SQLite v14 只在原 actor 确认插件及恢复进程结束后记录写入者停止事实；重启补出的终态不补造该证据。缺证据时不做快照或正常释放，已经冻结的字节保留。v13 独立记录 provider 准入，因此原始历史丢失不能把已建立会话变成 `not_started`。
+
 `DeliverRevisionSpec.workflow` 明确选择整次运行变体，不能同时携带旧单会话选择器或前序恢复输入。Cloud 给出按执行顺序排列的全部节点尝试和对象键；Node 逐项核对会话终态、actor 和恢复写入者已结束，以及同一 checkout，再在任何推送或上传之前冻结各会话的原始字节和版本化清单。明确的插件启动前失败可记 `not_started`；已建立会话的历史缺失使交付失败，不能缩小清单后报成功。
 
 冻结计划保留完整对象集以供重启重放；上传前再次核对大小和摘要，只为固定键申请校验和绑定授权，最后上传清单。Controller 原样转交全部尝试，只向声明 `workflow_history_delivery` 的 Node 派发，Cloud 独立核验全部对象后登记成果。原 Agent JSONL 形状不变，清单靠工作流变体显式识别，不猜文件扩展名。[整次成果 ADR](https://github.com/ora-space/specs/blob/main/decisions/cloud/workflow/20261025-run-owned-git-delivery-and-history.md) 在完整验收前保持 `approved`。

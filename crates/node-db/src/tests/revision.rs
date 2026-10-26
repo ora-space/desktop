@@ -6,6 +6,59 @@ use pretty_assertions::assert_eq;
 const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 const FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
 
+/// A recovered terminal cannot substitute for the original actor's durable stop confirmation.
+#[test]
+fn writer_stop_proof_survives_reopen_without_backfilling_legacy_terminals() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("writer-stop");
+    let mut db = open(&path);
+    let command = super::session::command();
+    db.accept_session(&command).unwrap();
+    db.start_session(&command, &NodeIncarnationId::new("incarnation"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    assert_eq!(
+        journal
+            .writer_stop_confirmed(&command.execution_id)
+            .unwrap(),
+        false
+    );
+    journal.confirm_writer_stop(&command.execution_id).unwrap();
+    journal
+        .end_session(&command.execution_id, super::session::ended())
+        .unwrap();
+    drop(journal);
+    drop(db);
+    let db = open(&path);
+    assert_eq!(
+        db.session_journal()
+            .unwrap()
+            .writer_stop_confirmed(&command.execution_id)
+            .unwrap(),
+        true
+    );
+    drop(db);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE session_writer_stops; PRAGMA user_version=13;")
+        .unwrap();
+    let db = open(&path);
+    assert_eq!(
+        db.session_journal()
+            .unwrap()
+            .writer_stop_confirmed(&command.execution_id)
+            .unwrap(),
+        false
+    );
+    assert!(matches!(
+        db.delivery_session(&command.execution_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        ExecutionState::Completed(_)
+    ));
+}
+
 /// Provider admission survives restart; old sessions never acquire fabricated absence evidence.
 #[test]
 fn history_admission_distinguishes_unstarted_from_lost_legacy_history() {
@@ -35,7 +88,7 @@ fn history_admission_distinguishes_unstarted_from_lost_legacy_history() {
     drop(db);
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE session_history_admissions; PRAGMA user_version=12;")
+        .execute_batch("DROP TABLE session_writer_stops; DROP TABLE session_history_admissions; PRAGMA user_version=12;")
         .unwrap();
     let db = open(&path);
     assert_eq!(
@@ -410,5 +463,5 @@ fn migrates_v8_without_losing_sessions() {
         .unwrap()
         .pragma_query_value(/*schema_name*/ None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
 }

@@ -212,10 +212,23 @@ impl Revisions {
             return Ok(());
         }
         for record in node.database.recoverable_deliveries()? {
-            if record.command.payload.spec.workflow.is_some()
-                && !workflow::writers_stopped(node, agents, &record)?
-            {
-                continue;
+            if record.command.payload.spec.workflow.is_some() {
+                match workflow::writers_stopped(node, agents, &record)? {
+                    workflow::Writers::Stopped => {}
+                    workflow::Writers::Pending => continue,
+                    workflow::Writers::Unconfirmed => {
+                        // Keep any already frozen bytes. A preparing attempt can report its
+                        // missing stop evidence without snapshotting or authorizing deletion.
+                        if matches!(record.progress, DeliveryProgress::Preparing) {
+                            fail(
+                                node,
+                                &record.command.execution_id,
+                                RevisionFailureCode::SessionNotSettled,
+                            )?;
+                        }
+                        continue;
+                    }
+                }
             }
             // Frozen legacy bytes do not bypass the same stop fence used for preparation.
             let journal = node.database.session_journal()?;

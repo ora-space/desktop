@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=13) {
+    if app != APPLICATION_ID || !matches!(version, 1..=14) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -90,6 +90,9 @@ pub(super) fn initialize(
     }
     if version >= 13 {
         expected.execute_batch(include_str!("history_admission.sql"))?;
+    }
+    if version >= 14 {
+        expected.execute_batch(include_str!("writer_stop.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -250,6 +253,16 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 13,
+        )?;
+        tx.commit()?;
+    }
+    if version < 14 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("writer_stop.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 14,
         )?;
         tx.commit()?;
     }
