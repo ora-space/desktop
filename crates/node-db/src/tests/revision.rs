@@ -6,6 +6,111 @@ use pretty_assertions::assert_eq;
 const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 const FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
 
+/// Same-owner reattachment preserves the frozen plan and original permit; it never adopts an
+/// unknown writer, changes ownership or admits a parallel session.
+#[test]
+fn workflow_delivery_rebinds_only_its_original_stopped_responsibility() {
+    for confirmed in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = open(&dir.path().join("rebind"));
+        let session = super::session::command();
+        db.accept_session(&session).unwrap();
+        db.start_session(&session, &NodeIncarnationId::new("first"))
+            .unwrap();
+        let journal = db.session_journal().unwrap();
+        if confirmed {
+            journal.confirm_writer_stop(&session.execution_id).unwrap();
+        }
+        journal
+            .end_session(&session.execution_id, super::session::ended())
+            .unwrap();
+        let mut scope = super::repository::runtime_scope(&NodeId::new("node"));
+        scope.operation_id = "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a".into();
+        scope.node_incarnation_id = "first".into();
+        db.bind_runtime(&scope).unwrap();
+        let mut command = deliver();
+        command.payload.spec.session_execution_id = ExecutionId::new("");
+        command.payload.spec.workflow = Some(WorkflowHistoryInput {
+            workflow_run_id: scope.operation_id.clone(),
+            sessions: vec![WorkflowSessionAttempt {
+                execution_order: 0,
+                node_id: "a".into(),
+                attempt: 1,
+                execution_id: session.execution_id.clone(),
+                history_key: ObjectKey::new("run/a.jsonl"),
+            }],
+        });
+        let mut permit = scope.clone();
+        permit.execution_id = command.execution_id.to_string();
+        permit.node_operation_id = command.operation_id.to_string();
+        db.accept_controlled_delivery(&ControlledDeliverRevision {
+            binding: permit.clone(),
+            command: command.clone(),
+        })
+        .unwrap();
+        let frozen = plan();
+        db.freeze_delivery(&command.execution_id, &frozen).unwrap();
+        db.enforce_runtime_incarnation("second").unwrap();
+        let mut current = scope.clone();
+        current.node_incarnation_id = "second".into();
+        current.node_instance_id = "new-record".into();
+        current.control_epoch += 1;
+        current.control_version += 1;
+        for bad in [
+            RuntimeBinding {
+                actor_user_id: "other".into(),
+                ..current.clone()
+            },
+            RuntimeBinding {
+                sandbox_id: "replacement".into(),
+                ..current.clone()
+            },
+            RuntimeBinding {
+                operation_id: "another-run".into(),
+                ..current.clone()
+            },
+        ] {
+            assert!(db.bind_runtime(&bad).is_err());
+        }
+        if !confirmed {
+            assert!(db.bind_runtime(&current).is_err());
+            continue;
+        }
+        assert_eq!(
+            db.bind_runtime(&current).unwrap(),
+            vec![command.execution_id.to_string()]
+        );
+        assert_eq!(
+            db.find_delivery(&command.operation_id, &command.execution_id)
+                .unwrap()
+                .unwrap()
+                .progress,
+            DeliveryProgress::Frozen(frozen)
+        );
+        let original: String = db
+            .connection
+            .query_row(
+                "SELECT permit FROM execution_control WHERE execution=?1",
+                [command.execution_id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<RuntimeBinding>(&original).unwrap(),
+            permit
+        );
+        let mut next = super::session::command();
+        next.execution_id = ExecutionId::new("parallel");
+        next.operation_id = OperationId::new("parallel-op");
+        current.execution_id = next.execution_id.to_string();
+        current.node_operation_id = next.operation_id.to_string();
+        assert!(matches!(
+            db.accept_controlled_session(&next, &current),
+            Err(Error::ResourceConflict)
+        ));
+    }
+}
+
 /// A recovered terminal cannot substitute for the original actor's durable stop confirmation.
 #[test]
 fn writer_stop_proof_survives_reopen_without_backfilling_legacy_terminals() {

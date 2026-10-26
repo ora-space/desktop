@@ -96,6 +96,23 @@ impl<G: WriteGuard> NodeDatabase<G> {
         }
         let old = self.runtime_binding()?;
         let unfinished = self.unfinished_runtime_executions()?;
+        let retained_workflow_delivery = old.as_ref().is_some_and(|old| {
+            old.input_closed
+                && !binding.input_closed
+                && old.node_incarnation_id != binding.node_incarnation_id
+                && binding.control_epoch > old.control_epoch
+                && old.tenant_id == binding.tenant_id
+                && old.workspace_id == binding.workspace_id
+                && old.sandbox_id == binding.sandbox_id
+                && old.runtime_generation == binding.runtime_generation
+                && old.node_id == binding.node_id
+                && old.session_id.is_empty()
+                && binding.session_id.is_empty()
+                && !old.operation_id.is_empty()
+                && old.operation_id == binding.operation_id
+                && old.actor_user_id == binding.actor_user_id
+        }) && self
+            .retained_workflow_deliveries(&unfinished, binding)?;
         if let Some(old) = &old {
             if old.tenant_id != binding.tenant_id
                 || old.workspace_id != binding.workspace_id
@@ -114,7 +131,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
                         || old.session_id != binding.session_id
                         || old.operation_id != binding.operation_id
                         || old.actor_user_id != binding.actor_user_id))
-                || (binding.control_epoch > old.control_epoch && !unfinished.is_empty())
+                || (binding.control_epoch > old.control_epoch
+                    && !unfinished.is_empty()
+                    && !retained_workflow_delivery)
             {
                 return Err(Error::InvalidTransition);
             }
@@ -130,6 +149,73 @@ impl<G: WriteGuard> NodeDatabase<G> {
             params![serde_json::to_string(binding)?, binding.input_closed],
         )?;
         Ok(unfinished)
+    }
+
+    /// Rebinding the same owner never adopts another kind of unfinished writer or rewrites its
+    /// original permit. Only registered workflow deliveries with positive stop proof can finish.
+    fn retained_workflow_deliveries(
+        &self,
+        unfinished: &[String],
+        binding: &RuntimeBinding,
+    ) -> Result<bool, Error> {
+        if unfinished.is_empty() {
+            return Ok(false);
+        }
+        let deliveries = self.recoverable_deliveries()?;
+        let journal = self.session_journal()?;
+        for execution in unfinished {
+            let Some(record) = deliveries
+                .iter()
+                .find(|record| record.command.execution_id.as_str() == execution)
+            else {
+                return Ok(false);
+            };
+            let Some(workflow) = &record.command.payload.spec.workflow else {
+                return Ok(false);
+            };
+            if workflow.workflow_run_id != binding.operation_id || workflow.sessions.is_empty() {
+                return Ok(false);
+            }
+            let control: Option<(String, bool)> = self
+                .connection
+                .query_row(
+                    "SELECT permit,started FROM execution_control WHERE execution=?1",
+                    [execution],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((permit, true)) = control else {
+                return Ok(false);
+            };
+            let permit: RuntimeBinding = serde_json::from_str(&permit)?;
+            if permit.tenant_id != binding.tenant_id
+                || permit.workspace_id != binding.workspace_id
+                || permit.sandbox_id != binding.sandbox_id
+                || permit.runtime_generation != binding.runtime_generation
+                || permit.node_id != binding.node_id
+                || permit.operation_id != binding.operation_id
+                || permit.actor_user_id != binding.actor_user_id
+                || permit.execution_id != *execution
+                || permit.node_operation_id != record.command.operation_id.as_str()
+            {
+                return Ok(false);
+            }
+            for attempt in &workflow.sessions {
+                let Some(session) = self.delivery_session(&attempt.execution_id)? else {
+                    return Ok(false);
+                };
+                if !matches!(
+                    session.state,
+                    ora_node_protocol::ExecutionState::Completed(_)
+                ) || !journal.writer_stop_confirmed(&attempt.execution_id)?
+                    || session.command.payload.spec.checkout_execution_id
+                        != record.command.payload.spec.checkout_execution_id
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Reports every unresolved local liability, including historical unbound executions.

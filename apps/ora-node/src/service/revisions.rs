@@ -230,6 +230,16 @@ impl Revisions {
                     }
                 }
             }
+            if let Some(workflow) = &record.command.payload.spec.workflow
+                && node.database.runtime_binding()?.is_none_or(|binding| {
+                    binding.node_incarnation_id != node.identity().incarnation_id.as_str()
+                        || binding.operation_id != workflow.workflow_run_id
+                })
+            {
+                // A restarted process first attaches to the current same-owner binding. Starting
+                // Git earlier would mistake the qualification gap for a definitive push refusal.
+                continue;
+            }
             // Frozen legacy bytes do not bypass the same stop fence used for preparation.
             let journal = node.database.session_journal()?;
             let session = &record.command.payload.spec.session_execution_id;
