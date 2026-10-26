@@ -2,7 +2,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use super::*;
 use crate::cloud::{lease, tests::config};
-use pretty_assertions::assert_eq;
 use std::{fs, os::unix::fs::PermissionsExt};
 use tokio::net::UnixListener;
 #[allow(dead_code)]
