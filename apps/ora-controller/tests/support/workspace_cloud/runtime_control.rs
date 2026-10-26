@@ -149,6 +149,18 @@ impl WorkspaceCloud {
 }
 #[tonic::async_trait]
 impl RuntimeControlService for WorkspaceCloud {
+    async fn list_execution_fences(
+        &self,
+        _: Request<proto::ListExecutionFencesRequest>,
+    ) -> Result<Response<proto::ListExecutionFencesResponse>, Status> {
+        Ok(Response::new(proto::ListExecutionFencesResponse::default()))
+    }
+    async fn record_execution_non_acceptance(
+        &self,
+        _: Request<proto::RecordExecutionNonAcceptanceRequest>,
+    ) -> Result<Response<proto::RecordExecutionNonAcceptanceResponse>, Status> {
+        Err(Status::failed_precondition("no_execution_fence"))
+    }
     async fn list_bindings(
         &self,
         _: Request<proto::ListBindingsRequest>,

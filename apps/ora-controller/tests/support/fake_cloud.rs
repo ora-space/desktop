@@ -67,6 +67,8 @@ pub struct State {
     /// Operation identities `ClaimWork` handed out, in claim order.
     pub claimed: Vec<String>,
     pub dispatches: Vec<proto::ExecutionRecord>,
+    pub execution_fences: Vec<proto::ExecutionFence>,
+    pub non_acceptance_proofs: Vec<proto::ExecutionNonAcceptance>,
     watch: WatchPolicy,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
 }
@@ -123,6 +125,8 @@ impl FakeCloud {
                 queue: VecDeque::new(),
                 claimed: Vec::new(),
                 dispatches: Vec::new(),
+                execution_fences: Vec::new(),
+                non_acceptance_proofs: Vec::new(),
                 watch: WatchPolicy::Accept,
                 subscriber: None,
             })),
@@ -222,6 +226,11 @@ impl FakeCloud {
     /// Restores a durable dispatch before a replacement Controller reconciles its Node.
     pub fn seed_record(&self, record: proto::ExecutionRecord) {
         self.update(|state| state.dispatches.push(record));
+    }
+
+    /// Supplies immutable administrative-cut origins for the proof transport tests.
+    pub fn seed_execution_fence(&self, fence: proto::ExecutionFence) {
+        self.update(|state| state.execution_fences.push(fence));
     }
 
     /// Queues a work item without a target, the shape tenant-level clones had. Cloud no longer

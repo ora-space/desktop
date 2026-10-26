@@ -2525,6 +2525,58 @@ pub struct GetExecutionPermitResponse {
     #[prost(message, optional, tag="1")]
     pub binding: ::core::option::Option<RuntimeBinding>,
 }
+/// Immutable original dispatch scope. input_json is the canonical frozen execution input, not a
+/// permit or credential; replays must keep its exact bytes and the original work identity.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExecutionOrigin {
+    #[prost(message, optional, tag="1")]
+    pub binding: ::core::option::Option<RuntimeBinding>,
+    #[prost(string, tag="2")]
+    pub work_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub input_json: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExecutionFence {
+    #[prost(message, optional, tag="1")]
+    pub authority: ::core::option::Option<RuntimeBinding>,
+    #[prost(message, optional, tag="2")]
+    pub origin: ::core::option::Option<ExecutionOrigin>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ExecutionNonAcceptance {
+    #[prost(string, tag="1")]
+    pub proof_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub fence: ::core::option::Option<ExecutionFence>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListExecutionFencesRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+    #[prost(string, tag="2")]
+    pub node_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListExecutionFencesResponse {
+    #[prost(message, repeated, tag="1")]
+    pub fences: ::prost::alloc::vec::Vec<ExecutionFence>,
+    /// Explicit committed proof facts let a reconnect recover a lost successful write response.
+    #[prost(string, repeated, tag="2")]
+    pub committed_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RecordExecutionNonAcceptanceRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(message, optional, tag="3")]
+    pub proof: ::core::option::Option<ExecutionNonAcceptance>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RecordExecutionNonAcceptanceResponse {
+}
 /// Fresh authority for one persisted lifecycle effect. Never inferred from an old plan replay.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RuntimeEffectPermit {

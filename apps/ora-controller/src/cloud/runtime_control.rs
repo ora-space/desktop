@@ -4,7 +4,7 @@ use ora_controller_proto::v1::{
     self as proto, runtime_control_service_client::RuntimeControlServiceClient,
 };
 
-fn binding(p: proto::RuntimeBinding) -> RuntimeBinding {
+pub(super) fn binding(p: proto::RuntimeBinding) -> RuntimeBinding {
     RuntimeBinding {
         tenant_id: p.tenant_id,
         workspace_id: p.workspace_id,

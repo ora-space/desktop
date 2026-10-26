@@ -226,7 +226,7 @@ fn controller_heartbeats_keep_idle_session_and_foreign_heartbeat_ends_it() {
                 let mut rejected = tokio::net::UnixStream::connect(&endpoint).await.unwrap();
                 let hello = ControllerToNodeMessage::Hello(HelloMessage {
                     protocol_version: CURRENT_PROTOCOL_VERSION,
-                    payload: Hello { thread_previews: false,
+                    payload: Hello { execution_non_acceptance: false, thread_previews: false,
                         controller_id: ControllerId::new("owner"),
                         supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                     },

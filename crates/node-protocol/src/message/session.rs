@@ -13,6 +13,8 @@ pub enum NodeCapability {
     /// Snapshot clones from the Git Server; declared only with a git-access identity.
     RepositoryClone,
     RuntimeControl,
+    /// Durable original-execution non-acceptance with irreversible intake fencing.
+    ExecutionNonAcceptance,
     /// `InstallPlugins` and `RemovePlugins`.
     PluginInstall,
     /// `StartAgentSession`, Thread events and session commands.
@@ -31,6 +33,9 @@ pub enum NodeCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Hello {
+    /// Opts into new non-acceptance capability names; older Controllers omit this flag.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub execution_non_acceptance: bool,
     /// Optional live-preview opt-in; omitted by older Controllers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_previews: bool,

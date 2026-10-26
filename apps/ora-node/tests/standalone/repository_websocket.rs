@@ -33,6 +33,7 @@ async fn hello(endpoint: &WsEndpoint) -> (ClientReceiver, SessionSender) {
                 encode_controller_frame(&ControllerToNodeMessage::Hello(HelloMessage {
                     protocol_version: CURRENT_PROTOCOL_VERSION,
                     payload: Hello {
+                        execution_non_acceptance: false,
                         thread_previews: false,
                         controller_id: ControllerId::new("owner"),
                         supported_versions: vec![CURRENT_PROTOCOL_VERSION],
@@ -594,6 +595,7 @@ fn node_closes_sessions_with_the_reason_code() {
                     encode_controller_frame(&ControllerToNodeMessage::Hello(HelloMessage {
                         protocol_version: CURRENT_PROTOCOL_VERSION,
                         payload: Hello {
+                            execution_non_acceptance: false,
                             thread_previews: false,
                             controller_id: ControllerId::new("intruder"),
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],

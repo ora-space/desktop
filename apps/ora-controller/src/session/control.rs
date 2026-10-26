@@ -54,6 +54,7 @@ impl SessionObserver for Unobserved {
 pub(super) enum Action {
     Send(Box<ControllerToNodeMessage>),
     Answered(ExecutionId),
+    NonAcceptanceCommitted(ExecutionId),
     TerminalRefused(ExecutionId),
     TerminalAccepted(ExecutionId),
     Unresolved(ExecutionId),
@@ -97,6 +98,7 @@ impl Control {
             Polled {
                 agents: capabilities.contains(&NodeCapability::AgentSession),
                 deliveries: capabilities.contains(&NodeCapability::RevisionDelivery),
+                non_acceptance: capabilities.contains(&NodeCapability::ExecutionNonAcceptance),
             },
             output.clone(),
         ));
@@ -128,6 +130,7 @@ fn step_failed(step: &'static str, error: Error) -> Error {
 struct Polled {
     agents: bool,
     deliveries: bool,
+    non_acceptance: bool,
 }
 
 /// The connection's other workers that learn from validated status replies.
@@ -163,6 +166,29 @@ async fn poll<S: CoordinationStore>(
                 .is_err()
             {
                 return Ok(());
+            }
+        }
+        if polled.non_acceptance {
+            let batch = store.execution_fences(&node).await?;
+            for id in batch.committed {
+                if output
+                    .send(Action::NonAcceptanceCommitted(id))
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+            }
+            for fence in batch.requests {
+                if output
+                    .send(Action::Send(Box::new(
+                        ControllerToNodeMessage::FenceUnacceptedExecution(fence),
+                    )))
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
             }
         }
         let mut commands: Vec<_> = store
@@ -304,6 +330,14 @@ async fn reconcile<S: CoordinationStore>(
             }
             Err(error) => return Err(error),
         };
+        if let NodeToControllerMessage::ExecutionNotAccepted(proof) = &message {
+            let execution = ExecutionId::new(proof.fence.origin.binding.execution_id.clone());
+            executions.remove(&execution);
+            output
+                .send(Action::NonAcceptanceCommitted(execution))
+                .await
+                .map_err(|_| Error::Conflict)?;
+        }
         if let NodeToControllerMessage::ExecutionStatus(status) = &message
             && matches!(
                 executions.get(&status.execution_id),

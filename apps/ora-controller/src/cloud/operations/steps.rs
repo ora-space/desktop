@@ -337,10 +337,15 @@ impl Round<'_> {
                 .store
                 .pending_deliveries(&sandbox.binding.node_id)
                 .await?;
+            let artifact_pending = self
+                .store
+                .pending_scheduled_artifacts(&sandbox.binding.node_id)
+                .await?;
             let idle = pending.is_empty()
                 && plugin_pending.is_empty()
                 && agent_pending.is_empty()
                 && delivery_pending.is_empty()
+                && artifact_pending.is_empty()
                 && !sandbox.any_unresolved();
             let accepted = reports::idle(
                 self.store,

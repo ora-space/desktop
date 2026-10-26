@@ -35,6 +35,20 @@ Cloud–Controller 和 Controller–Node 两段管理链路都认证双向 TLS �
 
 Node 持久化它的运行时目标、控制 epoch 与版本、关闭状态和责任。更低的 epoch、同一 epoch 下不同的绑定、错误的 incarnation 或错误的目标都会被拒绝，在受理队列和第一次真实变更处都会检查，重启也从不在内存中重新打开旧入口。
 
+## 已截止交付的未受理证明
+
+Cloud 的业务结算不等于 Node 终态。Controller 只在 Hello 明确启用并由 Node 声明
+`execution_non_acceptance` 后，请求 `ListExecutionFences` 中的原派发身份。旧 Controller 不会收到
+陌生 capability；旧 Node 缺少能力时保留未知责任，不回退到裸命令或 Unknown 推断。
+
+Node 在同一 SQLite writer 事务中检查完整身份 ledger，并为未受理的 execution 写入永久输入围栏。
+该围栏不受新 control epoch、迟到 permit 或重启影响，也不关闭另一交付族。已受理/已完成不产生证明；
+新 incarnation 的空库不能证明旧实例未受理，旧实例已持久证明则可原样重放。
+
+`RecordExecutionNonAcceptance` 独立接管证明，不产生普通 event ACK。Controller 只有在提交成功后才
+清除对应 unresolved；丢失响应由 RPC 返回的已提交证明身份恢复。quiesce 继续关闭全局派发并检查
+clone、插件、会话、Revision、产物上传及剩余未知责任，Cloud 的行政结算本身不能跳过其中任何一项。
+
 ## 强制停止
 
 紧急终止使用独立的 effect 许可，最长 10 秒，并且从不超过 Controller 的租约。Controller 的强制停止 worker（`ListForceStops`、`ConfirmForceStop`）在普通生命周期步骤等待 Node 时仍持续交付，从不编造执行完成。执行一侧使用持久的运行时栅栏，防止迟到的 ensure 重新创建目标；只有同时证明 `terminated` 和 `lateEnsureFenced` 时，Cloud 才接受终止。不可达、心跳超时或新的代次都不允许对同一目录的并行写入。

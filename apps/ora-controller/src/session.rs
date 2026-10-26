@@ -264,6 +264,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
     let hello = ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
+            execution_non_acceptance: true,
             thread_previews: store.supports_thread_previews(),
             controller_id: id.clone(),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
@@ -369,6 +370,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 Some(action) = control.outgoing.recv() => match action {
                     control::Action::Send(reply) => bounded(deadline, transmit(writer, &reply)).await?,
                     control::Action::Answered(execution) => observer.answered(&execution),
+                    control::Action::NonAcceptanceCommitted(execution) => { settled.insert(execution.clone()); observer.answered(&execution); },
                     control::Action::TerminalRefused(execution) => observer.terminal_refused(&execution),
                     control::Action::TerminalAccepted(execution) => observer.terminal_accepted(&execution),
                     control::Action::Unresolved(execution) => { if !settled.contains(&execution) { observer.unresolved(&execution); } },

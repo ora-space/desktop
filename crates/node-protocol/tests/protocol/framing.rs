@@ -104,6 +104,7 @@ async fn rejects_oversized_outbound_message_without_writing() -> Result<(), Test
     let message = ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
+            execution_non_acceptance: false,
             thread_previews: false,
             controller_id: ControllerId::new("x".repeat(MAX_FRAME_LENGTH)),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
@@ -125,6 +126,7 @@ async fn stream_envelope_is_length_prefix_around_frame_body() -> Result<(), Test
     let controller = ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
+            execution_non_acceptance: false,
             thread_previews: false,
             controller_id: ControllerId::new("owner"),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
@@ -188,6 +190,7 @@ fn rejects_invalid_frame_bodies() -> Result<(), TestError> {
     let oversized = ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
+            execution_non_acceptance: false,
             thread_previews: false,
             controller_id: ControllerId::new("x".repeat(MAX_FRAME_LENGTH)),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],

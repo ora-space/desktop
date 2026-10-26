@@ -1,4 +1,11 @@
 use crate::*;
+
+/// Separate original proof requests and already committed facts replayed after connection loss.
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct ExecutionFenceBatch {
+    pub requests: Vec<ExecutionFence>,
+    pub committed: Vec<ExecutionId>,
+}
 use std::{collections::BTreeMap, future::Future, io};
 
 /// The durable coordination boundary between clone coordination logic and whichever authority
@@ -235,6 +242,22 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         _node: &NodeId,
     ) -> impl Future<Output = Result<Vec<RuntimeBinding>, Error>> + Send {
         async { Ok(Vec::new()) }
+    }
+
+    /// Lists original executions whose intake may be fenced after a business-only settlement.
+    fn execution_fences(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<ExecutionFenceBatch, Error>> + Send {
+        async { Ok(ExecutionFenceBatch::default()) }
+    }
+
+    /// Commits the Node's durable proof separately from terminal results and event receipts.
+    fn record_execution_non_acceptance(
+        &self,
+        _proof: &ExecutionNonAcceptance,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
     }
 
     fn acknowledge_runtime_binding(

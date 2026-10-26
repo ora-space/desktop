@@ -3499,6 +3499,64 @@ pub mod runtime_control_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_execution_fences(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListExecutionFencesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListExecutionFencesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/ora.cloud.internal.v1.RuntimeControlService/ListExecutionFences",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "ora.cloud.internal.v1.RuntimeControlService",
+                        "ListExecutionFences",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn record_execution_non_acceptance(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RecordExecutionNonAcceptanceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RecordExecutionNonAcceptanceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/ora.cloud.internal.v1.RuntimeControlService/RecordExecutionNonAcceptance",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "ora.cloud.internal.v1.RuntimeControlService",
+                        "RecordExecutionNonAcceptance",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn get_effect_permit(
             &mut self,
             request: impl tonic::IntoRequest<super::GetEffectPermitRequest>,
@@ -3621,6 +3679,20 @@ pub mod runtime_control_service_server {
             request: tonic::Request<super::GetExecutionPermitRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetExecutionPermitResponse>,
+            tonic::Status,
+        >;
+        async fn list_execution_fences(
+            &self,
+            request: tonic::Request<super::ListExecutionFencesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListExecutionFencesResponse>,
+            tonic::Status,
+        >;
+        async fn record_execution_non_acceptance(
+            &self,
+            request: tonic::Request<super::RecordExecutionNonAcceptanceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RecordExecutionNonAcceptanceResponse>,
             tonic::Status,
         >;
         async fn get_effect_permit(
@@ -3851,6 +3923,109 @@ pub mod runtime_control_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetExecutionPermitSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/ora.cloud.internal.v1.RuntimeControlService/ListExecutionFences" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListExecutionFencesSvc<T: RuntimeControlService>(pub Arc<T>);
+                    impl<
+                        T: RuntimeControlService,
+                    > tonic::server::UnaryService<super::ListExecutionFencesRequest>
+                    for ListExecutionFencesSvc<T> {
+                        type Response = super::ListExecutionFencesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListExecutionFencesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RuntimeControlService>::list_execution_fences(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListExecutionFencesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/ora.cloud.internal.v1.RuntimeControlService/RecordExecutionNonAcceptance" => {
+                    #[allow(non_camel_case_types)]
+                    struct RecordExecutionNonAcceptanceSvc<T: RuntimeControlService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: RuntimeControlService,
+                    > tonic::server::UnaryService<
+                        super::RecordExecutionNonAcceptanceRequest,
+                    > for RecordExecutionNonAcceptanceSvc<T> {
+                        type Response = super::RecordExecutionNonAcceptanceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::RecordExecutionNonAcceptanceRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RuntimeControlService>::record_execution_non_acceptance(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RecordExecutionNonAcceptanceSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
