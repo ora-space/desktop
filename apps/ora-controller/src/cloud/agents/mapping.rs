@@ -118,6 +118,8 @@ fn prior(input: &proto::PriorRevision) -> Result<PriorRevision, Error> {
 fn listing(input: &proto::WorkspaceListing) -> WorkspaceListing {
     let optional = |value: &str| (!value.is_empty()).then(|| value.to_owned());
     WorkspaceListing {
+        workflow_run_id: optional(&input.workflow_run_id),
+        workflow_name: optional(&input.workflow_name),
         workspace_id: input.workspace_id.clone(),
         kind: input.kind.clone(),
         issue_id: optional(&input.issue_id),
@@ -384,6 +386,8 @@ mod tests {
                         }),
                         workspace_directory: vec![
                             proto::WorkspaceListing {
+                                workflow_run_id: String::new(),
+                                workflow_name: String::new(),
                                 workspace_id: "4b3c2d1e-0f9a-4b8c-9d7e-6f5a4b3c2d1e".into(),
                                 kind: "run".into(),
                                 issue_id: "issue-7".into(),
@@ -392,6 +396,8 @@ mod tests {
                                 run_status: "succeeded".into(),
                             },
                             proto::WorkspaceListing {
+                                workflow_run_id: String::new(),
+                                workflow_name: String::new(),
                                 workspace_id: "1e2d3c4b-5a69-4788-9a6b-5c4d3e2f1a0b".into(),
                                 kind: "main".into(),
                                 issue_id: String::new(),
@@ -453,6 +459,8 @@ mod tests {
                         }),
                         workspace_directory: vec![
                             WorkspaceListing {
+                                workflow_run_id: None,
+                                workflow_name: None,
                                 workspace_id: "4b3c2d1e-0f9a-4b8c-9d7e-6f5a4b3c2d1e".into(),
                                 kind: "run".into(),
                                 issue_id: Some("issue-7".into()),
@@ -461,6 +469,8 @@ mod tests {
                                 run_status: Some("succeeded".into()),
                             },
                             WorkspaceListing {
+                                workflow_run_id: None,
+                                workflow_name: None,
                                 workspace_id: "1e2d3c4b-5a69-4788-9a6b-5c4d3e2f1a0b".into(),
                                 kind: "main".into(),
                                 issue_id: None,

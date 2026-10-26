@@ -122,6 +122,8 @@ impl WorkspaceCloud {
     pub fn workspace_directory() -> Vec<proto::WorkspaceListing> {
         vec![
             proto::WorkspaceListing {
+                workflow_run_id: String::new(),
+                workflow_name: String::new(),
                 workspace_id: WORKSPACE.into(),
                 kind: "run".into(),
                 issue_id: "issue-7".into(),
@@ -130,6 +132,8 @@ impl WorkspaceCloud {
                 run_status: "running".into(),
             },
             proto::WorkspaceListing {
+                workflow_run_id: String::new(),
+                workflow_name: String::new(),
                 workspace_id: "00000000-0000-4000-8000-000000000003".into(),
                 kind: "main".into(),
                 issue_id: String::new(),

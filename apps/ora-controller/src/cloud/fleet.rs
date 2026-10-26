@@ -166,6 +166,14 @@ impl Sandbox {
             .contains(&NodeCapability::ModelProxy)
     }
 
+    /// Freeze whole-history support from the same handshake as the Node identity.
+    pub(super) fn advertised_workflow_history(&self) -> bool {
+        self.capabilities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&NodeCapability::WorkflowHistoryDelivery)
+    }
+
     /// Registration reports the adapter facts of the same handshake as `model_proxy`.
     pub(super) fn advertised_model_adapter(&self) -> Option<ModelAdapterCapability> {
         self.model_adapter

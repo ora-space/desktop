@@ -192,6 +192,7 @@ impl WorkspaceCloud {
         let input = proto::ExecutionInput {
             spec: Some(proto::execution_input::Spec::DeliverRevision(
                 proto::DeliverRevisionSpec {
+                    workflow: None,
                     session_execution_id: format!("session-of-{run}"),
                     checkout_execution_id: state.clones[0].execution_id.clone(),
                     base_commit: BASE_COMMIT.into(),

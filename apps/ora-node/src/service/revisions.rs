@@ -7,10 +7,12 @@
 //! Shutdown, a lost Controller and a lifecycle cancellation never write a failure: an interrupted
 //! step leaves the delivery running and the next start resumes it.
 use super::agents::SessionHost;
+mod workflow;
 use crate::git_server::GitServerAccess;
 use crate::revision::{
-    DELIVERY_ROOT, DeliveryGit, GrantStore, HttpUploader, ObjectUploader, Preparation, PushJob,
-    Pushed, RetryPolicy, SnapshotMode, UploadEnd, UploadJob, prepare, push, upload,
+    DELIVERY_ROOT, DeliveryGit, GrantStore, HistoryInput, HttpUploader, ObjectUploader,
+    Preparation, PushJob, Pushed, RetryPolicy, SnapshotMode, UploadEnd, UploadJob, prepare, push,
+    upload,
 };
 use crate::{ManagedNode, SessionHost as _, Shutdown};
 use gitlancer::GitRunner;
@@ -210,6 +212,11 @@ impl Revisions {
             return Ok(());
         }
         for record in node.database.recoverable_deliveries()? {
+            if record.command.payload.spec.workflow.is_some()
+                && !workflow::writers_stopped(node, agents, &record)?
+            {
+                continue;
+            }
             // Frozen legacy bytes do not bypass the same stop fence used for preparation.
             let journal = node.database.session_journal()?;
             let session = &record.command.payload.spec.session_execution_id;
@@ -228,6 +235,7 @@ impl Revisions {
                             node_id: node.node_id().clone(),
                             directory: self.root.join(&plan.directory),
                             outcome: plan.outcome,
+                            histories: plan.histories,
                         },
                     ))),
                     None => {
@@ -347,6 +355,9 @@ fn inputs(
     record: &RevisionDelivery,
 ) -> Result<Inputs, crate::Error> {
     let spec = &record.command.payload.spec;
+    if spec.workflow.is_some() {
+        return workflow::inputs(node, agents, record);
+    }
     let Some(session) = node.database.delivery_session(&spec.session_execution_id)? else {
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     };
@@ -395,7 +406,7 @@ fn inputs(
         mode,
         spec: spec.clone(),
         checkout,
-        history,
+        history: HistoryInput::Session(history),
         author: session_spec.git_identity,
         node: node.identity().clone(),
         owner: node.git.runner().process_config().workload_uid,

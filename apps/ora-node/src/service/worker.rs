@@ -144,6 +144,7 @@ pub(super) fn run(
     }
     if revisions.is_some() {
         capabilities.push(NodeCapability::RevisionDelivery);
+        capabilities.push(NodeCapability::WorkflowHistoryDelivery);
     }
     // Restore runs Git in session checkouts with delivery's policy, so it needs both.
     if agents.is_some() && revisions.is_some() {

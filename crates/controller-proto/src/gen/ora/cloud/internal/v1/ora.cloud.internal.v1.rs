@@ -80,6 +80,11 @@ pub struct WorkspaceListing {
     /// As of when the session work item was released.
     #[prost(string, tag="6")]
     pub run_status: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub workflow_run_id: ::prost::alloc::string::String,
+    /// The name frozen on the WorkflowRun, retained independently of the live workflow document.
+    #[prost(string, tag="8")]
+    pub workflow_name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AgentSessionSpec {
@@ -223,7 +228,28 @@ pub struct ScheduledArtifactManifest {
     #[prost(bool, tag="4")]
     pub walk_truncated: bool,
 }
+/// Complete registered attempt inventory, frozen only after every writer stopped.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkflowHistoryInput {
+    #[prost(string, tag="1")]
+    pub workflow_run_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="2")]
+    pub sessions: ::prost::alloc::vec::Vec<WorkflowSessionAttempt>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WorkflowSessionAttempt {
+    #[prost(uint32, tag="1")]
+    pub execution_order: u32,
+    #[prost(string, tag="2")]
+    pub node_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag="3")]
+    pub attempt: u32,
+    #[prost(string, tag="4")]
+    pub execution_id: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub history_key: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeliverRevisionSpec {
     /// The ended session whose Workspace and history are saved.
     #[prost(string, tag="1")]
@@ -254,6 +280,10 @@ pub struct DeliverRevisionSpec {
     /// after the delivery ref is pushed; failing to do so never fails the delivery.
     #[prost(string, tag="10")]
     pub workspace_ref: ::prost::alloc::string::String,
+    /// Explicit whole-workflow variant: session_execution_id and prior_revision must be absent.
+    /// history_key stores a versioned manifest, not a session JSONL.
+    #[prost(message, optional, tag="11")]
+    pub workflow: ::core::option::Option<WorkflowHistoryInput>,
 }
 /// An object the Node uploaded, as the Node measured it; Cloud verifies it before registering.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1467,6 +1497,8 @@ pub struct NodeRecord {
     pub model_proxy: bool,
     #[prost(message, optional, tag="10")]
     pub model_adapter: ::core::option::Option<ModelAdapterCapabilities>,
+    #[prost(bool, tag="11")]
+    pub workflow_history_delivery: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegisterNodeRequest {
@@ -1488,6 +1520,9 @@ pub struct RegisterNodeRequest {
     pub model_proxy: bool,
     #[prost(message, optional, tag="8")]
     pub model_adapter: ::core::option::Option<ModelAdapterCapabilities>,
+    /// Advertised by the live Node handshake; older Nodes must not receive whole-run input.
+    #[prost(bool, tag="9")]
+    pub workflow_history_delivery: bool,
 }
 /// Exact host capability advertised after startup validation, independent of plugin metadata.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

@@ -57,10 +57,14 @@ where
 {
     let end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
     let SessionEnd {
+        stop_confirmed,
         reason,
         detail,
         scheduled,
     } = end;
+    if !stop_confirmed {
+        return false;
+    }
     let (scheduled_result, artifact_manifest) = scheduled.map_or((None, None), |declaration| {
         (declaration.result, declaration.manifest)
     });
@@ -328,7 +332,7 @@ where
         sessions_root: shared.sessions_root(),
         scheduler: scheduler.clone(),
     });
-    let end = match manager {
+    let mut end = match manager {
         Ok(manager) => {
             let conversation = Conversation {
                 ledger: &shared.ledger,
@@ -391,6 +395,7 @@ where
         .await
     {
         ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
+        end.stop_confirmed = false;
     }
     scheduler.shutdown().await;
     if let Some(access) = &mut model_access {
@@ -401,7 +406,6 @@ where
     // The checkout still holds the Workspace, so a scheduled run declares its business result here,
     // while Cloud still owns an environment the artifacts can be read from. Neither step writes to
     // it; a failure to declare never changes why the session ended.
-    let mut end = end;
     if let Some(declaration) =
         scheduled::declare(&end, trigger, &shared.sessions_root(), execution, &checkout)
     {
@@ -526,6 +530,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 return SessionEnd::agent_failed("agent_unavailable");
             }
             Err(_) => return SessionEnd::agent_failed("agent_unavailable"),
+        }
+        if self.ledger.admit_history(self.execution).is_err() {
+            return SessionEnd::agent_failed("history_unavailable");
         }
         if let Err(error) = self
             .manager

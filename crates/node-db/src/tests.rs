@@ -385,7 +385,7 @@ fn remove_revision_schema(path: &std::path::Path) {
 fn remove_branch_heads_schema(path: &std::path::Path) {
     Connection::open(path)
         .unwrap()
-        .execute_batch("DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
+        .execute_batch("DROP TABLE IF EXISTS session_history_admissions; DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
         .unwrap();
 }
 

@@ -2,6 +2,12 @@
 
 [English](revisions.md) | 中文
 
+## 整次工作流交付
+
+`DeliverRevisionSpec.workflow` 明确选择整次运行变体，不能同时携带旧单会话选择器或前序恢复输入。Cloud 给出按执行顺序排列的全部节点尝试和对象键；Node 逐项核对会话终态、actor 和恢复写入者已结束，以及同一 checkout，再在任何推送或上传之前冻结各会话的原始字节和版本化清单。明确的插件启动前失败可记 `not_started`；已建立会话的历史缺失使交付失败，不能缩小清单后报成功。
+
+冻结计划保留完整对象集以供重启重放；上传前再次核对大小和摘要，只为固定键申请校验和绑定授权，最后上传清单。Controller 原样转交全部尝试，只向声明 `workflow_history_delivery` 的 Node 派发，Cloud 独立核验全部对象后登记成果。原 Agent JSONL 形状不变，清单靠工作流变体显式识别，不猜文件扩展名。[整次成果 ADR](https://github.com/ora-space/specs/blob/main/decisions/cloud/workflow/20261025-run-owned-git-delivery-and-history.md) 在完整验收前保持 `approved`。
+
 Agent 会话结束时，Node 把它的 checkout 和历史保存为一个 **Revision**：把最终提交推送到平台 Git Server 上的交付 ref，
 对象存储只经 Cloud 签发的授权上传定稿的会话 JSONL。同一个 Issue 之后的运行在 Agent 启动之前从 Git Server 恢复这个
 Revision。不生成、不上传也不下载 bundle。相关决策是

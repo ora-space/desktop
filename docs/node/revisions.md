@@ -2,6 +2,12 @@
 
 English | [中文](revisions.zh.md)
 
+## Whole-workflow delivery
+
+`DeliverRevisionSpec.workflow` selects the whole-run variant; it excludes the legacy single-session selector and prior-Revision restoration. Cloud supplies every ordered node attempt and its object key. The Node verifies that each registered session is terminal, no actor or restore writer remains, and all sessions share the frozen checkout. It freezes each established session's original bytes plus a versioned manifest before pushing or uploading. An explicit pre-plugin failure may be `not_started`; a missing established history fails delivery rather than shrinking the inventory.
+
+Frozen plans retain the complete object set across restart. Uploads check frozen sizes and digests, request checksum-bound grants only for the fixed keys and upload the manifest last. Controller forwards the inventory verbatim and only dispatches it to a Node advertising `workflow_history_delivery`. Cloud independently verifies all objects before registration. The original Agent JSONL shape is unchanged; a manifest is identified by the explicit workflow variant, never by extension. The [whole-run ADR](https://github.com/ora-space/specs/blob/main/decisions/cloud/workflow/20261025-run-owned-git-delivery-and-history.md) remains `approved` pending complete acceptance.
+
 When an Agent session ends, the Node saves its checkout and history as a **Revision**: it pushes the
 final commit to a delivery ref on the platform Git Server and uploads only the sealed session JSONL to
 object storage, through a grant Cloud signs. A later run of the same Issue restores that Revision from

@@ -5,6 +5,47 @@ use pretty_assertions::assert_eq;
 
 const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 const FINAL: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+/// Provider admission survives restart; old sessions never acquire fabricated absence evidence.
+#[test]
+fn history_admission_distinguishes_unstarted_from_lost_legacy_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history-db");
+    let mut db = open(&path);
+    let command = super::session::command();
+    db.accept_session(&command).unwrap();
+    let journal = db.session_journal().unwrap();
+    assert_eq!(
+        journal.history_admitted(&command.execution_id).unwrap(),
+        false
+    );
+    db.start_session(&command, &NodeIncarnationId::new("incarnation"))
+        .unwrap();
+    journal.admit_history(&command.execution_id).unwrap();
+    drop(journal);
+    drop(db);
+    let db = open(&path);
+    assert_eq!(
+        db.session_journal()
+            .unwrap()
+            .history_admitted(&command.execution_id)
+            .unwrap(),
+        true
+    );
+    drop(db);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE session_history_admissions; PRAGMA user_version=12;")
+        .unwrap();
+    let db = open(&path);
+    assert_eq!(
+        db.session_journal()
+            .unwrap()
+            .history_admitted(&command.execution_id)
+            .unwrap(),
+        true
+    );
+}
 const DIGEST: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Supplies a valid delivery of the session fixture's execution.
@@ -15,6 +56,7 @@ pub(super) fn deliver() -> DeliverRevisionMessage {
         execution_id: ExecutionId::new("deliver-execution"),
         payload: DeliverRevision {
             spec: DeliverRevisionSpec {
+                workflow: None,
                 node_id: NodeId::new("node"),
                 session_execution_id: super::session::command().execution_id,
                 checkout_execution_id: ExecutionId::new("clone"),
@@ -46,6 +88,7 @@ fn node() -> NodeRuntimeIdentity {
 pub(super) fn plan() -> DeliveryPlan {
     let spec = deliver().payload.spec;
     DeliveryPlan {
+        histories: Vec::new(),
         directory: "frozen".into(),
         outcome: FrozenOutcome::Delivered(RevisionDelivered {
             node: node(),
@@ -211,6 +254,7 @@ fn unchanged_plans_stop_at_the_base_or_the_prior_final_commit() {
     let unchanged = |final_commit: &str| {
         let spec = deliver().payload.spec;
         DeliveryPlan {
+            histories: Vec::new(),
             directory: "frozen".into(),
             outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
                 node: node(),
@@ -366,5 +410,5 @@ fn migrates_v8_without_losing_sessions() {
         .unwrap()
         .pragma_query_value(/*schema_name*/ None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
 }

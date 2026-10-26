@@ -122,6 +122,16 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
+    /// A released actor and a durable terminal prove quiescence without reading original bytes.
+    pub(crate) fn writers_settled(&self, execution: &ExecutionId) -> bool {
+        !self.shared.is_live(execution)
+            && self
+                .shared
+                .ledger
+                .session_completed(execution)
+                .unwrap_or(/*default*/ false)
+    }
+
     /// Composes session execution over the ledger, clone bookkeeping, plugin catalog and prior
     /// Revision restore of the Node incarnation `node`, which every terminal result reports.
     pub fn new(

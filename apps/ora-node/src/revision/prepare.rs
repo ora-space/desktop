@@ -26,13 +26,20 @@ pub(crate) struct Preparation {
     pub(crate) spec: DeliverRevisionSpec,
     pub(crate) checkout: PathBuf,
     /// The sealed session JSONL; nothing writes to it anymore.
-    pub(crate) history: PathBuf,
+    pub(crate) history: HistoryInput,
     pub(crate) author: GitIdentity,
     /// The incarnation that prepares the bytes is the one the declaration names, even when a
     /// later incarnation finishes the upload.
     pub(crate) node: NodeRuntimeIdentity,
     /// The workload user delivery Git runs as, when the deployment separates it from the Node.
     pub(crate) owner: Option<u32>,
+}
+
+/// The legacy bytes and whole-run inventory cannot be confused during freezing.
+#[derive(Clone, Debug)]
+pub(crate) enum HistoryInput {
+    Session(PathBuf),
+    Workflow(Vec<(WorkflowSessionAttempt, Option<PathBuf>)>),
 }
 
 /// The per-execution directory name: execution IDs are opaque protocol text, so the name is
@@ -75,8 +82,16 @@ fn freeze<R: GitRunner>(
         .create(frozen)
         .map_err(|error| local(error, RevisionFailureCode::SnapshotFailed))?;
     let history_path = frozen.join(HISTORY_FILE);
-    copy_synced(&job.history, &history_path)
-        .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
+    let histories = match &job.history {
+        HistoryInput::Session(path) => {
+            copy_synced(path, &history_path)
+                .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
+            Vec::new()
+        }
+        HistoryInput::Workflow(sessions) => {
+            super::workflow::freeze_history(frozen, &history_path, &job.spec, sessions)?
+        }
+    };
     // Agents now run as the workload user, but a checkout a session of an older Node worked in
     // (when the agent ran as the Node user) can still hold files the Node user owns with
     // owner-only modes, which delivery Git — running as the workload user like clone — could not
@@ -133,6 +148,7 @@ fn freeze<R: GitRunner>(
     Ok(DeliveryPlan {
         directory: directory.to_owned(),
         outcome,
+        histories,
     })
 }
 
@@ -149,7 +165,7 @@ pub(crate) fn stored(key: &ObjectKey, path: &Path) -> io::Result<StoredObject> {
 ///
 /// The source sits in a directory another program wrote (the session root); refusing a symlink
 /// keeps the Node from freezing an unrelated file.
-fn copy_synced(source: &Path, destination: &Path) -> io::Result<()> {
+pub(super) fn copy_synced(source: &Path, destination: &Path) -> io::Result<()> {
     let mut input = fs::OpenOptions::new()
         .read(/*read*/ true)
         .custom_flags(libc::O_NOFOLLOW)

@@ -89,6 +89,7 @@ pub(super) fn deliver(base: &CommitId, server: &GitServerFixture) -> DeliverRevi
         execution_id: ExecutionId::new("deliver-execution"),
         payload: DeliverRevision {
             spec: DeliverRevisionSpec {
+                workflow: None,
                 node_id: NodeId::new("test-node"),
                 session_execution_id: ExecutionId::new(EXECUTION),
                 checkout_execution_id: start("").payload.spec.checkout_execution_id,

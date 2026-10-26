@@ -32,6 +32,20 @@ pub(in crate::cloud) fn deliver(
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: DeliverRevision {
             spec: DeliverRevisionSpec {
+                workflow: spec.workflow.as_ref().map(|workflow| WorkflowHistoryInput {
+                    workflow_run_id: workflow.workflow_run_id.clone(),
+                    sessions: workflow
+                        .sessions
+                        .iter()
+                        .map(|attempt| WorkflowSessionAttempt {
+                            execution_order: attempt.execution_order,
+                            node_id: attempt.node_id.clone(),
+                            attempt: attempt.attempt,
+                            execution_id: ExecutionId::new(attempt.execution_id.clone()),
+                            history_key: ObjectKey::new(attempt.history_key.clone()),
+                        })
+                        .collect(),
+                }),
                 node_id: node.clone(),
                 session_execution_id: ExecutionId::new(spec.session_execution_id.clone()),
                 checkout_execution_id: ExecutionId::new(spec.checkout_execution_id.clone()),
@@ -372,6 +386,7 @@ mod tests {
             input: Some(proto::ExecutionInput {
                 spec: Some(proto::execution_input::Spec::DeliverRevision(
                     proto::DeliverRevisionSpec {
+                        workflow: None,
                         session_execution_id: "session".into(),
                         checkout_execution_id: "checkout".into(),
                         base_commit: BASE.into(),
@@ -398,6 +413,50 @@ mod tests {
         {
             edit(spec);
         }
+    }
+
+    /// The workflow inventory reaches the Node unchanged and cannot retain a legacy selector.
+    #[test]
+    fn whole_workflow_delivery_never_selects_a_final_session() {
+        let mut record = record();
+        let workflow = proto::WorkflowHistoryInput {
+            workflow_run_id: "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a".into(),
+            sessions: vec![
+                proto::WorkflowSessionAttempt {
+                    execution_order: 0,
+                    node_id: "a".into(),
+                    attempt: 1,
+                    execution_id: "attempt-1".into(),
+                    history_key: "run/attempt-1".into(),
+                },
+                proto::WorkflowSessionAttempt {
+                    execution_order: 1,
+                    node_id: "a".into(),
+                    attempt: 2,
+                    execution_id: "attempt-2".into(),
+                    history_key: "run/attempt-2".into(),
+                },
+            ],
+        };
+        edit(&mut record, |spec| {
+            spec.session_execution_id.clear();
+            spec.workflow = Some(workflow.clone());
+        });
+        let command = deliver(&record, &NodeId::new("node")).unwrap();
+        let input = command.payload.spec.workflow.as_ref().unwrap();
+        assert_eq!(input.workflow_run_id, workflow.workflow_run_id);
+        assert_eq!(
+            input
+                .sessions
+                .iter()
+                .map(|attempt| attempt.execution_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["attempt-1", "attempt-2"]
+        );
+        edit(&mut record, |spec| {
+            spec.session_execution_id = "last-session".into()
+        });
+        assert!(deliver(&record, &NodeId::new("node")).is_err());
     }
 
     /// The same delivery resuming the prior Revision whose final commit is `PRIOR`.
@@ -463,6 +522,7 @@ mod tests {
                 execution_id: ExecutionId::new("execution"),
                 payload: DeliverRevision {
                     spec: DeliverRevisionSpec {
+                        workflow: None,
                         node_id: node.clone(),
                         session_execution_id: ExecutionId::new("session"),
                         checkout_execution_id: ExecutionId::new("checkout"),

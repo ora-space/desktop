@@ -28,6 +28,8 @@ fn prior_revision() -> PriorRevision {
 fn workspace_directory() -> Vec<WorkspaceListing> {
     vec![
         WorkspaceListing {
+            workflow_run_id: None,
+            workflow_name: None,
             workspace_id: WORKSPACE.into(),
             kind: "run".into(),
             issue_id: Some("issue-7".into()),
@@ -36,6 +38,8 @@ fn workspace_directory() -> Vec<WorkspaceListing> {
             run_status: Some("running".into()),
         },
         WorkspaceListing {
+            workflow_run_id: None,
+            workflow_name: None,
             workspace_id: "00000000-0000-4000-8000-000000000003".into(),
             kind: "main".into(),
             issue_id: None,

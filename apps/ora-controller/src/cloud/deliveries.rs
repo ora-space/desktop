@@ -318,9 +318,20 @@ impl CloudStore {
         };
         // Grants exist only for the session history: a delivery over Git uploads nothing else.
         if record.result.is_some()
-            || checksums
-                .keys()
-                .any(|key| *key != command.payload.spec.history_key)
+            || checksums.keys().any(|key| {
+                *key != command.payload.spec.history_key
+                    && !command
+                        .payload
+                        .spec
+                        .workflow
+                        .as_ref()
+                        .is_some_and(|workflow| {
+                            workflow
+                                .sessions
+                                .iter()
+                                .any(|attempt| attempt.history_key == *key)
+                        })
+            })
         {
             return Ok(self.not_grantable(execution));
         }

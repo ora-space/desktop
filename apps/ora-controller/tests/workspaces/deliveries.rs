@@ -341,6 +341,7 @@ fn delivery_waits_for_its_permit_and_relays_checksum_bound_grants_unlogged() {
                     execution_id: execution.clone(),
                     payload: DeliverRevision {
                         spec: DeliverRevisionSpec {
+                            workflow: None,
                             node_id: node_id(),
                             session_execution_id: ExecutionId::new("session-of-run"),
                             checkout_execution_id: ExecutionId::new(spec.checkout_execution_id),

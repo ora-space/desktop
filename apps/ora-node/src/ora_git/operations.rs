@@ -129,6 +129,8 @@ impl<R: GitRunner + Send + 'static, N: GitRunner + Send + 'static> Context<'_, R
                     ("run", &listing.issue_run_id),
                     ("status", &listing.run_status),
                     ("title", &listing.issue_title),
+                    ("workflow_run", &listing.workflow_run_id),
+                    ("workflow", &listing.workflow_name),
                 ] {
                     if let Some(value) = value {
                         let _ = write!(output, " {label}={value:?}");
