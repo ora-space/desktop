@@ -206,7 +206,7 @@ fn failed_proof_takeover_keeps_the_real_fleet_unknown() {
                 .expect("failed proof takeover did not end the session");
                 assert!(result.is_err());
                 cloud.until(|state| state.non_acceptance_attempts > 0).await;
-            assert!(observed.any_unresolved());
+                assert!(observed.any_unresolved());
             });
     });
 }
