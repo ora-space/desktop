@@ -95,6 +95,9 @@ pub(super) async fn batch(
             }
             Targeted::Delivery | Targeted::Artifacts => {
                 sandbox.advertises(NodeCapability::RevisionDelivery)
+                    && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
+                        Some(proto::execution_input::Spec::DeliverRevision(spec)) if spec.workflow.is_some())
+                        || sandbox.advertises(NodeCapability::WorkflowHistoryDelivery))
             }
         };
         // A Node without the capability leaves the item queued in Cloud for a capable session;

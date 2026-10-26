@@ -51,6 +51,7 @@ fn setup() -> Setup {
     let job = PushJob {
         execution: ExecutionId::new("delivery"),
         spec: DeliverRevisionSpec {
+            workflow: None,
             node_id: NodeId::new("node"),
             session_execution_id: ExecutionId::new("session"),
             checkout_execution_id: ExecutionId::new("clone"),

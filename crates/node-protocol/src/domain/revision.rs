@@ -82,6 +82,9 @@ pub struct DeliverRevisionSpec {
     pub node_id: NodeId,
     /// Must have a terminal result and a closed process scope before delivery starts.
     pub session_execution_id: ExecutionId,
+    /// Present only for a whole WorkflowRun; the legacy session identity must then be empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::WorkflowHistoryInput>,
     pub checkout_execution_id: ExecutionId,
     /// Commit of the clone.
     pub base_commit: CommitId,
@@ -105,7 +108,7 @@ impl DeliverRevisionSpec {
         if self.node_id.is_empty() {
             return Err(MessageValidationError::EmptyField { field: "node_id" });
         }
-        if self.session_execution_id.is_empty() {
+        if self.workflow.is_none() && self.session_execution_id.is_empty() {
             return Err(MessageValidationError::EmptyField {
                 field: "session_execution_id",
             });
@@ -118,6 +121,12 @@ impl DeliverRevisionSpec {
         validate_commit(&self.base_commit)?;
         self.revision_ref.validate()?;
         self.history_key.validate()?;
+        if let Some(workflow) = &self.workflow {
+            if !self.session_execution_id.is_empty() || self.prior_revision.is_some() {
+                return Err(MessageValidationError::InvalidWorkflowHistory);
+            }
+            workflow.validate(&self.history_key)?;
+        }
         if let Some(prior) = &self.prior_revision {
             prior.validate()?;
         }

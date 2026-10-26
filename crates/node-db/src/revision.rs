@@ -37,6 +37,9 @@ pub struct DeliveryPlan {
     /// Single directory name under the Node's delivery root that holds the frozen history.
     pub directory: String,
     pub outcome: FrozenOutcome,
+    /// Whole-workflow raw histories, absent in legacy single-session plans.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub histories: Vec<StoredObject>,
 }
 
 /// Where a running delivery is; a frozen plan never returns to preparation.
@@ -177,6 +180,19 @@ impl<G: WriteGuard> NodeDatabase<G> {
             return Err(Error::InvalidTransition);
         }
         let spec = &record.command.payload.spec;
+        let allowed: std::collections::HashSet<_> = spec
+            .workflow
+            .iter()
+            .flat_map(|workflow| workflow.sessions.iter().map(|attempt| &attempt.history_key))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        if plan
+            .histories
+            .iter()
+            .any(|object| !allowed.contains(&object.key) || !seen.insert(&object.key))
+        {
+            return Err(Error::IdentityConflict);
+        }
         let consistent = match &plan.outcome {
             FrozenOutcome::Delivered(result) => {
                 result.node.node_id == self.node_id

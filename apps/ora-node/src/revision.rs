@@ -17,9 +17,10 @@ mod push;
 mod restore;
 mod snapshot;
 mod upload;
+mod workflow;
 
 pub(crate) use grants::{GrantRequest, GrantStore, Registration};
-pub(crate) use prepare::{Preparation, SnapshotMode, prepare};
+pub(crate) use prepare::{HistoryInput, Preparation, SnapshotMode, prepare};
 pub(crate) use push::{PushJob, Pushed, push};
 pub use restore::RestoreConfig;
 pub(crate) use restore::{

@@ -25,6 +25,8 @@ pub enum NodeCapability {
     /// Sessions with a prior Revision, fetched from the Git Server and restored before the agent
     /// starts; a delivery of such a session reports an unchanged prior final commit as unchanged.
     RevisionRestore,
+    /// Ordered whole-workflow history manifests and per-attempt raw archives.
+    WorkflowHistoryDelivery,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.

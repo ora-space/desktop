@@ -161,6 +161,7 @@ fn uploader() -> HttpUploader {
 fn frozen(directory: &Path) -> UploadJob {
     std::fs::write(directory.join(HISTORY_FILE), b"{\"type\":\"turnEnded\"}\n").unwrap();
     UploadJob {
+        histories: Vec::new(),
         operation: OperationId::new("deliver-op"),
         execution: ExecutionId::new("deliver-execution"),
         node_id: NodeId::new("node"),

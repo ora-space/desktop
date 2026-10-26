@@ -38,6 +38,10 @@ pub struct WorkspaceListing {
     pub issue_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_name: Option<String>,
 }
 
 /// Commit identity exported to the Agent's process tree as `GIT_AUTHOR_*` and `GIT_COMMITTER_*`.

@@ -196,6 +196,8 @@ impl Fixture {
                     spec,
                 },
                 directory: vec![WorkspaceListing {
+                    workflow_run_id: None,
+                    workflow_name: None,
                     workspace_id: WORKSPACE.into(),
                     kind: "run".into(),
                     issue_id: Some("issue".into()),

@@ -4,6 +4,14 @@ use ora_node_db::{SessionCommandInput, SessionCommandSettlement, SessionJournal,
 use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, ThreadEvent};
 
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
+    /// A terminal alone cannot authorize whole-workflow delivery after restart.
+    fn confirm_writer_stop(&self, execution: &ExecutionId) -> Result<(), Self::Error> {
+        SessionJournal::confirm_writer_stop(self, execution)
+    }
+    /// The marker distinguishes never-admitted sessions from lost established history.
+    fn admit_history(&self, execution: &ExecutionId) -> Result<(), Self::Error> {
+        SessionJournal::admit_history(self, execution)
+    }
     type Error = ora_node_db::Error;
 
     /// History release follows durable terminal evidence, never actor lifetime alone.

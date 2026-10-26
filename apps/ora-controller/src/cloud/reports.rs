@@ -99,6 +99,7 @@ async fn register(
     let epoch = store.epoch()?;
     let binding = &sandbox.binding;
     let model_proxy = sandbox.advertised_model_proxy();
+    let workflow_history_delivery = sandbox.advertised_workflow_history();
     let model_adapter =
         sandbox
             .advertised_model_adapter()
@@ -124,6 +125,7 @@ async fn register(
             }),
             protocol_version: u32::from(CURRENT_PROTOCOL_VERSION.value()),
             model_proxy,
+            workflow_history_delivery,
             model_adapter: model_adapter.clone(),
         });
         store.nodes().register_node(request).await

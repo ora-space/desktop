@@ -8,7 +8,13 @@ mod repository_result;
 mod revision;
 mod revision_restore;
 mod scheduled_run;
+mod workflow_history;
 mod worktree;
+
+pub use workflow_history::{
+    WorkflowHistoryEntry, WorkflowHistoryInput, WorkflowHistoryManifest, WorkflowSessionAttempt,
+    WorkflowSessionHistory,
+};
 
 pub use agent_session::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, ContentBlock,

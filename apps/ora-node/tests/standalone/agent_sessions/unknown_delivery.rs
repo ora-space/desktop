@@ -307,6 +307,7 @@ fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart(
             fs::create_dir_all(&frozen_path).unwrap();
             fs::write(frozen_path.join("history.jsonl"), "").unwrap();
             let plan = DeliveryPlan {
+                histories: Vec::new(),
                 directory: frozen_directory,
                 outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
                     node: NodeRuntimeIdentity {

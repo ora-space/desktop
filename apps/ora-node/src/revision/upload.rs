@@ -88,6 +88,7 @@ pub(crate) struct UploadJob {
     pub(crate) node_id: NodeId,
     pub(crate) directory: PathBuf,
     pub(crate) outcome: FrozenOutcome,
+    pub(crate) histories: Vec<StoredObject>,
 }
 
 /// How an upload ended; an interrupted upload is never reported here, it is simply resumed.
@@ -113,7 +114,17 @@ pub(crate) async fn upload<U: ObjectUploader>(
     job: &UploadJob,
     policy: RetryPolicy,
 ) -> UploadEnd {
-    let objects = objects(&job.outcome);
+    let mut objects: Vec<_> = job
+        .histories
+        .iter()
+        .map(|object| (object, super::workflow::object_file(&object.key)))
+        .collect();
+    // Upload the manifest last; an incomplete attempt never exposes a complete-looking index.
+    objects.extend(
+        self::objects(&job.outcome)
+            .into_iter()
+            .map(|(object, file)| (object, file.to_owned())),
+    );
     // The bytes must still be the ones declared; uploading anything else under the same keys
     // would break the declaration Cloud verifies.
     for (object, file) in &objects {

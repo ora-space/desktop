@@ -11,6 +11,76 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+/// Whole-run delivery keeps failed and successful attempts byte-for-byte in one Git snapshot.
+#[test]
+fn workflow_snapshot_freezes_every_history_and_explicit_unstarted_attempt() {
+    let fixture = Fixture::new();
+    let mut job = fixture.job();
+    job.spec.session_execution_id = ExecutionId::new("");
+    let attempts: Vec<_> = (0..3)
+        .map(|index| WorkflowSessionAttempt {
+            execution_order: index,
+            node_id: if index < 2 { "a" } else { "b" }.into(),
+            attempt: if index == 1 { 2 } else { 1 },
+            execution_id: ExecutionId::new(format!("session-{index}")),
+            history_key: ObjectKey::new(format!("run/{index}.jsonl")),
+        })
+        .collect();
+    job.spec.workflow = Some(WorkflowHistoryInput {
+        workflow_run_id: "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a".into(),
+        sessions: attempts.clone(),
+    });
+    let raw = [
+        b"{\"failed\": true}\r\n".as_slice(),
+        b"{\"success\": 1e3}\n".as_slice(),
+    ];
+    let mut sources = Vec::new();
+    for (index, attempt) in attempts.iter().enumerate() {
+        let path = fixture.directory.path().join(format!("raw-{index}"));
+        if let Some(bytes) = raw.get(index) {
+            fs::write(&path, bytes).unwrap();
+            sources.push((attempt.clone(), Some(path)));
+        } else {
+            sources.push((attempt.clone(), None));
+        }
+    }
+    fs::write(fixture.checkout().join("whole-run.txt"), "both nodes' code").unwrap();
+    job.history = prepare::HistoryInput::Workflow(sources.clone());
+    let plan = fixture.prepare(&job).unwrap();
+    let frozen = fixture.root().join(&plan.directory);
+    assert_eq!(plan.histories.len(), 2);
+    for (index, object) in plan.histories.iter().enumerate() {
+        assert_eq!(
+            fs::read(frozen.join(crate::revision::workflow::object_file(&object.key))).unwrap(),
+            raw[index]
+        );
+    }
+    let manifest: WorkflowHistoryManifest =
+        serde_json::from_slice(&fs::read(frozen.join(HISTORY_FILE)).unwrap()).unwrap();
+    assert_eq!(manifest.sessions.len(), 3);
+    assert_eq!(
+        manifest.sessions[2].history,
+        WorkflowSessionHistory::NotStarted
+    );
+    let final_commit = match plan.outcome {
+        FrozenOutcome::Delivered(ref r) => r.final_commit.as_str(),
+        _ => panic!("code change missing"),
+    };
+    assert_eq!(
+        git(
+            &fixture.checkout(),
+            &["show", &format!("{final_commit}:whole-run.txt")]
+        ),
+        "both nodes' code"
+    );
+    // Established history loss cannot become a smaller successful manifest.
+    fs::remove_file(sources[0].1.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        fixture.prepare(&job),
+        Err(RevisionFailureCode::HistoryUnavailable)
+    );
+}
+
 /// Rejects every operation except the one HEAD read allowed to an incomplete, unstarted restore.
 struct HeadOnly(std::sync::atomic::AtomicUsize);
 
@@ -213,6 +283,7 @@ impl Fixture {
             mode: crate::revision::SnapshotMode::Worktree,
             execution: ExecutionId::new("deliver-execution"),
             spec: DeliverRevisionSpec {
+                workflow: None,
                 node_id: NodeId::new("node"),
                 session_execution_id: ExecutionId::new("session"),
                 checkout_execution_id: ExecutionId::new("clone"),
@@ -229,7 +300,7 @@ impl Fixture {
                 .unwrap(),
             },
             checkout: self.checkout(),
-            history: self.directory.path().join("history.jsonl"),
+            history: prepare::HistoryInput::Session(self.directory.path().join("history.jsonl")),
             author: GitIdentity {
                 name: "Session User".into(),
                 email: "user@example.com".into(),
@@ -316,6 +387,7 @@ fn unchanged_checkout_freezes_only_the_history() {
     assert_eq!(
         plan,
         DeliveryPlan {
+            histories: Vec::new(),
             directory: directory_name(&job.execution),
             outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
                 node: job.node.clone(),
@@ -328,7 +400,7 @@ fn unchanged_checkout_freezes_only_the_history() {
     );
     assert_eq!(
         fs::read(frozen.join("history.jsonl")).unwrap(),
-        fs::read(&job.history).unwrap()
+        fs::read(fixture.directory.path().join("history.jsonl")).unwrap()
     );
     assert_eq!(
         fs::read_dir(&frozen).unwrap().count(),
@@ -365,6 +437,7 @@ fn resumed_delivery_stopping_at_the_prior_final_commit_is_unchanged() {
     assert_eq!(
         plan,
         DeliveryPlan {
+            histories: Vec::new(),
             directory: directory_name(&job.execution),
             outcome: FrozenOutcome::Unchanged(RevisionUnchanged {
                 node: job.node.clone(),
@@ -479,7 +552,8 @@ fn unusable_inputs_fail_without_frozen_objects() {
     let mut not_a_repository = fixture.job();
     not_a_repository.checkout = fixture.directory.path().to_path_buf();
     let mut missing_history = fixture.job();
-    missing_history.history = fixture.directory.path().join("absent.jsonl");
+    missing_history.history =
+        prepare::HistoryInput::Session(fixture.directory.path().join("absent.jsonl"));
     for (job, failure) in [
         (missing_base, RevisionFailureCode::CheckoutUnavailable),
         (not_a_repository, RevisionFailureCode::CheckoutUnavailable),

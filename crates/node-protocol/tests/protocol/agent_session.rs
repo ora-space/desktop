@@ -133,6 +133,8 @@ async fn workspace_directory_round_trips_and_rejects_ambiguous_identities() -> R
     };
     command.payload.spec.workspace_directory = vec![
         WorkspaceListing {
+            workflow_run_id: None,
+            workflow_name: None,
             workspace_id: run.to_owned(),
             kind: "run".to_owned(),
             issue_id: Some("issue-1".to_owned()),
@@ -141,6 +143,8 @@ async fn workspace_directory_round_trips_and_rejects_ambiguous_identities() -> R
             run_status: Some("completed".to_owned()),
         },
         WorkspaceListing {
+            workflow_run_id: None,
+            workflow_name: None,
             workspace_id: main.to_owned(),
             kind: "main".to_owned(),
             issue_id: None,

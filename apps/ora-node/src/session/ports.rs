@@ -45,6 +45,16 @@ pub enum CommandSettlement {
 pub trait SessionLedger: Clone + Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
 
+    /// Makes possible provider history durable before asking the provider to create a session.
+    fn admit_history(&self, _execution: &ExecutionId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Persists actual process-stop evidence; recovery must not call this to fabricate quiescence.
+    fn confirm_writer_stop(&self, _execution: &ExecutionId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Assigns the next sequence to one Thread event and returns once it is durable.
     fn append_thread_event(
         &self,

@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("workflow history must name distinct, ordered attempts and object keys")]
+    InvalidWorkflowHistory,
     #[error(
         "unconfirmed-stop evidence must retain original identities and an increasing stop bound"
     )]

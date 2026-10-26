@@ -24,6 +24,7 @@ pub(super) fn deliver() -> Case {
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: DeliverRevision {
                     spec: DeliverRevisionSpec {
+                        workflow: None,
                         node_id: NodeId::new("node-1"),
                         session_execution_id: ExecutionId::new("execution-session"),
                         checkout_execution_id: ExecutionId::new("execution-clone"),

@@ -32,11 +32,12 @@ pub use domain::{
     ScheduledArtifactUpload, ScheduledArtifactUploadGrant, ScheduledArtifactsDelivered,
     ScheduledArtifactsEvidence, ScheduledArtifactsExecutionResult, ScheduledArtifactsFailed,
     ScheduledArtifactsFailureReason, ScheduledRunResult, ScheduledVerdict, SessionTrigger,
-    Sha256Digest, SnapshotRef, StoredObject, ThreadEvent, UploadMethod, UserTurn, WorkspaceListing,
-    WorkspaceRef, WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed,
-    WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
-    WorktreeRemovalOutcome, WorktreeRemoved, is_canonical_uuid, is_full_lowercase_commit,
-    is_workspace_branch,
+    Sha256Digest, SnapshotRef, StoredObject, ThreadEvent, UploadMethod, UserTurn,
+    WorkflowHistoryEntry, WorkflowHistoryInput, WorkflowHistoryManifest, WorkflowSessionAttempt,
+    WorkflowSessionHistory, WorkspaceListing, WorkspaceRef, WorktreeExecutionResult,
+    WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed, WorktreeFailure, WorktreeFailureCode,
+    WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed, WorktreeRemovalOutcome,
+    WorktreeRemoved, is_canonical_uuid, is_full_lowercase_commit, is_workspace_branch,
 };
 pub use frame::{
     FrameError, MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE, decode_controller_frame,

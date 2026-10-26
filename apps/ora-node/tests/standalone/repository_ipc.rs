@@ -318,6 +318,7 @@ fn git_server_capabilities_follow_the_git_access_identity() {
                     NodeCapability::PluginInstall,
                     NodeCapability::RuntimeControl,
                     NodeCapability::RevisionDelivery,
+                    NodeCapability::WorkflowHistoryDelivery,
                 ],
             ]
         );

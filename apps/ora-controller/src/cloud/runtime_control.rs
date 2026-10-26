@@ -55,7 +55,22 @@ impl CloudStore {
     pub(super) async fn control_ack(&self, state: &RuntimeControlState) -> Result<(), Error> {
         // A running fixed activity retains its responsibility; only closure reports all liabilities.
         if !state.binding.input_closed && !state.unfinished_execution_ids.is_empty() {
-            return Ok(());
+            // Relay retained workflow delivery evidence rather than claiming an empty slot.
+            // Cloud still validates its original run, target and immutable input before ACKing.
+            for execution in &state.unfinished_execution_ids {
+                let Some(record) = self.record(&ExecutionId::new(execution)).await? else {
+                    return Ok(());
+                };
+                if record.node_id != state.binding.node_id
+                    || record.operation_id != state.binding.operation_id
+                    || record.result.is_some()
+                    || !matches!(record.input.as_ref().and_then(|input|input.spec.as_ref()),
+                        Some(proto::execution_input::Spec::DeliverRevision(spec))
+                            if spec.workflow.as_ref().is_some_and(|workflow|workflow.workflow_run_id==state.binding.operation_id))
+                {
+                    return Ok(());
+                }
+            }
         }
         let epoch = self.epoch()?;
         if state.binding.controller_epoch != epoch {

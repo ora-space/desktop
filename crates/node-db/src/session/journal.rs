@@ -3,6 +3,59 @@ use super::*;
 use std::path::PathBuf;
 
 impl<G: WriteGuard> SessionJournal<G> {
+    /// Only the live actor records this after plugin and restore stop confirmation, before ending.
+    pub fn confirm_writer_stop(&self, execution: &ExecutionId) -> Result<(), Error> {
+        let db = self.lock()?;
+        let session = read(&db.connection, execution)?.ok_or(Error::IdentityConflict)?;
+        if session.state != ExecutionState::Running {
+            return Err(Error::InvalidTransition);
+        }
+        db.guard.before_write(WritePoint::Progress)?;
+        db.connection.execute(
+            "INSERT INTO session_writer_stops(execution) VALUES(?1) ON CONFLICT DO NOTHING",
+            [execution.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Neither a restart-generated terminal nor elapsed time invents process-stop evidence.
+    pub fn writer_stop_confirmed(&self, execution: &ExecutionId) -> Result<bool, Error> {
+        self.lock()?
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_writer_stops WHERE execution=?1)",
+                [execution.as_str()],
+                |row| row.get(/*idx*/ 0),
+            )
+            .map_err(Error::from)
+    }
+
+    /// Records possible provider-side history before issuing session creation, including crashes.
+    pub fn admit_history(&self, execution: &ExecutionId) -> Result<(), Error> {
+        let db = self.lock()?;
+        let session = read(&db.connection, execution)?.ok_or(Error::IdentityConflict)?;
+        if session.state != ExecutionState::Running {
+            return Err(Error::InvalidTransition);
+        }
+        db.guard.before_write(WritePoint::Progress)?;
+        db.connection.execute(
+            "INSERT INTO session_history_admissions(execution) VALUES(?1) ON CONFLICT DO NOTHING",
+            [execution.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Only a new, never-admitted execution can prove that no provider history ever existed.
+    pub fn history_admitted(&self, execution: &ExecutionId) -> Result<bool, Error> {
+        self.lock()?
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_history_admissions WHERE execution=?1)",
+                [execution.as_str()],
+                |row| row.get(/*idx*/ 0),
+            )
+            .map_err(Error::from)
+    }
     /// A released actor with unknown stop evidence is not a sealed terminal session.
     pub fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Error> {
         Ok(read(&self.lock()?.connection, execution)?
