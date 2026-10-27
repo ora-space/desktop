@@ -25,6 +25,7 @@ import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { RunNodeSessionChat } from "./run-node-session-chat";
+import { isAwaitingConfirmation } from "./run-node-completion";
 import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
@@ -137,12 +138,14 @@ export function RunTheaterActCard({
   // A parked interactive turn without a settled completion preview is paused: the previous turn
   // did not settle normally, or an older node run has no snapshot yet. A provisional snapshot is
   // not paused: the step card invites the ordinary completion and the backend re-checks it, so the
-  // act card must not label the same state differently.
+  // act card must not label the same state differently. An unconfirmed opening turn is also not
+  // paused: its turn settled normally and the node is waiting for the user's answer or confirmation.
   const paused =
     interactive &&
     state.status === "awaiting_input" &&
     state.completion?.ready !== true &&
-    state.completion?.provisional !== true;
+    state.completion?.provisional !== true &&
+    !isAwaitingConfirmation(state.completion);
   const sessionInteraction =
     sessionChatIdentity !== null &&
     interactive &&

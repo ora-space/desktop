@@ -1,4 +1,30 @@
-import type { GraphWorkflowRun } from "@ora/workflow-runtime";
+import type {
+  GraphWorkflowRun,
+  WorkflowNodeCompletion,
+} from "@ora/workflow-runtime";
+
+/**
+ * True when the workflow's opening turn settled normally but the user has not confirmed the step.
+ *
+ * The node is awaiting the user rather than paused: its only blocker is `turn_unconfirmed`, so the
+ * step card keeps the awaiting-input badge and offers continue / complete-anyway instead of reading
+ * as a turn that ended abnormally.
+ */
+export function isAwaitingConfirmation(
+  completion: WorkflowNodeCompletion | undefined,
+): boolean {
+  if (
+    completion === undefined ||
+    completion.ready ||
+    completion.provisional ||
+    completion.blockers.length === 0
+  ) {
+    return false;
+  }
+  return completion.blockers.every(
+    (blocker) => blocker.kind === "turn_unconfirmed",
+  );
+}
 
 /**
  * Direct successor titles for every node in one frozen graph, keyed by node id.

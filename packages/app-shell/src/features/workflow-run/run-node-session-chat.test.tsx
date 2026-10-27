@@ -802,6 +802,82 @@ describe("RunNodeSessionChat", () => {
     );
   });
 
+  it("keeps the opening step awaiting confirmation instead of offering to advance", () => {
+    renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_unconfirmed"),
+      ["Review changes"],
+    );
+
+    const card = screen.getByTestId("node-step-card");
+    expect(within(card).getByText("等待参与")).toBeInTheDocument();
+    expect(card).toHaveTextContent("等待你的确认");
+    expect(card).toHaveTextContent(
+      "本次停靠来自 workflow 的首轮自动回合，不代表本步骤已完成。",
+    );
+    expect(card).not.toHaveTextContent("完成并进入下一步");
+    expect(screen.queryByTestId("complete-ready-node")).toBeNull();
+    expect(screen.getByTestId("continue-current-step")).toBeInTheDocument();
+    expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+    expect(screen.getByTestId("complete-current-node")).toBeDisabled();
+  });
+
+  it("sends the unconfirmed scoped turn when continuing the opening step", async () => {
+    const { client } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_unconfirmed"),
+    );
+    const promptSpy = vi.spyOn(client.session, "prompt");
+
+    await userEvent.click(screen.getByTestId("continue-current-step"));
+
+    await waitFor(() => expect(promptSpy).toHaveBeenCalledTimes(1));
+    const request = promptSpy.mock.calls[0]![0];
+    const text = request.prompt
+      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+      .join("\n");
+    expect(text).toContain("本轮自动回合已经结束");
+    expect(text).toContain("不要执行后续节点");
+    expect(text).not.toContain("本轮没有正常结束");
+  });
+
+  it("confirms the opening step before force-completing it", async () => {
+    const { client } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_unconfirmed"),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    await userEvent.click(screen.getByTestId("force-complete-node"));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("本轮已正常结束，但还没有你的确认。");
+    await userEvent.click(within(dialog).getByTestId("confirm-force-complete"));
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: true,
+      }),
+    );
+  });
+
   it("shows non-blocking warnings from a ready turn", () => {
     renderDock("awaiting_input", false, [], undefined, undefined, undefined, {
       ...readyCompletion(),
