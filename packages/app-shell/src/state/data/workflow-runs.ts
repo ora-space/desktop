@@ -999,6 +999,7 @@ function normalizeCompletionBlockerKind(
     case "turn_truncated":
     case "turn_refused":
     case "turn_unknown":
+    case "turn_unconfirmed":
     case "structured_invalid":
     case "output_missing":
       return kind;
