@@ -36,6 +36,7 @@ import { useCompleteWorkflowNode } from "../../state/data/workflow-runs";
 import { useAgents } from "../../state/hooks/use-agents";
 import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
+import { isAwaitingConfirmation } from "./run-node-completion";
 
 const RUNNING_SESSION_RELOAD_DELAY_MS = 250;
 const NODE_SESSION_CONVERSATION_NAVIGATION = {
@@ -119,11 +120,19 @@ export function RunNodeSessionChat({
   // offer the ordinary completion instead of sending the user to a forced one.
   const completionProvisional =
     hasCompletionSnapshot && completion.provisional === true;
+  // The workflow's opening turn always parks unconfirmed, so the node waits for the user instead
+  // of offering to advance: the agent may have ended that reply with a question. It is not
+  // "paused" either — the turn settled normally — so the card keeps the awaiting-input badge and
+  // only offers the explicit continue / complete-anyway actions.
+  const completionAwaitingConfirmation = isAwaitingConfirmation(
+    interaction?.completion,
+  );
   /** The card can still offer a normal completion while the snapshot is unknown or provisional. */
   const completionActionable =
     completionReady || completionProvisional || !hasCompletionSnapshot;
-  /** Ready or still settling: both invite the ordinary completion entry. */
-  const completionAwaiting = completionReady || completionProvisional;
+  /** Ready, still settling, or waiting for the user's confirmation of the opening turn. */
+  const completionAwaiting =
+    completionReady || completionProvisional || completionAwaitingConfirmation;
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
@@ -229,9 +238,11 @@ export function RunNodeSessionChat({
   const handleContinue = async (ready: boolean) => {
     const prompt = ready
       ? t("workflowRun.stepCard.continueReadyPrompt")
-      : t("workflowRun.stepCard.continuePrompt", {
-          reason: completionReasonText(completion, t),
-        });
+      : completionAwaitingConfirmation
+        ? t("workflowRun.stepCard.continueUnconfirmedPrompt")
+        : t("workflowRun.stepCard.continuePrompt", {
+            reason: completionReasonText(completion, t),
+          });
     await handleSend(prompt);
   };
 
@@ -308,6 +319,15 @@ export function RunNodeSessionChat({
           <p className="mt-1.5 text-xs text-muted-foreground">
             {t("workflowRun.stepCard.provisional")}
           </p>
+        ) : completionAwaitingConfirmation ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.unconfirmedTitle")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.unconfirmedHint")}
+            </p>
+          </>
         ) : hasCompletionSnapshot ? (
           <>
             <p className="mt-1.5 text-xs font-medium">
@@ -549,7 +569,9 @@ export function RunNodeSessionChat({
                     <TooltipContent sideOffset={8}>
                       {completionReady
                         ? t("workflowRun.completeNode.disabledHint")
-                        : t("workflowRun.completeNode.blockedHint")}
+                        : completionAwaitingConfirmation
+                          ? t("workflowRun.completeNode.unconfirmedHint")
+                          : t("workflowRun.completeNode.blockedHint")}
                     </TooltipContent>
                   )}
                 </Tooltip>
@@ -575,7 +597,9 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceTitle")}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {t("workflowRun.stepCard.forceDescription")}
+                {completionAwaitingConfirmation
+                  ? t("workflowRun.stepCard.forceDescriptionUnconfirmed")
+                  : t("workflowRun.stepCard.forceDescription")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

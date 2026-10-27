@@ -64,6 +64,8 @@
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。只有 `EndTurn` 且没有 blocker 的回合才能正常完成；停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。
 
+workflow 自己发起的首轮回合本身从不读作 ready：它的 `EndTurn` 只表示 agent 结束了这次回复，而这次回复可能在向用户提问。快照因此带 `turn_unconfirmed` blocker，卡片保持「等待参与」徽标，只提供「继续当前步骤」与「仍然完成（采用当前产出）」（后者需要确认并留痕），右下角推进按钮在用户回复或确认前不可用。由用户回复开启的回合仍按上面的规则：`EndTurn` 且没有 blocker 时正常完成，卡片重新给出「完成并进入下一步」。
+
 如果流在 stop reason 持久化前被 drop，节点按最后一次可读历史写 provisional 快照：保留它描述的 `userSeq`，并带 `turn_not_settled` warning；之后完成时，只要同一 user 消息的回合已经收敛就修复该快照。升级前停靠、完全没有快照的节点由第一次完成尝试在读取会话历史后物化快照，再走同一套 blocker 门禁，所以未完成的回合同样会被拒绝，不会静默推进。
 
 每个人工回合都带一个从冻结图渲染的 `<workflow_step_boundary>` 块：它写明当前步骤与直接后续节点，并声明只完成本步骤；它不承诺运行时会阻止后续节点，而记录给用户的 prompt 仍是用户原文。

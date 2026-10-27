@@ -1,6 +1,6 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::{
-    completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
+    TurnOrigin, completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
 };
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{
@@ -342,7 +342,12 @@ async fn park_first_interactive_turn(
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
         let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
-            Ok(history) => derive_completion_snapshot(&history, output_contract.as_ref(), false),
+            Ok(history) => derive_completion_snapshot(
+                &history,
+                output_contract.as_ref(),
+                false,
+                TurnOrigin::WorkflowInitial,
+            ),
             Err(error) => {
                 ora_warn!(
                     node_run_id = %node_run_id,

@@ -123,6 +123,13 @@ the expected and actual identity. The step card at the end of the conversation a
 action are the two explicit ways to advance: continue, a confirmed forced completion, or
 complete-and-advance when the card is ready.
 
+The opening, workflow-owned turn never reads as ready on its own. Its `EndTurn` only means the
+agent finished that reply, which may be a question for the user, so the snapshot carries a
+`turn_unconfirmed` blocker and the card keeps the awaiting-input badge with "continue this step"
+and "complete anyway (use current output)" (the latter confirms and is audited). The bottom-right
+action stays disabled until the user replies or confirms. A turn opened by the user's reply keeps
+the rule above: an `EndTurn` without blockers completes normally and the card names the next step.
+
 A turn whose stream dropped before its stop reason became durable parks provisionally from the last
 readable history: the snapshot keeps the `userSeq` it describes and a `turn_not_settled` warning, and
 a later completion attempt repairs it once the turn settles for that same user message. A node that
