@@ -5,8 +5,8 @@
 //! engine commit are done by the caller around [`prepare_completion`].
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, completion_final_text,
-    completion_payload, derive_completion_snapshot, forced_completion_audit,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnOrigin,
+    completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
     parse_completion_snapshot, trailing_assistant_text, unknown_completion_snapshot,
 };
 use super::super::executor::apply_output_contract;
@@ -201,7 +201,11 @@ pub(crate) fn prepare_completion(
         Some(session_id) => {
             let history = read_session_history(sessions_root, session_id.as_ref())
                 .map_err(|error| BackendError::internal("failed to read session history", error))?;
-            let derived = derive_completion_snapshot(&history, output_contract, false);
+            // A human reply or a legacy materialization: the stored snapshot keeps any
+            // `turn_unconfirmed` marker the opening park wrote, so repair never re-opens or
+            // retroactively blocks a node.
+            let derived =
+                derive_completion_snapshot(&history, output_contract, false, TurnOrigin::Human);
             (Some(history), derived)
         }
         None => (None, unknown_completion_snapshot(false)),
@@ -340,6 +344,9 @@ fn to_contract_blocker(blocker: &CompletionBlocker) -> WorkflowNodeCompletionBlo
         CompletionBlockerKind::TurnTruncated => WorkflowNodeCompletionBlockerKind::TurnTruncated,
         CompletionBlockerKind::TurnRefused => WorkflowNodeCompletionBlockerKind::TurnRefused,
         CompletionBlockerKind::TurnUnknown => WorkflowNodeCompletionBlockerKind::TurnUnknown,
+        CompletionBlockerKind::TurnUnconfirmed => {
+            WorkflowNodeCompletionBlockerKind::TurnUnconfirmed
+        }
         CompletionBlockerKind::StructuredInvalid => {
             WorkflowNodeCompletionBlockerKind::StructuredInvalid
         }
