@@ -211,7 +211,8 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
             node.status == WorkflowNodeStatus::Pending
         })
         .await?;
-        // The first park owns its own snapshot. Assert it before any human turn starts: that turn's
+        // The first park owns its own snapshot and stays unconfirmed: the agent may have ended its
+        // opening reply with a question. Assert it before any human turn starts: that turn's
         // cleanup rewrites `payload.completion`, which would hide a wrong first snapshot forever.
         let first = completion_snapshot(&parked);
         assert_eq!(
@@ -220,9 +221,13 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
             "the settled first turn parks as end_turn"
         );
         assert_eq!(first["provisional"], json!(false));
-        assert!(
-            first["blockers"].as_array().is_some_and(Vec::is_empty),
-            "a settled first turn has no blockers"
+        assert_eq!(
+            completion_blockers(&parked)
+                .into_iter()
+                .map(|blocker| blocker.kind)
+                .collect::<Vec<_>>(),
+            vec![WorkflowNodeCompletionBlockerKind::TurnUnconfirmed],
+            "the opening turn parks unconfirmed instead of ready"
         );
         assert!(
             first["turnKey"]["userSeq"]
@@ -236,6 +241,21 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
                 .as_str()
                 .is_some_and(|digest| digest.starts_with("sha256:")),
             "the snapshot pins the output digest"
+        );
+        // The opening turn cannot complete without the human's explicit confirmation.
+        let rejected = complete(&backend, &run_id)
+            .await
+            .err()
+            .ok_or("an unconfirmed opening turn cannot complete")?;
+        assert_eq!(
+            rejected.public_error(),
+            &PublicError::WorkflowNodeIncomplete(WorkflowNodeIncompleteParams {
+                node_id: "agent".to_string(),
+                blockers: vec![WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
+                    message: None,
+                }],
+            })
         );
         let session_id = parked.session_id.ok_or("the node owns a session")?;
         (run_id, session_id)

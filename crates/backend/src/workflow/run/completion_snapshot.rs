@@ -20,6 +20,20 @@ pub(crate) struct TurnKey {
     pub ended_seq: u32,
 }
 
+/// Which prompt opened the parked turn, so the workflow's own opening turn can stay unconfirmed.
+///
+/// The workflow must not treat the agent's first reply as the user accepting the step: the agent
+/// may have ended that reply with a question, and an `EndTurn` only says the reply finished. Later
+/// turns are opened by the user, who has already participated, so their `EndTurn` remains the
+/// completion signal the completion ADR specifies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnOrigin {
+    /// The workflow-owned opening prompt; the user has not answered anything yet.
+    WorkflowInitial,
+    /// A turn opened by a human reply, or a snapshot materialized from history alone.
+    Human,
+}
+
 /// A stable reason that an awaiting interactive node may not complete without an explicit force.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +42,8 @@ pub(crate) enum CompletionBlockerKind {
     TurnTruncated,
     TurnRefused,
     TurnUnknown,
+    /// The workflow's opening turn ended normally, but the user has not confirmed the step.
+    TurnUnconfirmed,
     StructuredInvalid,
     OutputMissing,
 }
@@ -159,10 +175,15 @@ pub(crate) fn completion_final_text(history: &SessionHistory) -> Option<String> 
 /// Retries have no attempt boundary in the current history format, so an abandoned attempt's text
 /// can fall inside the window; that limitation is documented by the ADR and surfaced here rather
 /// than hidden by a different text picker.
+///
+/// `origin` marks the workflow's opening turn: when that turn is otherwise ready, the snapshot
+/// carries `turn_unconfirmed` instead of reporting the step ready, because the agent may have
+/// ended its first reply with a question the user still has to answer.
 pub(crate) fn derive_completion_snapshot(
     history: &SessionHistory,
     output_contract: Option<&AgentOutputContract>,
     provisional: bool,
+    origin: TurnOrigin,
 ) -> CompletionSnapshot {
     let user_seq = last_user_message_seq(history);
     let turn = user_seq.and_then(|user_seq| settled_turn(history, user_seq));
@@ -249,6 +270,17 @@ pub(crate) fn derive_completion_snapshot(
         }
     }
 
+    // The workflow's opening turn never makes the step ready by itself: its `EndTurn` only means
+    // the agent finished that reply, which may have been a question. The user must answer or
+    // explicitly adopt the output, so the node stays open. A more precise blocker already keeps
+    // the node open and names the actual reason, so only an otherwise-ready snapshot gets the
+    // confirmation marker.
+    if matches!(origin, TurnOrigin::WorkflowInitial) && blockers.is_empty() {
+        blockers.push(CompletionBlocker::new(
+            CompletionBlockerKind::TurnUnconfirmed,
+        ));
+    }
+
     CompletionSnapshot {
         user_seq,
         turn_key,
@@ -321,8 +353,9 @@ fn assistant_text(update: &SessionUpdate) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompletionBlockerKind, TurnKey, completion_payload, derive_completion_snapshot,
-        forced_completion_audit, trailing_assistant_text, unknown_completion_snapshot,
+        CompletionBlocker, CompletionBlockerKind, TurnKey, TurnOrigin, completion_payload,
+        derive_completion_snapshot, forced_completion_audit, trailing_assistant_text,
+        unknown_completion_snapshot,
     };
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
@@ -394,6 +427,7 @@ mod tests {
             ),
             None,
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(snapshot.user_seq, Some(1));
         assert_eq!(
@@ -410,6 +444,92 @@ mod tests {
             Some(format!("sha256:{}", sha256_hex(b"done")))
         );
         assert!(!snapshot.provisional);
+    }
+
+    /// The workflow's opening turn cannot make the step ready on its own: an `EndTurn` only
+    /// finishes that reply, and the reply may be a question waiting for the user.
+    #[test]
+    fn workflow_initial_turn_is_not_confirmed_complete() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "run the workflow step"),
+                    assistant(2, "which of the two existing artifacts should I keep?"),
+                    ended(3, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::WorkflowInitial,
+        );
+        assert_eq!(
+            snapshot.blockers,
+            vec![CompletionBlocker::new(
+                CompletionBlockerKind::TurnUnconfirmed
+            )]
+        );
+        // The turn itself is still settled: identity and digest stay available for the conflict
+        // checks and for a forced completion that adopts the current output.
+        assert_eq!(
+            snapshot.turn_key,
+            Some(TurnKey {
+                user_seq: 1,
+                ended_seq: 3
+            })
+        );
+        assert_eq!(
+            snapshot.output_digest,
+            Some(format!(
+                "sha256:{}",
+                sha256_hex(b"which of the two existing artifacts should I keep?")
+            ))
+        );
+        assert!(!snapshot.provisional);
+    }
+
+    /// A human turn keeps the completion ADR rule: a settled `EndTurn` with no blockers is ready.
+    #[test]
+    fn human_turn_after_the_first_reply_is_ready() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "run the workflow step"),
+                    assistant(2, "which option?"),
+                    ended(3, StopReason::EndTurn),
+                    user(4, "keep the first one"),
+                    assistant(5, "done"),
+                    ended(6, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Human,
+        );
+        assert!(snapshot.blockers.is_empty());
+    }
+
+    /// A more precise blocker already names why the opening turn cannot complete.
+    #[test]
+    fn a_stopped_opening_turn_keeps_only_its_own_blocker() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "go"),
+                    assistant(2, "partial"),
+                    ended(3, StopReason::Cancelled),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::WorkflowInitial,
+        );
+        assert_eq!(
+            snapshot.blockers,
+            vec![CompletionBlocker::new(CompletionBlockerKind::TurnStopped)]
+        );
     }
 
     /// Stopped, truncated and refused turns each report their own blocker.
@@ -431,6 +551,7 @@ mod tests {
                 ),
                 None,
                 false,
+                TurnOrigin::Human,
             );
             assert_eq!(
                 snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -447,6 +568,7 @@ mod tests {
             &history(vec![assistant(1, "hello")], HistoryIntegrity::Complete),
             None,
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(snapshot.user_seq, None);
         assert_eq!(snapshot.turn_key, None);
@@ -467,6 +589,7 @@ mod tests {
             ),
             None,
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(snapshot.turn_key, None);
         assert_eq!(snapshot.output_digest, None);
@@ -492,6 +615,7 @@ mod tests {
             ),
             Some(&AgentOutputContract::Text),
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(
             snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -513,6 +637,7 @@ mod tests {
             ),
             Some(&AgentOutputContract::None),
             false,
+            TurnOrigin::Human,
         );
         assert!(snapshot.blockers.is_empty());
         assert_eq!(snapshot.warnings, vec!["empty_output".to_string()]);
@@ -540,6 +665,7 @@ mod tests {
                 text_exposure: StructuredTextExposure::IncludeFinalText,
             }),
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(
             snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -564,6 +690,7 @@ mod tests {
             ),
             None,
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(
             snapshot.turn_key,
@@ -598,6 +725,7 @@ mod tests {
             ),
             None,
             true,
+            TurnOrigin::Human,
         );
         let payload = completion_payload(&snapshot);
         assert_eq!(payload["completion"]["userSeq"], 1);
@@ -647,6 +775,7 @@ mod tests {
             ),
             None,
             false,
+            TurnOrigin::Human,
         );
         assert_eq!(
             forced_completion_audit(&settled)["completion_forced"],
@@ -678,6 +807,7 @@ mod tests {
             ),
             Some(&AgentOutputContract::Text),
             false,
+            TurnOrigin::Human,
         );
         assert!(snapshot.warnings.is_empty());
         assert_eq!(

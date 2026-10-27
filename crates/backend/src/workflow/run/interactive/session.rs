@@ -27,7 +27,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::super::completion_snapshot::{
-    CompletionSnapshot, completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
+    CompletionSnapshot, TurnOrigin, completion_payload, derive_completion_snapshot,
+    unknown_completion_snapshot,
 };
 use super::CompletingNodeRuns;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
@@ -328,7 +329,8 @@ async fn settled_snapshot(
     loop {
         match read_history_blocking(sessions_root, session_id).await {
             Ok(history) => {
-                let snapshot = derive_completion_snapshot(&history, output_contract, false);
+                let snapshot =
+                    derive_completion_snapshot(&history, output_contract, false, TurnOrigin::Human);
                 if snapshot.turn_key.is_some() {
                     return snapshot;
                 }
@@ -337,7 +339,12 @@ async fn settled_snapshot(
                     // reason names the unsettled turn rather than claiming the history is
                     // unavailable, and the provisional snapshot keeps the `userSeq` the later
                     // repair matches on (ADR invariant 19).
-                    let mut unsettled = derive_completion_snapshot(&history, output_contract, true);
+                    let mut unsettled = derive_completion_snapshot(
+                        &history,
+                        output_contract,
+                        true,
+                        TurnOrigin::Human,
+                    );
                     unsettled.warnings.push("turn_not_settled".to_string());
                     return unsettled;
                 }
