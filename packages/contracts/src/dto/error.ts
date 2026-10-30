@@ -59,6 +59,7 @@ export type ContractError =
       "params": EmptyErrorParams;
     }
     | { "code": "project_not_found"; "params": EmptyErrorParams }
+    | { "code": "project_workspace_not_directory"; "params": EmptyErrorParams }
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "scheduled_task_not_found"; "params": EmptyErrorParams }
     | { "code": "scheduled_task_conflict"; "params": EmptyErrorParams }
@@ -306,6 +307,7 @@ export type PublicError =
     "params": EmptyErrorParams;
   }
   | { "code": "project_not_found"; "params": EmptyErrorParams }
+  | { "code": "project_workspace_not_directory"; "params": EmptyErrorParams }
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "scheduled_task_not_found"; "params": EmptyErrorParams }
   | { "code": "scheduled_task_conflict"; "params": EmptyErrorParams }

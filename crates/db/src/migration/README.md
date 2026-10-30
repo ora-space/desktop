@@ -56,6 +56,11 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   recovery exit. Its upgrade rebuilds the operation journal and its referencing status/artifact
   tables through staging copies so every row and foreign key survives; the downgrade maps closed
   journals back to explicit `recovery_required`, which a later upgrade can prove and close again.
+- Migration `0022` is data only: it marks local Main Workspaces that earlier project creation left
+  in `provisioning` (and their `pending` `local_git` provisioning rows) as `active`/`ready`, since
+  nothing ever promotes a local checkout. Remote locations and deleted rows are untouched. Its
+  downgrade is intentionally empty because older builds admit an active local Workspace the same
+  way.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
   Workspace seeds its new Scope from published Sources in the same transaction.
 

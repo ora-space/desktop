@@ -174,9 +174,13 @@ fn project_creation_creates_main_workspace() {
     );
 }
 
-/// Verifies an absent local checkout stays in durable provisioning state instead of admitting work.
+/// Verifies a local checkout never waits for provisioning, even if its directory is absent now.
+///
+/// Nothing ever promotes a local main Workspace out of `provisioning`, so a directory that was
+/// missing for an instant at creation used to strand the project forever. Availability is a
+/// runtime fact that cwd resolution re-checks on every use instead.
 #[test]
-fn project_creation_keeps_missing_main_workspace_in_provisioning() {
+fn project_creation_admits_local_main_workspace_without_probing_the_directory() {
     let (temp_dir, pool) = bootstrapped_pool();
     let missing_path = temp_dir.path().join("missing-repository");
     let project_repository =
@@ -197,7 +201,14 @@ fn project_creation_keeps_missing_main_workspace_in_provisioning() {
         .find_main_workspace(&ProjectId::new("project-1"))
         .unwrap()
         .unwrap();
-    assert_eq!(workspace.lifecycle, WorkspaceLifecycle::Provisioning);
+    assert_eq!(workspace.lifecycle, WorkspaceLifecycle::Active);
+    assert!(
+        ora_application::WorkspaceRepository::is_provisioning_ready(
+            &workspace_repository,
+            &workspace.id
+        )
+        .unwrap()
+    );
 }
 
 /// Verifies sessions can be stored and read with only their direct workspace foreign key.

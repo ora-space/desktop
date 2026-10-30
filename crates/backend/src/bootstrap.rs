@@ -257,6 +257,7 @@ impl Backend {
             project: Arc::new(ProjectApi::new(
                 pool.clone(),
                 sessions_root,
+                relative_path_base.clone(),
                 clock,
                 effect_reconcile.clone(),
                 git_cleanup.clone(),
@@ -406,15 +407,13 @@ mod tests {
                     assert!(database_path.is_file());
                     assert!(worktree_root.is_dir());
 
+                    let repository = temporary.path().join("repository");
+                    fs::create_dir(&repository).expect("create project checkout");
                     let project = backend
                         .projects()
                         .create(CreateProjectRequest {
                             name: "Ora".to_string(),
-                            main_workspace_path: temporary
-                                .path()
-                                .join("repository")
-                                .to_string_lossy()
-                                .into_owned(),
+                            main_workspace_path: repository.to_string_lossy().into_owned(),
                         })
                         .expect("create project")
                         .project;
