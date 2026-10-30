@@ -193,6 +193,22 @@ a clone step whose snapshot carries no `clone_input`, or one the Node protocol r
 dispatch. A ready clone is taken over only when its commit equals the input's `base_commit`; otherwise
 it is neither taken over nor acknowledged.
 
+An unavailable Node receives one nonrenewing two-second handshake grace per ordinary operation
+round, shared by node readiness, quiesce and clone disconnections. A missing target defers immediately;
+a ready target proceeds immediately. The Controller submits `node_unavailable` without choosing a
+retry delay: Cloud durably counts unavailable rounds and schedules 5/10/20/40/60-second backoff,
+resetting the count only on real progress. Sessions and the global lease remain active.
+
+An already registered clone keeps its original execution, Node and frozen input across rounds.
+Each round polls for at most five seconds on the monotonic clock, then submits `clone_result_pending`;
+Cloud schedules its next claim one second later. Reconnects and pending replies renew neither budget.
+Known results are handled first. With no known result thirty minutes after the execution's durable
+Cloud `created_at`, the Controller requests `blocked/clone_result_timeout`, which Cloud rechecks against
+its durable registration and concurrent results. Cloud automatically takes over the original
+execution's late known success or failure; the latter retains the existing clone failure budget.
+Node-reported Unknown remains `clone_result_unknown` under the existing unresolved-outcome rules.
+These waits do not authorize redispatch, cleanup or termination, and force-stop keeps its separate task.
+
 Sandbox Node targets come only from Cloud's sandbox rows; a sandbox whose NodeId collides with a
 static Node is refused, and the Controller never recreates a sandbox on its own. After a handshake it
 registers the Node incarnation with `RegisterNode`, reports it connected every ten seconds, reports it

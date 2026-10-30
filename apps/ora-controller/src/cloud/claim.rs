@@ -202,6 +202,7 @@ async fn record_targeted(
 ) -> Result<(), Error> {
     let execution = uuid::Uuid::new_v4().to_string();
     let preview = proto::ExecutionRecord {
+        created_at: None,
         operation_id: item.operation_id.clone(),
         node_operation_id: item.operation_id.clone(),
         execution_id: execution.clone(),

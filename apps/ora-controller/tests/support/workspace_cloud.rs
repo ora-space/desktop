@@ -375,6 +375,7 @@ impl WorkspaceCloud {
             let id = format!("00000000-0000-4000-9000-{:012}", state.next_id);
             state.ops.push(Op {
                 operation: proto::Operation {
+                    node_unavailable_attempts: 0,
                     id: id.clone(),
                     kind: kind as i32,
                     state: proto::OperationState::Queued as i32,
@@ -450,6 +451,7 @@ impl WorkspaceCloud {
         let mut state = self.lock();
         let execution = Self::next_id(&mut state);
         state.clones.push(proto::ExecutionRecord {
+            created_at: None,
             node_operation_id: execution.clone(),
             operation_id: operation.into(),
             execution_id: execution,
@@ -929,6 +931,8 @@ impl WorkspaceOperationService for WorkspaceCloud {
                 proto::DeferReason::ExternalFailure => "external_failure",
                 proto::DeferReason::CloneFailed => "clone_failed",
                 proto::DeferReason::CloneResultUnknown => "clone_result_unknown",
+                proto::DeferReason::CloneResultPending => "clone_result_pending",
+                proto::DeferReason::CloneResultTimeout => "clone_result_timeout",
                 proto::DeferReason::PluginExecutionFailed => "plugin_execution_failed",
                 proto::DeferReason::PluginResultUnknown => "plugin_result_unknown",
                 proto::DeferReason::Unspecified => "unspecified",
@@ -1218,6 +1222,11 @@ impl ExecutionService for WorkspaceCloud {
                 return Err(conflict("dispatch_conflict"));
             }
             let record = proto::ExecutionRecord {
+                created_at: Some(
+                    ora_logging::clock::now_local()
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap(),
+                ),
                 node_operation_id: message.execution_id.clone(),
                 operation_id: message.operation_id,
                 execution_id: message.execution_id,

@@ -364,14 +364,47 @@ fn projection_worker_logs_neither_provider_identifiers_nor_raw_history() {
 #[test]
 fn history_read_boundary_does_not_hold_a_database_write_lock() {
     run_test(async {
-        let fixture = Fixture::stopped();
+        // Backend::open starts detached Effect/Git workers which may acquire unrelated write
+        // transactions. This boundary test needs only the real migrated database and repository.
+        let temporary = TempDir::new().unwrap();
+        let database = temporary.path().join("ora.sqlite3");
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&database),
+                &default_migration_catalog().unwrap(),
+            )
+            .unwrap();
+        let seed = rusqlite::Connection::open(&database).unwrap();
+        seed.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO projects (id, name, created_at, updated_at)
+             VALUES ('project-1', 'Binding boundary', 1, 1);
+             INSERT INTO workspace_locations (id, location_kind, locator_json, created_at, updated_at)
+             VALUES ('location-1', 'local_filesystem', '{}', 1, 1);
+             INSERT INTO workspaces (id, project_id, workspace_kind, location_id, lifecycle, created_at, updated_at)
+             VALUES ('workspace-1', 'project-1', 'main', 'location-1', 'active', 1, 1);",
+        )
+        .unwrap();
+        drop(seed);
+        let repository = SqliteSessionRepository::new(pool);
+        repository
+            .create_session(Session::new(
+                SessionId::new("session-1"),
+                WorkspaceId::new("workspace-1"),
+                AgentRef::parse("ora-space.fixture").unwrap(),
+                "provider-session",
+                ora_domain::SessionStatus::Stopped,
+                ora_domain::SessionMcpSelection::Automatic,
+                AuditFields::new(1, 1, /*is_deleted*/ false),
+            ))
+            .unwrap();
         let mut reads = 0;
         let result = super::super::super::bindings::read_consistent(
-            &fixture.sessions.repository,
+            &repository,
             "session-1",
             |_| {
                 reads += 1;
-                let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+                let connection = rusqlite::Connection::open(&database).unwrap();
                 connection.busy_timeout(Duration::ZERO).unwrap();
                 connection.execute_batch("BEGIN IMMEDIATE; UPDATE sessions SET title = 'committed-during-history-read' WHERE id = 'session-1'; COMMIT;").expect("history read must not hold the database writer slot");
                 (BindingHistoryState::Readable, Vec::new())
@@ -393,14 +426,12 @@ fn history_read_boundary_does_not_hold_a_database_write_lock() {
             }
         );
         assert_eq!(
-            fixture
-                .sessions
-                .get(GetSessionRequest {
-                    session_id: "session-1".into()
-                })
+            repository
+                .find_session(&SessionId::new("session-1"))
                 .unwrap()
-                .session
-                .title,
+                .unwrap()
+                .title
+                .map(|title| title.as_str().to_owned()),
             Some("committed-during-history-read".into())
         );
     });

@@ -426,6 +426,7 @@ fn tenant_work_waits_until_the_configured_node_proves_its_identity() {
 fn artifact_record() -> ora_controller_proto::v1::ExecutionRecord {
     use ora_controller_proto::v1 as proto;
     proto::ExecutionRecord {
+        created_at: None,
         operation_id: "run".into(),
         execution_id: "artifact-upload".into(),
         node_id: "node".into(),

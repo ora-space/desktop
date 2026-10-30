@@ -365,6 +365,7 @@ mod tests {
 
     fn record() -> proto::ExecutionRecord {
         proto::ExecutionRecord {
+            created_at: None,
             operation_id: "run".into(),
             node_operation_id: "node-operation".into(),
             execution_id: "execution".into(),

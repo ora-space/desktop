@@ -10,6 +10,7 @@
 mod live;
 mod plugin;
 mod steps;
+mod wait;
 
 #[cfg(test)]
 mod eligibility;
@@ -169,6 +170,7 @@ struct Round<'a> {
     epoch: i64,
     operation: proto::Operation,
     snapshot: proto::OperationSnapshot,
+    node_grace: wait::NodeGrace,
 }
 
 impl<'a> Round<'a> {
@@ -185,6 +187,7 @@ impl<'a> Round<'a> {
             epoch,
             operation,
             snapshot,
+            node_grace: wait::NodeGrace::default(),
         })
     }
 
@@ -358,7 +361,12 @@ impl<'a> Round<'a> {
                     version,
                     state: state as i32,
                     reason: reason as i32,
-                    retry_seconds: RETRY_SECONDS,
+                    // Cloud atomically decides these retry times with its durable state.
+                    retry_seconds: match reason {
+                        proto::DeferReason::NodeUnavailable
+                        | proto::DeferReason::CloneResultPending => 0,
+                        _ => RETRY_SECONDS,
+                    },
                 });
                 store.operations().defer_operation(request).await
             }
@@ -468,7 +476,7 @@ impl<'a> Round<'a> {
     }
 }
 
-/// How long the node, clone and quiesce steps wait for a Node before parking the operation.
+/// Existing plugin/unresolved-outcome wait, independent of Node/clone round scheduling budgets.
 const NODE_WAIT: Duration = Duration::from_secs(/*secs*/ 60);
 /// How often a waiting step looks again.
 const POLL: Duration = Duration::from_millis(/*millis*/ 250);

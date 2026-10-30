@@ -111,4 +111,8 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 `effects_url` 是 Substrate 的 effect API（`GET`/`PUT /effects/{id}`）。Controller 在写入 effect 之前先读取，超时或服务端错误之后重新读取同一个 id，所以回复丢失的 effect 永远不会以新身份发送第二次。effect 失败以 `external_failure` 推迟，超时以 `substrate_timeout` 推迟，终止未得到确认以 `termination_unconfirmed` 阻塞。Controller 从不用 Project 或 Workspace 的字段拼 clone 输入：快照中没有 `clone_input` 的 clone 步骤，或 Node 协议拒绝的输入（见 [仓库 clone](../node/repository-clone.zh.md#输入)），会以 `external_failure` 阻塞而不派发。只有 commit 等于输入的 `base_commit` 时才接管就绪的 clone；否则既不接管也不确认。
 
+普通 operation 每轮只给不可用的 Node 一次不可续期的两秒握手宽限，Node 就绪检查、quiesce 与 clone 断连共用这次宽限。没有目标立即延后；目标已就绪立即继续。Controller 只提交 `node_unavailable` 原因，不指定重试秒数；Cloud 持久计算连续不可用轮次的 5/10/20/40/60 秒退避，只在真实推进时清零。会话和全局租约继续运行。
+
+已经登记的 clone 跨轮保留原 execution、Node 和冻结输入，每轮按单调时钟最多等五秒，然后提交 `clone_result_pending`，由 Cloud 安排一秒后再领取。重连和 pending 回复都不续期。Controller 先接管已知结果；从 Cloud 持久的 execution `created_at` 起满三十分钟仍无结果，才请求 `blocked/clone_result_timeout`，Cloud 提交前重新核对登记时间和并发到达的结果。原执行的已知成功或失败晚到时，Cloud 自动接管；失败仍遵守原 clone 失败预算。Node 报告的 Unknown 继续按原未决结果规则保持 `clone_result_unknown`。等待到期不授权重派、清理或终止；force-stop 仍由独立任务处理。
+
 沙盒 Node 目标只来自 Cloud 的沙盒行；NodeId 与静态 Node 冲突的沙盒被拒绝，Controller 从不自己重建沙盒。握手之后它用 `RegisterNode` 登记 Node incarnation，每十秒报告一次已连接，会话丢失时报告一次断开（Controller 自己停止它时不报告），并在登记新 incarnation 之前结束旧的。第一次持有某个租约 epoch 时，它调用 `ListLiveSandboxes`，为列出的每个沙盒启动会话，并停止不在列表中的会话，所以重启后的 Controller 在认领操作之前就会重新连上。路由细节见[沙盒路由](../operations/sandbox-routing.zh.md)。

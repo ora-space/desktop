@@ -382,6 +382,7 @@ impl ExecutionService for FakeCloud {
             message.epoch,
         )?;
         let record = proto::ExecutionRecord {
+            created_at: None,
             node_operation_id: message.operation_id.clone(),
             operation_id: message.operation_id,
             execution_id: message.execution_id,

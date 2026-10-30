@@ -1,6 +1,6 @@
 //! What the Controller does in each operation step, and how the sandbox targets follow the
 //! snapshot. Every step either advances the operation or parks it; the next round claims again.
-use super::{Carried, NODE_WAIT, POLL, Round};
+use super::{Carried, NODE_WAIT, POLL, Round, wait};
 use crate::{
     cloud::{
         claim,
@@ -10,7 +10,8 @@ use crate::{
     *,
 };
 use ora_controller_proto::v1::{self as proto, effect_evidence::Evidence};
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
+use tokio::time::Instant;
 
 /// How long the Node may keep answering `Unknown` for the clone after its retransmission before
 /// the outcome is treated as unknown: long enough for a Node that is still admitting the command.
@@ -143,17 +144,10 @@ impl Round<'_> {
         let target = self
             .live_sandbox(&workspace)
             .and_then(|sandbox| self.fleet.get(&sandbox.id));
-        let deadline = Instant::now() + NODE_WAIT;
-        if let Some(sandbox) = target {
-            loop {
-                if sandbox.report.lock().await.ready() {
-                    return Ok(Some(sandbox));
-                }
-                if Instant::now() >= deadline {
-                    break;
-                }
-                tokio::time::sleep(POLL).await;
-            }
+        if let Some(sandbox) = target
+            && self.wait_ready(&sandbox).await
+        {
+            return Ok(Some(sandbox));
         }
         self.defer(
             proto::DeferState::RetryWait,
@@ -163,18 +157,35 @@ impl Round<'_> {
         .map(|_| None)
     }
 
+    /// Shares the first unavailable observation's deadline across every readiness check this round.
+    async fn wait_ready(&mut self, sandbox: &Sandbox) -> bool {
+        loop {
+            if sandbox.report.lock().await.ready() {
+                return true;
+            }
+            let deadline = self.node_grace.deadline();
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep_until((Instant::now() + POLL).min(deadline)).await;
+        }
+    }
+
     /// node: advances once Cloud has a registered, connected Node with a fresh heartbeat for the
     /// current generation, which the reporter provides after the handshake.
     pub(super) async fn node(&mut self) -> Result<(), Error> {
         if self.ready_node().await?.is_none() {
             return Ok(());
         }
-        let deadline = Instant::now() + NODE_WAIT;
         loop {
             match self.advance().await {
                 // The heartbeat Cloud checks may lag the handshake by one report.
-                Err(Error::Conflict) if Instant::now() < deadline => tokio::time::sleep(POLL).await,
                 Err(Error::Conflict) => {
+                    let deadline = self.node_grace.deadline();
+                    if Instant::now() < deadline {
+                        tokio::time::sleep_until((Instant::now() + POLL).min(deadline)).await;
+                        continue;
+                    }
                     return self
                         .defer(
                             proto::DeferState::RetryWait,
@@ -192,9 +203,6 @@ impl Round<'_> {
     /// Workspace's Node and waits for its result. A pending execution from an earlier round is
     /// waited on, never registered twice; a failed one is followed by a new execution.
     pub(super) async fn clone_step(&mut self) -> Result<(), Error> {
-        let Some(sandbox) = self.ready_node().await? else {
-            return Ok(());
-        };
         let latest = match self.snapshot.clones.last().cloned() {
             Some(record) => {
                 let outcome = record.result.map(mapping::outcome).transpose()?;
@@ -204,24 +212,27 @@ impl Round<'_> {
         };
         let execution = match latest {
             Some((execution, None)) => execution,
-            Some((_, Some(ExecutionOutcome::Ready { .. }))) => return self.advance().await,
+            Some((_, Some(ExecutionOutcome::Ready { .. }))) => return self.node().await,
             Some((_, Some(ExecutionOutcome::Failed { .. }))) | None => {
+                let Some(sandbox) = self.ready_node().await? else {
+                    return Ok(());
+                };
                 match self.dispatch_clone(&sandbox).await? {
                     Some(execution) => execution,
                     None => return Ok(()),
                 }
             }
         };
-        let mut disconnected: Option<Instant> = None;
+        let deadline = wait::clone_deadline();
+        let workspace = self.workspace()?.id.clone();
+        let sandbox = self
+            .live_sandbox(&workspace)
+            .and_then(|live| self.fleet.get(&live.id));
         loop {
-            if let Some(result) = self
-                .store
-                .record(&execution)
-                .await?
-                .and_then(|record| record.result)
-            {
+            let record = self.store.record(&execution).await?;
+            if let Some(result) = record.as_ref().and_then(|record| record.result.clone()) {
                 return match mapping::outcome(result)? {
-                    ExecutionOutcome::Ready { .. } => self.advance().await,
+                    ExecutionOutcome::Ready { .. } => self.node().await,
                     ExecutionOutcome::Failed { failure, .. } => {
                         ora_logging::ora_warn!(execution_id = %execution.as_str(), failure = ?failure, "Workspace clone failed; a retry dispatches a new execution");
                         self.defer(
@@ -233,10 +244,10 @@ impl Round<'_> {
                     }
                 };
             }
-            if sandbox
-                .unresolved_for(&execution)
-                .is_some_and(|elapsed| elapsed >= UNRESOLVED_GRACE)
-            {
+            let unresolved = sandbox
+                .as_ref()
+                .and_then(|sandbox| sandbox.unresolved_for(&execution));
+            if unresolved.is_some_and(|elapsed| elapsed >= UNRESOLVED_GRACE) {
                 ora_logging::ora_warn!(execution_id = %execution.as_str(), "the Node cannot tell the clone's outcome; the operation stays blocked");
                 return self
                     .defer(
@@ -246,9 +257,38 @@ impl Round<'_> {
                     .await
                     .map(drop);
             }
-            if sandbox.connected() {
-                disconnected = None;
-            } else if disconnected.get_or_insert_with(Instant::now).elapsed() >= NODE_WAIT {
+            // Known results and existing Unknown classification win over the total deadline.
+            if let Some(reason) = wait::clone_deadline_reason(
+                record
+                    .as_ref()
+                    .and_then(|record| record.created_at.as_deref()),
+                ora_logging::clock::now_local(),
+                match unresolved {
+                    Some(_) => wait::CloneEvidence::Unresolved,
+                    None => wait::CloneEvidence::AwaitingResult,
+                },
+            ) {
+                return self
+                    .defer(proto::DeferState::Blocked, reason)
+                    .await
+                    .map(drop);
+            }
+            let Some(sandbox) = sandbox.as_ref() else {
+                return self
+                    .defer(
+                        proto::DeferState::RetryWait,
+                        proto::DeferReason::NodeUnavailable,
+                    )
+                    .await
+                    .map(drop);
+            };
+            let unavailable_deadline =
+                if !sandbox.connected() || !sandbox.report.lock().await.ready() {
+                    Some(self.node_grace.deadline())
+                } else {
+                    None
+                };
+            if unavailable_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return self
                     .defer(
                         proto::DeferState::RetryWait,
@@ -257,7 +297,20 @@ impl Round<'_> {
                     .await
                     .map(drop);
             }
-            tokio::time::sleep(POLL).await;
+            if Instant::now() >= deadline {
+                return self
+                    .defer(
+                        proto::DeferState::RetryWait,
+                        proto::DeferReason::CloneResultPending,
+                    )
+                    .await
+                    .map(drop);
+            }
+            let wake = (Instant::now() + POLL).min(deadline);
+            tokio::time::sleep_until(
+                unavailable_deadline.map_or(wake, |unavailable| wake.min(unavailable)),
+            )
+            .await;
         }
     }
 
@@ -314,17 +367,13 @@ impl Round<'_> {
                 .await?;
                 return Ok(());
             };
-            let deadline = Instant::now() + NODE_WAIT;
-            while !sandbox.report.lock().await.ready() {
-                if Instant::now() >= deadline {
-                    self.defer(
-                        proto::DeferState::RetryWait,
-                        proto::DeferReason::NodeUnavailable,
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                tokio::time::sleep(POLL).await;
+            if !self.wait_ready(&sandbox).await {
+                self.defer(
+                    proto::DeferState::RetryWait,
+                    proto::DeferReason::NodeUnavailable,
+                )
+                .await?;
+                return Ok(());
             }
             *sandbox.gate.lock().await = Gate::Closed;
             let pending = self
