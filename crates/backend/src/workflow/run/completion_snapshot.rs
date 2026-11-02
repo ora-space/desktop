@@ -197,14 +197,18 @@ pub(crate) fn unknown_completion_snapshot(
 ///
 /// The audit is a payload key of its own (`completion_forced`), never mixed into the live
 /// `completion` snapshot, so the projection keeps rejecting a forced node's blockers on the next
-/// read while the record of the decision survives the completion. `reason` is the blockers
-/// snapshot only: no user-authored text is copied into it. `stop_cause` separates the abnormal
-/// sources the blocker kinds cannot express, such as a prompt timeout versus a user stop.
-pub(crate) fn forced_completion_audit(snapshot: &CompletionSnapshot) -> Value {
+/// read while the record of the decision survives the completion. `blockers` is the effective set
+/// the completion actually covered — the persisted snapshot plus anything `prepare` recomputed —
+/// and holds no user-authored text. `stop_cause` separates the abnormal sources the blocker kinds
+/// cannot express, such as a prompt timeout versus a user stop.
+pub(crate) fn forced_completion_audit(
+    snapshot: &CompletionSnapshot,
+    blockers: &[CompletionBlocker],
+) -> Value {
     let without_turn = snapshot.turn_key.is_none();
     json!({
         "completion_forced": {
-            "blockers": snapshot.blockers,
+            "blockers": blockers,
             "stop_cause": snapshot.stop_cause,
             "without_turn": without_turn,
             "output_source": if without_turn {
@@ -214,6 +218,36 @@ pub(crate) fn forced_completion_audit(snapshot: &CompletionSnapshot) -> Value {
             },
         }
     })
+}
+
+/// Returns the blocker the declared output contract adds for a settled turn's final text.
+///
+/// The park derivation and the completion-time recomputation share this rule, so a stored snapshot
+/// that looks ready cannot let a completion cross an output-contract blocker the park would have
+/// recorded (ADR D2, invariant 4).
+pub(crate) fn output_contract_blocker(
+    output_contract: Option<&AgentOutputContract>,
+    final_text: Option<&str>,
+) -> Option<CompletionBlocker> {
+    match output_contract {
+        None | Some(AgentOutputContract::None) => None,
+        Some(AgentOutputContract::Text) => final_text
+            .is_some_and(|text| text.trim().is_empty())
+            .then(|| CompletionBlocker::new(CompletionBlockerKind::OutputMissing)),
+        Some(AgentOutputContract::Structured { .. }) => {
+            match super::executor::apply_output_contract(
+                output_contract,
+                final_text.map(str::to_string),
+                "interactive-node",
+            ) {
+                Ok(_) => None,
+                Err(error) => Some(CompletionBlocker::with_message(
+                    CompletionBlockerKind::StructuredInvalid,
+                    error.to_string(),
+                )),
+            }
+        }
+    }
 }
 
 /// Returns the last assistant text after the last user message, whether or not a turn settled.
@@ -331,29 +365,13 @@ pub(crate) fn derive_completion_snapshot(
     // and an `empty_output` warning would describe a turn the history never closed.
     let final_text = final_text.unwrap_or_default();
     if turn.is_some() {
-        match output_contract {
-            None | Some(AgentOutputContract::None) => {
-                if final_text.is_empty() {
-                    warnings.push("empty_output".to_string());
-                }
-            }
-            Some(AgentOutputContract::Text) => {
-                if final_text.trim().is_empty() {
-                    blockers.push(CompletionBlocker::new(CompletionBlockerKind::OutputMissing));
-                }
-            }
-            Some(AgentOutputContract::Structured { .. }) => {
-                if let Err(error) = super::executor::apply_output_contract(
-                    output_contract,
-                    Some(final_text),
-                    "interactive-node",
-                ) {
-                    blockers.push(CompletionBlocker::with_message(
-                        CompletionBlockerKind::StructuredInvalid,
-                        error.to_string(),
-                    ));
-                }
-            }
+        if matches!(output_contract, None | Some(AgentOutputContract::None))
+            && final_text.is_empty()
+        {
+            warnings.push("empty_output".to_string());
+        }
+        if let Some(blocker) = output_contract_blocker(output_contract, Some(final_text.as_str())) {
+            blockers.push(blocker);
         }
     }
 
@@ -1040,7 +1058,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            forced_completion_audit(&settled)["completion_forced"],
+            forced_completion_audit(&settled, &settled.blockers)["completion_forced"],
             json!({
                 "blockers": [{ "kind": "turn_stopped" }],
                 "stop_cause": null,
@@ -1052,7 +1070,7 @@ mod tests {
         let unsettled =
             unknown_completion_snapshot(true, TurnOrigin::Human, Some(StopCause::Unknown));
         assert_eq!(
-            forced_completion_audit(&unsettled)["completion_forced"],
+            forced_completion_audit(&unsettled, &unsettled.blockers)["completion_forced"],
             json!({
                 "blockers": [{ "kind": "turn_unknown" }],
                 "stop_cause": "unknown",

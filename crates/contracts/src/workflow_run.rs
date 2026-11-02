@@ -535,6 +535,14 @@ pub struct CompleteWorkflowNodeRequest {
     /// Explicitly completes despite blockers; the node payload records the forced audit.
     #[serde(default)]
     pub force: bool,
+    /// Explicitly confirms the workflow's opening turn; absent or `false` means unconfirmed.
+    ///
+    /// This is a normal completion once accepted — it never writes the forced audit — and it only
+    /// lifts the `turn_unconfirmed` blocker; every other blocker and the output contract still
+    /// apply. A request that also sets `force` is self-contradictory and rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub confirm_initial_turn: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub requester: Option<NodeCompletionRequester>,
@@ -989,6 +997,7 @@ mod tests {
                 run_id: "run-1".to_string(),
                 node_id: "node-1".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: None,
             },
             json!({ "runId": "run-1", "nodeId": "node-1", "force": false }),
@@ -998,6 +1007,7 @@ mod tests {
                 run_id: "run-1".to_string(),
                 node_id: "node-1".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: Some(NodeCompletionRequester::Human),
             },
             json!({ "runId": "run-1", "nodeId": "node-1", "force": false, "requester": "human" }),

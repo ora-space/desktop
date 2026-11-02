@@ -85,6 +85,7 @@ fn concurrent_completions_commit_once_and_leave_the_session_read_only() {
             run_id: "run-1".to_string(),
             node_id: "agent".to_string(),
             force: false,
+            confirm_initial_turn: None,
             requester: Some(NodeCompletionRequester::Human),
         };
         let (first, second) = tokio::join!(
@@ -152,6 +153,7 @@ fn prepare_failure_releases_the_claim_for_retry() {
             run_id: "run-1".to_string(),
             node_id: "agent".to_string(),
             force: false,
+            confirm_initial_turn: None,
             requester: Some(NodeCompletionRequester::Human),
         };
         let error = fixture
@@ -184,6 +186,7 @@ fn an_unsettled_completion_is_rejected_with_its_blockers() {
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -218,6 +221,7 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: true,
+                confirm_initial_turn: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -237,10 +241,40 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
             payload["completion_forced"],
             serde_json::json!({
                 "blockers": [{ "kind": "turn_unknown" }],
+                "stop_cause": null,
                 "without_turn": true,
                 "output_source": "last_assistant_message",
             }),
             "the forced audit is part of the completion payload, not a later write"
+        );
+    });
+}
+
+/// A request that both confirms the opening turn and forces has no consistent meaning.
+#[test]
+fn conflicting_completion_flags_are_rejected_before_claiming() {
+    run_test(async {
+        let fixture = Fixture::awaiting();
+        let before = fixture.detail();
+        let error = fixture
+            .runs
+            .complete_node(CompleteWorkflowNodeRequest {
+                run_id: "run-1".to_string(),
+                node_id: "agent".to_string(),
+                force: true,
+                confirm_initial_turn: Some(true),
+                requester: Some(NodeCompletionRequester::Human),
+            })
+            .await
+            .expect_err("force and confirmation contradict each other");
+        assert_eq!(
+            error.public_error(),
+            &PublicError::InvalidRequest(EmptyErrorParams {})
+        );
+        assert_eq!(
+            fixture.detail(),
+            before,
+            "the rejection happens before the node is claimed"
         );
     });
 }
@@ -277,6 +311,7 @@ fn failed_prompt_start_restores_the_awaiting_node_before_returning() {
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: None,
             })
             .await
@@ -314,6 +349,7 @@ fn cancellation_commits_even_when_session_cleanup_fails() {
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -384,6 +420,7 @@ fn concurrent_cancel_and_complete_report_the_committed_outcome() {
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
+                confirm_initial_turn: None,
                 requester: None,
             }),
         );

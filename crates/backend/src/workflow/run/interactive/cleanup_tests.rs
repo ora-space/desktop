@@ -4,7 +4,7 @@ use super::super::completion_snapshot::{
     CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, TurnKey, TurnOrigin,
     parse_completion_snapshot,
 };
-use super::completion::prepare_completion;
+use super::completion::{CompletionApproval, prepare_completion};
 use super::session::{begin_human_turn, end_human_turn, restore_human_turn};
 use crate::workflow::run::test_fixture::{
     AGENT_GRAPH, INTERACTIVE_AGENT_GRAPH, bind_and_park, bootstrap, end_fixture_turn, locks,
@@ -218,8 +218,14 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         );
 
         // The stopped turn is still completable when the user explicitly forces it.
-        let prepared = prepare_completion(&pool, &sessions_root, &run_id, "agent", true)
-            .expect("the restored stopped turn is still forceable");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect("the restored stopped turn is still forceable");
         assert_eq!(prepared.output.as_deref(), Some("partial"));
         assert!(
             prepared.audit.is_some(),

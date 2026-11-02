@@ -7,7 +7,8 @@
 use super::super::completion_snapshot::{
     CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnOrigin,
     completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
-    parse_completion_snapshot, trailing_assistant_text, unknown_completion_snapshot,
+    output_contract_blocker, parse_completion_snapshot, trailing_assistant_text,
+    unknown_completion_snapshot,
 };
 use super::super::executor::apply_output_contract;
 use super::super::worktree::{capture_worktree_snapshot, compute_file_changes};
@@ -44,6 +45,36 @@ pub(crate) struct PreparedCompletion {
     pub workspace_id: WorkspaceId,
     /// The payload keys a forced completion must commit with the completion itself.
     pub audit: Option<serde_json::Value>,
+}
+
+/// What the user explicitly approved on this completion request.
+///
+/// Both flags are user decisions, not derived state: `confirm_initial_turn` adopts the workflow's
+/// opening turn, `force` overrides a non-confirmation blocker. They are mutually exclusive at the
+/// request boundary — one says the gate is satisfied, the other says it is overridden — so the
+/// approval models them as named constants instead of two positional booleans (ADR D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct CompletionApproval {
+    pub(crate) confirm_initial_turn: bool,
+    pub(crate) force: bool,
+}
+
+impl CompletionApproval {
+    /// A plain completion with no override.
+    pub(crate) const PLAIN: Self = Self {
+        confirm_initial_turn: false,
+        force: false,
+    };
+    /// Adopts the workflow's opening turn as a normal completion.
+    pub(crate) const CONFIRM: Self = Self {
+        confirm_initial_turn: true,
+        force: false,
+    };
+    /// Completes despite a non-confirmation blocker, recording the forced audit.
+    pub(crate) const FORCE: Self = Self {
+        confirm_initial_turn: false,
+        force: true,
+    };
 }
 
 /// Atomically claims an awaiting interactive node for manual completion under the per-run gate.
@@ -152,7 +183,7 @@ pub(crate) fn prepare_completion(
     sessions_root: &Path,
     run_id: &WorkflowRunId,
     node_id: &str,
-    force: bool,
+    approval: CompletionApproval,
 ) -> Result<PreparedCompletion, BackendError> {
     let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
     let context = repository
@@ -243,34 +274,50 @@ pub(crate) fn prepare_completion(
         )));
     }
     let snapshot = settle_snapshot(&repository, &node_run.id, stored.as_ref(), derived);
-    if !force && !snapshot.blockers.is_empty() {
-        return Err(completion_rejected(PublicError::WorkflowNodeIncomplete(
-            WorkflowNodeIncompleteParams {
-                node_id: node_run.node_id.clone(),
-                blockers: snapshot.blockers.iter().map(to_contract_blocker).collect(),
-            },
-        )));
-    }
     let stop_reason = snapshot.stop_reason.clone();
     // A forced completion without a settled turn takes the last assistant reply as its output and
     // never claims a structured output; a settled turn always uses its own contract window.
     let raw_output = match (&history, snapshot.turn_key) {
         (Some(history), Some(_)) => completion_final_text(history),
-        (Some(history), None) if force => trailing_assistant_text(history),
+        (Some(history), None) if approval.force => trailing_assistant_text(history),
         _ => None,
     };
+    // The effective blocker set joins the persisted snapshot with what this preparation recomputes
+    // from the live history: a stored snapshot that looks ready must still not let the completion
+    // cross an output-contract blocker the park would have recorded (ADR D2, invariant 4).
+    let mut effective_blockers = snapshot.blockers.clone();
+    if snapshot.turn_key.is_some()
+        && let Some(blocker) = output_contract_blocker(output_contract, raw_output.as_deref())
+        && !effective_blockers
+            .iter()
+            .any(|existing| existing.kind == blocker.kind)
+    {
+        effective_blockers.push(blocker);
+    }
+    // `confirm_initial_turn` only lifts `turn_unconfirmed`; every other blocker still applies and
+    // `force` cannot stand in for confirmation. What remains is exactly what the user has not
+    // resolved, so a rejection lists only those blockers (ADR D2 rows 5–10).
+    let unfulfilled: Vec<CompletionBlocker> = effective_blockers
+        .iter()
+        .filter(|blocker| {
+            !(approval.confirm_initial_turn
+                && blocker.kind == CompletionBlockerKind::TurnUnconfirmed)
+        })
+        .cloned()
+        .collect();
+    let forced = !unfulfilled.is_empty()
+        && approval.force
+        && !unfulfilled
+            .iter()
+            .any(|blocker| blocker.kind == CompletionBlockerKind::TurnUnconfirmed);
+    if !unfulfilled.is_empty() && !forced {
+        return Err(incomplete(&node_run.node_id, &unfulfilled));
+    }
     let (output, structured_output) =
         match apply_output_contract(output_contract, raw_output.clone(), &node_run.node_id) {
-            Ok(output) => output,
-            Err(_) if force => (raw_output, None),
-            Err(_) => {
-                return Err(completion_rejected(PublicError::WorkflowNodeIncomplete(
-                    WorkflowNodeIncompleteParams {
-                        node_id: node_run.node_id.clone(),
-                        blockers: snapshot.blockers.iter().map(to_contract_blocker).collect(),
-                    },
-                )));
-            }
+            Ok(applied) => applied,
+            Err(_) if forced => (raw_output, None),
+            Err(_) => return Err(incomplete(&node_run.node_id, &unfulfilled)),
         };
 
     Ok(PreparedCompletion {
@@ -280,7 +327,7 @@ pub(crate) fn prepare_completion(
         stop_reason,
         session_id: node_run.session_id,
         workspace_id: context.workspace.id,
-        audit: force.then(|| forced_completion_audit(&snapshot)),
+        audit: forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
     })
 }
 
@@ -414,6 +461,19 @@ fn load_worktree_baseline(
 /// Maps a workflow engine repository failure onto the public backend error.
 fn repository_error(source: ora_application::RepositoryError) -> BackendError {
     BackendError::from(ApplicationError::WorkflowRunRepository { source })
+}
+
+/// Rejects a completion whose effective blockers the approval does not satisfy.
+///
+/// Only the blockers the request has not resolved are listed: a confirmed opening turn no longer
+/// appears, while every other stored or recomputed blocker still does (ADR D2 row 9).
+fn incomplete(node_id: &str, blockers: &[CompletionBlocker]) -> BackendError {
+    completion_rejected(PublicError::WorkflowNodeIncomplete(
+        WorkflowNodeIncompleteParams {
+            node_id: node_id.to_string(),
+            blockers: blockers.iter().map(to_contract_blocker).collect(),
+        },
+    ))
 }
 
 /// Rejects a completion whose snapshot no longer supports it, without exposing history details.

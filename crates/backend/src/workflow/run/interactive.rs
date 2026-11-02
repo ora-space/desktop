@@ -14,7 +14,8 @@ use ora_domain::WorkflowNodeRunId;
 use std::collections::HashSet;
 
 pub(crate) use completion::{
-    claim_node_for_completion, completion_file_changes, prepare_completion, revalidate_completion,
+    CompletionApproval, claim_node_for_completion, completion_file_changes, prepare_completion,
+    revalidate_completion,
 };
 pub(crate) use session::{begin_human_turn, end_human_turn};
 pub(crate) use turns::WorkflowSessionTurns;
