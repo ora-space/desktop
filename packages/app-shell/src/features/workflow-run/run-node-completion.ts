@@ -6,24 +6,15 @@ import type {
 /**
  * True when the workflow's opening turn settled normally but the user has not confirmed the step.
  *
- * The node is awaiting the user rather than paused: its only blocker is `turn_unconfirmed`, so the
- * step card keeps the awaiting-input badge and offers continue / complete-anyway instead of reading
- * as a turn that ended abnormally.
+ * The projection computes `needsConfirmation` from the snapshot (`!provisional` and exactly the
+ * `turn_unconfirmed` blocker); consumers read that field instead of re-deriving the gate from the
+ * blocker list. The node is awaiting the user rather than paused, and only an explicit
+ * `confirmInitialTurn` completion can advance it.
  */
 export function isAwaitingConfirmation(
   completion: WorkflowNodeCompletion | undefined,
 ): boolean {
-  if (
-    completion === undefined ||
-    completion.ready ||
-    completion.provisional ||
-    completion.blockers.length === 0
-  ) {
-    return false;
-  }
-  return completion.blockers.every(
-    (blocker) => blocker.kind === "turn_unconfirmed",
-  );
+  return completion?.needsConfirmation === true;
 }
 
 /**

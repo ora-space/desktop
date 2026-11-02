@@ -69,39 +69,33 @@ describe("isAwaitingConfirmation", () => {
       warnings: [],
       provisional: false,
       ready: false,
+      needsConfirmation: false,
       ...overrides,
     };
   }
 
-  it("recognizes the unconfirmed opening turn and nothing else", () => {
+  it("reads the projected needsConfirmation flag instead of re-deriving blockers", () => {
     expect(isAwaitingConfirmation(undefined)).toBe(false);
     expect(isAwaitingConfirmation(completion({ ready: true }))).toBe(false);
     expect(
       isAwaitingConfirmation(
         completion({
           provisional: true,
-          blockers: [{ kind: "turn_unknown", params: {} }],
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      isAwaitingConfirmation(
-        completion({ blockers: [{ kind: "turn_stopped", params: {} }] }),
-      ),
-    ).toBe(false);
-    expect(
-      isAwaitingConfirmation(
-        completion({
-          blockers: [
-            { kind: "turn_unconfirmed", params: {} },
-            { kind: "turn_stopped", params: {} },
-          ],
+          blockers: [{ kind: "turn_unconfirmed", params: {} }],
         }),
       ),
     ).toBe(false);
     expect(
       isAwaitingConfirmation(
         completion({ blockers: [{ kind: "turn_unconfirmed", params: {} }] }),
+      ),
+    ).toBe(false);
+    expect(
+      isAwaitingConfirmation(
+        completion({
+          blockers: [{ kind: "turn_unconfirmed", params: {} }],
+          needsConfirmation: true,
+        }),
       ),
     ).toBe(true);
   });
