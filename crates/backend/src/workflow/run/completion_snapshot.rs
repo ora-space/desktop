@@ -26,12 +26,47 @@ pub(crate) struct TurnKey {
 /// may have ended that reply with a question, and an `EndTurn` only says the reply finished. Later
 /// turns are opened by the user, who has already participated, so their `EndTurn` remains the
 /// completion signal the completion ADR specifies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TurnOrigin {
     /// The workflow-owned opening prompt; the user has not answered anything yet.
-    WorkflowInitial,
+    Workflow,
     /// A turn opened by a human reply, or a snapshot materialized from history alone.
     Human,
+}
+
+/// Why the owning prompt stopped without a usable end turn.
+///
+/// The blocker kind says what the turn looked like; the stop cause says which side ended it. The
+/// distinction matters because `Cancelled` and `turn_unknown` can come from the user stopping the
+/// prompt, the inactivity policy giving up on it, the client dropping the stream, or the session
+/// crashing — and the UI must not show a system failure as the user's own stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StopCause {
+    /// The user cancelled the prompt from the session UI.
+    UserStopped,
+    /// The frozen prompt-inactivity policy exhausted its windows.
+    PromptTimedOut,
+    /// The prompt stream was dropped before the turn settled.
+    StreamDropped,
+    /// The owning agent session crashed or ended without a stop reason.
+    SessionCrashed,
+    /// The end reason could not be determined at the park site.
+    Unknown,
+}
+
+/// How a parked node is shown: waiting for the user, or stopped by an abnormal end.
+///
+/// The classification is computed where the snapshot is written, because only the park site knows
+/// the turn origin and the stop cause; the projection must not re-infer it from blockers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ParkKind {
+    /// Waiting for the user to confirm the opening turn, answer, continue, or choose how to go on.
+    AwaitingUser,
+    /// The turn stopped for a reason that is not the user's participation.
+    Abnormal,
 }
 
 /// A stable reason that an awaiting interactive node may not complete without an explicit force.
@@ -85,6 +120,15 @@ pub(crate) struct CompletionSnapshot {
     pub turn_key: Option<TurnKey>,
     /// Snake-case stop reason of the settled turn, or `None` when the turn did not settle.
     pub stop_reason: Option<String>,
+    /// Which prompt opened the turn; absent on snapshots written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_origin: Option<TurnOrigin>,
+    /// Why the owning prompt stopped, when the park site knew it; null when not applicable.
+    #[serde(default)]
+    pub stop_cause: Option<StopCause>,
+    /// The display classification for this park; absent when the turn is ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_kind: Option<ParkKind>,
     pub blockers: Vec<CompletionBlocker>,
     pub warnings: Vec<String>,
     /// SHA-256 of the final assistant text; `None` when there is no settled turn.
@@ -93,18 +137,56 @@ pub(crate) struct CompletionSnapshot {
     pub provisional: bool,
 }
 
+/// Classifies a parked snapshot as waiting for the user or stopped abnormally.
+///
+/// `awaiting_user` is reserved for the three cases where the turn belongs to the user's
+/// participation: an unconfirmed opening turn, the user's own stop, and a provisional snapshot
+/// that has not settled yet. Everything else is an abnormal stop, including a `turn_stopped` park
+/// whose cause could not be determined: assuming the user stopped would show a timeout as if the
+/// user had chosen it (ADR D4). A ready snapshot has no park kind at all.
+fn park_kind(
+    blockers: &[CompletionBlocker],
+    provisional: bool,
+    stop_cause: Option<StopCause>,
+) -> Option<ParkKind> {
+    if blockers.is_empty() {
+        return None;
+    }
+    if provisional {
+        return Some(ParkKind::AwaitingUser);
+    }
+    match blockers {
+        [blocker]
+            if blocker.kind == CompletionBlockerKind::TurnUnconfirmed
+                || (blocker.kind == CompletionBlockerKind::TurnStopped
+                    && stop_cause == Some(StopCause::UserStopped)) =>
+        {
+            Some(ParkKind::AwaitingUser)
+        }
+        _ => Some(ParkKind::Abnormal),
+    }
+}
+
 /// Wraps one snapshot in the node-run payload shape the projection parses.
 pub(crate) fn completion_payload(snapshot: &CompletionSnapshot) -> Value {
     json!({ "completion": snapshot })
 }
 
 /// Builds the conservative snapshot used when the session history cannot be read at park time.
-pub(crate) fn unknown_completion_snapshot(provisional: bool) -> CompletionSnapshot {
+pub(crate) fn unknown_completion_snapshot(
+    provisional: bool,
+    origin: TurnOrigin,
+    stop_cause: Option<StopCause>,
+) -> CompletionSnapshot {
+    let blockers = vec![CompletionBlocker::new(CompletionBlockerKind::TurnUnknown)];
     CompletionSnapshot {
         user_seq: None,
         turn_key: None,
         stop_reason: None,
-        blockers: vec![CompletionBlocker::new(CompletionBlockerKind::TurnUnknown)],
+        turn_origin: Some(origin),
+        stop_cause,
+        park_kind: park_kind(&blockers, provisional, stop_cause),
+        blockers,
         warnings: vec!["history_unavailable".to_string()],
         output_digest: None,
         provisional,
@@ -116,12 +198,14 @@ pub(crate) fn unknown_completion_snapshot(provisional: bool) -> CompletionSnapsh
 /// The audit is a payload key of its own (`completion_forced`), never mixed into the live
 /// `completion` snapshot, so the projection keeps rejecting a forced node's blockers on the next
 /// read while the record of the decision survives the completion. `reason` is the blockers
-/// snapshot only: no user-authored text is copied into it.
+/// snapshot only: no user-authored text is copied into it. `stop_cause` separates the abnormal
+/// sources the blocker kinds cannot express, such as a prompt timeout versus a user stop.
 pub(crate) fn forced_completion_audit(snapshot: &CompletionSnapshot) -> Value {
     let without_turn = snapshot.turn_key.is_none();
     json!({
         "completion_forced": {
             "blockers": snapshot.blockers,
+            "stop_cause": snapshot.stop_cause,
             "without_turn": without_turn,
             "output_source": if without_turn {
                 "last_assistant_message"
@@ -178,12 +262,15 @@ pub(crate) fn completion_final_text(history: &SessionHistory) -> Option<String> 
 ///
 /// `origin` marks the workflow's opening turn: when that turn is otherwise ready, the snapshot
 /// carries `turn_unconfirmed` instead of reporting the step ready, because the agent may have
-/// ended its first reply with a question the user still has to answer.
+/// ended its first reply with a question the user still has to answer. `stop_cause` is the park
+/// site's knowledge of why the owning prompt ended; it only shapes the display classification and
+/// the forced-completion audit, never the blockers.
 pub(crate) fn derive_completion_snapshot(
     history: &SessionHistory,
     output_contract: Option<&AgentOutputContract>,
     provisional: bool,
     origin: TurnOrigin,
+    stop_cause: Option<StopCause>,
 ) -> CompletionSnapshot {
     let user_seq = last_user_message_seq(history);
     let turn = user_seq.and_then(|user_seq| settled_turn(history, user_seq));
@@ -275,7 +362,7 @@ pub(crate) fn derive_completion_snapshot(
     // explicitly adopt the output, so the node stays open. A more precise blocker already keeps
     // the node open and names the actual reason, so only an otherwise-ready snapshot gets the
     // confirmation marker.
-    if matches!(origin, TurnOrigin::WorkflowInitial) && blockers.is_empty() {
+    if matches!(origin, TurnOrigin::Workflow) && !provisional && blockers.is_empty() {
         blockers.push(CompletionBlocker::new(
             CompletionBlockerKind::TurnUnconfirmed,
         ));
@@ -285,6 +372,9 @@ pub(crate) fn derive_completion_snapshot(
         user_seq,
         turn_key,
         stop_reason,
+        turn_origin: Some(origin),
+        stop_cause,
+        park_kind: park_kind(&blockers, provisional, stop_cause),
         blockers,
         warnings,
         output_digest,
@@ -353,9 +443,9 @@ fn assistant_text(update: &SessionUpdate) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompletionBlocker, CompletionBlockerKind, TurnKey, TurnOrigin, completion_payload,
-        derive_completion_snapshot, forced_completion_audit, trailing_assistant_text,
-        unknown_completion_snapshot,
+        CompletionBlocker, CompletionBlockerKind, ParkKind, StopCause, TurnKey, TurnOrigin,
+        completion_payload, derive_completion_snapshot, forced_completion_audit,
+        trailing_assistant_text, unknown_completion_snapshot,
     };
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
@@ -428,6 +518,7 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(snapshot.user_seq, Some(1));
         assert_eq!(
@@ -461,7 +552,8 @@ mod tests {
             ),
             None,
             false,
-            TurnOrigin::WorkflowInitial,
+            TurnOrigin::Workflow,
+            None,
         );
         assert_eq!(
             snapshot.blockers,
@@ -488,6 +580,165 @@ mod tests {
         assert!(!snapshot.provisional);
     }
 
+    /// The opening turn's park carries the origin and classification both UI entry points read.
+    #[test]
+    fn the_opening_turn_parks_as_awaiting_user_confirmation() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "run the workflow step"),
+                    assistant(2, "which option?"),
+                    ended(3, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Workflow,
+            None,
+        );
+        assert_eq!(snapshot.turn_origin, Some(TurnOrigin::Workflow));
+        assert_eq!(snapshot.stop_cause, None);
+        assert_eq!(snapshot.park_kind, Some(ParkKind::AwaitingUser));
+        let payload = completion_payload(&snapshot);
+        assert_eq!(payload["completion"]["turnOrigin"], "workflow");
+        assert_eq!(payload["completion"]["parkKind"], "awaiting_user");
+        assert_eq!(payload["completion"]["stopCause"], json!(null));
+    }
+
+    /// The user's own stop keeps waiting for participation, but it is not a confirmation.
+    #[test]
+    fn a_user_stopped_turn_parks_as_awaiting_user() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "go"),
+                    assistant(2, "partial"),
+                    ended(3, StopReason::Cancelled),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Human,
+            Some(StopCause::UserStopped),
+        );
+        assert_eq!(
+            snapshot.blockers,
+            vec![CompletionBlocker::new(CompletionBlockerKind::TurnStopped)]
+        );
+        assert_eq!(snapshot.park_kind, Some(ParkKind::AwaitingUser));
+    }
+
+    /// A timeout carries the same blocker kind as a user stop but must read as abnormal.
+    #[test]
+    fn a_timed_out_turn_parks_as_abnormal() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "go"),
+                    assistant(2, "partial"),
+                    ended(3, StopReason::Cancelled),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Human,
+            Some(StopCause::PromptTimedOut),
+        );
+        assert_eq!(snapshot.stop_cause, Some(StopCause::PromptTimedOut));
+        assert_eq!(snapshot.park_kind, Some(ParkKind::Abnormal));
+    }
+
+    /// A stop whose cause the park site could not determine is never shown as the user's stop.
+    #[test]
+    fn an_unattributed_stop_parks_as_abnormal() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "go"),
+                    assistant(2, "partial"),
+                    ended(3, StopReason::Cancelled),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Human,
+            None,
+        );
+        assert_eq!(snapshot.park_kind, Some(ParkKind::Abnormal));
+    }
+
+    /// Truncation, refusal and output-contract failures are abnormal without a stop cause.
+    #[test]
+    fn other_blocked_turns_park_as_abnormal() {
+        for (last, contract) in [
+            (ended(3, StopReason::MaxTokens), None),
+            (ended(3, StopReason::Refusal), None),
+            (
+                ended(3, StopReason::EndTurn),
+                Some(AgentOutputContract::Text),
+            ),
+        ] {
+            let snapshot = derive_completion_snapshot(
+                &history(
+                    vec![user(1, "go"), assistant(2, ""), last],
+                    HistoryIntegrity::Complete,
+                ),
+                contract.as_ref(),
+                false,
+                TurnOrigin::Human,
+                None,
+            );
+            assert!(!snapshot.blockers.is_empty());
+            assert_eq!(snapshot.park_kind, Some(ParkKind::Abnormal));
+        }
+    }
+
+    /// A provisional park stays with the user until `prepare` settles the turn.
+    #[test]
+    fn a_provisional_park_stays_with_the_user() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![user(1, "go"), assistant(2, "still working")],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            true,
+            TurnOrigin::Workflow,
+            None,
+        );
+        assert!(
+            snapshot
+                .blockers
+                .iter()
+                .any(|blocker| { blocker.kind == CompletionBlockerKind::TurnUnknown })
+        );
+        assert_eq!(snapshot.park_kind, Some(ParkKind::AwaitingUser));
+    }
+
+    /// A ready human turn writes no classification and never asks for confirmation.
+    #[test]
+    fn a_ready_turn_has_no_park_kind() {
+        let snapshot = derive_completion_snapshot(
+            &history(
+                vec![
+                    user(1, "go"),
+                    assistant(2, "done"),
+                    ended(3, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            ),
+            None,
+            false,
+            TurnOrigin::Human,
+            None,
+        );
+        assert_eq!(snapshot.park_kind, None);
+    }
+
     /// A human turn keeps the completion ADR rule: a settled `EndTurn` with no blockers is ready.
     #[test]
     fn human_turn_after_the_first_reply_is_ready() {
@@ -506,6 +757,7 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert!(snapshot.blockers.is_empty());
     }
@@ -524,7 +776,8 @@ mod tests {
             ),
             None,
             false,
-            TurnOrigin::WorkflowInitial,
+            TurnOrigin::Workflow,
+            None,
         );
         assert_eq!(
             snapshot.blockers,
@@ -552,6 +805,7 @@ mod tests {
                 None,
                 false,
                 TurnOrigin::Human,
+                None,
             );
             assert_eq!(
                 snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -569,6 +823,7 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(snapshot.user_seq, None);
         assert_eq!(snapshot.turn_key, None);
@@ -590,6 +845,7 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(snapshot.turn_key, None);
         assert_eq!(snapshot.output_digest, None);
@@ -616,6 +872,7 @@ mod tests {
             Some(&AgentOutputContract::Text),
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(
             snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -638,6 +895,7 @@ mod tests {
             Some(&AgentOutputContract::None),
             false,
             TurnOrigin::Human,
+            None,
         );
         assert!(snapshot.blockers.is_empty());
         assert_eq!(snapshot.warnings, vec!["empty_output".to_string()]);
@@ -666,6 +924,7 @@ mod tests {
             }),
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(
             snapshot.blockers.first().map(|blocker| blocker.kind),
@@ -691,6 +950,7 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(
             snapshot.turn_key,
@@ -726,6 +986,7 @@ mod tests {
             None,
             true,
             TurnOrigin::Human,
+            None,
         );
         let payload = completion_payload(&snapshot);
         assert_eq!(payload["completion"]["userSeq"], 1);
@@ -776,21 +1037,25 @@ mod tests {
             None,
             false,
             TurnOrigin::Human,
+            None,
         );
         assert_eq!(
             forced_completion_audit(&settled)["completion_forced"],
             json!({
                 "blockers": [{ "kind": "turn_stopped" }],
+                "stop_cause": null,
                 "without_turn": false,
                 "output_source": "turn_window",
             })
         );
 
-        let unsettled = unknown_completion_snapshot(true);
+        let unsettled =
+            unknown_completion_snapshot(true, TurnOrigin::Human, Some(StopCause::Unknown));
         assert_eq!(
             forced_completion_audit(&unsettled)["completion_forced"],
             json!({
                 "blockers": [{ "kind": "turn_unknown" }],
+                "stop_cause": "unknown",
                 "without_turn": true,
                 "output_source": "last_assistant_message",
             })
@@ -808,6 +1073,7 @@ mod tests {
             Some(&AgentOutputContract::Text),
             false,
             TurnOrigin::Human,
+            None,
         );
         assert!(snapshot.warnings.is_empty());
         assert_eq!(

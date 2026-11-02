@@ -197,18 +197,24 @@ pub(crate) fn prepare_completion(
     }
     let output_contract = agent_config.and_then(|config| config.output_contract.as_ref());
     let stored = parse_completion_snapshot(node_run.payload.as_deref());
+    // A repair keeps the park's own origin and stop cause: only the turn facts are re-derived, so a
+    // provisional opening turn must not become a human one and an unexplained timeout must not lose
+    // its reason. A node that parked before these fields existed materializes as a human turn (ADR
+    // D7), which is the conservative choice for history alone.
+    let origin = stored
+        .as_ref()
+        .and_then(|stored| stored.turn_origin)
+        .unwrap_or(TurnOrigin::Human);
+    let stop_cause = stored.as_ref().and_then(|stored| stored.stop_cause);
     let (history, derived) = match node_run.session_id.as_ref() {
         Some(session_id) => {
             let history = read_session_history(sessions_root, session_id.as_ref())
                 .map_err(|error| BackendError::internal("failed to read session history", error))?;
-            // A human reply or a legacy materialization: the stored snapshot keeps any
-            // `turn_unconfirmed` marker the opening park wrote, so repair never re-opens or
-            // retroactively blocks a node.
             let derived =
-                derive_completion_snapshot(&history, output_contract, false, TurnOrigin::Human);
+                derive_completion_snapshot(&history, output_contract, false, origin, stop_cause);
             (Some(history), derived)
         }
-        None => (None, unknown_completion_snapshot(false)),
+        None => (None, unknown_completion_snapshot(false, origin, stop_cause)),
     };
     // The conflicts are decided against the freshly derived turn, before any repair write: a stale
     // completion must be told what changed even when the stored snapshot itself is still coherent.

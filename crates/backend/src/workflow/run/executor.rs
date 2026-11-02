@@ -1,6 +1,7 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::{
-    TurnOrigin, completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
+    StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
+    unknown_completion_snapshot,
 };
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{
@@ -346,7 +347,8 @@ async fn park_first_interactive_turn(
                 &history,
                 output_contract.as_ref(),
                 false,
-                TurnOrigin::WorkflowInitial,
+                TurnOrigin::Workflow,
+                None,
             ),
             Err(error) => {
                 ora_warn!(
@@ -354,7 +356,7 @@ async fn park_first_interactive_turn(
                     error = %error,
                     "failed to read session history while parking; recording an unknown completion snapshot"
                 );
-                unknown_completion_snapshot(false)
+                unknown_completion_snapshot(false, TurnOrigin::Workflow, Some(StopCause::Unknown))
             }
         };
         transitions

@@ -1,7 +1,7 @@
 //! A dropped human turn must park its node with the completion snapshot completion later reads.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnKey,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, TurnKey, TurnOrigin,
     parse_completion_snapshot,
 };
 use super::completion::prepare_completion;
@@ -79,6 +79,9 @@ fn cleanup_polls_until_the_turn_ended_is_durable() {
                     ended_seq: 2,
                 }),
                 stop_reason: Some("end_turn".to_string()),
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: None,
                 blockers: Vec::new(),
                 warnings: Vec::new(),
                 output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
@@ -134,6 +137,9 @@ fn cleanup_parks_provisionally_when_the_turn_never_ends() {
                 user_seq: Some(0),
                 turn_key: None,
                 stop_reason: None,
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: Some(ParkKind::AwaitingUser),
                 blockers: vec![CompletionBlocker {
                     kind: CompletionBlockerKind::TurnUnknown,
                     params: Value::Null,

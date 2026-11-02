@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::super::completion_snapshot::{
-    CompletionSnapshot, TurnOrigin, completion_payload, derive_completion_snapshot,
+    CompletionSnapshot, StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
     unknown_completion_snapshot,
 };
 use super::CompletingNodeRuns;
@@ -200,7 +200,7 @@ pub(crate) async fn end_human_turn(
         }
         // A node without a bound session has no history to read; the conservative provisional
         // snapshot keeps it parkable and lets a later completion force the decision.
-        None => unknown_completion_snapshot(true),
+        None => unknown_completion_snapshot(true, TurnOrigin::Human, Some(StopCause::Unknown)),
     };
     let completion = completion_payload(&snapshot);
     let transitions = transitions.clone();
@@ -329,8 +329,13 @@ async fn settled_snapshot(
     loop {
         match read_history_blocking(sessions_root, session_id).await {
             Ok(history) => {
-                let snapshot =
-                    derive_completion_snapshot(&history, output_contract, false, TurnOrigin::Human);
+                let snapshot = derive_completion_snapshot(
+                    &history,
+                    output_contract,
+                    false,
+                    TurnOrigin::Human,
+                    None,
+                );
                 if snapshot.turn_key.is_some() {
                     return snapshot;
                 }
@@ -344,6 +349,7 @@ async fn settled_snapshot(
                         output_contract,
                         true,
                         TurnOrigin::Human,
+                        None,
                     );
                     unsettled.warnings.push("turn_not_settled".to_string());
                     return unsettled;
@@ -357,7 +363,11 @@ async fn settled_snapshot(
                     error = %error,
                     "failed to read session history when parking an interactive node"
                 );
-                return unknown_completion_snapshot(true);
+                return unknown_completion_snapshot(
+                    true,
+                    TurnOrigin::Human,
+                    Some(StopCause::Unknown),
+                );
             }
         }
         tokio::time::sleep(interval).await;

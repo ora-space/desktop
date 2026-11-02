@@ -4,8 +4,8 @@
 //! assertions describe the contract a client observes rather than a helper's return value.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnKey, completion_payload,
-    parse_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, StopCause, TurnKey,
+    TurnOrigin, completion_payload, parse_completion_snapshot,
 };
 use super::completion::prepare_completion;
 use crate::workflow::run::test_fixture::{
@@ -32,6 +32,9 @@ fn stopped_snapshot() -> CompletionSnapshot {
             ended_seq: 2,
         }),
         stop_reason: Some("cancelled".to_string()),
+        turn_origin: Some(TurnOrigin::Human),
+        stop_cause: Some(StopCause::UserStopped),
+        park_kind: Some(ParkKind::AwaitingUser),
         blockers: vec![CompletionBlocker {
             kind: CompletionBlockerKind::TurnStopped,
             params: serde_json::Value::Null,
@@ -252,6 +255,9 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
                 user_seq: Some(0),
                 turn_key: None,
                 stop_reason: None,
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: Some(ParkKind::Abnormal),
                 blockers: vec![CompletionBlocker {
                     kind: CompletionBlockerKind::TurnUnknown,
                     params: serde_json::Value::Null,
@@ -306,6 +312,9 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
                 user_seq: Some(0),
                 turn_key: None,
                 stop_reason: None,
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: Some(ParkKind::AwaitingUser),
                 blockers: vec![CompletionBlocker {
                     kind: CompletionBlockerKind::TurnUnknown,
                     params: serde_json::Value::Null,
@@ -349,6 +358,9 @@ fn a_provisional_snapshot_of_another_turn_is_left_alone() {
             user_seq: Some(0),
             turn_key: None,
             stop_reason: None,
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: Some(ParkKind::AwaitingUser),
             blockers: vec![CompletionBlocker {
                 kind: CompletionBlockerKind::TurnUnknown,
                 params: serde_json::Value::Null,
@@ -529,6 +541,9 @@ fn an_existing_ready_snapshot_is_not_rewritten() {
                 ended_seq: 2,
             }),
             stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
             blockers: Vec::new(),
             warnings: Vec::new(),
             output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
