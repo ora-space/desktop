@@ -184,18 +184,34 @@ async fn say(backend: &Backend, session_id: &str, text: &str) -> TestResult {
     .await
 }
 
-/// Requests a manual completion of the interactive node.
-async fn complete(backend: &Backend, run_id: &str) -> Result<(), BackendError> {
+/// Requests a manual completion with the explicit approvals the case is testing.
+async fn complete_with(
+    backend: &Backend,
+    run_id: &str,
+    confirm_initial_turn: Option<bool>,
+    force: bool,
+) -> Result<(), BackendError> {
     backend
         .workflow_runs()
         .complete_node(CompleteWorkflowNodeRequest {
             run_id: run_id.to_string(),
             node_id: "agent".to_string(),
-            force: false,
+            force,
+            confirm_initial_turn,
             requester: Some(NodeCompletionRequester::Human),
         })
         .await
         .map(|_response| ())
+}
+
+/// Requests the plain manual completion of the interactive node.
+async fn complete(backend: &Backend, run_id: &str) -> Result<(), BackendError> {
+    complete_with(backend, run_id, None, false).await
+}
+
+/// Confirms the workflow's opening turn as a normal completion.
+async fn confirm_opening_turn(backend: &Backend, run_id: &str) -> Result<(), BackendError> {
+    complete_with(backend, run_id, Some(true), false).await
 }
 
 /// Runs one host-restart scenario, optionally with the provider refusing `session/load`.
@@ -241,6 +257,17 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
                 .as_str()
                 .is_some_and(|digest| digest.starts_with("sha256:")),
             "the snapshot pins the output digest"
+        );
+        assert_eq!(
+            first["parkKind"],
+            json!("awaiting_user"),
+            "the opening park waits for the user instead of reading as abnormal"
+        );
+        assert_eq!(first["turnOrigin"], json!("workflow"));
+        assert_eq!(
+            first["stopCause"],
+            json!(null),
+            "a settled opening turn has no abnormal stop cause"
         );
         // The opening turn cannot complete without the human's explicit confirmation.
         let rejected = complete(&backend, &run_id)
@@ -311,6 +338,17 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
             .collect::<Vec<_>>(),
         vec![WorkflowNodeCompletionBlockerKind::TurnStopped],
         "a cancelled turn parks as turn_stopped"
+    );
+    let stopped_snapshot = completion_snapshot(&stopped);
+    assert_eq!(
+        stopped_snapshot["stopCause"],
+        json!("user_stopped"),
+        "the cancel endpoint's own stop is recorded as the park's cause"
+    );
+    assert_eq!(
+        stopped_snapshot["parkKind"],
+        json!("awaiting_user"),
+        "a user stop waits for participation instead of reading as an abnormal end"
     );
 
     // Completing it must be refused with the blocker, not advance the run.
@@ -436,6 +474,70 @@ fn a_plain_conversation_saying_continue_does_not_advance_a_node() -> TestResult 
         assert!(
             after.nodes.iter().all(|node| node.node_id != "output"),
             "a human turn in the node's session still needs the explicit completion"
+        );
+        Ok(())
+    })
+}
+
+/// The opening turn completes only when the user explicitly confirms it; force cannot stand in.
+#[test]
+fn the_opening_turn_completes_only_by_explicit_confirmation() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run_id = start_interactive_run(&backend, &workspace_id)?;
+        wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+        })
+        .await?;
+
+        // A plain completion and a forced one are both refused for the missing confirmation.
+        for rejected in [
+            complete(&backend, &run_id).await,
+            complete_with(&backend, &run_id, None, true).await,
+        ] {
+            let error = rejected
+                .err()
+                .ok_or("an unconfirmed opening turn cannot complete")?;
+            assert_eq!(
+                error.public_error(),
+                &PublicError::WorkflowNodeIncomplete(WorkflowNodeIncompleteParams {
+                    node_id: "agent".to_string(),
+                    blockers: vec![WorkflowNodeCompletionBlocker {
+                        kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
+                        message: None,
+                    }],
+                })
+            );
+        }
+        // A contradictory request is rejected before any state changes.
+        let contradictory = complete_with(&backend, &run_id, Some(true), true)
+            .await
+            .err()
+            .ok_or("force cannot be combined with confirmation")?;
+        assert_eq!(
+            contradictory.public_error(),
+            &PublicError::InvalidRequest(EmptyErrorParams {})
+        );
+
+        // The explicit confirmation is an ordinary completion with no forced audit.
+        confirm_opening_turn(&backend, &run_id).await?;
+        let finished = wait_for_run_end(&backend, &run_id).await?;
+        assert_eq!(finished.run.status, WorkflowRunStatus::Succeeded);
+        let agent = finished
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .ok_or("agent node")?;
+        assert_eq!(agent.status, WorkflowNodeStatus::Succeeded);
+        let payload: Value =
+            serde_json::from_str(agent.payload.as_deref().unwrap_or("{}")).unwrap_or(Value::Null);
+        assert_eq!(
+            payload.get("completion_forced"),
+            None,
+            "confirmation must not be recorded as a forced completion"
         );
         Ok(())
     })

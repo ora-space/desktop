@@ -356,6 +356,7 @@ fn confirmed_and_dropped_workflow_follow_ups_restore_awaiting_status() -> TestRe
                     run_id: run.id,
                     node_id: "agent".to_string(),
                     force: true,
+                    confirm_initial_turn: None,
                     requester: Some(NodeCompletionRequester::Human),
                 })
                 .await?;
