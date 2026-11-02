@@ -171,6 +171,9 @@ impl Sessions {
         &self,
         request: CancelSessionPromptRequest,
     ) -> Result<CancelSessionPromptResponse, BackendError> {
+        // The workflow park that follows this stop classifies it as the user's own, instead of
+        // leaving it to look like an unexplained abnormal end.
+        self.workflow_turns.note_user_stop(&request.session_id);
         Ok(self.agent_runtime.cancel_session_prompt(request)?)
     }
 

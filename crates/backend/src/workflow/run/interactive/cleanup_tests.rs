@@ -1,8 +1,8 @@
 //! A dropped human turn must park its node with the completion snapshot completion later reads.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, TurnKey, TurnOrigin,
-    parse_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, StopCause, TurnKey,
+    TurnOrigin, parse_completion_snapshot,
 };
 use super::completion::{CompletionApproval, prepare_completion};
 use super::session::{begin_human_turn, end_human_turn, restore_human_turn};
@@ -63,7 +63,7 @@ fn cleanup_polls_until_the_turn_ended_is_durable() {
             tokio::time::sleep(Duration::from_millis(200)).await;
             end_fixture_turn(&late_root, &late_session, StopReason::EndTurn);
         });
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id)
+        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
             .await
             .unwrap();
         late_boundary.await.unwrap();
@@ -125,7 +125,7 @@ fn cleanup_parks_provisionally_when_the_turn_never_ends() {
         .await
         .unwrap();
 
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id)
+        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
             .await
             .unwrap();
 
@@ -188,7 +188,7 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         .unwrap();
         write_open_turn(&sessions_root, session_id.as_ref(), "go", "partial");
         end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::Cancelled);
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id)
+        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
             .await
             .unwrap();
         let stopped =
@@ -230,6 +230,60 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         assert!(
             prepared.audit.is_some(),
             "the forced completion records why it overrode the blocker"
+        );
+    });
+}
+
+/// The user's own stop parks as awaiting participation, not as an abnormal end.
+///
+/// The stop reason alone cannot tell a user cancel from an inactivity timeout; the recorded cause
+/// is what keeps the card from presenting a timeout as the user's own decision (ADR D4).
+#[test]
+fn a_user_stop_parks_as_awaiting_participation() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs) = started_run(&temp, &pool, INTERACTIVE_AGENT_GRAPH);
+        let agent = node_runs
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .unwrap();
+        let (session_id, node_run_id) = bind_and_park(&pool, agent);
+        let sessions_root = temp.path().join("sessions");
+        let (run_locks, completing) = locks();
+        let (transitions, _recording) = recording_transitions(&pool);
+        begin_human_turn(
+            &pool,
+            &run_locks,
+            &completing,
+            &transitions,
+            session_id.as_ref(),
+        )
+        .await
+        .unwrap();
+        write_open_turn(&sessions_root, session_id.as_ref(), "go", "partial");
+        end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::Cancelled);
+
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &transitions,
+            &node_run_id,
+            Some(StopCause::UserStopped),
+        )
+        .await
+        .unwrap();
+
+        let parked =
+            parse_completion_snapshot(parked_node(&pool, &run_id, "agent").payload.as_deref())
+                .expect("the stopped turn parked a snapshot");
+        assert_eq!(parked.stop_cause, Some(StopCause::UserStopped));
+        assert_eq!(parked.park_kind, Some(ParkKind::AwaitingUser));
+        assert_eq!(
+            parked.blockers,
+            vec![CompletionBlocker {
+                kind: CompletionBlockerKind::TurnStopped,
+                params: Value::Null,
+            }]
         );
     });
 }

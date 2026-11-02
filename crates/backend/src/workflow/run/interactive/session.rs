@@ -181,6 +181,7 @@ pub(crate) async fn end_human_turn(
     sessions_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
+    stop_cause: Option<StopCause>,
 ) -> Result<(), BackendError> {
     let context = {
         let pool = pool.clone();
@@ -196,11 +197,21 @@ pub(crate) async fn end_human_turn(
     };
     let snapshot = match context.session_id.as_ref() {
         Some(session_id) => {
-            settled_snapshot(sessions_root, session_id, context.output_contract.as_ref()).await
+            settled_snapshot(
+                sessions_root,
+                session_id,
+                context.output_contract.as_ref(),
+                stop_cause,
+            )
+            .await
         }
         // A node without a bound session has no history to read; the conservative provisional
         // snapshot keeps it parkable and lets a later completion force the decision.
-        None => unknown_completion_snapshot(true, TurnOrigin::Human, Some(StopCause::Unknown)),
+        None => unknown_completion_snapshot(
+            true,
+            TurnOrigin::Human,
+            stop_cause.or(Some(StopCause::Unknown)),
+        ),
     };
     let completion = completion_payload(&snapshot);
     let transitions = transitions.clone();
@@ -323,6 +334,7 @@ async fn settled_snapshot(
     sessions_root: &Path,
     session_id: &SessionId,
     output_contract: Option<&AgentOutputContract>,
+    stop_cause: Option<StopCause>,
 ) -> CompletionSnapshot {
     let deadline = tokio::time::Instant::now() + TURN_END_WAIT;
     let mut interval = TURN_END_POLL_INTERVAL;
@@ -334,7 +346,7 @@ async fn settled_snapshot(
                     output_contract,
                     false,
                     TurnOrigin::Human,
-                    None,
+                    stop_cause,
                 );
                 if snapshot.turn_key.is_some() {
                     return snapshot;
@@ -349,7 +361,7 @@ async fn settled_snapshot(
                         output_contract,
                         true,
                         TurnOrigin::Human,
-                        None,
+                        stop_cause,
                     );
                     unsettled.warnings.push("turn_not_settled".to_string());
                     return unsettled;
@@ -366,7 +378,7 @@ async fn settled_snapshot(
                 return unknown_completion_snapshot(
                     true,
                     TurnOrigin::Human,
-                    Some(StopCause::Unknown),
+                    stop_cause.or(Some(StopCause::Unknown)),
                 );
             }
         }
@@ -647,7 +659,7 @@ mod tests {
             )
             .await
             .unwrap();
-            end_human_turn(&pool, &sessions_root, &transitions, &_node_run_id)
+            end_human_turn(&pool, &sessions_root, &transitions, &_node_run_id, None)
                 .await
                 .unwrap();
 
@@ -684,6 +696,7 @@ mod tests {
                 &temp.path().join("sessions"),
                 &transitions,
                 &node_run_id,
+                None,
             )
             .await
             .unwrap();

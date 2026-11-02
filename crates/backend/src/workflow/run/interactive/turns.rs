@@ -1,5 +1,6 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
+use super::super::completion_snapshot::StopCause;
 use super::CompletingNodeRuns;
 use super::session::{HumanTurnAdmission, restore_human_turn};
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
@@ -10,8 +11,49 @@ use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use ora_contracts::{PromptSessionEvent, PromptSessionRequest};
 use ora_db::RepositoryPool;
 use ora_domain::PromptInactivityPolicy;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+/// Session-scoped record of a prompt the user stopped, read by the park that follows it.
+///
+/// The cancel endpoint does not own the prompt stream, and a client that simply disconnects looks
+/// the same to the stream as one whose user pressed stop. The backend records the explicit stop
+/// here and the park consumes it once, so a timeout is never displayed as the user's own stop
+/// (ADR D4). The marker is also cleared when a new turn starts, so it cannot explain a later turn.
+#[derive(Debug, Default)]
+pub(crate) struct UserPromptStops {
+    sessions: Mutex<HashSet<String>>,
+}
+
+impl UserPromptStops {
+    /// Builds the empty registry shared by the session use cases and their cleanup.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records that the user asked to stop this session's current prompt.
+    pub(crate) fn record(&self, session_id: &str) {
+        self.lock().insert(session_id.to_string());
+    }
+
+    /// Drops a stale marker before a new turn of the same session begins.
+    pub(crate) fn clear(&self, session_id: &str) {
+        self.lock().remove(session_id);
+    }
+
+    /// Takes the marker, so one user stop explains at most one park.
+    fn take(&self, session_id: &str) -> bool {
+        self.lock().remove(session_id)
+    }
+
+    /// Serializes access; a poisoned lock still holds a complete set of session ids.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
 
 /// Grants only human-turn coordination to Sessions, not workflow scheduling or completion control.
 pub(crate) struct WorkflowSessionTurns {
@@ -20,6 +62,8 @@ pub(crate) struct WorkflowSessionTurns {
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
     sessions_root: PathBuf,
+    /// Explicit user stops, consumed by the park of the turn they interrupted.
+    user_stops: Arc<UserPromptStops>,
 }
 
 impl WorkflowSessionTurns {
@@ -40,7 +84,13 @@ impl WorkflowSessionTurns {
             completing_node_runs,
             transitions,
             sessions_root,
+            user_stops: Arc::new(UserPromptStops::new()),
         }
+    }
+
+    /// Records the user's explicit stop so the park of this turn can classify it.
+    pub(crate) fn note_user_stop(&self, session_id: &str) {
+        self.user_stops.record(session_id);
     }
 
     /// Streams one structured ACP prompt turn for a running session.
@@ -56,12 +106,15 @@ impl WorkflowSessionTurns {
         agent_runtime: &AgentRuntimeManager,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
+        // A stop that belonged to an earlier turn must not explain this one.
+        self.user_stops.clear(&request.session_id);
+        let session_id = request.session_id.clone();
         let admission = crate::workflow::run::interactive::begin_human_turn(
             &self.pool,
             &self.run_locks,
             &self.completing_node_runs,
             &self.transitions,
-            &request.session_id,
+            &session_id,
         )
         .await?;
         let (prompt_inactivity, step_boundary) = match &admission {
@@ -93,12 +146,19 @@ impl WorkflowSessionTurns {
         let pool = self.pool.clone();
         let sessions_root = self.sessions_root.clone();
         let transitions = self.transitions.clone();
+        let user_stops = self.user_stops.clone();
         Ok(stream.attach_cleanup(move || async move {
+            // Only an explicit stop recorded while this turn ran becomes the park's cause; a
+            // timeout keeps its own (conservative) classification instead.
+            let stop_cause = user_stops
+                .take(&session_id)
+                .then_some(StopCause::UserStopped);
             crate::workflow::run::interactive::end_human_turn(
                 &pool,
                 &sessions_root,
                 &transitions,
                 &node_run_id,
+                stop_cause,
             )
             .await
         }))
@@ -135,7 +195,7 @@ fn with_step_boundary(
 
 #[cfg(test)]
 mod tests {
-    use super::with_step_boundary;
+    use super::{UserPromptStops, with_step_boundary};
     use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
     use ora_contracts::PromptSessionRequest;
     use pretty_assertions::assert_eq;
@@ -187,5 +247,17 @@ mod tests {
         let output = with_step_boundary(request(Vec::new(), None), Some("boundary".to_string()));
         assert!(output.prompt.is_empty());
         assert_eq!(output.record_prompt, None);
+    }
+
+    /// A recorded stop explains exactly one park and never survives a new turn.
+    #[test]
+    fn a_user_stop_marker_is_taken_once() {
+        let stops = UserPromptStops::new();
+        stops.record("session-1");
+        assert!(stops.take("session-1"));
+        assert!(!stops.take("session-1"));
+        stops.record("session-1");
+        stops.clear("session-1");
+        assert!(!stops.take("session-1"));
     }
 }
