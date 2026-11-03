@@ -4,6 +4,12 @@ import { useContractsClient } from "../../contracts-client-context";
 import { effectKeys } from "../data/effects";
 import { useInstalledPlugins } from "./use-installed-plugins";
 
+/** One user-visible blocking reason from the persisted Target status. */
+export type AgentEffectFailureReason = {
+  code: string;
+  message: string;
+};
+
 /** Send-gate state derived from one complete persisted Effect Target. */
 export type AgentEffectReadiness =
   | { kind: "ready" }
@@ -11,6 +17,7 @@ export type AgentEffectReadiness =
   | {
       kind: "failed";
       message: string;
+      reasons: AgentEffectFailureReason[];
       /** The Target that must be recovered, when the failure is the recovery quarantine. */
       targetId: string | null;
       /** True only for the manual-recovery quarantine the recoverTarget command can close. */
@@ -49,14 +56,30 @@ export function effectTargetFailureMessage(
   status: EffectTargetStatus | undefined,
 ): string | null {
   if (status === undefined || status === null) return null;
-  const manualBlocking = status.conditions.find(
-    (condition) =>
-      condition.impact === "blocking" && condition.retry === "manual",
+  const blocking = status.conditions.filter(
+    (condition) => condition.impact === "blocking",
   );
-  if (status.phase !== "recovery_required" && manualBlocking === undefined) {
+  const manualBlocking = blocking.find(
+    (condition) => condition.retry === "manual",
+  );
+  // Resource-level blockers can persist forever with an on_change retry because deleting a
+  // conflicting directory does not emit an Effect event. Surface them as failures so the user
+  // can perform the external cleanup and explicitly retry the Target.
+  const resourceBlocking = blocking.find(
+    (condition) => condition.ownerKind === "resource",
+  );
+  if (
+    status.phase !== "recovery_required" &&
+    manualBlocking === undefined &&
+    resourceBlocking === undefined
+  ) {
     return null;
   }
-  return manualBlocking?.message ?? "Effect recovery is required.";
+  return (
+    manualBlocking?.message ??
+    resourceBlocking?.message ??
+    "Effect recovery is required."
+  );
 }
 
 /**
@@ -111,12 +134,19 @@ export function useAgentEffectReadiness(
   if (isEffectTargetReady(status)) return { kind: "ready" };
   const failure = effectTargetFailureMessage(status);
   if (failure !== null) {
+    const reasons = status.conditions
+      .filter((condition) => condition.impact === "blocking")
+      .map((condition) => ({
+        code: condition.code,
+        message: condition.message,
+      }));
     return {
       kind: "failed",
       message: failure,
+      reasons,
       targetId: status.targetId,
-      // Other manual blocking Conditions need different remedies (for example a deleted
-      // Worktree); only the recovery quarantine has a controlled recovery command.
+      // Only the recovery quarantine closes journals; other blocking Conditions use the
+      // ordinary retry command after the user fixes the external state.
       recoveryRequired: status.phase === "recovery_required",
     };
   }
