@@ -135,7 +135,7 @@ fn migration_round_trips_preserve_recovery_evidence() -> Result<(), Box<dyn std:
                     .expect("recovered Target")
                     .conditions
                     .len(),
-                1
+                2
             );
             upgraded.with_connection(|connection| {
                 assert!(connection.execute("UPDATE effect_operations SET detected_at = NULL WHERE id = 'operation-1'", []).is_err());
