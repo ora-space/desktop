@@ -32,7 +32,11 @@ import {
   useUpdateScheduledTask,
 } from "../../state/hooks/use-scheduled-tasks";
 import type { AgentEntry } from "../../state/hooks/use-agent-catalog";
-import { WEEKDAYS, scheduleTime } from "./scheduled-task-format";
+import {
+  WEEKDAYS,
+  scheduleKindItems,
+  scheduleTime,
+} from "./scheduled-task-format";
 
 interface ScheduledTaskFormProps {
   open: boolean;
@@ -110,6 +114,7 @@ export function ScheduledTaskForm({
       })),
     [agentEntries],
   );
+  const kindItems = useMemo(() => scheduleKindItems(t), [t]);
 
   const toggleWeekday = (weekday: ScheduledTaskWeekday) => {
     setWeekdays((current) =>
@@ -195,7 +200,10 @@ export function ScheduledTaskForm({
               {t("scheduledTask.description")}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4">
+          <div
+            aria-busy={pending}
+            className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4"
+          >
             <div className="grid gap-1.5">
               <Label htmlFor="scheduled-task-name" className="font-normal">
                 {t("scheduledTask.name")}
@@ -203,7 +211,6 @@ export function ScheduledTaskForm({
               <Input
                 id="scheduled-task-name"
                 value={name}
-                disabled={pending}
                 onChange={(event) => setName(event.target.value)}
                 autoFocus
               />
@@ -215,7 +222,6 @@ export function ScheduledTaskForm({
               <Textarea
                 id="scheduled-task-prompt"
                 value={prompt}
-                disabled={pending}
                 rows={5}
                 onChange={(event) => setPrompt(event.target.value)}
               />
@@ -228,7 +234,6 @@ export function ScheduledTaskForm({
                 <SearchableChoice
                   id="scheduled-task-project"
                   value={projectId}
-                  disabled={pending}
                   options={projectOptions}
                   placeholder={t("scheduledTask.searchProject")}
                   emptyLabel={t("scheduledTask.noMatchingProjects")}
@@ -249,7 +254,6 @@ export function ScheduledTaskForm({
                 <SearchableChoice
                   id="scheduled-task-agent"
                   value={agentRef}
-                  disabled={pending}
                   options={agentOptions}
                   placeholder={t("scheduledTask.searchAgent")}
                   emptyLabel={t("scheduledTask.noMatchingAgents")}
@@ -264,35 +268,30 @@ export function ScheduledTaskForm({
               <Input
                 id="scheduled-task-model"
                 value={model}
-                disabled={pending}
                 onChange={(event) => setModel(event.target.value)}
               />
             </div>
             <div className="grid gap-2">
-              <Label className="font-normal">
+              <Label htmlFor="scheduled-task-schedule" className="font-normal">
                 {t("scheduledTask.schedule")}
               </Label>
               <Select
                 value={scheduleKind}
-                disabled={pending}
+                items={kindItems}
                 onValueChange={(value) =>
                   value &&
                   setScheduleKind(value as ScheduledTaskSchedule["kind"])
                 }
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
+                <SelectTrigger id="scheduled-task-schedule" className="w-full">
+                  <SelectValue>{kindItems[scheduleKind]}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="every_hours">
-                    {t("scheduledTask.everyHours")}
+                    {kindItems.every_hours}
                   </SelectItem>
-                  <SelectItem value="daily">
-                    {t("scheduledTask.daily")}
-                  </SelectItem>
-                  <SelectItem value="weekly">
-                    {t("scheduledTask.weekly")}
-                  </SelectItem>
+                  <SelectItem value="daily">{kindItems.daily}</SelectItem>
+                  <SelectItem value="weekly">{kindItems.weekly}</SelectItem>
                 </SelectContent>
               </Select>
               {scheduleKind === "every_hours" ? (
@@ -308,7 +307,6 @@ export function ScheduledTaskForm({
                     type="number"
                     min={1}
                     value={interval}
-                    disabled={pending}
                     onChange={(event) =>
                       setInterval(Number(event.target.value))
                     }
@@ -323,7 +321,6 @@ export function ScheduledTaskForm({
                     id="scheduled-task-time"
                     type="time"
                     value={time}
-                    disabled={pending}
                     onChange={(event) => setTime(event.target.value)}
                   />
                 </div>
@@ -342,7 +339,6 @@ export function ScheduledTaskForm({
                           type="button"
                           size="sm"
                           variant={selected ? "secondary" : "outline"}
-                          disabled={pending}
                           aria-pressed={selected}
                           onClick={() => toggleWeekday(day.value)}
                         >
@@ -373,7 +369,6 @@ export function ScheduledTaskForm({
                 <Switch
                   id="scheduled-task-approval"
                   checked={approved}
-                  disabled={pending}
                   onCheckedChange={setApproved}
                 />
               </div>
@@ -387,25 +382,29 @@ export function ScheduledTaskForm({
                 <Switch
                   id="scheduled-task-enabled"
                   checked={enabled}
-                  disabled={pending}
                   onCheckedChange={setEnabled}
                 />
               </div>
             </div>
-            {validationError && (
-              <p className="text-sm text-destructive">
-                {t("scheduledTask.validation")}
-              </p>
-            )}
-            {submissionError && (
-              <p data-selectable className="text-sm text-destructive">
-                {submissionError}
-              </p>
-            )}
           </div>
+          {(validationError || submissionError !== null) && (
+            <div className="shrink-0 px-4 pb-1">
+              {validationError && (
+                <p className="text-sm text-destructive">
+                  {t("scheduledTask.validation")}
+                </p>
+              )}
+              {submissionError !== null && (
+                <p data-selectable className="text-sm text-destructive">
+                  {submissionError}
+                </p>
+              )}
+            </div>
+          )}
           <DialogFooter className="mx-0 mb-0 shrink-0">
             <Button
               type="submit"
+              aria-busy={pending}
               disabled={
                 pending ||
                 projects.length === 0 ||
