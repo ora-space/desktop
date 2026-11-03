@@ -124,6 +124,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     record_prompt,
                     inactivity_policy,
                     model,
+                    end_report,
                     events,
                     accepted,
                 } => {
@@ -140,10 +141,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     prompt,
                                     record_prompt,
                                     inactivity_policy,
+                                    end_report,
                                     events,
                                 )
                                 .await;
                                 self.refresh_idle_mcp_if_owed().await;
+                            } else {
+                                // Setup never reached the owner, so the turn cannot have started.
+                                end_report.record(PromptEndCause::StreamDropped);
                             }
                         }
                         Err(error) => {
@@ -235,11 +240,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         prompt: Vec<ContentBlock>,
         record_prompt: RecordedTurn,
         inactivity_policy: PromptInactivityPolicy,
+        end_report: PromptEndReport,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     ) {
         // An exit without a terminal provider response cannot prove remote work stopped.
         self.record_cleanup(operation_id, Err(runtime_unavailable()));
         let Some(mut channel) = self.channel.take() else {
+            // Nothing was sent, so no side of the turn can be credited with ending it.
+            end_report.record(PromptEndCause::Unknown);
             return;
         };
         let client = channel.connection.client.clone();
@@ -249,6 +257,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
+                    end_report.record(PromptEndCause::Unknown);
                     let _ = events.try_send(Err(session_event_overflow(
                         "session event queue overflowed",
                     )));
@@ -256,6 +265,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 SessionControl::ConnectionLost(error) => {
+                    end_report.record(PromptEndCause::SessionCrashed);
                     self.fail_prompt(&events, error);
                     return;
                 }
@@ -270,6 +280,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }))
                 .is_err()
             {
+                end_report.record(PromptEndCause::StreamDropped);
                 self.isolate_channel(channel).await;
                 return;
             }
@@ -293,6 +304,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // work is real whether or not the file kept it. This one has not
             // started: nothing is lost by refusing it, and running it would put
             // the conversation somewhere the record cannot follow.
+            end_report.record(PromptEndCause::Unknown);
             let _ = events.try_send(Err(history_degraded()));
             self.channel = Some(channel);
             return;
@@ -313,6 +325,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 // The request never reached the agent, so a transcript this prompt
                 // was carrying is still owed and stays owed — in memory and, since
                 // no delivery was recorded, across a restart as well.
+                end_report.record(PromptEndCause::Unknown);
                 self.end_turn(StopReason::Cancelled);
                 let _ = events.try_send(Err(map_acp_error(error)));
                 self.isolate_channel(channel).await;
@@ -371,6 +384,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         continue;
                     }
                     StalledPrompt::Failed(error) => {
+                        // The inactivity schedule gave up: this is a system timeout, never the
+                        // user's own stop, even though both end the turn as `Cancelled`.
+                        end_report.record(PromptEndCause::InactivityTimeout);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
                         let _ = events.try_send(Err(error));
@@ -400,6 +416,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         }))
                         .is_err()
                     {
+                        // The turn's owner stopped reading, so nobody is left to answer it.
+                        end_report.record(PromptEndCause::StreamDropped);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
@@ -427,6 +445,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     permissions.insert(public_id.clone(), (permission.request_id, option_ids));
                     let Some(option_id) = auto_option_id else {
                         ora_warn!(session_id = %self.session.id, request_id = %public_id, "permission request offered no allow option");
+                        end_report.record(PromptEndCause::Unknown);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
@@ -445,6 +464,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     .await;
                     if let Err(error) = auto_response {
                         ora_warn!(session_id = %self.session.id, error = %error, "failed to auto-allow permission request");
+                        end_report.record(PromptEndCause::Unknown);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
@@ -460,6 +480,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     match pending.finish(response) {
                         Ok(response) => {
                             self.record_cleanup(operation_id, Ok(()));
+                            // The provider answered: its stop reason now describes the turn, so the
+                            // end cause is not an interruption.
+                            end_report.record(PromptEndCause::Settled);
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
                             let token_usage = usage::normalize_token_usage(
                                 &self.session.agent_ref,
@@ -488,6 +511,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 self.record_cleanup(operation_id, Ok(()));
                             }
                             ora_debug!(session_id = %self.session.id, code = "agent_turn_failed", reusable = reusable, "prompt failed");
+                            end_report.record(PromptEndCause::Unknown);
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);
                             let delivered = events.try_send(Err(map_prompt_error(error))).is_ok();
@@ -501,12 +525,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 ActiveInput::Control(SessionControl::ConnectionLost(error)) => {
+                    end_report.record(PromptEndCause::SessionCrashed);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.fail_prompt(&events, error);
                     return;
                 }
                 ActiveInput::Control(SessionControl::QueueOverflow) => {
+                    end_report.record(PromptEndCause::Unknown);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.cancel(&client, &permissions).await;
@@ -517,6 +543,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 ActiveInput::EventsClosed | ActiveInput::ControlsClosed => {
+                    end_report.record(PromptEndCause::SessionCrashed);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.fail_prompt(&events, runtime_unavailable());
@@ -553,6 +580,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::Cancel { completion, .. } => completion,
                         _ => None,
                     };
+                    // `cancel_prompt` is the user pressing stop, while the owner-addressed cancel
+                    // is a consumer that stopped reading; the two must not be reported alike.
+                    end_report.record(if notify_owner {
+                        PromptEndCause::UserStopped
+                    } else {
+                        PromptEndCause::StreamDropped
+                    });
                     self.cancel(&client, &permissions).await;
                     let settled = timeout(
                         CANCELLATION_GRACE,
@@ -595,6 +629,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
+                    end_report.record(PromptEndCause::Unknown);
                     self.cancel(&client, &permissions).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
@@ -674,6 +709,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     self.observe_session_update(&update);
                 }
                 ActiveInput::CommandsClosed => {
+                    end_report.record(PromptEndCause::SessionCrashed);
                     self.cancel(&client, &permissions).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);

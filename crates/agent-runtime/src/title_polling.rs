@@ -68,7 +68,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = cleanup.send(Ok(()));
                             return;
                         }
-                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, inactivity_policy, model, events, accepted } => {
+                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, inactivity_policy, model, end_report, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             // Admission goes through the same attach as the idle loop's. The
@@ -78,8 +78,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 Ok(setup) => {
                                     let _ = accepted.send(Ok(()));
                                     if super::publish_setup(&events, setup) {
-                                        self.run_prompt(operation_id, prompt, record_prompt, inactivity_policy, events).await;
+                                        self.run_prompt(operation_id, prompt, record_prompt, inactivity_policy, end_report, events).await;
                                         self.refresh_idle_mcp_if_owed().await;
+                                    } else {
+                                        end_report.record(super::PromptEndCause::StreamDropped);
                                     }
                                 }
                                 Err(error) => {

@@ -104,6 +104,9 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
         let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (accepted_sender, accepted) = oneshot::channel();
+        // Created here so the owner of this turn holds the same report the actor writes its end
+        // cause into; the stream exposes it for consumers that classify the turn after it settled.
+        let end_report = PromptEndReport::new();
         handle
             .commands
             .send(RuntimeCommand::Prompt {
@@ -112,15 +115,15 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 record_prompt,
                 inactivity_policy,
                 model,
+                end_report: end_report.clone(),
                 events: events_sender,
                 accepted: accepted_sender,
             })
             .map_err(runtime_unavailable_with)?;
         accepted.await.map_err(runtime_unavailable_with)??;
-        Ok(SessionEventStream::new(
-            events,
-            handle.commands,
-            operation_id,
-        ))
+        Ok(
+            SessionEventStream::new(events, handle.commands, operation_id)
+                .with_end_report(end_report),
+        )
     }
 }

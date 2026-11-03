@@ -1,4 +1,4 @@
-use super::RuntimeCommand;
+use super::{PromptEndCause, PromptEndReport, RuntimeCommand};
 use crate::RuntimeError;
 use std::{future::Future, pin::Pin};
 use tokio::sync::{mpsc, oneshot};
@@ -9,6 +9,8 @@ type Cleanup =
 /// Owns one operation; explicit cancellation waits for the owner and workflow cleanup.
 pub struct SessionEventStream<Event> {
     state: StreamState<Event>,
+    /// How the runtime says the owning prompt ended; absent on non-prompt streams.
+    end_report: Option<PromptEndReport>,
 }
 
 /// Cleanup ownership moves once from the receiver to a worker, then to a retained receipt.
@@ -35,7 +37,27 @@ impl<Event: Send + 'static> SessionEventStream<Event> {
                 commands: Some((commands, operation_id)),
                 cleanup: None,
             },
+            end_report: None,
         }
+    }
+
+    /// Attaches the report of how this prompt's turn ended, written by the actor.
+    pub(super) fn with_end_report(mut self, report: PromptEndReport) -> Self {
+        self.end_report = Some(report);
+        self
+    }
+
+    /// Returns how the runtime says this prompt ended, once its turn settled.
+    ///
+    /// A consumer that ends the operation itself, such as a workflow park reading the cause while
+    /// its cleanup runs, keeps this handle and reads it after the stream stopped.
+    pub fn end_cause(&self) -> Option<PromptEndCause> {
+        self.end_report.as_ref().and_then(PromptEndReport::recorded)
+    }
+
+    /// Hands the turn owner the same report the actor writes, so cleanup can read it later.
+    pub fn end_report(&self) -> Option<PromptEndReport> {
+        self.end_report.clone()
     }
 
     /// Runs workflow restoration after the operation owner has settled, retaining the first failure.
@@ -79,6 +101,7 @@ impl<Event: Send + 'static> SessionEventStream<Event> {
                 commands: None,
                 cleanup: Some(Box::new(move || Box::pin(cleanup()))),
             },
+            end_report: None,
         }
     }
 
