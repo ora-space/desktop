@@ -86,7 +86,7 @@ export function ScheduledTaskForm({
   agents,
   onOpenChange,
 }: ScheduledTaskFormProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const createTask = useCreateScheduledTask();
   const updateTask = useUpdateScheduledTask();
   const initialSchedule = task?.schedule ?? {
@@ -146,7 +146,7 @@ export function ScheduledTaskForm({
       })),
     [agentEntries],
   );
-  const kindItems = useMemo(() => scheduleKindItems(t), [i18n.language, t]);
+  const kindItems = useMemo(() => scheduleKindItems(t), [t]);
   const onScheduleKindChange = useCallback(
     (kind: ScheduledTaskSchedule["kind"]) => setScheduleKind(kind),
     [],
