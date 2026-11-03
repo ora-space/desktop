@@ -424,19 +424,24 @@ export function ScheduledTaskForm({
             <Button
               type="submit"
               aria-busy={pending}
-              className="self-end"
+              className="relative self-end"
               disabled={
                 pending ||
                 projects.length === 0 ||
                 (task === null && agents.length === 0)
               }
             >
+              <span className={pending ? "opacity-0" : undefined}>
+                {task === null
+                  ? t("scheduledTask.create")
+                  : t("scheduledTask.save")}
+              </span>
               {pending ? (
-                <Spinner className="size-3.5" aria-hidden="true" />
+                <Spinner
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2"
+                />
               ) : null}
-              {task === null
-                ? t("scheduledTask.create")
-                : t("scheduledTask.save")}
             </Button>
           </DialogFooter>
         </form>
