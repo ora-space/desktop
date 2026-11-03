@@ -6,6 +6,7 @@
 //! history so the park path and the completion path share one source.
 
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason};
+use ora_agent_runtime::PromptEndCause;
 use ora_application::AgentOutputContract;
 use ora_history::{HistoryIntegrity, HistoryRecord, SessionHistory};
 use ora_utils::hash::sha256_hex;
@@ -54,6 +55,24 @@ pub(crate) enum StopCause {
     SessionCrashed,
     /// The end reason could not be determined at the park site.
     Unknown,
+}
+
+impl StopCause {
+    /// Maps the owning prompt's end cause to the park's stop cause.
+    ///
+    /// A settled turn has no stop cause: its stop reason and blockers describe the end on their
+    /// own (ADR D4). Every interruption keeps its own cause, including one that cannot be
+    /// attributed, so a `turn_stopped` park is never silently read as the user's own stop.
+    pub(crate) fn of_prompt_end(end: Option<PromptEndCause>) -> Option<Self> {
+        match end {
+            Some(PromptEndCause::UserStopped) => Some(Self::UserStopped),
+            Some(PromptEndCause::InactivityTimeout) => Some(Self::PromptTimedOut),
+            Some(PromptEndCause::StreamDropped) => Some(Self::StreamDropped),
+            Some(PromptEndCause::SessionCrashed) => Some(Self::SessionCrashed),
+            Some(PromptEndCause::Unknown) => Some(Self::Unknown),
+            Some(PromptEndCause::Settled) | None => None,
+        }
+    }
 }
 
 /// How a parked node is shown: waiting for the user, or stopped by an abnormal end.
@@ -468,6 +487,7 @@ mod tests {
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
     };
+    use ora_agent_runtime::PromptEndCause;
     use ora_application::{AgentOutputContract, StructuredTextExposure};
     use ora_history::{HistoryIntegrity, HistoryLine, HistoryRecord, SessionHistory};
     use ora_utils::hash::sha256_hex;
@@ -667,6 +687,34 @@ mod tests {
         );
         assert_eq!(snapshot.stop_cause, Some(StopCause::PromptTimedOut));
         assert_eq!(snapshot.park_kind, Some(ParkKind::Abnormal));
+    }
+
+    /// The runtime's end report maps onto the park's stop cause without inventing one.
+    #[test]
+    fn the_prompt_end_cause_maps_onto_the_park_stop_cause() {
+        for (end, expected) in [
+            (None, None),
+            (Some(PromptEndCause::Settled), None),
+            (
+                Some(PromptEndCause::UserStopped),
+                Some(StopCause::UserStopped),
+            ),
+            (
+                Some(PromptEndCause::InactivityTimeout),
+                Some(StopCause::PromptTimedOut),
+            ),
+            (
+                Some(PromptEndCause::StreamDropped),
+                Some(StopCause::StreamDropped),
+            ),
+            (
+                Some(PromptEndCause::SessionCrashed),
+                Some(StopCause::SessionCrashed),
+            ),
+            (Some(PromptEndCause::Unknown), Some(StopCause::Unknown)),
+        ] {
+            assert_eq!(StopCause::of_prompt_end(end), expected);
+        }
     }
 
     /// A stop whose cause the park site could not determine is never shown as the user's stop.

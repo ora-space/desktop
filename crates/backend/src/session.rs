@@ -167,13 +167,13 @@ impl Sessions {
     }
 
     /// Cancels one active prompt while keeping its session available for another turn.
+    ///
+    /// The runtime attributes the stop itself: `cancelSessionPrompt` reaches the actor as the
+    /// user's own cancellation, which the park of the interrupted turn reads as `user_stopped`.
     pub fn cancel_prompt(
         &self,
         request: CancelSessionPromptRequest,
     ) -> Result<CancelSessionPromptResponse, BackendError> {
-        // The workflow park that follows this stop classifies it as the user's own, instead of
-        // leaving it to look like an unexplained abnormal end.
-        self.workflow_turns.note_user_stop(&request.session_id);
         Ok(self.agent_runtime.cancel_session_prompt(request)?)
     }
 

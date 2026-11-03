@@ -390,6 +390,11 @@ impl<Event: Send + 'static> SessionEventStream<Event> {
             .map(|item| item.map_err(BackendError::from))
     }
 
+    /// Hands the turn owner the same report the runtime writes, so cleanup can read it later.
+    pub(crate) fn end_report(&self) -> Option<ora_agent_runtime::PromptEndReport> {
+        self.inner.end_report()
+    }
+
     /// Requests cancellation once and waits for owner cleanup followed by workflow restoration.
     pub async fn cancel_and_wait(&mut self) -> Result<(), BackendError> {
         self.inner

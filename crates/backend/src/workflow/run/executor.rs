@@ -340,6 +340,7 @@ async fn park_first_interactive_turn(
     node_run_id: WorkflowNodeRunId,
     session_id: SessionId,
     output_contract: Option<AgentOutputContract>,
+    stop_cause: Option<StopCause>,
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
         let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
@@ -348,7 +349,7 @@ async fn park_first_interactive_turn(
                 output_contract.as_ref(),
                 false,
                 TurnOrigin::Workflow,
-                None,
+                stop_cause,
             ),
             Err(error) => {
                 ora_warn!(
@@ -596,6 +597,9 @@ async fn drive_agent_node(
                 node_run_id.clone(),
                 session_id.clone(),
                 config.output_contract.clone(),
+                // A first turn the user stopped must still park as awaiting them, so the cause
+                // travels with the park instead of being read back from the stop reason.
+                StopCause::of_prompt_end(stream.end_cause()),
             )
             .await?;
             return Ok(AgentNodeOutcome::AwaitingInput);
