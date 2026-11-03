@@ -329,6 +329,27 @@ describe("ScheduledTaskManager consent handling", () => {
     expect(screen.queryByText("every_hours")).toBeNull();
   });
 
+  it("keeps the localized schedule label when create validation fails", async () => {
+    const user = userEvent.setup();
+    renderManager(scheduledTaskHandlers([], []));
+    await user.click(
+      await screen.findByRole("button", { name: "新建定时任务" }),
+    );
+
+    expect(
+      await screen.findByRole("combobox", { name: "计划" }),
+    ).toHaveTextContent("每隔几小时");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    expect(
+      await screen.findByText(
+        "请填写必填字段，并在启用任务时确认无人值守授权。",
+      ),
+    ).toBeInTheDocument();
+    const schedule = screen.getByRole("combobox", { name: "计划" });
+    expect(schedule).toHaveTextContent("每隔几小时");
+    expect(schedule).not.toHaveTextContent("every_hours");
+  });
+
   it("keeps the localized daily label while an edit save is in flight", async () => {
     const user = userEvent.setup();
     const tasks = [CONSENTED_TASK];

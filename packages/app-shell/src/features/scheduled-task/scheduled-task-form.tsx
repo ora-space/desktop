@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { memo, useCallback, useMemo, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   Project,
@@ -46,6 +46,38 @@ interface ScheduledTaskFormProps {
   onOpenChange(open: boolean): void;
 }
 
+/** Isolated so submit/validation re-renders cannot remount Base UI Select. */
+const ScheduleKindSelect = memo(function ScheduleKindSelect({
+  value,
+  items,
+  onValueChange,
+}: {
+  value: ScheduledTaskSchedule["kind"];
+  items: Record<ScheduledTaskSchedule["kind"], string>;
+  onValueChange: (kind: ScheduledTaskSchedule["kind"]) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      items={items}
+      onValueChange={(next) => {
+        if (next === "every_hours" || next === "daily" || next === "weekly") {
+          onValueChange(next);
+        }
+      }}
+    >
+      <SelectTrigger id="scheduled-task-schedule" className="w-full">
+        <SelectValue>{items[value]}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="every_hours">{items.every_hours}</SelectItem>
+        <SelectItem value="daily">{items.daily}</SelectItem>
+        <SelectItem value="weekly">{items.weekly}</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+});
+
 /** Creates or edits the bounded local Scheduled Task definition shape. */
 export function ScheduledTaskForm({
   open,
@@ -54,7 +86,7 @@ export function ScheduledTaskForm({
   agents,
   onOpenChange,
 }: ScheduledTaskFormProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const createTask = useCreateScheduledTask();
   const updateTask = useUpdateScheduledTask();
   const initialSchedule = task?.schedule ?? {
@@ -114,7 +146,11 @@ export function ScheduledTaskForm({
       })),
     [agentEntries],
   );
-  const kindItems = useMemo(() => scheduleKindItems(t), [t]);
+  const kindItems = useMemo(() => scheduleKindItems(t), [i18n.language, t]);
+  const onScheduleKindChange = useCallback(
+    (kind: ScheduledTaskSchedule["kind"]) => setScheduleKind(kind),
+    [],
+  );
 
   const toggleWeekday = (weekday: ScheduledTaskWeekday) => {
     setWeekdays((current) =>
@@ -200,10 +236,7 @@ export function ScheduledTaskForm({
               {t("scheduledTask.description")}
             </DialogDescription>
           </DialogHeader>
-          <div
-            aria-busy={pending}
-            className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4"
-          >
+          <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4">
             <div className="grid gap-1.5">
               <Label htmlFor="scheduled-task-name" className="font-normal">
                 {t("scheduledTask.name")}
@@ -275,25 +308,11 @@ export function ScheduledTaskForm({
               <Label htmlFor="scheduled-task-schedule" className="font-normal">
                 {t("scheduledTask.schedule")}
               </Label>
-              <Select
+              <ScheduleKindSelect
                 value={scheduleKind}
                 items={kindItems}
-                onValueChange={(value) =>
-                  value &&
-                  setScheduleKind(value as ScheduledTaskSchedule["kind"])
-                }
-              >
-                <SelectTrigger id="scheduled-task-schedule" className="w-full">
-                  <SelectValue>{kindItems[scheduleKind]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="every_hours">
-                    {kindItems.every_hours}
-                  </SelectItem>
-                  <SelectItem value="daily">{kindItems.daily}</SelectItem>
-                  <SelectItem value="weekly">{kindItems.weekly}</SelectItem>
-                </SelectContent>
-              </Select>
+                onValueChange={onScheduleKindChange}
+              />
               {scheduleKind === "every_hours" ? (
                 <div className="grid gap-1.5">
                   <Label
@@ -387,31 +406,31 @@ export function ScheduledTaskForm({
               </div>
             </div>
           </div>
-          {(validationError || submissionError !== null) && (
-            <div className="shrink-0 px-4 pb-1">
-              {validationError && (
+          <DialogFooter className="mx-0 mb-0 shrink-0 flex-col items-stretch gap-2 sm:flex-col">
+            <div className="min-h-5 px-1">
+              {validationError ? (
                 <p className="text-sm text-destructive">
                   {t("scheduledTask.validation")}
                 </p>
-              )}
-              {submissionError !== null && (
+              ) : submissionError !== null ? (
                 <p data-selectable className="text-sm text-destructive">
                   {submissionError}
                 </p>
-              )}
+              ) : null}
             </div>
-          )}
-          <DialogFooter className="mx-0 mb-0 shrink-0">
             <Button
               type="submit"
               aria-busy={pending}
+              className="self-end"
               disabled={
                 pending ||
                 projects.length === 0 ||
                 (task === null && agents.length === 0)
               }
             >
-              {pending && <Spinner className="size-4" />}
+              <span className="inline-flex size-4 shrink-0 items-center justify-center">
+                {pending ? <Spinner className="size-4" /> : null}
+              </span>
               {task === null
                 ? t("scheduledTask.create")
                 : t("scheduledTask.save")}
