@@ -47,6 +47,20 @@ const NODE_DATA: WorkflowNodeData = {
   model: "mock-model",
 };
 
+/** The same Agent node opted into an interactive session, so it can park for the user. */
+const INTERACTIVE_NODE_DATA: WorkflowNodeData = {
+  ...NODE_DATA,
+  agentConfig: {
+    schemaVersion: 3,
+    executor: { agentCli: AGENT_REF.opencode, modelId: "mock-model" },
+    roleId: "reviewer",
+    skills: [],
+    mcps: [],
+    prompt: "Review the current branch.",
+    interactive: true,
+  },
+};
+
 it("renders condition semantics without Agent instruction, output or conversation placeholders", () => {
   render(
     <RunTheaterActCard
@@ -463,6 +477,7 @@ describe("RunTheaterActCard conversation", () => {
             warnings: [],
             provisional: false,
             ready: false,
+            needsConfirmation: false,
           },
         }}
         live
@@ -496,6 +511,7 @@ describe("RunTheaterActCard conversation", () => {
             warnings: ["turn_not_settled"],
             provisional: true,
             ready: false,
+            needsConfirmation: false,
           },
         }}
         live
@@ -504,6 +520,121 @@ describe("RunTheaterActCard conversation", () => {
     );
 
     expect(screen.getByText("等待参与")).toBeInTheDocument();
+    expect(screen.queryByText("已暂停")).toBeNull();
+  });
+
+  it("keeps an unconfirmed opening turn out of the paused badge", () => {
+    render(
+      <RunTheaterActCard
+        data={{
+          ...NODE_DATA,
+          agentConfig: {
+            schemaVersion: 3,
+            executor: { agentCli: AGENT_REF.opencode, modelId: "mock-model" },
+            roleId: "reviewer",
+            skills: [],
+            mcps: [],
+            prompt: "Review the current branch.",
+            interactive: true,
+          },
+        }}
+        state={{
+          status: "awaiting_input",
+          completion: {
+            blockers: [{ kind: "turn_unconfirmed", params: {} }],
+            warnings: [],
+            provisional: false,
+            ready: false,
+            needsConfirmation: true,
+          },
+        }}
+        live
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("等待参与")).toBeInTheDocument();
+    expect(screen.queryByText("已暂停")).toBeNull();
+  });
+
+  it("shows the backend's abnormal park classification instead of the paused heuristic", () => {
+    render(
+      <RunTheaterActCard
+        data={INTERACTIVE_NODE_DATA}
+        state={{
+          status: "awaiting_input",
+          completion: {
+            turnOrigin: "human",
+            stopCause: "prompt_timed_out",
+            parkKind: "abnormal",
+            blockers: [{ kind: "turn_stopped", params: {} }],
+            warnings: [],
+            provisional: false,
+            ready: false,
+            needsConfirmation: false,
+          },
+        }}
+        live
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("异常停靠")).toBeInTheDocument();
+    expect(screen.queryByText("已暂停")).toBeNull();
+    expect(screen.queryByText("等待参与")).toBeNull();
+  });
+
+  it("shows a user stop as awaiting input, not as an abnormal stop", () => {
+    render(
+      <RunTheaterActCard
+        data={INTERACTIVE_NODE_DATA}
+        state={{
+          status: "awaiting_input",
+          completion: {
+            turnOrigin: "human",
+            stopCause: "user_stopped",
+            parkKind: "awaiting_user",
+            blockers: [{ kind: "turn_stopped", params: {} }],
+            warnings: [],
+            provisional: false,
+            ready: false,
+            needsConfirmation: false,
+          },
+        }}
+        live
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("等待参与")).toBeInTheDocument();
+    expect(screen.queryByText("异常停靠")).toBeNull();
+    expect(screen.queryByText("已暂停")).toBeNull();
+  });
+
+  it("never labels the unconfirmed opening turn as an abnormal stop", () => {
+    render(
+      <RunTheaterActCard
+        data={INTERACTIVE_NODE_DATA}
+        state={{
+          status: "awaiting_input",
+          completion: {
+            turnOrigin: "workflow",
+            stopCause: null,
+            parkKind: "abnormal",
+            blockers: [{ kind: "turn_unconfirmed", params: {} }],
+            warnings: [],
+            provisional: false,
+            ready: false,
+            needsConfirmation: true,
+          },
+        }}
+        live
+      />,
+      { wrapper: createSessionWrapper() },
+    );
+
+    expect(screen.getByText("等待参与")).toBeInTheDocument();
+    expect(screen.queryByText("异常停靠")).toBeNull();
     expect(screen.queryByText("已暂停")).toBeNull();
   });
 

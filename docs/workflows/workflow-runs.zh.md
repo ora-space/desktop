@@ -64,11 +64,15 @@
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。只有 `EndTurn` 且没有 blocker 的回合才能正常完成；停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。
 
+workflow 自己发起的首轮回合本身从不读作 ready：它的 `EndTurn` 只表示 agent 结束了这次回复，而这次回复可能在向用户提问。快照因此带 `turn_unconfirmed` blocker。步骤卡片提供「确认并完成」（发送 `confirmInitialTurn` 的普通完成，不写强制审计）与「继续当前步骤」，右下角推进按钮在该回合 ready 之前不可用。由用户回复开启的回合仍按上面的规则：`EndTurn` 且没有 blocker 时正常完成，卡片重新给出「完成并进入下一步」。`force` 不能代替确认，两个字段同时为 true 的请求返回 `invalid_request`。
+
+每次停靠都在写入处分类：`parkKind` 为 `awaiting_user` 的只有首轮未确认、用户主动停止和 provisional 快照，超时、截断、拒答、未知终态、会话崩溃、流断开与输出契约失败都是 `abnormal`；`stopCause` 记录 owning prompt 的结束原因（`user_stopped`、`prompt_timed_out`、`stream_dropped`、`session_crashed`、`unknown`）。异常停靠的卡片显示原因，只提供继续或二次确认后的强制完成；右下角按钮只对 ready 的回合启用。缺这些字段的旧快照沿用原来的「已暂停／状态未知」展示，provisional 快照被修复时保留它停靠时的 origin 与 stop cause。
+
 如果流在 stop reason 持久化前被 drop，节点按最后一次可读历史写 provisional 快照：保留它描述的 `userSeq`，并带 `turn_not_settled` warning；之后完成时，只要同一 user 消息的回合已经收敛就修复该快照。升级前停靠、完全没有快照的节点由第一次完成尝试在读取会话历史后物化快照，再走同一套 blocker 门禁，所以未完成的回合同样会被拒绝，不会静默推进。
 
 每个人工回合都带一个从冻结图渲染的 `<workflow_step_boundary>` 块：它写明当前步骤与直接后续节点，并声明只完成本步骤；它不承诺运行时会阻止后续节点，而记录给用户的 prompt 仍是用户原文。
 
-`force` 完成会在节点 payload 的 `completion_forced` 下留痕，记录被绕过的 blockers、本轮是否有终态，以及采用的输出从哪来（`turn_window` 或 `last_assistant_message`）。这条审计与完成在同一个事务里写入，所以已完成的节点不会缺这条记录。
+`force` 完成会在节点 payload 的 `completion_forced` 下留痕，记录它实际覆盖的有效 blockers、解释这些 blocker 的 `stop_cause`、本轮是否有终态，以及采用的输出从哪来（`turn_window` 或 `last_assistant_message`）。这条审计与完成在同一个事务里写入，所以已完成的节点不会缺这条记录。
 
 ## 变量与类型
 

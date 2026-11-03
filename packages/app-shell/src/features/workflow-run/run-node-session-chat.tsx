@@ -28,6 +28,7 @@ import type {
   GraphWorkflowNodeStatus,
   WorkflowNodeCompletion,
   WorkflowNodeCompletionBlockerKind,
+  WorkflowNodeStopCause,
 } from "@ora/workflow-runtime";
 import { useChatStore } from "../../chat-store-context";
 import { useContractsClient } from "../../contracts-client-context";
@@ -36,6 +37,7 @@ import { useCompleteWorkflowNode } from "../../state/data/workflow-runs";
 import { useAgents } from "../../state/hooks/use-agents";
 import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
+import { isAwaitingConfirmation } from "./run-node-completion";
 
 const RUNNING_SESSION_RELOAD_DELAY_MS = 250;
 const NODE_SESSION_CONVERSATION_NAVIGATION = {
@@ -49,6 +51,7 @@ const UNKNOWN_COMPLETION: WorkflowNodeCompletion = {
   warnings: [],
   provisional: false,
   ready: false,
+  needsConfirmation: false,
 };
 
 /** Everything the step card needs from the owning workflow act. */
@@ -115,15 +118,46 @@ export function RunNodeSessionChat({
   const hasCompletionSnapshot = interaction?.completion !== undefined;
   const completionReady = hasCompletionSnapshot && completion.ready === true;
   // A provisional snapshot is the park path's guess before the turn settled. Its blockers are not
-  // final: `prepare` re-derives the same turn and repairs the snapshot when it can, so the card must
-  // offer the ordinary completion instead of sending the user to a forced one.
+  // final: `prepare` re-derives the same turn and repairs the snapshot when it can, so the card
+  // keeps offering completion, but it never enables the right-bottom advancement action.
   const completionProvisional =
     hasCompletionSnapshot && completion.provisional === true;
-  /** The card can still offer a normal completion while the snapshot is unknown or provisional. */
-  const completionActionable =
-    completionReady || completionProvisional || !hasCompletionSnapshot;
-  /** Ready or still settling: both invite the ordinary completion entry. */
-  const completionAwaiting = completionReady || completionProvisional;
+  // The workflow's opening turn always parks unconfirmed, so the node waits for the user instead
+  // of offering to advance: the agent may have ended that reply with a question. The backend
+  // classifies this gate; only `confirmInitialTurn` lifts it and `force` cannot stand in for it.
+  const completionNeedsConfirmation = isAwaitingConfirmation(
+    interaction?.completion,
+  );
+  const completionParkKind = hasCompletionSnapshot
+    ? completion.parkKind
+    : undefined;
+  // A user stop stays "awaiting input": the user chose to stop, so it is not a system failure.
+  const completionUserStopped =
+    hasCompletionSnapshot &&
+    !completionProvisional &&
+    !completionNeedsConfirmation &&
+    completionParkKind === "awaiting_user";
+  // Timeout, truncation, refusal, unknown end, session crash, or an output-contract failure.
+  const completionAbnormal =
+    hasCompletionSnapshot &&
+    !completionProvisional &&
+    !completionNeedsConfirmation &&
+    completionParkKind === "abnormal";
+  // Snapshots written before `parkKind` existed keep the existing paused presentation.
+  const completionLegacy =
+    hasCompletionSnapshot &&
+    !completionReady &&
+    !completionProvisional &&
+    !completionNeedsConfirmation &&
+    completionParkKind === undefined;
+  /** Badges that mean the node still belongs to the user's participation. */
+  const completionAwaitingUser =
+    completionReady ||
+    completionProvisional ||
+    completionNeedsConfirmation ||
+    completionUserStopped;
+  /** Only a ready snapshot (or the legacy snapshot-less entry) offers a normal completion. */
+  const completionActionable = completionReady || !hasCompletionSnapshot;
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
@@ -229,14 +263,30 @@ export function RunNodeSessionChat({
   const handleContinue = async (ready: boolean) => {
     const prompt = ready
       ? t("workflowRun.stepCard.continueReadyPrompt")
-      : t("workflowRun.stepCard.continuePrompt", {
-          reason: completionReasonText(completion, t),
-        });
+      : completionNeedsConfirmation
+        ? t("workflowRun.stepCard.continueUnconfirmedPrompt")
+        : completionUserStopped
+          ? t("workflowRun.stepCard.continueUserStoppedPrompt")
+          : completionAbnormal
+            ? t("workflowRun.stepCard.continueAbnormalPrompt", {
+                reason: completionParkReasonTexts(completion, t).join(
+                  t("workflowRun.stepCard.reasonSeparator"),
+                ),
+              })
+            : t("workflowRun.stepCard.continuePrompt", {
+                reason: completionBlockerReasonText(completion, t),
+              });
     await handleSend(prompt);
   };
 
-  /** Commits completion from the card or the right-bottom action; force must be confirmed. */
-  const handleComplete = (force: boolean) => {
+  /**
+   * Commits completion from the card or the right-bottom action.
+   *
+   * Force must always be confirmed by the dialog. `confirmInitialTurn` is the ordinary
+   * confirmation of the workflow's opening turn: a normal completion that never records the
+   * forced audit and therefore never travels with `force`.
+   */
+  const handleComplete = (force: boolean, confirmInitialTurn = false) => {
     if (interaction === undefined) {
       return;
     }
@@ -245,6 +295,7 @@ export function RunNodeSessionChat({
         runId: interaction.runId,
         nodeId: interaction.nodeId,
         force,
+        ...(confirmInitialTurn ? { confirmInitialTurn: true } : {}),
       },
       {
         onSuccess: () => onNodeCompleted?.(interaction.nodeId),
@@ -265,6 +316,16 @@ export function RunNodeSessionChat({
     const nextNodeLabel = nextNodeTitles.join(
       t("workflowRun.stepCard.nextSeparator"),
     );
+    const nextActionLabel =
+      nextNodeTitles.length > 0
+        ? t("workflowRun.stepCard.readyAction", { next: nextNodeLabel })
+        : t("workflowRun.stepCard.readyLastAction");
+    const confirmActionLabel =
+      nextNodeTitles.length > 0
+        ? t("workflowRun.stepCard.confirmInitialAction", {
+            next: nextNodeLabel,
+          })
+        : t("workflowRun.stepCard.confirmInitialLastAction");
     const blockedKindSet = new Set(
       completion.blockers.map((blocker) => blocker.kind),
     );
@@ -272,7 +333,13 @@ export function RunNodeSessionChat({
     const warningTexts = [...new Set(completion.warnings)].map((warning) =>
       completionWarningText(warning, t),
     );
+    /** Stop cause / contract reasons shown by the classified park states. */
+    const parkReasonTexts = completionParkReasonTexts(completion, t);
     const actionDisabled = isResponding || complete.isPending;
+    // A provisional workflow-origin snapshot still asks for the explicit confirmation; a
+    // provisional human turn keeps the ordinary completion it has always offered.
+    const provisionalNeedsConfirmation =
+      completionProvisional && completion.turnOrigin === "workflow";
     return (
       <section
         data-testid="node-step-card"
@@ -285,18 +352,25 @@ export function RunNodeSessionChat({
           </p>
           <Badge
             variant="outline"
-            data-paused={completionAwaiting ? undefined : ""}
+            data-paused={
+              completionAwaitingUser || completionAbnormal ? undefined : ""
+            }
+            data-abnormal={completionAbnormal ? "" : undefined}
             className={cn(
               "text-[10px]",
-              completionAwaiting
-                ? "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-200"
-                : "border-border bg-muted/60 text-muted-foreground",
+              completionAbnormal
+                ? "border-destructive/35 bg-destructive/10 text-destructive"
+                : completionAwaitingUser
+                  ? "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-200"
+                  : "border-border bg-muted/60 text-muted-foreground",
             )}
           >
             {t(
-              completionAwaiting
-                ? "workflowRun.stepCard.waitingBadge"
-                : "workflowRun.stepCard.pausedBadge",
+              completionAbnormal
+                ? "workflowRun.stepCard.abnormalBadge"
+                : completionAwaitingUser
+                  ? "workflowRun.stepCard.waitingBadge"
+                  : "workflowRun.stepCard.pausedBadge",
             )}
           </Badge>
         </div>
@@ -308,7 +382,55 @@ export function RunNodeSessionChat({
           <p className="mt-1.5 text-xs text-muted-foreground">
             {t("workflowRun.stepCard.provisional")}
           </p>
-        ) : hasCompletionSnapshot ? (
+        ) : completionNeedsConfirmation ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.unconfirmedTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.unconfirmedReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.unconfirmedHint")}
+            </p>
+          </>
+        ) : completionUserStopped ? (
+          <>
+            <ul className="mt-1.5 space-y-0.5">
+              {(parkReasonTexts.length > 0
+                ? parkReasonTexts
+                : [t("workflowRun.stepCard.stopCause.user_stopped")]
+              ).map((reason) => (
+                <li key={reason} className="text-xs font-medium">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.userStoppedHint")}
+            </p>
+          </>
+        ) : completionAbnormal ? (
+          <>
+            <ul className="mt-1.5 space-y-0.5">
+              {parkReasonTexts.map((reason) => (
+                <li
+                  key={reason}
+                  className="flex items-start gap-1.5 text-xs text-muted-foreground"
+                >
+                  <IconAlertTriangle
+                    className="mt-0.5 size-3.5 shrink-0 text-destructive"
+                    aria-hidden="true"
+                  />
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.abnormalHint")}
+            </p>
+          </>
+        ) : completionLegacy ? (
           <>
             <p className="mt-1.5 text-xs font-medium">
               {t("workflowRun.stepCard.blockedTitle")}
@@ -369,11 +491,7 @@ export function RunNodeSessionChat({
                 ) : (
                   <IconCheck className="size-3.5" aria-hidden="true" />
                 )}
-                {nextNodeTitles.length > 0
-                  ? t("workflowRun.stepCard.readyAction", {
-                      next: nextNodeLabel,
-                    })
-                  : t("workflowRun.stepCard.readyLastAction")}
+                {nextActionLabel}
               </Button>
               <Button
                 type="button"
@@ -386,27 +504,69 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.continueChat")}
               </Button>
             </>
-          ) : completionProvisional ? (
+          ) : completionNeedsConfirmation ? (
             <>
               <Button
                 type="button"
                 size="sm"
-                data-testid="complete-ready-node"
+                data-testid="confirm-initial-turn"
                 disabled={actionDisabled}
                 aria-busy={complete.isPending}
-                onClick={() => handleComplete(false)}
+                onClick={() => handleComplete(false, true)}
               >
                 {complete.isPending ? (
                   <Spinner className="size-3.5" aria-hidden="true" />
                 ) : (
                   <IconCheck className="size-3.5" aria-hidden="true" />
                 )}
-                {nextNodeTitles.length > 0
-                  ? t("workflowRun.stepCard.readyAction", {
-                      next: nextNodeLabel,
-                    })
-                  : t("workflowRun.stepCard.readyLastAction")}
+                {confirmActionLabel}
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionProvisional ? (
+            <>
+              {provisionalNeedsConfirmation ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="confirm-initial-turn"
+                  disabled={actionDisabled}
+                  aria-busy={complete.isPending}
+                  onClick={() => handleComplete(false, true)}
+                >
+                  {complete.isPending ? (
+                    <Spinner className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <IconCheck className="size-3.5" aria-hidden="true" />
+                  )}
+                  {confirmActionLabel}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="complete-ready-node"
+                  disabled={actionDisabled}
+                  aria-busy={complete.isPending}
+                  onClick={() => handleComplete(false)}
+                >
+                  {complete.isPending ? (
+                    <Spinner className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <IconCheck className="size-3.5" aria-hidden="true" />
+                  )}
+                  {nextActionLabel}
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -428,7 +588,29 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceAction")}
               </Button>
             </>
-          ) : hasCompletionSnapshot ? (
+          ) : completionUserStopped || completionAbnormal ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="force-complete-node"
+                disabled={actionDisabled}
+                onClick={() => setForceOpen(true)}
+              >
+                {t("workflowRun.stepCard.forceAction")}
+              </Button>
+            </>
+          ) : completionLegacy ? (
             <>
               <Button
                 type="button"
@@ -549,7 +731,13 @@ export function RunNodeSessionChat({
                     <TooltipContent sideOffset={8}>
                       {completionReady
                         ? t("workflowRun.completeNode.disabledHint")
-                        : t("workflowRun.completeNode.blockedHint")}
+                        : completionNeedsConfirmation
+                          ? t("workflowRun.completeNode.unconfirmedHint")
+                          : completionUserStopped
+                            ? t("workflowRun.completeNode.userStoppedHint")
+                            : completionAbnormal
+                              ? t("workflowRun.completeNode.abnormalHint")
+                              : t("workflowRun.completeNode.blockedHint")}
                     </TooltipContent>
                   )}
                 </Tooltip>
@@ -575,7 +763,11 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceTitle")}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {t("workflowRun.stepCard.forceDescription")}
+                {completionNeedsConfirmation
+                  ? t("workflowRun.stepCard.forceDescriptionUnconfirmed")
+                  : completionUserStopped
+                    ? t("workflowRun.stepCard.forceDescriptionUserStopped")
+                    : t("workflowRun.stepCard.forceDescription")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -628,8 +820,8 @@ function completionWarningText(
   return warning;
 }
 
-/** Human-readable reason list used inside the scoped continue instruction. */
-function completionReasonText(
+/** Human-readable blocker list used by the legacy card and its scoped continue instruction. */
+function completionBlockerReasonText(
   completion: WorkflowNodeCompletion,
   translate: (key: string) => string,
 ): string {
@@ -642,4 +834,72 @@ function completionReasonText(
   return kinds
     .map((kind) => translate(completionBlockerReasonKey(kind)))
     .join(" ");
+}
+
+/** Reason copy for each stop cause written by the backend park/prepare path. */
+const STOP_CAUSE_REASON_KEYS: Record<WorkflowNodeStopCause, string> = {
+  user_stopped: "workflowRun.stepCard.stopCause.user_stopped",
+  prompt_timed_out: "workflowRun.stepCard.stopCause.prompt_timed_out",
+  stream_dropped: "workflowRun.stepCard.stopCause.stream_dropped",
+  session_crashed: "workflowRun.stepCard.stopCause.session_crashed",
+  unknown: "workflowRun.stepCard.stopCause.unknown",
+};
+
+/** Reason copy for every blocker that can keep a parked turn from completing. */
+const ABNORMAL_BLOCKER_REASON_KEYS: Record<
+  WorkflowNodeCompletionBlockerKind,
+  string
+> = {
+  turn_stopped: "workflowRun.stepCard.abnormalReason.turn_stopped",
+  turn_truncated: "workflowRun.stepCard.abnormalReason.turn_truncated",
+  turn_refused: "workflowRun.stepCard.abnormalReason.turn_refused",
+  turn_unknown: "workflowRun.stepCard.abnormalReason.turn_unknown",
+  turn_unconfirmed: "workflowRun.stepCard.abnormalReason.turn_unconfirmed",
+  structured_invalid: "workflowRun.stepCard.abnormalReason.structured_invalid",
+  output_missing: "workflowRun.stepCard.abnormalReason.output_missing",
+};
+
+/**
+ * Translation keys naming why a classified park stopped, in display order.
+ *
+ * The stop cause is authoritative when present, so a blocker that only repeats the stop itself is
+ * skipped then; output-contract failures and a mixed-in `turn_unconfirmed` still add their own
+ * line. A legacy `awaiting_user` snapshot without a cause is the user's own stop, never a system
+ * failure.
+ */
+function completionParkReasonKeys(
+  completion: WorkflowNodeCompletion,
+): string[] {
+  const hasStopReason =
+    completion.stopCause != null || completion.parkKind === "awaiting_user";
+  const keys: string[] = [];
+  if (completion.stopCause != null) {
+    keys.push(STOP_CAUSE_REASON_KEYS[completion.stopCause]);
+  } else if (completion.parkKind === "awaiting_user") {
+    keys.push(STOP_CAUSE_REASON_KEYS.user_stopped);
+  }
+  for (const blocker of completion.blockers) {
+    if (
+      hasStopReason &&
+      (blocker.kind === "turn_stopped" ||
+        blocker.kind === "turn_truncated" ||
+        blocker.kind === "turn_unknown")
+    ) {
+      continue;
+    }
+    keys.push(ABNORMAL_BLOCKER_REASON_KEYS[blocker.kind]);
+  }
+  return [...new Set(keys)];
+}
+
+/** Localized stop/contract reasons; equal copy collapses into one line. */
+function completionParkReasonTexts(
+  completion: WorkflowNodeCompletion,
+  translate: (key: string) => string,
+): string[] {
+  return [
+    ...new Set(
+      completionParkReasonKeys(completion).map((key) => translate(key)),
+    ),
+  ];
 }

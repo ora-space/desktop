@@ -123,6 +123,24 @@ the expected and actual identity. The step card at the end of the conversation a
 action are the two explicit ways to advance: continue, a confirmed forced completion, or
 complete-and-advance when the card is ready.
 
+The opening, workflow-owned turn never reads as ready on its own. Its `EndTurn` only means the
+agent finished that reply, which may be a question for the user, so the snapshot carries a
+`turn_unconfirmed` blocker. The step card offers "confirm and complete" — a normal completion sent
+with `confirmInitialTurn`, never audited as forced — beside "continue this step", and the
+bottom-right action stays disabled until the turn is ready. A turn opened by the user's reply keeps
+the rule above: an `EndTurn` without blockers completes normally and the card names the next step.
+`force` cannot stand in for confirmation, and a request that sets both is rejected as
+`invalid_request`.
+
+Every park is classified where it is written. `parkKind` is `awaiting_user` for an unconfirmed
+opening turn, the user's own stop, or a provisional snapshot, and `abnormal` for a timeout,
+truncation, refusal, unknown end, session crash, stream drop, or output-contract failure; `stopCause`
+names why the owning prompt ended (`user_stopped`, `prompt_timed_out`, `stream_dropped`,
+`session_crashed`, `unknown`). The card shows an abnormal stop with its reason and offers only
+continue or a confirmed forced completion; the bottom-right action is enabled only for a ready turn.
+Older snapshots without these fields keep their previous paused/unknown display, and a repaired
+provisional snapshot keeps the turn origin and stop cause it was parked with.
+
 A turn whose stream dropped before its stop reason became durable parks provisionally from the last
 readable history: the snapshot keeps the `userSeq` it describes and a `turn_not_settled` warning, and
 a later completion attempt repairs it once the turn settles for that same user message. A node that
@@ -135,10 +153,10 @@ the current step and its direct successors, and states that only this step is in
 promise about the runtime stopping later nodes, and the prompt recorded for the user stays exactly
 what the user typed.
 
-A `force` completion is audited in the node payload under `completion_forced`, with the blockers that
-were bypassed, whether the node had a settled turn, and where the accepted output came from
-(`turn_window` or `last_assistant_message`). The audit is written in the same transaction as the
-completion, so a completed node never lacks its record.
+A `force` completion is audited in the node payload under `completion_forced`, with the effective
+blockers it covered, the stop cause that explains them, whether the node had a settled turn, and
+where the accepted output came from (`turn_window` or `last_assistant_message`). The audit is
+written in the same transaction as the completion, so a completed node never lacks its record.
 
 ## Variables and types
 

@@ -420,6 +420,188 @@ describe("buildDisplayRun", () => {
     });
   });
 
+  it("projects the park classification and stop cause of a parked turn", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+                stopReason: "cancelled",
+                turnOrigin: "human",
+                stopCause: "user_stopped",
+                parkKind: "awaiting_user",
+                blockers: [{ kind: "turn_stopped", params: {} }],
+                warnings: [],
+                provisional: false,
+              },
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+
+    expect(display.nodeStates.explore.completion).toMatchObject({
+      turnOrigin: "human",
+      stopCause: "user_stopped",
+      parkKind: "awaiting_user",
+      needsConfirmation: false,
+      ready: false,
+    });
+  });
+
+  it("keeps the unconfirmed opening turn awaiting confirmation on both sides", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+                stopReason: "end_turn",
+                turnOrigin: "workflow",
+                stopCause: null,
+                parkKind: "awaiting_user",
+                blockers: [{ kind: "turn_unconfirmed", params: {} }],
+                warnings: [],
+                provisional: false,
+              },
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+
+    expect(display.nodeStates.explore.completion).toMatchObject({
+      turnOrigin: "workflow",
+      stopCause: null,
+      parkKind: "awaiting_user",
+      needsConfirmation: true,
+      ready: false,
+    });
+  });
+
+  it("does not ask for confirmation on a provisional or multi-blocker snapshot", () => {
+    const provisional = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                blockers: [{ kind: "turn_unconfirmed", params: {} }],
+                warnings: [],
+                provisional: true,
+              },
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+    expect(provisional.nodeStates.explore.completion).toMatchObject({
+      provisional: true,
+      needsConfirmation: false,
+    });
+
+    const mixed = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                blockers: [
+                  { kind: "turn_unconfirmed", params: {} },
+                  { kind: "output_missing", params: {} },
+                ],
+                warnings: [],
+                provisional: false,
+              },
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+    expect(mixed.nodeStates.explore.completion).toMatchObject({
+      needsConfirmation: false,
+    });
+  });
+
+  it("keeps old snapshots and unknown enum values on the legacy projection", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                turnOrigin: "robot",
+                stopCause: "exploded",
+                parkKind: "future_park",
+                blockers: [{ kind: "turn_stopped", params: {} }],
+                warnings: [],
+                provisional: false,
+              },
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+
+    const completion = display.nodeStates.explore.completion;
+    expect(completion).toBeDefined();
+    expect(completion).not.toHaveProperty("turnOrigin");
+    expect(completion).not.toHaveProperty("stopCause");
+    expect(completion).not.toHaveProperty("parkKind");
+    expect(completion).toMatchObject({
+      needsConfirmation: false,
+      ready: false,
+    });
+  });
+
   it("leaves completion absent on older node runs without a snapshot", () => {
     const display = buildDisplayRun(
       {

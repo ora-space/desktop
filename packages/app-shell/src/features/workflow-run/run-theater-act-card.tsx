@@ -134,15 +134,25 @@ export function RunTheaterActCard({
       ? { sessionId: state.sessionId }
       : null;
   const interactive = data.agentConfig?.interactive === true;
-  // A parked interactive turn without a settled completion preview is paused: the previous turn
-  // did not settle normally, or an older node run has no snapshot yet. A provisional snapshot is
-  // not paused: the step card invites the ordinary completion and the backend re-checks it, so the
-  // act card must not label the same state differently.
-  const paused =
-    interactive &&
-    state.status === "awaiting_input" &&
-    state.completion?.ready !== true &&
-    state.completion?.provisional !== true;
+  const completion = state.completion;
+  const awaitingConfirmation = completion?.needsConfirmation === true;
+  // A provisional snapshot and an unconfirmed opening turn both belong to the user's
+  // participation, so neither may read as paused even when the backend classified the park.
+  const participation =
+    completion?.provisional === true || awaitingConfirmation;
+  // The backend classifies a new park (`awaiting_user` / `abnormal`) where it writes the snapshot,
+  // because only the park site knows the turn origin and stop cause. Snapshots written before the
+  // field existed keep the paused heuristic: unchanged surface, never a guessed classification.
+  const parkBadgeKey =
+    interactive && state.status === "awaiting_input" && !participation
+      ? completion?.parkKind === "abnormal"
+        ? "workflowRun.stepCard.abnormalBadge"
+        : completion?.parkKind === "awaiting_user"
+          ? undefined
+          : completion?.ready !== true
+            ? "workflowRun.stepCard.pausedBadge"
+            : undefined
+      : undefined;
   const sessionInteraction =
     sessionChatIdentity !== null &&
     interactive &&
@@ -288,9 +298,12 @@ export function RunTheaterActCard({
           <RunStatusBadge
             status={state.status}
             live={emphasized && isNodeWorking(state.status)}
-            {...(paused
-              ? { labelKey: "workflowRun.stepCard.pausedBadge" }
-              : {})}
+            className={
+              parkBadgeKey === "workflowRun.stepCard.abnormalBadge"
+                ? "border-destructive/35 bg-destructive/10 text-destructive"
+                : undefined
+            }
+            {...(parkBadgeKey !== undefined ? { labelKey: parkBadgeKey } : {})}
           />
           {state.stopReason === "loop_exit" && (
             <span className="text-[10px] text-muted-foreground">

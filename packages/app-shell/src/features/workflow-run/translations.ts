@@ -265,6 +265,12 @@ export const workflowRunTranslations = {
       "请等待节点回复完成后再完成当前节点。",
     "workflowRun.completeNode.blockedHint":
       "本轮没有正常结束，请在步骤卡片里继续当前步骤或仍然完成。",
+    "workflowRun.completeNode.unconfirmedHint":
+      "首轮结果尚未确认，请在步骤卡片里继续当前步骤或确认完成。",
+    "workflowRun.completeNode.userStoppedHint":
+      "你已停止本轮，请在步骤卡片里继续当前步骤或仍然完成。",
+    "workflowRun.completeNode.abnormalHint":
+      "上一轮异常结束，请在步骤卡片里继续当前步骤或仍然完成。",
     "workflowRun.stepCard.title": "当前步骤",
     "workflowRun.stepCard.readyHint": "本轮已正常结束，可以完成当前步骤。",
     "workflowRun.stepCard.readyAction": "完成并进入下一步：{{next}}",
@@ -273,14 +279,45 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.blockedTitle": "本轮未完成",
     "workflowRun.stepCard.blockedHint":
       "需要继续当前步骤，或显式采用当前产出。",
+    "workflowRun.stepCard.unconfirmedTitle": "等待你的确认",
+    "workflowRun.stepCard.unconfirmedReason": "首轮结果尚未确认",
+    "workflowRun.stepCard.unconfirmedHint":
+      "本次停靠来自 workflow 的首轮自动回合，不代表本步骤已完成。如果智能体在等你回答，请直接在下方回复；也可以继续当前步骤，或确认完成。",
+    "workflowRun.stepCard.confirmInitialAction": "确认并完成：{{next}}",
+    "workflowRun.stepCard.confirmInitialLastAction": "确认并完成",
     "workflowRun.stepCard.continueStep": "继续当前步骤",
     "workflowRun.stepCard.forceAction": "仍然完成（采用当前产出）",
     "workflowRun.stepCard.forceTitle": "仍然完成当前步骤？",
     "workflowRun.stepCard.forceDescription":
       "本轮没有正常结束，当前产出可能不完整。完成后工作流会进入下一步，并记录这次强制完成。",
+    "workflowRun.stepCard.forceDescriptionUnconfirmed":
+      "本轮已正常结束，但还没有你的确认。完成后会采用当前产出并进入下一步，并记录这次确认。",
+    "workflowRun.stepCard.forceDescriptionUserStopped":
+      "本轮由你主动停止，当前产出可能不完整。完成后工作流会进入下一步，并记录这次强制完成。",
     "workflowRun.stepCard.forceConfirm": "仍然完成",
     "workflowRun.stepCard.pausedBadge": "已暂停",
     "workflowRun.stepCard.waitingBadge": "等待参与",
+    "workflowRun.stepCard.abnormalBadge": "异常停靠",
+    "workflowRun.stepCard.userStoppedHint":
+      "你主动停止了本轮；可以继续当前步骤，或显式采用当前产出。",
+    "workflowRun.stepCard.abnormalHint":
+      "上一轮异常结束；可以继续当前步骤，或显式采用当前产出。",
+    "workflowRun.stepCard.stopCause.user_stopped": "你已停止本轮",
+    "workflowRun.stepCard.stopCause.prompt_timed_out": "上一轮异常结束：超时",
+    "workflowRun.stepCard.stopCause.stream_dropped": "上一轮异常结束：截断",
+    "workflowRun.stepCard.stopCause.session_crashed":
+      "上一轮异常结束：会话崩溃",
+    "workflowRun.stepCard.stopCause.unknown": "上一轮异常结束：未知",
+    "workflowRun.stepCard.abnormalReason.turn_stopped": "上一轮异常结束：中断",
+    "workflowRun.stepCard.abnormalReason.turn_truncated":
+      "上一轮异常结束：截断",
+    "workflowRun.stepCard.abnormalReason.turn_refused": "上一轮异常结束：拒答",
+    "workflowRun.stepCard.abnormalReason.turn_unknown": "上一轮异常结束：未知",
+    "workflowRun.stepCard.abnormalReason.turn_unconfirmed": "首轮结果尚未确认",
+    "workflowRun.stepCard.abnormalReason.structured_invalid":
+      "上一轮异常结束：结构化输出不符合",
+    "workflowRun.stepCard.abnormalReason.output_missing":
+      "上一轮异常结束：没有输出",
     "workflowRun.stepCard.provisional":
       "本轮仍在收尾；点完成时会按本轮重新校验，未结束会给出原因。",
     "workflowRun.stepCard.warning.empty_output":
@@ -292,10 +329,17 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.warning.turn_not_settled":
       "本轮还没有在等待窗口内收敛；节点可能仍在收尾，稍后刷新会重新判定。",
     "workflowRun.stepCard.nextSeparator": "、",
+    "workflowRun.stepCard.reasonSeparator": "；",
     "workflowRun.stepCard.continuePrompt":
       "请继续当前步骤。上一轮没有正常结束——{{reason}}\n只完成本步骤，不要执行后续节点；完成后请告诉我结果，我会在工作流界面确认完成。",
+    "workflowRun.stepCard.continueAbnormalPrompt":
+      "请继续当前步骤。{{reason}}\n只完成本步骤，不要执行后续节点；完成后请告诉我结果，我会在工作流界面确认完成。",
+    "workflowRun.stepCard.continueUserStoppedPrompt":
+      "请继续当前步骤。上一轮是我主动停止的，不是系统故障——你已停止本轮。\n只完成本步骤，不要执行后续节点；完成后请告诉我结果，我会在工作流界面确认完成。",
     "workflowRun.stepCard.continueReadyPrompt":
       "请继续对话，暂时不要结束当前步骤。我需要补充信息后，再在工作流界面完成这一步。",
+    "workflowRun.stepCard.continueUnconfirmedPrompt":
+      "请继续当前步骤。首轮结果尚未确认：本轮自动回合已经结束，但还没有我的确认；如果还需要我提供信息，请直接问我。只完成本步骤，不要执行后续节点；完成后请告诉我结果，我会在工作流界面确认完成。",
     "workflowRun.stepCard.legacyTitle": "本步骤还没有完成快照",
     "workflowRun.stepCard.legacyHint":
       "升级前停靠的节点没有记录本轮状态。完成后端会先读取会话历史再判定：本轮未正常结束时返回原因，需要继续或显式强制完成。",
@@ -306,6 +350,8 @@ export const workflowRunTranslations = {
       "拒答：智能体没有完成本轮请求。",
     "workflowRun.stepCard.blocker.turn_unknown":
       "回合未知：没有找到本轮正常结束的记录。",
+    "workflowRun.stepCard.blocker.turn_unconfirmed":
+      "首轮未确认：本轮已正常结束，但还没有你的确认。",
     "workflowRun.stepCard.blocker.structured_invalid":
       "结构化输出不符合：本轮输出未通过声明的结构校验。",
     "workflowRun.stepCard.blocker.output_missing":
@@ -750,6 +796,12 @@ export const workflowRunTranslations = {
       "Wait for the node to finish replying before completing it.",
     "workflowRun.completeNode.blockedHint":
       "This turn did not end normally. Continue it or complete it anyway from the step card.",
+    "workflowRun.completeNode.unconfirmedHint":
+      "The opening turn is not confirmed yet; continue the current step or confirm completion from the step card.",
+    "workflowRun.completeNode.userStoppedHint":
+      "You stopped this turn; continue the current step or complete it anyway from the step card.",
+    "workflowRun.completeNode.abnormalHint":
+      "The previous turn ended abnormally; continue the current step or complete it anyway from the step card.",
     "workflowRun.stepCard.title": "Current step",
     "workflowRun.stepCard.readyHint":
       "This turn ended normally. You can complete it.",
@@ -759,14 +811,54 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.blockedTitle": "This turn is not complete",
     "workflowRun.stepCard.blockedHint":
       "Continue this step, or explicitly accept the current output.",
+    "workflowRun.stepCard.unconfirmedTitle": "Waiting for your confirmation",
+    "workflowRun.stepCard.unconfirmedReason":
+      "The opening turn is not confirmed yet",
+    "workflowRun.stepCard.unconfirmedHint":
+      "This park came from the workflow's opening turn, so the step is not complete yet. If the agent is waiting for your answer, reply below; you can also continue the current step or confirm completion.",
+    "workflowRun.stepCard.confirmInitialAction":
+      "Confirm and complete: {{next}}",
+    "workflowRun.stepCard.confirmInitialLastAction": "Confirm and complete",
     "workflowRun.stepCard.continueStep": "Continue this step",
     "workflowRun.stepCard.forceAction": "Complete anyway (use current output)",
     "workflowRun.stepCard.forceTitle": "Complete this step anyway?",
     "workflowRun.stepCard.forceDescription":
       "This turn did not end normally and its output may be incomplete. Completing it advances the workflow and records the forced completion.",
+    "workflowRun.stepCard.forceDescriptionUnconfirmed":
+      "The turn ended normally, but you have not confirmed this step. Completing it adopts the current output, advances the workflow, and records this confirmation.",
+    "workflowRun.stepCard.forceDescriptionUserStopped":
+      "You stopped this turn, so its output may be incomplete. Completing it advances the workflow and records the forced completion.",
     "workflowRun.stepCard.forceConfirm": "Complete anyway",
     "workflowRun.stepCard.pausedBadge": "Paused",
     "workflowRun.stepCard.waitingBadge": "Awaiting input",
+    "workflowRun.stepCard.abnormalBadge": "Abnormal stop",
+    "workflowRun.stepCard.userStoppedHint":
+      "You stopped this turn; you can continue the current step or explicitly accept the current output.",
+    "workflowRun.stepCard.abnormalHint":
+      "The previous turn ended abnormally; you can continue the current step or explicitly accept the current output.",
+    "workflowRun.stepCard.stopCause.user_stopped": "You stopped this turn",
+    "workflowRun.stepCard.stopCause.prompt_timed_out":
+      "The previous turn ended abnormally: timed out",
+    "workflowRun.stepCard.stopCause.stream_dropped":
+      "The previous turn ended abnormally: truncated",
+    "workflowRun.stepCard.stopCause.session_crashed":
+      "The previous turn ended abnormally: session crashed",
+    "workflowRun.stepCard.stopCause.unknown":
+      "The previous turn ended abnormally: unknown",
+    "workflowRun.stepCard.abnormalReason.turn_stopped":
+      "The previous turn ended abnormally: interrupted",
+    "workflowRun.stepCard.abnormalReason.turn_truncated":
+      "The previous turn ended abnormally: truncated",
+    "workflowRun.stepCard.abnormalReason.turn_refused":
+      "The previous turn ended abnormally: refused",
+    "workflowRun.stepCard.abnormalReason.turn_unknown":
+      "The previous turn ended abnormally: unknown",
+    "workflowRun.stepCard.abnormalReason.turn_unconfirmed":
+      "The opening turn is not confirmed yet",
+    "workflowRun.stepCard.abnormalReason.structured_invalid":
+      "The previous turn ended abnormally: structured output invalid",
+    "workflowRun.stepCard.abnormalReason.output_missing":
+      "The previous turn ended abnormally: no output",
     "workflowRun.stepCard.provisional":
       "This turn is still settling; completing re-checks it and reports a reason if it has not finished.",
     "workflowRun.stepCard.warning.empty_output":
@@ -778,10 +870,17 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.warning.turn_not_settled":
       "This turn has not settled inside the wait window; the node may still be finishing and the card rechecks on refresh.",
     "workflowRun.stepCard.nextSeparator": ", ",
+    "workflowRun.stepCard.reasonSeparator": "; ",
     "workflowRun.stepCard.continuePrompt":
       "Please continue the current step. The previous turn did not end normally — {{reason}}\nOnly complete this step, do not run the next nodes; tell me the result and I will confirm completion in the workflow view.",
+    "workflowRun.stepCard.continueAbnormalPrompt":
+      "Please continue the current step. {{reason}}\nOnly complete this step, do not run the next nodes; tell me the result and I will confirm completion in the workflow view.",
+    "workflowRun.stepCard.continueUserStoppedPrompt":
+      "Please continue the current step. I stopped the previous turn myself; this was not a system failure — you stopped this turn.\nOnly complete this step, do not run the next nodes; tell me the result and I will confirm completion in the workflow view.",
     "workflowRun.stepCard.continueReadyPrompt":
       "Please continue the conversation for now and do not finish this step. I will confirm completion in the workflow view after adding what is needed.",
+    "workflowRun.stepCard.continueUnconfirmedPrompt":
+      "Please continue the current step. The opening turn is not confirmed yet: it has ended, but I have not confirmed this step; if you still need information from me, ask for it directly. Only finish this step and do not run later nodes; tell me the result and I will confirm completion in the workflow view.",
     "workflowRun.stepCard.legacyTitle": "This step has no completion snapshot",
     "workflowRun.stepCard.legacyHint":
       "A node parked before snapshots existed recorded nothing about its turn. Completing reads the session history and applies the same gate: an unfinished turn comes back with its reason unless you force the completion.",
@@ -794,6 +893,8 @@ export const workflowRunTranslations = {
       "Refused: the agent declined the requested work.",
     "workflowRun.stepCard.blocker.turn_unknown":
       "Turn unknown: no normally ended turn was found.",
+    "workflowRun.stepCard.blocker.turn_unconfirmed":
+      "First turn unconfirmed: the turn ended normally, but you have not confirmed the step yet.",
     "workflowRun.stepCard.blocker.structured_invalid":
       "Structured output invalid: this turn did not match the declared schema.",
     "workflowRun.stepCard.blocker.output_missing":

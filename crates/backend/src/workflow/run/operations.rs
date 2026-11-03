@@ -2,11 +2,11 @@
 
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
-use super::interactive::{CompletingNodeRuns, WorkflowSessionTurns};
+use super::interactive::{CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns};
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
-use crate::error::BackendError;
+use crate::error::{BackendError, ErrorClassification};
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::repository_work::spawn_repository_work;
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
@@ -170,6 +170,24 @@ impl WorkflowRuns {
         &self,
         request: CompleteWorkflowNodeRequest,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
+        let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
+        // The two approvals contradict each other: one accepts the completion gate, the other
+        // overrides it. Reject before claiming the node so a contradictory request changes no
+        // state (ADR D2 row 1).
+        if request.force && confirm_initial_turn {
+            return Err(BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "force and confirmInitialTurn cannot be combined",
+            ));
+        }
+        let approval = if request.force {
+            CompletionApproval::FORCE
+        } else if confirm_initial_turn {
+            CompletionApproval::CONFIRM
+        } else {
+            CompletionApproval::PLAIN
+        };
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let node_id = request.node_id.clone();
 
@@ -203,14 +221,13 @@ impl WorkflowRuns {
             let agent_runtime = self.agent_runtime.clone();
             let run_id = run_id.clone();
             let node_id = node_id.clone();
-            let force = request.force;
             match spawn_repository_work(move || {
                 let prepared = crate::workflow::run::interactive::prepare_completion(
                     &pool,
                     &sessions_root,
                     &run_id,
                     &node_id,
-                    force,
+                    approval,
                 )?;
                 let worktree_root = agent_runtime.workspace_cwd(&prepared.workspace_id)?;
                 let file_changes = crate::workflow::run::interactive::completion_file_changes(

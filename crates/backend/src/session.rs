@@ -167,6 +167,9 @@ impl Sessions {
     }
 
     /// Cancels one active prompt while keeping its session available for another turn.
+    ///
+    /// The runtime attributes the stop itself: `cancelSessionPrompt` reaches the actor as the
+    /// user's own cancellation, which the park of the interrupted turn reads as `user_stopped`.
     pub fn cancel_prompt(
         &self,
         request: CancelSessionPromptRequest,

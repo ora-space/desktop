@@ -20,6 +20,14 @@ export type CompleteWorkflowNodeRequest = {
    * Explicitly completes despite blockers; the node payload records the forced audit.
    */
   force: boolean;
+  /**
+   * Explicitly confirms the workflow's opening turn; absent or `false` means unconfirmed.
+   *
+   * This is a normal completion once accepted — it never writes the forced audit — and it only
+   * lifts the `turn_unconfirmed` blocker; every other blocker and the output contract still
+   * apply. A request that also sets `force` is self-contradictory and rejected.
+   */
+  confirmInitialTurn?: boolean;
   requester?: NodeCompletionRequester;
 };
 

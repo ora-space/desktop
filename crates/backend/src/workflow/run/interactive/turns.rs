@@ -1,5 +1,6 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
+use super::super::completion_snapshot::StopCause;
 use super::CompletingNodeRuns;
 use super::session::{HumanTurnAdmission, restore_human_turn};
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
@@ -56,12 +57,13 @@ impl WorkflowSessionTurns {
         agent_runtime: &AgentRuntimeManager,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
+        let session_id = request.session_id.clone();
         let admission = crate::workflow::run::interactive::begin_human_turn(
             &self.pool,
             &self.run_locks,
             &self.completing_node_runs,
             &self.transitions,
-            &request.session_id,
+            &session_id,
         )
         .await?;
         let (prompt_inactivity, step_boundary) = match &admission {
@@ -90,15 +92,22 @@ impl WorkflowSessionTurns {
         let HumanTurnAdmission::Workflow { node_run_id, .. } = admission else {
             return Ok(stream);
         };
+        let end_report = stream.end_report();
         let pool = self.pool.clone();
         let sessions_root = self.sessions_root.clone();
         let transitions = self.transitions.clone();
         Ok(stream.attach_cleanup(move || async move {
+            // The runtime attributes this turn's end while it settles: an explicit stop, the
+            // inactivity policy, a dropped stream and a crashed session all end it as `Cancelled`
+            // in history, so the park must be told which one it was (ADR D4).
+            let stop_cause =
+                StopCause::of_prompt_end(end_report.and_then(|report| report.recorded()));
             crate::workflow::run::interactive::end_human_turn(
                 &pool,
                 &sessions_root,
                 &transitions,
                 &node_run_id,
+                stop_cause,
             )
             .await
         }))

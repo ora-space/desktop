@@ -27,7 +27,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::super::completion_snapshot::{
-    CompletionSnapshot, completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
+    CompletionSnapshot, StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
+    unknown_completion_snapshot,
 };
 use super::CompletingNodeRuns;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
@@ -180,6 +181,7 @@ pub(crate) async fn end_human_turn(
     sessions_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
+    stop_cause: Option<StopCause>,
 ) -> Result<(), BackendError> {
     let context = {
         let pool = pool.clone();
@@ -195,11 +197,21 @@ pub(crate) async fn end_human_turn(
     };
     let snapshot = match context.session_id.as_ref() {
         Some(session_id) => {
-            settled_snapshot(sessions_root, session_id, context.output_contract.as_ref()).await
+            settled_snapshot(
+                sessions_root,
+                session_id,
+                context.output_contract.as_ref(),
+                stop_cause,
+            )
+            .await
         }
         // A node without a bound session has no history to read; the conservative provisional
         // snapshot keeps it parkable and lets a later completion force the decision.
-        None => unknown_completion_snapshot(true),
+        None => unknown_completion_snapshot(
+            true,
+            TurnOrigin::Human,
+            stop_cause.or(Some(StopCause::Unknown)),
+        ),
     };
     let completion = completion_payload(&snapshot);
     let transitions = transitions.clone();
@@ -322,13 +334,20 @@ async fn settled_snapshot(
     sessions_root: &Path,
     session_id: &SessionId,
     output_contract: Option<&AgentOutputContract>,
+    stop_cause: Option<StopCause>,
 ) -> CompletionSnapshot {
     let deadline = tokio::time::Instant::now() + TURN_END_WAIT;
     let mut interval = TURN_END_POLL_INTERVAL;
     loop {
         match read_history_blocking(sessions_root, session_id).await {
             Ok(history) => {
-                let snapshot = derive_completion_snapshot(&history, output_contract, false);
+                let snapshot = derive_completion_snapshot(
+                    &history,
+                    output_contract,
+                    false,
+                    TurnOrigin::Human,
+                    stop_cause,
+                );
                 if snapshot.turn_key.is_some() {
                     return snapshot;
                 }
@@ -337,7 +356,13 @@ async fn settled_snapshot(
                     // reason names the unsettled turn rather than claiming the history is
                     // unavailable, and the provisional snapshot keeps the `userSeq` the later
                     // repair matches on (ADR invariant 19).
-                    let mut unsettled = derive_completion_snapshot(&history, output_contract, true);
+                    let mut unsettled = derive_completion_snapshot(
+                        &history,
+                        output_contract,
+                        true,
+                        TurnOrigin::Human,
+                        stop_cause,
+                    );
                     unsettled.warnings.push("turn_not_settled".to_string());
                     return unsettled;
                 }
@@ -350,7 +375,11 @@ async fn settled_snapshot(
                     error = %error,
                     "failed to read session history when parking an interactive node"
                 );
-                return unknown_completion_snapshot(true);
+                return unknown_completion_snapshot(
+                    true,
+                    TurnOrigin::Human,
+                    stop_cause.or(Some(StopCause::Unknown)),
+                );
             }
         }
         tokio::time::sleep(interval).await;
@@ -630,7 +659,7 @@ mod tests {
             )
             .await
             .unwrap();
-            end_human_turn(&pool, &sessions_root, &transitions, &_node_run_id)
+            end_human_turn(&pool, &sessions_root, &transitions, &_node_run_id, None)
                 .await
                 .unwrap();
 
@@ -667,6 +696,7 @@ mod tests {
                 &temp.path().join("sessions"),
                 &transitions,
                 &node_run_id,
+                None,
             )
             .await
             .unwrap();
