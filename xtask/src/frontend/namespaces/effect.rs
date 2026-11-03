@@ -1,4 +1,4 @@
-//! Endpoint declarations for generic Effect target status and recovery control.
+//! Endpoint declarations for generic Effect target status, retry, and recovery control.
 
 use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
 
@@ -17,6 +17,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         member_name: "recoverTarget",
         request_type: "RecoverEffectTargetRequest",
         response_type: "RecoverEffectTargetResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "retryEffectTarget",
+        namespace: "effect",
+        member_name: "retryTarget",
+        request_type: "RetryEffectTargetRequest",
+        response_type: "RetryEffectTargetResponse",
         response_mode: FrontendResponseMode::Unary,
     },
 ];

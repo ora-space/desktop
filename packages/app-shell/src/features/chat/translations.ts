@@ -370,6 +370,13 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.pending": "正在恢复…",
     "chat.agentEffectRecovery.refused":
       "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
+    "chat.agentEffectFailure.title": "Agent 技能同步失败",
+    "chat.agentEffectFailure.preservedHint":
+      "请移走上列旧技能目录，然后重新同步。",
+    "chat.agentEffectFailure.retryHint": "请先处理上列问题，然后重新同步。",
+    "chat.agentEffectFailure.action": "重新同步",
+    "chat.agentEffectFailure.pending": "正在重新同步…",
+    "chat.agentEffectFailure.refused": "重新同步未完成：{{message}}。",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",
@@ -819,6 +826,14 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.pending": "Recovering…",
     "chat.agentEffectRecovery.refused":
       "Recovery did not complete: {{message}}. External state no longer matches the journal; check the workspace directory and try again.",
+    "chat.agentEffectFailure.title": "Agent Skill sync failed",
+    "chat.agentEffectFailure.preservedHint":
+      "Move the old Skill directories listed above out of the workspace, then retry the sync.",
+    "chat.agentEffectFailure.retryHint":
+      "Resolve the issues listed above, then retry the sync.",
+    "chat.agentEffectFailure.action": "Retry sync",
+    "chat.agentEffectFailure.pending": "Retrying sync…",
+    "chat.agentEffectFailure.refused": "Retry did not complete: {{message}}.",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",
     "chat.collapseCode": "Collapse code",

@@ -129,7 +129,7 @@ describe("useAgentEffectReadiness", () => {
     );
   });
 
-  it("reports the manual blocking Condition as a failed gate with its reason", async () => {
+  it("reports manual and resource-level blocking Conditions with their reasons", async () => {
     const ready = await readyEffectHandlers().getEffectTargetStatus();
     const drifted = {
       ...ready.status!,
@@ -137,8 +137,8 @@ describe("useAgentEffectReadiness", () => {
       conditions: [
         {
           id: "condition-1",
-          ownerKind: "resource",
-          ownerId: "resource-1",
+          ownerKind: "target",
+          ownerId: ready.status!.targetId,
           subjectKind: "managed_item",
           subjectId: "managed-1",
           code: "managed_item_drift",
@@ -156,10 +156,35 @@ describe("useAgentEffectReadiness", () => {
     );
     expect(effectTargetStatusPollInterval(drifted)).toBe(10_000);
 
-    // A blocking Condition that can still resolve on its own stays a sync wait.
+    const preserved = {
+      ...drifted,
+      conditions: [
+        {
+          ...drifted.conditions[0]!,
+          ownerKind: "resource",
+          ownerId: "resource-1",
+          code: "preserved_item_conflict",
+          retry: "on_change" as const,
+          message:
+            "A Preserved Item already occupies the required native identity: grilling.",
+        },
+      ],
+    };
+    expect(effectTargetFailureMessage(preserved)).toBe(
+      "A Preserved Item already occupies the required native identity: grilling.",
+    );
+    expect(effectTargetStatusPollInterval(preserved)).toBe(10_000);
+
+    // A Target-owned blocking Condition that can still resolve on its own stays a sync wait.
     const waiting = {
       ...drifted,
-      conditions: [{ ...drifted.conditions[0]!, retry: "on_change" as const }],
+      conditions: [
+        {
+          ...drifted.conditions[0]!,
+          ownerKind: "target" as const,
+          retry: "on_change" as const,
+        },
+      ],
     };
     expect(effectTargetFailureMessage(waiting)).toBeNull();
     expect(effectTargetStatusPollInterval(waiting)).toBe(1_000);
@@ -184,16 +209,17 @@ describe("useAgentEffectReadiness", () => {
       expect(result.current).toEqual({
         kind: "failed",
         message: "Effect recovery is required.",
+        reasons: [],
         targetId: status.status!.targetId,
         recoveryRequired: true,
       }),
     );
   });
 
-  it("keeps other manual failures recoverable only when the Target is quarantined", async () => {
+  it("marks a preserved resource conflict as a retryable failure", async () => {
     const status = await readyEffectHandlers().getEffectTargetStatus();
-    // A manual blocking Condition on a non-quarantined Target (for example a deleted
-    // Worktree) still fails the gate, but no recovery command can close it yet.
+    // The conflict is owned by a Resource and retries only when the user explicitly asks,
+    // so the send gate must show it instead of waiting for an automatic change event.
     const getEffectTargetStatus = vi.fn(async () => ({
       status: {
         ...status.status!,
@@ -201,15 +227,16 @@ describe("useAgentEffectReadiness", () => {
         conditions: [
           {
             id: "condition-1",
-            ownerKind: "target",
-            ownerId: status.status!.targetId,
-            subjectKind: "operation",
-            subjectId: "operation-1",
-            code: "recovery_required",
+            ownerKind: "resource",
+            ownerId: "resource-1",
+            subjectKind: "desired_effect",
+            subjectId: "desired-1",
+            code: "preserved_item_conflict",
             impact: "blocking" as const,
-            retry: "manual" as const,
+            retry: "on_change" as const,
             generation: 1n,
-            message: "A Managed Item changed outside Ora.",
+            message:
+              "A Preserved Item already occupies the required native identity: grilling.",
             firstObservedAt: 1n,
             lastObservedAt: 1n,
           },
@@ -225,7 +252,15 @@ describe("useAgentEffectReadiness", () => {
     await waitFor(() =>
       expect(result.current).toEqual({
         kind: "failed",
-        message: "A Managed Item changed outside Ora.",
+        message:
+          "A Preserved Item already occupies the required native identity: grilling.",
+        reasons: [
+          {
+            code: "preserved_item_conflict",
+            message:
+              "A Preserved Item already occupies the required native identity: grilling.",
+          },
+        ],
         targetId: status.status!.targetId,
         recoveryRequired: false,
       }),

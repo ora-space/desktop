@@ -136,6 +136,10 @@ revision key; an unchanged publication creates no revision.
 
 - `getEffectTargetStatus` exposes a Target's desired, observed, applied and ready generations,
   recovery identity and current Conditions to the frontend.
+- `retryEffectTarget` wakes one Target without changing Desired State. The send gate surfaces
+  Resource-owned blocking Conditions, such as a preserved Skill directory conflict, as a visible
+  failure with the conflicting names; after the user removes the external cause, this command
+  retries the Target and refreshes only its readiness caches.
 - `recoverEffectTarget` is the controlled exit from `RecoveryRequired`; the chat send gate offers
   it while readiness is blocked by a recovery quarantine, and a refusal keeps the quarantine.
 - Plugin registration exposes `effectResources`. Agent Consumers implement `effect/coordinate`,

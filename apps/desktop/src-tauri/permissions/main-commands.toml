@@ -126,6 +126,7 @@ commands.allow = [
     "restart_workflow_run",
     "resume_session_history",
     "resume_workflow_run_from_failure",
+    "retry_effect_target",
     "revoke_scheduled_task_approval",
     "rollback_workflow",
     "save_plugin_configuration",

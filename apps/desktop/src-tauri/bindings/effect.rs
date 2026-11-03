@@ -13,4 +13,9 @@ pub(super) const BINDINGS: &[Binding] = &[
         handler: "commands::effect::recover_effect_target",
         permission: Permission::MainWebview,
     },
+    Binding::Unary {
+        operation: "retryEffectTarget",
+        handler: "commands::effect::retry_effect_target",
+        permission: Permission::MainWebview,
+    },
 ];
