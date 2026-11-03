@@ -149,7 +149,10 @@ impl EffectPlanner for SkillPlanner {
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
                     "preserved_item_conflict",
                     input.generation,
-                    "A Preserved Item already occupies the required native identity.",
+                    format!(
+                        "A Preserved Item already occupies the required native identity: {}.",
+                        item.native_identity
+                    ),
                     ConditionRetry::OnChange,
                 ));
             }
@@ -358,7 +361,7 @@ pub(super) fn blocking_condition(
     subject: ConditionSubject,
     code: &'static str,
     generation: Generation,
-    message: &'static str,
+    message: impl Into<String>,
     retry: ConditionRetry,
 ) -> ConditionProposal {
     ConditionProposal {
@@ -369,7 +372,7 @@ pub(super) fn blocking_condition(
         retry,
         generation: ConditionGeneration::At(generation),
         safe_details: SafeConditionDetails {
-            message: message.to_string(),
+            message: message.into(),
             parameters: BTreeMap::new(),
         },
     }

@@ -3,7 +3,8 @@ use crate::effect_worker::EffectWorkerHandle;
 use ora_application::EffectService;
 use ora_contracts::{
     EmptyErrorParams, GetEffectTargetStatusRequest, GetEffectTargetStatusResponse, PublicError,
-    RecoverEffectTargetRequest, RecoverEffectTargetResponse,
+    RecoverEffectTargetRequest, RecoverEffectTargetResponse, RetryEffectTargetRequest,
+    RetryEffectTargetResponse,
 };
 use ora_db::{RepositoryPool, SqliteEffectRepository};
 use ora_effect::{EffectRecoverer, EffectTargetId, RecoveryError, RecoveryOutcome};
@@ -36,6 +37,29 @@ impl Effects {
         EffectService::new(SqliteEffectRepository::new(self.pool.clone()))
             .get_target_status(request)
             .map_err(|error| BackendError::internal("failed to load Effect Target status", error))
+    }
+
+    /// Wakes one Target without changing Desired State, so a user can retry after external cleanup.
+    pub fn retry_target(
+        &self,
+        request: RetryEffectTargetRequest,
+    ) -> Result<RetryEffectTargetResponse, BackendError> {
+        let target_id = request.target_id.clone();
+        let response = EffectService::new(SqliteEffectRepository::new(self.pool.clone()))
+            .retry_target(request, ora_logging::clock::now_millis())
+            .map_err(|error| BackendError::internal("failed to retry Effect Target", error))?;
+        if response.requested {
+            // The durable request is pending; wake the worker so convergence starts immediately
+            // instead of waiting for the periodic scan.
+            self.wake.notify();
+        }
+        ora_logging::ora_info!(
+            operation = "effect_retry",
+            target = target_id.as_str(),
+            requested = response.requested,
+            "Effect Target explicit retry requested"
+        );
+        Ok(response)
     }
 
     /// Closes one quarantined Target's journals by proving each against external state.
