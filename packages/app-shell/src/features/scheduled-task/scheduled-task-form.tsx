@@ -381,7 +381,7 @@ export function ScheduledTaskForm({
               <div className="flex items-center justify-between gap-3">
                 <Label
                   htmlFor="scheduled-task-approval"
-                  className="leading-snug"
+                  className="cursor-pointer leading-snug"
                 >
                   {t("scheduledTask.approval")}
                 </Label>
@@ -395,7 +395,10 @@ export function ScheduledTaskForm({
                 {t("scheduledTask.approvalHelp")}
               </p>
               <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="scheduled-task-enabled">
+                <Label
+                  htmlFor="scheduled-task-enabled"
+                  className="cursor-pointer"
+                >
                   {t("scheduledTask.enabled")}
                 </Label>
                 <Switch
@@ -428,9 +431,9 @@ export function ScheduledTaskForm({
                 (task === null && agents.length === 0)
               }
             >
-              <span className="inline-flex size-4 shrink-0 items-center justify-center">
-                {pending ? <Spinner className="size-4" /> : null}
-              </span>
+              {pending ? (
+                <Spinner className="size-3.5" aria-hidden="true" />
+              ) : null}
               {task === null
                 ? t("scheduledTask.create")
                 : t("scheduledTask.save")}
