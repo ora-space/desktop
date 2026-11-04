@@ -287,3 +287,78 @@ fn a_user_stop_parks_as_awaiting_participation() {
         );
     });
 }
+
+/// A silent timeout, a dropped stream and a crashed session park as abnormal with their own cause.
+///
+/// All three end as a `Cancelled` turn in history, so the stop reason alone cannot tell them from a
+/// stop the user chose. This drives the real cleanup against a real history file and SQLite row: the
+/// persisted snapshot — what the read projection and the completion gate read — must name the side
+/// that actually ended the turn and classify the park as abnormal (ADR D4).
+#[test]
+fn silent_timeout_stream_drop_and_session_crash_park_as_abnormal_with_their_cause() {
+    run_test(async {
+        for cause in [
+            StopCause::PromptTimedOut,
+            StopCause::StreamDropped,
+            StopCause::SessionCrashed,
+        ] {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, INTERACTIVE_AGENT_GRAPH);
+            let agent = node_runs
+                .iter()
+                .find(|node| node.node_id == "agent")
+                .unwrap();
+            let (session_id, node_run_id) = bind_and_park(&pool, agent);
+            let sessions_root = temp.path().join("sessions");
+            write_open_turn(&sessions_root, session_id.as_ref(), "go", "partial");
+            end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::Cancelled);
+            let (run_locks, completing) = locks();
+            let (transitions, _recording) = recording_transitions(&pool);
+            begin_human_turn(
+                &pool,
+                &run_locks,
+                &completing,
+                &transitions,
+                session_id.as_ref(),
+            )
+            .await
+            .unwrap();
+
+            end_human_turn(
+                &pool,
+                &sessions_root,
+                &transitions,
+                &node_run_id,
+                Some(cause),
+            )
+            .await
+            .unwrap();
+
+            let parked =
+                parse_completion_snapshot(parked_node(&pool, &run_id, "agent").payload.as_deref())
+                    .expect("the abnormally ended turn parked a snapshot");
+            assert_eq!(
+                parked,
+                CompletionSnapshot {
+                    user_seq: Some(0),
+                    turn_key: Some(TurnKey {
+                        user_seq: 0,
+                        ended_seq: 2,
+                    }),
+                    stop_reason: Some("cancelled".to_string()),
+                    turn_origin: Some(TurnOrigin::Human),
+                    stop_cause: Some(cause),
+                    park_kind: Some(ParkKind::Abnormal),
+                    blockers: vec![CompletionBlocker {
+                        kind: CompletionBlockerKind::TurnStopped,
+                        params: Value::Null,
+                    }],
+                    warnings: Vec::new(),
+                    output_digest: Some(format!("sha256:{}", sha256_hex(b"partial"))),
+                    provisional: false,
+                },
+                "a turn ended by {cause:?} must park with that cause and as abnormal"
+            );
+        }
+    });
+}

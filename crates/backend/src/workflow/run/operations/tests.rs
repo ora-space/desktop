@@ -250,6 +250,73 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
     });
 }
 
+/// Forcing a ready turn is an ordinary completion: it writes no empty forced audit.
+///
+/// `force` only overrides a blocker that exists. A snapshot whose turn settled normally has nothing
+/// to override, so the completion must take the plain path and leave `payload.completion_forced`
+/// absent instead of recording an override that never happened (ADR D5).
+#[test]
+fn ready_force_does_not_write_an_empty_audit() {
+    run_test(async {
+        let fixture = Fixture::awaiting();
+        fixture.settle_turn();
+        // Seed the ready snapshot exactly as a plain park of the settled turn writes it, so the
+        // forced request is applied to a snapshot that already has nothing to override.
+        let ready = serde_json::json!({
+            "completion": {
+                "userSeq": 0,
+                "turnKey": { "userSeq": 0, "endedSeq": 2 },
+                "stopReason": "end_turn",
+                "turnOrigin": "human",
+                "blockers": [],
+                "warnings": [],
+                "outputDigest": format!(
+                    "sha256:{}",
+                    ora_utils::hash::sha256_hex(b"Final answer")
+                ),
+                "provisional": false,
+            }
+        });
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+                .repair_node_payload(&WorkflowNodeRunId::new(&fixture.node_run_id), &ready, 60)
+                .expect("seed the ready completion snapshot")
+        );
+
+        let response = fixture
+            .runs
+            .complete_node(CompleteWorkflowNodeRequest {
+                run_id: "run-1".to_string(),
+                node_id: "agent".to_string(),
+                force: true,
+                confirm_initial_turn: None,
+                requester: Some(NodeCompletionRequester::Human),
+            })
+            .await
+            .expect("force over a ready turn completes as a plain completion");
+        assert_eq!(response.run.status, WorkflowRunStatus::Succeeded);
+
+        let node = SqliteWorkflowRunRepository::new(fixture.runs.pool.clone())
+            .list_node_runs(&ora_domain::WorkflowRunId::new("run-1"))
+            .expect("node runs")
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        assert_eq!(node.output.as_deref(), Some("Final answer"));
+        let payload: serde_json::Value =
+            serde_json::from_str(node.payload.as_deref().expect("payload")).expect("payload JSON");
+        assert_eq!(
+            payload.get("completion_forced"),
+            None,
+            "a ready force completion records no forced audit"
+        );
+        assert_eq!(
+            payload["completion"], ready["completion"],
+            "the ready snapshot stays the record of the park it completed"
+        );
+    });
+}
+
 /// A request that both confirms the opening turn and forces has no consistent meaning.
 #[test]
 fn conflicting_completion_flags_are_rejected_before_claiming() {
