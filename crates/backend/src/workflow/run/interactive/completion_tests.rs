@@ -382,6 +382,95 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
     });
 }
 
+/// A snapshot written before `turnOrigin` existed is repaired as a human turn, not blocked.
+///
+/// The field is absent on snapshots from older versions. Defaulting it to the workflow's own
+/// opening turn would add `turn_unconfirmed` to a turn the user already answered, so the upgrade
+/// path must read such a snapshot as human and complete it normally (ADR D7).
+#[test]
+fn legacy_snapshot_without_turn_origin_defaults_to_human() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        // Serialize the pre-field park shape: the older version wrote no `turnOrigin`, and the
+        // classification fields added with it are absent too.
+        let mut legacy = completion_payload(&CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: None,
+            stop_reason: None,
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: vec![CompletionBlocker {
+                kind: CompletionBlockerKind::TurnUnknown,
+                params: serde_json::Value::Null,
+            }],
+            warnings: vec!["turn_not_settled".to_string()],
+            output_digest: None,
+            provisional: true,
+        });
+        legacy["completion"]
+            .as_object_mut()
+            .expect("completion snapshot object")
+            .remove("turnOrigin");
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(pool.clone())
+                .repair_node_payload(&node_run_id, &legacy, 60)
+                .expect("seed the pre-turnOrigin snapshot")
+        );
+        assert_eq!(
+            stored_snapshot(&pool, &run_id),
+            Some(CompletionSnapshot {
+                user_seq: Some(0),
+                turn_key: None,
+                stop_reason: None,
+                turn_origin: None,
+                stop_cause: None,
+                park_kind: None,
+                blockers: vec![CompletionBlocker {
+                    kind: CompletionBlockerKind::TurnUnknown,
+                    params: serde_json::Value::Null,
+                }],
+                warnings: vec!["turn_not_settled".to_string()],
+                output_digest: None,
+                provisional: true,
+            }),
+            "the seeded snapshot is the pre-field shape"
+        );
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("a pre-turnOrigin snapshot completes as a human turn");
+
+        assert_eq!(prepared.output, Some("done".to_string()));
+        assert_eq!(
+            stored_snapshot(&pool, &run_id),
+            Some(CompletionSnapshot {
+                user_seq: Some(0),
+                turn_key: Some(TurnKey {
+                    user_seq: 0,
+                    ended_seq: 2,
+                }),
+                stop_reason: Some("end_turn".to_string()),
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: None,
+                blockers: Vec::new(),
+                warnings: Vec::new(),
+                output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+                provisional: false,
+            }),
+            "the repair defaults the missing origin to a human turn"
+        );
+    });
+}
+
 /// A newer user message never stands in for the turn a provisional snapshot described.
 #[test]
 fn a_provisional_snapshot_of_another_turn_is_left_alone() {
