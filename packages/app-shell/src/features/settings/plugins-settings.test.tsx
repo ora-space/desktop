@@ -23,13 +23,26 @@ import {
   type TestHandlers,
 } from "../../test/contracts-transport";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import {
+  createWorkflowMemory,
+  workflowHandlers,
+} from "../../test/memory/workflows";
+import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import { PluginOperationEventBridge } from "./plugin-operation-event-bridge";
 import { PluginsSettings } from "./plugins-settings";
 import { useUiStore } from "../../state/stores/ui-store";
 
-/** State for this test surface; no unrelated domain fixtures are initialized. */
+/**
+ * State for this test surface. The workflow and Skill fixtures are composed up front because a
+ * workflow package import is reported against the graphs and catalogs it references; every other
+ * test leaves them empty, which costs nothing.
+ */
 function createFixtureState() {
-  return { ...createPluginMemory() };
+  return {
+    ...createPluginMemory(),
+    workflows: createWorkflowMemory(),
+    skills: createSkillMemory(),
+  };
 }
 
 type FixtureState = ReturnType<typeof createFixtureState>;
@@ -38,7 +51,68 @@ type FixtureState = ReturnType<typeof createFixtureState>;
 function createFixtureHandlers(state: FixtureState): TestHandlers {
   return {
     ...pluginHandlers(state),
+    ...workflowHandlers(state.workflows),
+    ...skillHandlers(state.skills),
   };
+}
+
+/** One Agent node bound to the given Skills and MCPs, shaped like an exported graph envelope. */
+function agentGraph(bindings: { skills?: string[]; mcps?: string[] } = {}) {
+  return JSON.stringify({
+    viewport: { x: 0, y: 0, zoom: 1 },
+    nodes: [
+      {
+        id: "agent-1",
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: {
+          kind: "agent",
+          title: "编写发布说明",
+          agentConfig: {
+            skills: (bindings.skills ?? []).map((skillId) => ({
+              skillId,
+              enabled: true,
+            })),
+            mcps: (bindings.mcps ?? []).map((mcpId) => ({
+              mcpId,
+              enabled: true,
+            })),
+          },
+        },
+      },
+    ],
+    edges: [],
+    annotations: [],
+    globalVariables: [],
+  });
+}
+
+/** Seeds one workflow the import created, so its report can read the graph back by id. */
+function seedImportedWorkflow(
+  state: FixtureState,
+  workflowId: string,
+  name: string,
+  graph: string,
+) {
+  state.workflows.workflows.push({
+    workflow: {
+      id: workflowId,
+      namespace: "local",
+      name,
+      publishedSnapshotId: null,
+      createdAt: 1n,
+      updatedAt: 2n,
+    },
+    draft: {
+      id: `${workflowId}-draft`,
+      workflowId,
+      version: "draft",
+      graph,
+      createdAt: 1n,
+      updatedAt: 2n,
+    },
+    published: [],
+  });
 }
 
 // Keep this test worker responsible for initializing the instance used by useTranslation.
@@ -1073,8 +1147,11 @@ it("imports a local archive through the backend", async () => {
   );
 });
 
-/** A workflow package reports how many documents imported and how many were refused. */
-it("summarizes the workflow documents an imported package carried", async () => {
+/**
+ * A workflow package reports every document and the plugin readiness of the workflows it created,
+ * instead of a bare success (ora-space/circus#978).
+ */
+it("reports the workflow documents and their plugin readiness after importing a package", async () => {
   const user = userEvent.setup();
   const { state, client } = clientWithWeather();
   state.importTarget = weatherInstalled();
@@ -1092,6 +1169,12 @@ it("summarizes the workflow documents an imported package carried", async () => 
       reason: "document is not valid JSON",
     },
   ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
   const platform = createStubPlatform();
   platform.selectPath = vi
     .fn()
@@ -1107,19 +1190,32 @@ it("summarizes the workflow documents an imported package carried", async () => 
     await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
   );
 
-  await waitFor(() => expect(successToast).toHaveBeenCalled());
-  expect(successToast.mock.calls[0]?.[0]).toEqual(
-    expect.stringMatching(/插件已导入|Plugin imported/),
+  const report = await screen.findByRole("dialog");
+  expect(
+    within(report).getByText(/工作流导入结果|Workflow import result/),
+  ).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  // The workflow's own graph decides its readiness, so the missing Skill is named with its node.
+  expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
+    0,
   );
-  expect(successToast.mock.calls[0]?.[1]).toEqual({
-    description: expect.stringMatching(
-      /导入了 1 个工作流，1 个被拒绝|Imported 1 workflow\(s\); 1 were refused/,
-    ),
-  });
+  expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
+  expect(
+    within(report).getByText(/1 个插件未安装|1 referenced plugin/),
+  ).toBeVisible();
+  expect(
+    within(report).getByRole("button", { name: /去安装|Install/ }),
+  ).toBeVisible();
+  // A refused document is reported by its own path and the backend's reason, not just counted.
+  expect(within(report).getByText("assets/workflows/2.0.0.json")).toBeVisible();
+  expect(within(report).getByText("document is not valid JSON")).toBeVisible();
+  expect(successToast.mock.calls[0]).toEqual([
+    expect.stringMatching(/插件已导入|Plugin imported/),
+  ]);
 });
 
-/** A package whose documents all imported reports only the imported count. */
-it("reports a fully successful workflow import without a refusal count", async () => {
+/** A package whose documents all imported lists every workflow and has no refusal section. */
+it("lists every imported workflow without a refusal section", async () => {
   const user = userEvent.setup();
   const { state, client } = clientWithWeather();
   state.importTarget = weatherInstalled();
@@ -1139,14 +1235,12 @@ it("reports a fully successful workflow import without a refusal count", async (
       version: "2.0.0",
     },
   ];
+  seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
+  seedImportedWorkflow(state, "workflow-4", "回归流程", agentGraph());
   const platform = createStubPlatform();
   platform.selectPath = vi
     .fn()
     .mockResolvedValue("C:/downloads/workflows.orax");
-  const successToast = vi
-    .spyOn(toast, "success")
-    .mockClear()
-    .mockImplementation(() => "toast");
   renderSettings(client, platform);
 
   await openManagePlugins(user);
@@ -1154,12 +1248,132 @@ it("reports a fully successful workflow import without a refusal count", async (
     await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
   );
 
-  await waitFor(() => expect(successToast).toHaveBeenCalled());
-  expect(successToast.mock.calls[0]?.[1]).toEqual({
-    description: expect.stringMatching(
-      /并导入了 2 个工作流|Imported 2 workflow\(s\)/,
-    ),
+  const report = await screen.findByRole("dialog");
+  expect(
+    within(report).getByText(/已导入 2 个工作流|Imported 2 workflow/),
+  ).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText("回归流程")).toBeVisible();
+  expect(
+    within(report).queryByText(/个文档未导入|document\(s\) were not imported/),
+  ).toBeNull();
+});
+
+/**
+ * A catalog that cannot be read must not become a verdict: an empty list would report every
+ * referenced plugin as missing, which is a different and wrong answer.
+ */
+it("reports an unreadable plugin catalog instead of a dependency verdict", async () => {
+  const user = userEvent.setup();
+  const { state, handlers } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  const client = createTestClient({
+    ...handlers,
+    listInstalledPlugins: async () => {
+      throw new Error("plugin list unavailable");
+    },
   });
+  const platform = createStubPlatform();
+  platform.selectPath = vi
+    .fn()
+    .mockResolvedValue("C:/downloads/workflows.orax");
+  renderSettings(client, platform);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+
+  const report = await screen.findByRole("dialog");
+  expect(
+    await within(report).findByText(
+      /无法读取已安装插件|Unable to read the installed plugins/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(report).queryByText(/个插件未安装|referenced plugin/),
+  ).toBeNull();
+});
+
+/**
+ * The settings entry reaches the same dependency verdict as the editor's import preview, and its
+ * install link resolves inside the pane instead of waiting for a later mount of the deep link.
+ */
+it("offers the missing dependency's install entry from the import report", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    id: "official/mcp-weather",
+    name: "mcp-weather",
+    displayName: "Weather MCP",
+    kind: "mcp",
+    configuration: { state: "available", completeness: "complete" },
+  });
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({
+      skills: ["release-notes"],
+      mcps: ["official/mcp-weather"],
+    }),
+  );
+  const platform = createStubPlatform();
+  platform.selectPath = vi
+    .fn()
+    .mockResolvedValue("C:/downloads/workflows.orax");
+  renderSettings(client, platform);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+
+  const report = await screen.findByRole("dialog");
+  // The installed MCP reads as ready while the missing Skill keeps its install entry.
+  expect(within(report).getByText("Weather MCP")).toBeVisible();
+  expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
+    0,
+  );
+  expect(within(report).getAllByText(/用于：编写发布说明/)).toHaveLength(2);
+  expect(within(report).getByText("已安装")).toBeVisible();
+  expect(within(report).getAllByText("未安装").length).toBeGreaterThan(0);
+
+  await user.click(
+    within(report).getByRole("button", { name: /去安装|Install/ }),
+  );
+
+  // The report closes and the manager hands the id to the marketplace search it already owns.
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    await screen.findByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  ).toHaveValue("release-notes");
 });
 
 /** A path picker that rejects surfaces an error toast without touching the backend. */
