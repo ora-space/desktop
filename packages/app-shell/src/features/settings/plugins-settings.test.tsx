@@ -274,6 +274,24 @@ async function openManagePlugins(user: ReturnType<typeof userEvent.setup>) {
   );
 }
 
+/** A file picker that answers with the workflow package a test is importing. */
+function platformPickingWorkflowPackage(): PlatformAdapter {
+  const platform = createStubPlatform();
+  platform.selectPath = vi
+    .fn()
+    .mockResolvedValue("C:/downloads/workflows.orax");
+  return platform;
+}
+
+/** Drives one package through the manager's import entry and returns its result report. */
+async function openImportReport(user: ReturnType<typeof userEvent.setup>) {
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+  return await screen.findByRole("dialog");
+}
+
 /** The host-local asset URL the backend hands out for a validated registry icon. */
 const WEATHER_LOGO: PluginLogo = {
   variant: "universal",
@@ -1374,6 +1392,170 @@ it("offers the missing dependency's install entry from the import report", async
   expect(
     await screen.findByRole("textbox", { name: /搜索插件|Search plugins/ }),
   ).toHaveValue("release-notes");
+});
+
+/** A referenced MCP that still needs configuration is finished in this pane's own editor. */
+it("opens an imported MCP's configuration from the report", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    id: "official/mcp-weather",
+    name: "mcp-weather",
+    displayName: "Weather MCP",
+    kind: "mcp",
+    configuration: { state: "available", completeness: "incomplete" },
+  });
+  state.pluginConfigurations.set("official/mcp-weather", {
+    pluginId: "official/mcp-weather",
+    schemaVersion: 1,
+    revision: 0n,
+    declarationFingerprint: "declaration-1",
+    settings: [
+      {
+        declaration: {
+          id: "endpoint",
+          title: "Endpoint",
+          description: "Service URL",
+          type: "string",
+          required: true,
+          order: 1n,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: false,
+        source: "absent",
+        valueErrorCode: null,
+      },
+    ],
+    summary: { state: "available", completeness: "incomplete" },
+  });
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ mcps: ["official/mcp-weather"] }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(within(report).getByText("Weather MCP")).toBeVisible();
+  expect(
+    within(report).getAllByText(/不可用|Unavailable/).length,
+  ).toBeGreaterThan(0);
+  await user.click(
+    within(report).getByRole("button", { name: /去配置|Configure/ }),
+  );
+
+  // The manager keeps ownership of the destination: its editor opens on the declared fields.
+  expect(await screen.findByLabelText(/Endpoint/)).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+/** An MCP whose declaration is invalid is inspected in the manager row that reports the error. */
+it("sends an invalid MCP back to the manager row that names the error", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    id: "official/mcp-broken",
+    name: "mcp-broken",
+    displayName: "Broken MCP",
+    kind: "mcp",
+    installationValidity: {
+      validity: "invalid_declaration",
+      errorCode: "invalid_manifest",
+    },
+  });
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ mcps: ["official/mcp-broken"] }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(within(report).getByText("Broken MCP")).toBeVisible();
+  await user.click(
+    within(report).getByRole("button", { name: /去查看|Review/ }),
+  );
+
+  // The manager already owns the row, so the report steps aside and leaves the error in view.
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    screen.getByText(/配置声明无效|Invalid configuration declaration/),
+  ).toBeVisible();
+});
+
+/** An unusable Skill is reviewed on the Skills page, which this pane opens through Settings. */
+it("sends an unavailable Skill to the Skills settings page", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.skills.skills.push({
+    id: "skill-release-notes",
+    namespace: "local",
+    name: "release-notes",
+    description: "Writes release notes",
+    source: { kind: "local" },
+    availability: "unavailable",
+  });
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  act(() =>
+    useUiStore.setState({ settingsOpen: false, settingsCategory: "plugins" }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
+    0,
+  );
+  await user.click(
+    within(report).getByRole("button", { name: /去查看|Review/ }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // The Skills page belongs to Settings, so the pane hands the destination to Settings itself.
+  const ui = useUiStore.getState();
+  expect(ui.settingsOpen).toBe(true);
+  expect(ui.settingsCategory).toBe("skills");
+  act(() => useUiStore.setState({ settingsOpen: false }));
 });
 
 /** A path picker that rejects surfaces an error toast without touching the backend. */
