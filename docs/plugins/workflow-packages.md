@@ -37,7 +37,14 @@ library and drop the file into `assets/workflows/`.
   "name": "发布流程",
   "version": "1.0.0",
   "viewport": { "x": 0, "y": 0, "zoom": 1 },
-  "nodes": [{ "id": "start", "type": "workflow", "position": { "x": 120, "y": 260 }, "data": { "kind": "start" } }],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "workflow",
+      "position": { "x": 120, "y": 260 },
+      "data": { "kind": "start" }
+    }
+  ],
   "edges": [],
   "annotations": [],
   "globalVariables": []
@@ -72,6 +79,21 @@ Because validation reuses the run engine's parser, an imported workflow is held 
 a run would apply; a document that could never execute is refused at import. A broken document costs
 only itself, and each document either becomes a workflow with one published snapshot or does not
 become one at all.
+
+### Plugin readiness
+
+A document records the MCP plugins and Skills its Agent nodes bind, so importing a package can leave
+workflows that reference plugins missing from this machine. The import therefore reports plugin
+readiness next to the per-document outcomes: for a package that carried workflow documents, the
+plugin manager opens an import result that reads each created workflow's graph back and lists every
+MCP and Skill it references with its state (`installed`, `unavailable`, `missing`), the Agent nodes
+that use it, and the same install, configure, or review entry the editor's own import preview
+offers. A document the import refused is listed with its package path and the backend's reason.
+
+The check is presentation only: it never blocks the import or installs anything on its own, and a
+missing reference simply fails the run at the node that uses it. Both import entries resolve
+dependencies with the same rules, so the same package reports the same readiness whether it is
+imported from the plugin manager or from the editor's workflow import.
 
 ## Version
 
