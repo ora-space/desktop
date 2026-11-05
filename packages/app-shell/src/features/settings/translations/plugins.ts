@@ -236,9 +236,24 @@ export const pluginTranslations = {
     "settings.plugins.import": "导入插件",
     "settings.plugins.importSuccess": "插件已导入。",
     "settings.plugins.importFailed": "导入失败",
-    "settings.plugins.importWorkflowsImported": "并导入了 {{count}} 个工作流。",
-    "settings.plugins.importWorkflowsSummary":
-      "导入了 {{imported}} 个工作流，{{failed}} 个被拒绝。",
+    "settings.plugins.importReportTitle": "工作流导入结果",
+    "settings.plugins.importReportImported": "已导入 {{count}} 个工作流。",
+    "settings.plugins.importReportChecking": "正在检查插件依赖…",
+    "settings.plugins.importReportCheckFailed":
+      "无法读取已安装插件或 Skills 列表，暂时无法判断工作流的依赖。",
+    "settings.plugins.importReportMissingTitle": "{{count}} 个插件未安装。",
+    "settings.plugins.importReportMissing":
+      "工作流已经导入，但运行到引用它们的节点时会失败。可以从下面的「去安装」补齐。",
+    "settings.plugins.importReportUnavailable":
+      "{{count}} 个插件已安装但当前不可用，运行前需要检查插件状态或配置。",
+    "settings.plugins.importReportReady":
+      "所引用的 {{count}} 个插件都已安装，导入的工作流可以直接运行。",
+    "settings.plugins.importReportNoReferences":
+      "导入的工作流没有引用任何 MCP 或 Skill 插件。",
+    "settings.plugins.importReportUnreadable":
+      "无法读取「{{name}}」的图，暂时无法检查它依赖的插件。",
+    "settings.plugins.importReportRefusedTitle": "{{count}} 个文档未导入",
+    "settings.plugins.importReportClose": "关闭",
     "settings.plugins.pathSelectionError": "无法选择插件文件。",
     "settings.plugins.uninstalling": "卸载中",
     "settings.plugins.runtimeFailing": "运行失败",
@@ -632,10 +647,27 @@ export const pluginTranslations = {
     "settings.plugins.import": "Import plugin",
     "settings.plugins.importSuccess": "Plugin imported.",
     "settings.plugins.importFailed": "Import failed",
-    "settings.plugins.importWorkflowsImported":
-      "Imported {{count}} workflow(s) as well.",
-    "settings.plugins.importWorkflowsSummary":
-      "Imported {{imported}} workflow(s); {{failed}} were refused.",
+    "settings.plugins.importReportTitle": "Workflow import result",
+    "settings.plugins.importReportImported": "Imported {{count}} workflow(s).",
+    "settings.plugins.importReportChecking":
+      "Checking the plugins these workflows use…",
+    "settings.plugins.importReportCheckFailed":
+      "Unable to read the installed plugins or Skills, so the workflows’ dependencies can’t be checked right now.",
+    "settings.plugins.importReportMissingTitle":
+      "{{count}} referenced plugin(s) aren’t installed.",
+    "settings.plugins.importReportMissing":
+      "The workflows are imported, but runs fail at the nodes that use those plugins. Install them from the rows below.",
+    "settings.plugins.importReportUnavailable":
+      "{{count}} referenced plugin(s) are installed but unavailable. Check their status or configuration before running.",
+    "settings.plugins.importReportReady":
+      "Every referenced plugin ({{count}}) is installed, so the imported workflows can run right away.",
+    "settings.plugins.importReportNoReferences":
+      "The imported workflows reference no MCP or Skill plugins.",
+    "settings.plugins.importReportUnreadable":
+      "Unable to read the graph of “{{name}}”, so its plugins can’t be checked right now.",
+    "settings.plugins.importReportRefusedTitle":
+      "{{count}} document(s) were not imported",
+    "settings.plugins.importReportClose": "Close",
     "settings.plugins.pathSelectionError": "Unable to select a plugin file.",
     "settings.plugins.uninstalling": "Uninstalling",
     "settings.plugins.runtimeFailing": "Runtime failed",
