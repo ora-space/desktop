@@ -143,12 +143,18 @@ export function WorkflowImportReportDialog({
             </p>
           ) : (
             <>
-              <p className="text-[13px]">
-                {t("settings.plugins.importReportImported", {
-                  count: report.workflows.length,
-                })}
-              </p>
-              <ReportBanner report={report} />
+              {/* A package whose documents were all refused created no workflow, so there is
+                  no import count or readiness verdict to report — only what was refused. */}
+              {report.workflows.length > 0 && (
+                <>
+                  <p className="text-[13px]">
+                    {t("settings.plugins.importReportImported", {
+                      count: report.workflows.length,
+                    })}
+                  </p>
+                  <ReportBanner report={report} />
+                </>
+              )}
               {report.workflows.map((workflow) =>
                 workflow.dependencies === null ? (
                   <p
@@ -171,7 +177,9 @@ export function WorkflowImportReportDialog({
               )}
               {report.refused.length > 0 && (
                 <section
-                  aria-label={t("settings.plugins.importReportRefusedTitle")}
+                  aria-label={t("settings.plugins.importReportRefusedTitle", {
+                    count: report.refused.length,
+                  })}
                   className="overflow-hidden rounded-[10px] border border-border"
                 >
                   <h3 className="border-b border-border px-3 py-2 text-[13px] font-medium">
@@ -213,28 +221,51 @@ export function WorkflowImportReportDialog({
 /**
  * One readiness verdict for the whole package: missing beats unavailable beats ready, because
  * only missing references fail a run outright.
+ *
+ * The counts cover the workflows whose graph could be read back, so a workflow still unread keeps
+ * the summary from claiming the package needs nothing or is ready: the package-wide verdict would
+ * be about part of what was imported. That case gets its own notice instead.
  */
 function ReportBanner({ report }: { report: WorkflowImportReport }) {
   const { t } = useTranslation();
   const { missing, unavailable, installed } = report.counts;
   const total = missing + unavailable + installed;
+  const unchecked = report.workflows.filter(
+    (workflow) => workflow.dependencies === null,
+  ).length;
+  const uncheckedNotice = unchecked > 0 && (
+    <Banner tone="info">
+      {t("settings.plugins.importReportUnchecked", { count: unchecked })}
+    </Banner>
+  );
 
   if (missing > 0) {
     return (
-      <Banner tone="warn">
-        <b className="font-semibold">
-          {t("settings.plugins.importReportMissingTitle", { count: missing })}
-        </b>
-        {t("settings.plugins.importReportMissing")}
-      </Banner>
+      <>
+        <Banner tone="warn">
+          <b className="font-semibold">
+            {t("settings.plugins.importReportMissingTitle", { count: missing })}
+          </b>
+          {t("settings.plugins.importReportMissing")}
+        </Banner>
+        {uncheckedNotice}
+      </>
     );
   }
   if (unavailable > 0) {
     return (
-      <Banner tone="info">
-        {t("settings.plugins.importReportUnavailable", { count: unavailable })}
-      </Banner>
+      <>
+        <Banner tone="info">
+          {t("settings.plugins.importReportUnavailable", {
+            count: unavailable,
+          })}
+        </Banner>
+        {uncheckedNotice}
+      </>
     );
+  }
+  if (unchecked > 0) {
+    return uncheckedNotice;
   }
   if (total === 0) {
     return (

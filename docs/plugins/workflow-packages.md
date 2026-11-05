@@ -95,6 +95,10 @@ missing reference simply fails the run at the node that uses it. Both import ent
 dependencies with the same rules, so the same package reports the same readiness whether it is
 imported from the plugin manager or from the editor's workflow import.
 
+A workflow whose graph cannot be read back is reported as unreadable instead of as needing nothing;
+while one of those is outstanding the result states no package-wide readiness verdict and covers
+only what it could read. When every document was refused, the result lists just the refusals.
+
 ## Version
 
 The published version is the first usable candidate from: the document's `version`, the file name

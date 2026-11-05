@@ -250,6 +250,8 @@ export const pluginTranslations = {
       "所引用的 {{count}} 个插件都已安装，导入的工作流可以直接运行。",
     "settings.plugins.importReportNoReferences":
       "导入的工作流没有引用任何 MCP 或 Skill 插件。",
+    "settings.plugins.importReportUnchecked":
+      "{{count}} 个工作流的图无法读取，下面的依赖情况只覆盖读取成功的工作流。",
     "settings.plugins.importReportUnreadable":
       "无法读取「{{name}}」的图，暂时无法检查它依赖的插件。",
     "settings.plugins.importReportRefusedTitle": "{{count}} 个文档未导入",
@@ -663,6 +665,8 @@ export const pluginTranslations = {
       "Every referenced plugin ({{count}}) is installed, so the imported workflows can run right away.",
     "settings.plugins.importReportNoReferences":
       "The imported workflows reference no MCP or Skill plugins.",
+    "settings.plugins.importReportUnchecked":
+      "The graph of {{count}} workflow(s) could not be read, so the dependency result below only covers the workflows that could be read.",
     "settings.plugins.importReportUnreadable":
       "Unable to read the graph of “{{name}}”, so its plugins can’t be checked right now.",
     "settings.plugins.importReportRefusedTitle":

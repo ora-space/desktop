@@ -1394,6 +1394,126 @@ it("offers the missing dependency's install entry from the import report", async
   ).toHaveValue("release-notes");
 });
 
+/**
+ * A package whose documents were all refused created no workflow, so the report carries only what
+ * was refused: an import count of zero plus a "needs no plugins" verdict would describe a workflow
+ * that never arrived (ora-space/circus#984).
+ */
+it("reports only the refused documents when the package created no workflow", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "failed",
+      sourceFile: "assets/workflows/1.0.0.json",
+      reason: "document is not valid JSON",
+    },
+  ];
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(
+    await within(report).findByText("assets/workflows/1.0.0.json"),
+  ).toBeVisible();
+  expect(within(report).getByText("document is not valid JSON")).toBeVisible();
+  // The refusal header names its count in the section's accessible name as well as on screen.
+  expect(
+    within(report).getByRole("region", {
+      name: /1 个文档未导入|1 document/,
+    }),
+  ).toBeVisible();
+  expect(
+    within(report).queryByText(/已导入 \d+ 个工作流|Imported \d+ workflow/),
+  ).toBeNull();
+  expect(
+    within(report).queryByText(/没有引用任何|reference no MCP/),
+  ).toBeNull();
+});
+
+/**
+ * A workflow whose graph cannot be read back has no readiness of its own, so the summary must not
+ * turn that into a package-wide verdict: claiming it references nothing would be a statement about
+ * the workflows it could inspect, and there were none (ora-space/circus#984).
+ */
+it("withholds the readiness verdict when no imported graph could be read", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  // The record the import returned cannot be read back, the way a removed or locked one behaves.
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(
+    await within(report).findByText(
+      /无法读取「发布流程」的图|Unable to read the graph/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(report).getByText(/1 个工作流的图无法读取|graph of 1 workflow/),
+  ).toBeVisible();
+  expect(
+    within(report).queryByText(/没有引用任何|reference no MCP/),
+  ).toBeNull();
+  expect(
+    within(report).queryByText(/可以直接运行|can run right away/),
+  ).toBeNull();
+});
+
+/**
+ * A readable workflow that references nothing must not make the package "ready" while another
+ * workflow's graph is still unread: the verdict would cover part of what the import created.
+ */
+it("keeps a partly unreadable package from claiming the workflows can run", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/2.0.0.json",
+      workflowId: "workflow-4",
+      name: "回归流程",
+      version: "2.0.0",
+    },
+  ];
+  seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
+  // `workflow-4` is never seeded, so only the first workflow can be inspected.
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(
+    await within(report).findByText(
+      /无法读取「回归流程」的图|Unable to read the graph/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(report).getByText(/1 个工作流的图无法读取|graph of 1 workflow/),
+  ).toBeVisible();
+  expect(
+    within(report).queryByText(/可以直接运行|can run right away/),
+  ).toBeNull();
+  expect(
+    within(report).queryByText(/没有引用任何|reference no MCP/),
+  ).toBeNull();
+});
+
 /** A referenced MCP that still needs configuration is finished in this pane's own editor. */
 it("opens an imported MCP's configuration from the report", async () => {
   const user = userEvent.setup();
