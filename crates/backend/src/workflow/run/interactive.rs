@@ -9,6 +9,8 @@ mod completion_tests;
 mod inactivity_tests;
 mod session;
 mod turns;
+#[cfg(test)]
+mod turns_tests;
 
 use ora_domain::WorkflowNodeRunId;
 use std::collections::HashSet;
