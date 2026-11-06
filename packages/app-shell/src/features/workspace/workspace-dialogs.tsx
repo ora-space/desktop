@@ -10,6 +10,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  toast,
 } from "@ora/ui";
 import { IconTrash } from "@tabler/icons-react";
 import { EntityDialog, type EntityField } from "./entity-dialog";
@@ -234,10 +235,24 @@ function WorkspaceEntityDialog({
       },
     ];
     submit = async (values) => {
-      await createProject.mutateAsync({
-        name: projectNameFromPath(values.rootPath!),
-        mainWorkspacePath: values.rootPath!,
-      });
+      // Pasted paths often carry surrounding whitespace that is never part of the folder name.
+      const rootPath = values.rootPath!.trim();
+      try {
+        await createProject.mutateAsync({
+          name: projectNameFromPath(rootPath),
+          mainWorkspacePath: rootPath,
+        });
+      } catch (error) {
+        // The host owns the filesystem check; surface its rejection beyond the dialog, which
+        // stays open with the same message so the path can be corrected in place.
+        if (
+          error instanceof RemoteContractError &&
+          error.code === "project_workspace_not_directory"
+        ) {
+          toast.error(localizeContractError(error, t));
+        }
+        throw error;
+      }
     };
   } else if (dialog.kind === "task") {
     title = t("dialog.createWorktree");

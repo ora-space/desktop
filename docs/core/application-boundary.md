@@ -8,14 +8,14 @@ the public contract, the handler set and the invariants every caller can rely on
 
 ## Ownership
 
-| Owner | Crate | Owns |
-|---|---|---|
-| Domain | `ora-domain` | Schema-backed entities, identifier newtypes, categorical enums and the invariants that hold regardless of transport or storage |
-| Contracts | `ora-contracts` | Request, response, stream-event and public-error DTOs; TypeScript export into `@ora/contracts` |
-| Application | `ora-application` | Use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports handlers depend on, domain-to-contract mapping |
-| Persistence | `ora-db` | SQLite implementations of those ports and schema reconciliation, see [Persistence](persistence.md) |
-| Backend | `ora-backend` | Composition: SQLite bootstrap, the system clock, concrete repositories and handlers, the agent runtime host, plugin lifecycle, workflow execution, durable Git cleanup, public error projection and the shared request lifecycle |
-| Desktop adapter | `apps/desktop/src-tauri` | Thin Tauri commands that accept a contract request, call a Backend domain handle or the Desktop filesystem service, and serialize the result, see [Desktop host](../desktop/desktop-host.md) |
+| Owner           | Crate                    | Owns                                                                                                                                                                                                                             |
+| --------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain          | `ora-domain`             | Schema-backed entities, identifier newtypes, categorical enums and the invariants that hold regardless of transport or storage                                                                                                   |
+| Contracts       | `ora-contracts`          | Request, response, stream-event and public-error DTOs; TypeScript export into `@ora/contracts`                                                                                                                                   |
+| Application     | `ora-application`        | Use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports handlers depend on, domain-to-contract mapping                                                                                           |
+| Persistence     | `ora-db`                 | SQLite implementations of those ports and schema reconciliation, see [Persistence](persistence.md)                                                                                                                               |
+| Backend         | `ora-backend`            | Composition: SQLite bootstrap, the system clock, concrete repositories and handlers, the agent runtime host, plugin lifecycle, workflow execution, durable Git cleanup, public error projection and the shared request lifecycle |
+| Desktop adapter | `apps/desktop/src-tauri` | Thin Tauri commands that accept a contract request, call a Backend domain handle or the Desktop filesystem service, and serialize the result, see [Desktop host](../desktop/desktop-host.md)                                     |
 
 - `ora-contracts` keeps Rust field names idiomatic and serializes JSON in `camelCase`.
 - ACP v1 wire types belong to the official `agent-client-protocol-schema` crate (Rust) and
@@ -31,20 +31,20 @@ the public contract, the handler set and the invariants every caller can rely on
 `ora-domain` has no dependency on SQLite, Tauri or `ora-contracts`. Depending on it is enough to
 construct and inspect every model.
 
-| Domain type | Backing table | Notes |
-|---|---|---|
-| `Project` | `projects` | Name and repository facts; its checkout is the Main Workspace's location |
-| `Workspace`, `WorkspaceProvisioning` | `workspaces`, `workspace_locations`, `workspace_provisioning` | A stable execution environment shared by sessions and workflow runs; `Main` (the project checkout) or `Isolated` (a task worktree) |
-| `Task` | `tasks` | The user-facing label of an isolated Workspace; it carries no status of its own |
-| `Worktree` | `worktrees` | Optional one-to-one Git extension of a Workspace, keyed by the Workspace id |
-| `Session` | `sessions` | One conversation in a Workspace and the provider session it currently runs on |
-| `Skill` | `skills` | Namespaced Skill catalog entry |
-| `AgentDefinition` | `agents` | A configurable agent: namespaced name, description and Markdown content |
-| `Workflow`, `WorkflowSnapshot` | `workflows`, `workflow_snapshots` | Editable draft plus immutable published snapshots, see [Workflows](../workflows/workflows.md) |
-| `WorkflowRun`, `WorkflowNodeRun`, `WorkflowExecutionScope` | `workflow_runs`, `workflow_node_runs`, `workflow_execution_scopes` | Executed runs, see [Workflow runs](../workflows/workflow-runs.md) |
-| `ScheduledTask`, `ScheduledRun` | `scheduled_tasks`, `scheduled_runs`, `scheduled_occurrences` | See [Scheduled tasks](../scheduled-tasks/scheduled-tasks.md) |
-| `GitCleanupJob` | `git_cleanup_jobs` | Durable physical Git cleanup, see [Tasks and worktrees](../workspaces/tasks-and-worktrees.md) |
-| `WorktreeProvisioningLease` | `worktree_provisioning_leases` | Owner of Git resources while a task is being created |
+| Domain type                                                | Backing table                                                      | Notes                                                                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `Project`                                                  | `projects`                                                         | Name and repository facts; its checkout is the Main Workspace's location                                                           |
+| `Workspace`, `WorkspaceProvisioning`                       | `workspaces`, `workspace_locations`, `workspace_provisioning`      | A stable execution environment shared by sessions and workflow runs; `Main` (the project checkout) or `Isolated` (a task worktree) |
+| `Task`                                                     | `tasks`                                                            | The user-facing label of an isolated Workspace; it carries no status of its own                                                    |
+| `Worktree`                                                 | `worktrees`                                                        | Optional one-to-one Git extension of a Workspace, keyed by the Workspace id                                                        |
+| `Session`                                                  | `sessions`                                                         | One conversation in a Workspace and the provider session it currently runs on                                                      |
+| `Skill`                                                    | `skills`                                                           | Namespaced Skill catalog entry                                                                                                     |
+| `AgentDefinition`                                          | `agents`                                                           | A configurable agent: namespaced name, description and Markdown content                                                            |
+| `Workflow`, `WorkflowSnapshot`                             | `workflows`, `workflow_snapshots`                                  | Editable draft plus immutable published snapshots, see [Workflows](../workflows/workflows.md)                                      |
+| `WorkflowRun`, `WorkflowNodeRun`, `WorkflowExecutionScope` | `workflow_runs`, `workflow_node_runs`, `workflow_execution_scopes` | Executed runs, see [Workflow runs](../workflows/workflow-runs.md)                                                                  |
+| `ScheduledTask`, `ScheduledRun`                            | `scheduled_tasks`, `scheduled_runs`, `scheduled_occurrences`       | See [Scheduled tasks](../scheduled-tasks/scheduled-tasks.md)                                                                       |
+| `GitCleanupJob`                                            | `git_cleanup_jobs`                                                 | Durable physical Git cleanup, see [Tasks and worktrees](../workspaces/tasks-and-worktrees.md)                                      |
+| `WorktreeProvisioningLease`                                | `worktree_provisioning_leases`                                     | Owner of Git resources while a task is being created                                                                               |
 
 Workspace state is modelled with independent enums rather than optional fields: `WorkspaceKind`
 (`Main`, `Isolated`), `WorkspaceLifecycle` (`Provisioning`, `Active`, `Unavailable`, `Retiring`,
@@ -141,20 +141,20 @@ response contract or an `ApplicationError`; none references a UI, Tauri or datab
 Dependencies are statically dispatched through generics, so a unit test can build any handler with
 in-memory fakes.
 
-| Module | Use cases |
-|---|---|
-| `project` | create, get, list, list branches, update |
-| `task` | create, get, list, update |
-| `session` | get, list, delete |
-| `skill` | create, get, list, update, delete, startup reconciliation |
-| `skill_import` | prepare, get, commit, cancel |
-| `agent_definition` | create, get, list, update, delete; Markdown import (prepare, commit) |
-| `effect` | Desired State and Target status, see [Effects](../agents/effects.md) |
-| `workspace_diff` | read diff and status, stage, unstage, commit, push |
-| `workflow` | create, get, list, update, delete, analyze, draft get/update, publish, rollback, activate, versions, delete snapshot |
-| `workflow_run` | CRUD plus the run engine (start, cancel, restart, resume, node completion) |
-| `scheduled_task` | create, get, list, list history, update, delete, revoke approval |
-| `worktree` | none, ports only |
+| Module             | Use cases                                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `project`          | create, get, list, list branches, update                                                                             |
+| `task`             | create, get, list, update                                                                                            |
+| `session`          | get, list, delete                                                                                                    |
+| `skill`            | create, get, list, update, delete, startup reconciliation                                                            |
+| `skill_import`     | prepare, get, commit, cancel                                                                                         |
+| `agent_definition` | create, get, list, update, delete; Markdown import (prepare, commit)                                                 |
+| `effect`           | Desired State and Target status, see [Effects](../agents/effects.md)                                                 |
+| `workspace_diff`   | read diff and status, stage, unstage, commit, push                                                                   |
+| `workflow`         | create, get, list, update, delete, analyze, draft get/update, publish, rollback, activate, versions, delete snapshot |
+| `workflow_run`     | CRUD plus the run engine (start, cancel, restart, resume, node completion)                                           |
+| `scheduled_task`   | create, get, list, list history, update, delete, revoke approval                                                     |
+| `worktree`         | none, ports only                                                                                                     |
 
 Consequences of that set:
 
@@ -183,6 +183,11 @@ written.
 ## Invariants
 
 - A project's Main Workspace location is fixed at creation; `UpdateProjectHandler` renames only.
+- Project creation rejects a local Main Workspace path that is blank or not an existing directory
+  with `project_workspace_not_directory`; a relative path is resolved against the same base that
+  later cwd resolution uses. A local Main Workspace is `active` from creation: Ora never provisions
+  a local checkout, so whether its directory still exists is re-checked on every use and reported
+  as `workspace_unavailable` instead of being frozen into the lifecycle.
 - A session's Workspace is immutable. Lifecycle operations change only `status` and `updated_at`.
 - `UpdateTaskRequest` cannot change project or Workspace ownership.
 - Project and Task deletion soft-delete the whole Ora-owned aggregate in one SQLite transaction. A

@@ -267,6 +267,7 @@ pub enum PublicError {
     PluginConfigurationValidation(PluginConfigurationValidationParams),
     PluginConfigurationRecoveryNotRequired(EmptyErrorParams),
     ProjectNotFound(EmptyErrorParams),
+    ProjectWorkspaceNotDirectory(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
     ScheduledTaskNotFound(EmptyErrorParams),
     ScheduledTaskConflict(EmptyErrorParams),
@@ -408,6 +409,7 @@ impl PublicError {
                 "plugin_configuration_recovery_not_required"
             }
             Self::ProjectNotFound(_) => "project_not_found",
+            Self::ProjectWorkspaceNotDirectory(_) => "project_workspace_not_directory",
             Self::EffectTargetNotFound(_) => "effect_target_not_found",
             Self::EffectTargetNotRecoverable(_) => "effect_target_not_recoverable",
             Self::TaskNotFound(_) => "task_not_found",
@@ -635,6 +637,7 @@ mod tests {
             PublicError::EffectTargetNotFound(empty),
             PublicError::EffectTargetNotRecoverable(empty),
             PublicError::ProjectNotFound(empty),
+            PublicError::ProjectWorkspaceNotDirectory(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ScheduledTaskNotFound(empty),
             PublicError::ScheduledTaskConflict(empty),
@@ -796,6 +799,7 @@ mod tests {
                 | PublicError::EffectTargetNotFound(_)
                 | PublicError::EffectTargetNotRecoverable(_)
                 | PublicError::ProjectNotFound(_)
+                | PublicError::ProjectWorkspaceNotDirectory(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ScheduledTaskNotFound(_)
                 | PublicError::ScheduledTaskConflict(_)
@@ -903,7 +907,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 122);
+        assert_eq!(samples.len(), 123);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

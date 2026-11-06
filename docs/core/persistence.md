@@ -25,29 +25,30 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
   is renumbered before merging; startup recognizes one historical case (an unpublished Loop branch
   that used `0011`) by its exact SQL and adopts it as `0013`.
 
-| Version | Adds |
-|---|---|
-| `0001` | User configuration, projects, Workspace locations and provisioning, Workspaces, worktrees, task labels, workspace-owned sessions |
-| `0002` | Namespaced Skills and configurable agents |
-| `0003` | Workflow definitions, snapshots, workspace-owned runs and node runs |
-| `0004` | Durable Git cleanup jobs and worktree provisioning leases |
-| `0005` | Plugin marketplace source configuration |
-| `0006` | Generic Effect persistence, see [Effects](../agents/effects.md) |
-| `0007` | Immutable namespace binding per marketplace source, keyed by canonical Git URL |
-| `0008` | Per-source `enabled` flag |
-| `0009` | Per-source artifact retrieval configuration (Direct HTTPS by default) |
-| `0010` | Independent Effect recovery detection time; Scope creation moves into Workspace transactions |
-| `0011` | Each Session's persisted MCP selection (existing sessions get an empty explicit set) |
-| `0012` | Iteration round index on node runs |
-| `0013` | Workflow execution scopes: root and Loop-round identities, scoped node uniqueness, downgrade archive |
-| `0014` | Pack installation ownership (`pack_installation`, `pack_installation_member`) |
-| `0015` | Scheduled tasks, scheduled runs and occurrences |
-| `0016` | Scheduled task scheduling anchor and worktree base branch |
-| `0017` | Scheduled run worktree base branch selected at admission |
-| `0018` | Scheduled run worktree task link |
-| `0019` | The `finalized_without_effect` Effect operation phase, added by rebuilding the operation journal through staging copies |
-| `0020` | Scheduled run business verdict, detail and annotation time |
-| `0021` | Scheduled run artifact manifest and rejected-candidate log |
+| Version | Adds                                                                                                                             |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `0001`  | User configuration, projects, Workspace locations and provisioning, Workspaces, worktrees, task labels, workspace-owned sessions |
+| `0002`  | Namespaced Skills and configurable agents                                                                                        |
+| `0003`  | Workflow definitions, snapshots, workspace-owned runs and node runs                                                              |
+| `0004`  | Durable Git cleanup jobs and worktree provisioning leases                                                                        |
+| `0005`  | Plugin marketplace source configuration                                                                                          |
+| `0006`  | Generic Effect persistence, see [Effects](../agents/effects.md)                                                                  |
+| `0007`  | Immutable namespace binding per marketplace source, keyed by canonical Git URL                                                   |
+| `0008`  | Per-source `enabled` flag                                                                                                        |
+| `0009`  | Per-source artifact retrieval configuration (Direct HTTPS by default)                                                            |
+| `0010`  | Independent Effect recovery detection time; Scope creation moves into Workspace transactions                                     |
+| `0011`  | Each Session's persisted MCP selection (existing sessions get an empty explicit set)                                             |
+| `0012`  | Iteration round index on node runs                                                                                               |
+| `0013`  | Workflow execution scopes: root and Loop-round identities, scoped node uniqueness, downgrade archive                             |
+| `0014`  | Pack installation ownership (`pack_installation`, `pack_installation_member`)                                                    |
+| `0015`  | Scheduled tasks, scheduled runs and occurrences                                                                                  |
+| `0016`  | Scheduled task scheduling anchor and worktree base branch                                                                        |
+| `0017`  | Scheduled run worktree base branch selected at admission                                                                         |
+| `0018`  | Scheduled run worktree task link                                                                                                 |
+| `0019`  | The `finalized_without_effect` Effect operation phase, added by rebuilding the operation journal through staging copies          |
+| `0020`  | Scheduled run business verdict, detail and annotation time                                                                       |
+| `0021`  | Scheduled run artifact manifest and rejected-candidate log                                                                       |
+| `0022`  | Releases local Main Workspaces stranded in `provisioning` (data only; downgrade is a no-op)                                      |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL
@@ -106,19 +107,19 @@ bootstrap and migration tests. Parent directories are prepared by the Desktop co
 
 ## Repositories
 
-| Adapter | Port or role |
-|---|---|
-| `SqliteProjectRepository`, `SqliteTaskRepository`, `SqliteWorkspaceRepository`, `SqliteWorktreeRepository` | Project, task, Workspace and worktree records |
-| `SqliteTaskWorkspaceRepository` | The single-transaction commit of a new task, see [Tasks and worktrees](../workspaces/tasks-and-worktrees.md) |
-| `SqliteWorktreeProvisioningLeaseRepository`, `SqliteGitCleanupJobRepository` | Provisioning leases and the durable Git cleanup queue |
-| `SqliteCascadeRepository` | Aggregate deletion used by `ora-backend` |
-| `SqliteSessionRepository` | Sessions |
-| `SqliteSkillRepository`, `SqliteAgentDefinitionRepository` | Skill and agent catalogs |
-| `SqliteWorkflowRepository`, `SqliteWorkflowRunRepository`, `SqliteWorkflowRunEngineRepository` | Workflow definitions, run CRUD and the run engine's transactions |
-| `SqliteScheduledTaskRepository`, `SqliteScheduledRunRepository` | Scheduled tasks and their runs |
-| `SqlitePluginMarketplaceSourceRepository`, `SqlitePluginSourceNamespaceRepository`, `SqlitePackInstallationRepository` | Marketplace sources, namespace bindings and pack ownership |
-| `SqliteEffectRepository` | Effect state, see [Effects](../agents/effects.md) |
-| `SqliteUserConfigRepository` | The generic key/value store for user configuration |
+| Adapter                                                                                                                | Port or role                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `SqliteProjectRepository`, `SqliteTaskRepository`, `SqliteWorkspaceRepository`, `SqliteWorktreeRepository`             | Project, task, Workspace and worktree records                                                                |
+| `SqliteTaskWorkspaceRepository`                                                                                        | The single-transaction commit of a new task, see [Tasks and worktrees](../workspaces/tasks-and-worktrees.md) |
+| `SqliteWorktreeProvisioningLeaseRepository`, `SqliteGitCleanupJobRepository`                                           | Provisioning leases and the durable Git cleanup queue                                                        |
+| `SqliteCascadeRepository`                                                                                              | Aggregate deletion used by `ora-backend`                                                                     |
+| `SqliteSessionRepository`                                                                                              | Sessions                                                                                                     |
+| `SqliteSkillRepository`, `SqliteAgentDefinitionRepository`                                                             | Skill and agent catalogs                                                                                     |
+| `SqliteWorkflowRepository`, `SqliteWorkflowRunRepository`, `SqliteWorkflowRunEngineRepository`                         | Workflow definitions, run CRUD and the run engine's transactions                                             |
+| `SqliteScheduledTaskRepository`, `SqliteScheduledRunRepository`                                                        | Scheduled tasks and their runs                                                                               |
+| `SqlitePluginMarketplaceSourceRepository`, `SqlitePluginSourceNamespaceRepository`, `SqlitePackInstallationRepository` | Marketplace sources, namespace bindings and pack ownership                                                   |
+| `SqliteEffectRepository`                                                                                               | Effect state, see [Effects](../agents/effects.md)                                                            |
+| `SqliteUserConfigRepository`                                                                                           | The generic key/value store for user configuration                                                           |
 
 Adding an adapter never changes a port signature.
 

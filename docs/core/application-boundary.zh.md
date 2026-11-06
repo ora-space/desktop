@@ -6,13 +6,13 @@ Desktop 的持久化操作分属六个 owner，因此用例编排、存储和 AC
 
 ## 职责划分
 
-| Owner | Crate | 负责 |
-|---|---|---|
-| 领域 | `ora-domain` | 有数据表支撑的实体、标识符 newtype、分类枚举，以及与传输和存储无关、始终成立的不变量 |
-| 契约 | `ora-contracts` | 请求、响应、流事件和公开错误 DTO；导出 TypeScript 到 `@ora/contracts` |
-| 应用 | `ora-application` | 用例 handler、`ApplicationError`、handler 依赖的仓储/时钟/身份/provisioning 端口、领域到契约的映射 |
-| 持久化 | `ora-db` | 这些端口的 SQLite 实现和 schema 协调，见[持久化](persistence.zh.md) |
-| Backend | `ora-backend` | 组装：SQLite 启动、系统时钟、具体仓储与 handler、agent 运行时宿主、插件生命周期、工作流执行、持久 Git 清理、公开错误投影和共享请求生命周期 |
+| Owner          | Crate                    | 负责                                                                                                                                          |
+| -------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 领域           | `ora-domain`             | 有数据表支撑的实体、标识符 newtype、分类枚举，以及与传输和存储无关、始终成立的不变量                                                          |
+| 契约           | `ora-contracts`          | 请求、响应、流事件和公开错误 DTO；导出 TypeScript 到 `@ora/contracts`                                                                         |
+| 应用           | `ora-application`        | 用例 handler、`ApplicationError`、handler 依赖的仓储/时钟/身份/provisioning 端口、领域到契约的映射                                            |
+| 持久化         | `ora-db`                 | 这些端口的 SQLite 实现和 schema 协调，见[持久化](persistence.zh.md)                                                                           |
+| Backend        | `ora-backend`            | 组装：SQLite 启动、系统时钟、具体仓储与 handler、agent 运行时宿主、插件生命周期、工作流执行、持久 Git 清理、公开错误投影和共享请求生命周期    |
 | Desktop 适配层 | `apps/desktop/src-tauri` | 很薄的 Tauri 命令：接收契约请求，调用 Backend 领域句柄或 Desktop 文件系统服务，再序列化结果，见 [Desktop 宿主](../desktop/desktop-host.zh.md) |
 
 - `ora-contracts` 的 Rust 字段名保持惯用写法，JSON 统一序列化为 `camelCase`。
@@ -24,20 +24,20 @@ Desktop 的持久化操作分属六个 owner，因此用例编排、存储和 AC
 
 `ora-domain` 不依赖 SQLite、Tauri 或 `ora-contracts`，只依赖它就能构造和检查所有模型。
 
-| 领域类型 | 数据表 | 说明 |
-|---|---|---|
-| `Project` | `projects` | 名称和仓库信息；它的 checkout 是 Main Workspace 的位置 |
-| `Workspace`、`WorkspaceProvisioning` | `workspaces`、`workspace_locations`、`workspace_provisioning` | 会话和工作流运行共享的稳定执行环境；`Main`（项目自身的 checkout）或 `Isolated`（任务 worktree） |
-| `Task` | `tasks` | Isolated Workspace 面向用户的标签，本身不带状态 |
-| `Worktree` | `worktrees` | Workspace 可选的一对一 Git 扩展，以 Workspace id 为键 |
-| `Session` | `sessions` | Workspace 中的一个对话，以及它当前所在的 provider session |
-| `Skill` | `skills` | 带命名空间的 Skill 目录条目 |
-| `AgentDefinition` | `agents` | 可配置的 Agent：带命名空间的名称、描述和 Markdown 内容 |
-| `Workflow`、`WorkflowSnapshot` | `workflows`、`workflow_snapshots` | 可编辑草稿加不可变的发布快照，见[工作流](../workflows/workflows.zh.md) |
-| `WorkflowRun`、`WorkflowNodeRun`、`WorkflowExecutionScope` | `workflow_runs`、`workflow_node_runs`、`workflow_execution_scopes` | 已执行的运行，见[工作流运行](../workflows/workflow-runs.zh.md) |
-| `ScheduledTask`、`ScheduledRun` | `scheduled_tasks`、`scheduled_runs`、`scheduled_occurrences` | 见[定时任务](../scheduled-tasks/scheduled-tasks.zh.md) |
-| `GitCleanupJob` | `git_cleanup_jobs` | 持久化的物理 Git 清理，见[任务与 worktree](../workspaces/tasks-and-worktrees.zh.md) |
-| `WorktreeProvisioningLease` | `worktree_provisioning_leases` | 创建任务期间 Git 资源的持有者 |
+| 领域类型                                                   | 数据表                                                             | 说明                                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `Project`                                                  | `projects`                                                         | 名称和仓库信息；它的 checkout 是 Main Workspace 的位置                                          |
+| `Workspace`、`WorkspaceProvisioning`                       | `workspaces`、`workspace_locations`、`workspace_provisioning`      | 会话和工作流运行共享的稳定执行环境；`Main`（项目自身的 checkout）或 `Isolated`（任务 worktree） |
+| `Task`                                                     | `tasks`                                                            | Isolated Workspace 面向用户的标签，本身不带状态                                                 |
+| `Worktree`                                                 | `worktrees`                                                        | Workspace 可选的一对一 Git 扩展，以 Workspace id 为键                                           |
+| `Session`                                                  | `sessions`                                                         | Workspace 中的一个对话，以及它当前所在的 provider session                                       |
+| `Skill`                                                    | `skills`                                                           | 带命名空间的 Skill 目录条目                                                                     |
+| `AgentDefinition`                                          | `agents`                                                           | 可配置的 Agent：带命名空间的名称、描述和 Markdown 内容                                          |
+| `Workflow`、`WorkflowSnapshot`                             | `workflows`、`workflow_snapshots`                                  | 可编辑草稿加不可变的发布快照，见[工作流](../workflows/workflows.zh.md)                          |
+| `WorkflowRun`、`WorkflowNodeRun`、`WorkflowExecutionScope` | `workflow_runs`、`workflow_node_runs`、`workflow_execution_scopes` | 已执行的运行，见[工作流运行](../workflows/workflow-runs.zh.md)                                  |
+| `ScheduledTask`、`ScheduledRun`                            | `scheduled_tasks`、`scheduled_runs`、`scheduled_occurrences`       | 见[定时任务](../scheduled-tasks/scheduled-tasks.zh.md)                                          |
+| `GitCleanupJob`                                            | `git_cleanup_jobs`                                                 | 持久化的物理 Git 清理，见[任务与 worktree](../workspaces/tasks-and-worktrees.zh.md)             |
+| `WorktreeProvisioningLease`                                | `worktree_provisioning_leases`                                     | 创建任务期间 Git 资源的持有者                                                                   |
 
 Workspace 的状态用相互独立的枚举表达，而不是一堆可选字段：`WorkspaceKind`（`Main`、`Isolated`）、`WorkspaceLifecycle`（`Provisioning`、`Active`、`Unavailable`、`Retiring`、`Deleted`）、`WorkspaceLocation`（本地文件系统、SSH，或只保存引用和不透明定位符、从不保存凭据的远程目标）以及 `WorkspaceProvisioningState`。
 
@@ -91,20 +91,20 @@ Backend 把最高层的语义 `ApplicationError` 穷尽地映射为一个公开�
 
 每个 `ora-application` handler 只接收一种请求契约，只返回一种响应契约或 `ApplicationError`，不引用任何 UI、Tauri 或数据库类型。依赖通过泛型静态分发，因此单元测试可以用内存假实现构造任意 handler。
 
-| 模块 | 用例 |
-|---|---|
-| `project` | 创建、获取、列表、列出分支、更新 |
-| `task` | 创建、获取、列表、更新 |
-| `session` | 获取、列表、删除 |
-| `skill` | 创建、获取、列表、更新、删除、启动时协调 |
-| `skill_import` | 准备、获取、提交、取消 |
-| `agent_definition` | 创建、获取、列表、更新、删除；Markdown 导入（准备、提交） |
-| `effect` | Desired State 与 Target 状态，见 [Effect](../agents/effects.zh.md) |
-| `workspace_diff` | 读取 diff 和状态、暂存、取消暂存、提交、推送 |
-| `workflow` | 创建、获取、列表、更新、删除、分析、获取/更新草稿、发布、回滚、激活、版本、删除快照 |
-| `workflow_run` | CRUD，以及运行引擎（启动、取消、重启、恢复、完成节点） |
-| `scheduled_task` | 创建、获取、列表、列出历史、更新、删除、撤销授权 |
-| `worktree` | 没有 handler，只有端口 |
+| 模块               | 用例                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `project`          | 创建、获取、列表、列出分支、更新                                                    |
+| `task`             | 创建、获取、列表、更新                                                              |
+| `session`          | 获取、列表、删除                                                                    |
+| `skill`            | 创建、获取、列表、更新、删除、启动时协调                                            |
+| `skill_import`     | 准备、获取、提交、取消                                                              |
+| `agent_definition` | 创建、获取、列表、更新、删除；Markdown 导入（准备、提交）                           |
+| `effect`           | Desired State 与 Target 状态，见 [Effect](../agents/effects.zh.md)                  |
+| `workspace_diff`   | 读取 diff 和状态、暂存、取消暂存、提交、推送                                        |
+| `workflow`         | 创建、获取、列表、更新、删除、分析、获取/更新草稿、发布、回滚、激活、版本、删除快照 |
+| `workflow_run`     | CRUD，以及运行引擎（启动、取消、重启、恢复、完成节点）                              |
+| `scheduled_task`   | 创建、获取、列表、列出历史、更新、删除、撤销授权                                    |
+| `worktree`         | 没有 handler，只有端口                                                              |
 
 这套 handler 集合意味着：
 
@@ -121,6 +121,10 @@ Backend 把最高层的语义 `ApplicationError` 穷尽地映射为一个公开�
 ## 不变量
 
 - 项目的 Main Workspace 位置在创建时确定；`UpdateProjectHandler` 只改名。
+- 创建项目时，本地 Main Workspace 路径为空或不是已存在的目录会被拒绝，返回
+  `project_workspace_not_directory`；相对路径按后续解析 cwd 时相同的基准目录解析。本地 Main Workspace
+  从创建起就是 `active`：Ora 从不为本地 checkout 做 provisioning，因此目录是否仍然存在会在每次使用时
+  重新检查并以 `workspace_unavailable` 报告，而不是固化进生命周期。
 - 会话的 Workspace 不可变。生命周期操作只改 `status` 和 `updated_at`。
 - `UpdateTaskRequest` 不能修改项目或 Workspace 归属。
 - Project 和 Task 删除在一个 SQLite 事务里软删除 Ora 拥有的整个聚合。存在运行中的会话时以 `resource_in_use` 拒绝。这些路径从不调用 Git，也从不删除 provider 拥有的 ACP 历史，但会删除 Ora 自己记录的历史。
