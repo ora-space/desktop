@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type {
   WorkflowSnapshot,
@@ -56,6 +61,24 @@ export function useWorkflowDraft(workflowId: string | null | undefined) {
     queryKey: workflowDraftKey(workflowId ?? ""),
     queryFn: async () => client.workflow.get({ workflowId: workflowId! }),
     enabled: workflowId != null && workflowId !== "",
+  });
+}
+
+/**
+ * Loads several workflows' records and draft snapshots at once, in the requested order.
+ *
+ * The editor reads one workflow through `useWorkflowDraft`; a caller that must resolve a whole set
+ * at once (the plugin import report resolves every imported document's graph) needs the same query
+ * identity and fetch without mounting one hook per id.
+ */
+export function useWorkflowDrafts(workflowIds: readonly string[]) {
+  const client = useContractsClient();
+  return useQueries({
+    queries: workflowIds.map((workflowId) => ({
+      queryKey: workflowDraftKey(workflowId),
+      queryFn: () => client.workflow.get({ workflowId }),
+      enabled: workflowId !== "",
+    })),
   });
 }
 

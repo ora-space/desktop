@@ -58,6 +58,15 @@ interface WorkflowTransferDependenciesProps {
    * the enabled state each reference is written with.
    */
   variant: "import" | "export";
+  /**
+   * Resolves a dependency instead of the shared Settings deep link. A host that already owns the
+   * destination (the plugin import report navigates inside the pane it opened from) passes its
+   * own handler; the editor import preview keeps the default.
+   */
+  onResolve?: (
+    dependency: WorkflowDependency,
+    fix: WorkflowDependencyFix,
+  ) => void;
 }
 
 /** Lists the plugin references a workflow file carries. */
@@ -65,6 +74,7 @@ export function WorkflowTransferDependencies({
   title,
   dependencies,
   variant,
+  onResolve,
 }: WorkflowTransferDependenciesProps) {
   const { t } = useTranslation();
   const openSettingsAt = useUiStore((state) => state.openSettingsAt);
@@ -72,6 +82,10 @@ export function WorkflowTransferDependencies({
 
   /** Sends the user to the place that resolves this dependency. */
   function resolve(dependency: WorkflowDependency, fix: WorkflowDependencyFix) {
+    if (onResolve !== undefined) {
+      onResolve(dependency, fix);
+      return;
+    }
     switch (fix) {
       case "install":
         // Missing MCPs and Skills are installed from the marketplace first.
