@@ -51,13 +51,8 @@ interface WorkflowImportReportDialogProps {
 }
 
 /**
- * Post-import surface for the workflow documents a plugin package carried.
- *
- * The backend installs the package and reports one outcome per document; it deliberately carries
- * no MCP/Skill identity, so this dialog reads each created workflow's graph back through the
- * workflow data owner and resolves the references with the same collector the editor's import
- * preview uses. Both import entries therefore agree on readiness, wording, and install entries,
- * and a package whose dependencies are missing no longer reports a bare success.
+ * Presents authoritative import outcomes independently of the optional dependency check.
+ * Refused-only packages never mount the catalog readers because no workflow needs checking.
  */
 export function WorkflowImportReportDialog({
   input,
@@ -66,54 +61,12 @@ export function WorkflowImportReportDialog({
 }: WorkflowImportReportDialogProps) {
   const { t } = useTranslation();
   const imported = useMemo(
-    () =>
-      input.outcomes.filter(
-        (
-          outcome,
-        ): outcome is Extract<ImportedWorkflowOutcome, { state: "imported" }> =>
-          outcome.state === "imported",
-      ),
+    () => input.outcomes.filter((outcome) => outcome.state === "imported"),
     [input.outcomes],
   );
-  const drafts = useWorkflowDrafts(
-    imported.map((outcome) => outcome.workflowId),
+  const refused = input.outcomes.filter(
+    (outcome) => outcome.state === "failed",
   );
-  const plugins = useInstalledPlugins();
-  const skills = useSkills();
-  // Readiness compares the imported graphs against installed plugins and Skills, so the report
-  // stays pending until both the graphs and those catalogs are there. A catalog that failed to
-  // load must keep the surface from claiming anything: an empty list would read as "nothing is
-  // installed", which is a different and wrong verdict.
-  const catalogsFailed = plugins.isError || skills.isError;
-  const pending =
-    drafts.some((draft) => draft.isPending) ||
-    plugins.isPending ||
-    skills.isPending;
-
-  const report = useMemo(() => {
-    if (pending || catalogsFailed) return null;
-    const graphs = new Map<string, string>();
-    imported.forEach((outcome, index) => {
-      const graph = drafts[index]?.data?.draft.graph;
-      if (graph !== undefined) graphs.set(outcome.workflowId, graph);
-    });
-    return buildWorkflowImportReport({
-      fileName: input.fileName,
-      outcomes: input.outcomes,
-      graphs,
-      plugins: plugins.data ?? [],
-      skills: skills.data ?? [],
-    });
-  }, [
-    pending,
-    catalogsFailed,
-    imported,
-    drafts,
-    input.fileName,
-    input.outcomes,
-    plugins.data,
-    skills.data,
-  ]);
 
   return (
     <Dialog
@@ -132,79 +85,44 @@ export function WorkflowImportReportDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex max-h-[60vh] flex-col gap-3.5 overflow-y-auto px-5 pt-1.5 pb-3.5">
-          {catalogsFailed ? (
-            <p role="alert" className="text-[13px] text-destructive">
-              {t("settings.plugins.importReportCheckFailed")}
-            </p>
-          ) : report === null ? (
-            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <IconLoader2 className="size-4 animate-spin" />
-              {t("settings.plugins.importReportChecking")}
-            </p>
-          ) : (
+          {imported.length > 0 && (
             <>
-              {/* A package whose documents were all refused created no workflow, so there is
-                  no import count or readiness verdict to report — only what was refused. */}
-              {report.workflows.length > 0 && (
-                <>
-                  <p className="text-[13px]">
-                    {t("settings.plugins.importReportImported", {
-                      count: report.workflows.length,
-                    })}
-                  </p>
-                  <ReportBanner report={report} />
-                </>
-              )}
-              {report.workflows.map((workflow) =>
-                workflow.dependencies === null ? (
-                  <p
-                    key={workflow.workflowId}
-                    className="rounded-[10px] border border-border px-3 py-2 text-[12.5px] text-muted-foreground"
-                  >
-                    {t("settings.plugins.importReportUnreadable", {
-                      name: workflow.name,
-                    })}
-                  </p>
-                ) : (
-                  <WorkflowTransferDependencies
-                    key={workflow.workflowId}
-                    title={workflow.name}
-                    dependencies={workflow.dependencies}
-                    variant="import"
-                    onResolve={onResolve}
-                  />
-                ),
-              )}
-              {report.refused.length > 0 && (
-                <section
-                  aria-label={t("settings.plugins.importReportRefusedTitle", {
-                    count: report.refused.length,
-                  })}
-                  className="overflow-hidden rounded-[10px] border border-border"
-                >
-                  <h3 className="border-b border-border px-3 py-2 text-[13px] font-medium">
-                    {t("settings.plugins.importReportRefusedTitle", {
-                      count: report.refused.length,
-                    })}
-                  </h3>
-                  <ul className="divide-y divide-border">
-                    {report.refused.map((refused) => (
-                      <li
-                        key={refused.sourceFile}
-                        className="px-3 py-2 text-[12px]"
-                      >
-                        <p className="font-mono break-all">
-                          {refused.sourceFile}
-                        </p>
-                        <p className="text-muted-foreground">
-                          {refused.reason}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
+              <p className="text-[13px]">
+                {t("settings.plugins.importReportImported", {
+                  count: imported.length,
+                })}
+              </p>
+              <WorkflowImportDependencies
+                fileName={input.fileName}
+                imported={imported}
+                onResolve={onResolve}
+              />
             </>
+          )}
+          {refused.length > 0 && (
+            <section
+              aria-label={t("settings.plugins.importReportRefusedTitle", {
+                count: refused.length,
+              })}
+              className="overflow-hidden rounded-[10px] border border-border"
+            >
+              <h3 className="border-b border-border px-3 py-2 text-[13px] font-medium">
+                {t("settings.plugins.importReportRefusedTitle", {
+                  count: refused.length,
+                })}
+              </h3>
+              <ul className="divide-y divide-border">
+                {refused.map((outcome) => (
+                  <li
+                    key={outcome.sourceFile}
+                    className="px-3 py-2 text-[12px]"
+                  >
+                    <p className="font-mono break-all">{outcome.sourceFile}</p>
+                    <p className="text-muted-foreground">{outcome.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </div>
         <DialogFooter className="mx-0 mb-0 flex-row items-center gap-2 rounded-b-xl border-t border-border bg-transparent px-5 pt-3 pb-4">
@@ -215,6 +133,99 @@ export function WorkflowImportReportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Checks dependencies without suppressing known workflow names while reads are pending or fail. */
+function WorkflowImportDependencies({
+  fileName,
+  imported,
+  onResolve,
+}: {
+  fileName: string;
+  imported: readonly Extract<ImportedWorkflowOutcome, { state: "imported" }>[];
+  onResolve: WorkflowImportReportDialogProps["onResolve"];
+}) {
+  const { t } = useTranslation();
+  const drafts = useWorkflowDrafts(
+    imported.map((outcome) => outcome.workflowId),
+  );
+  const plugins = useInstalledPlugins();
+  const skills = useSkills();
+  // A failed catalog is unknown, not an empty catalog in which every dependency is missing.
+  const catalogsFailed = plugins.isError || skills.isError;
+  const pending =
+    drafts.some((draft) => draft.isPending) ||
+    plugins.isPending ||
+    skills.isPending;
+  const report = useMemo(() => {
+    if (pending || catalogsFailed) return null;
+    const graphs = new Map<string, string>();
+    imported.forEach((outcome, index) => {
+      const graph = drafts[index]?.data?.draft.graph;
+      if (graph !== undefined) graphs.set(outcome.workflowId, graph);
+    });
+    return buildWorkflowImportReport({
+      fileName,
+      outcomes: imported,
+      graphs,
+      plugins: plugins.data ?? [],
+      skills: skills.data ?? [],
+    });
+  }, [
+    pending,
+    catalogsFailed,
+    imported,
+    drafts,
+    fileName,
+    plugins.data,
+    skills.data,
+  ]);
+
+  return (
+    <>
+      {catalogsFailed ? (
+        <p role="alert" className="text-[13px] text-destructive">
+          {t("settings.plugins.importReportCheckFailed")}
+        </p>
+      ) : report === null ? (
+        <p
+          role="status"
+          className="flex items-center gap-2 text-[13px] text-muted-foreground"
+        >
+          <IconLoader2 className="size-4 animate-spin" />
+          {t("settings.plugins.importReportChecking")}
+        </p>
+      ) : (
+        <ReportBanner report={report} />
+      )}
+      {imported.map((outcome, index) => {
+        const workflow = report?.workflows[index];
+        return workflow?.dependencies != null ? (
+          <WorkflowTransferDependencies
+            key={outcome.workflowId}
+            title={outcome.name}
+            dependencies={workflow.dependencies}
+            variant="import"
+            onResolve={onResolve}
+          />
+        ) : (
+          <section
+            key={outcome.workflowId}
+            className="rounded-[10px] border border-border px-3 py-2 text-[12.5px]"
+          >
+            <h3 className="font-medium">{outcome.name}</h3>
+            {workflow?.dependencies === null && (
+              <p className="text-muted-foreground">
+                {t("settings.plugins.importReportUnreadable", {
+                  name: outcome.name,
+                })}
+              </p>
+            )}
+          </section>
+        );
+      })}
+    </>
   );
 }
 

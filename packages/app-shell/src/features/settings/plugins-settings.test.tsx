@@ -32,28 +32,32 @@ import { PluginOperationEventBridge } from "./plugin-operation-event-bridge";
 import { PluginsSettings } from "./plugins-settings";
 import { useUiStore } from "../../state/stores/ui-store";
 
-/**
- * State for this test surface. The workflow and Skill fixtures are composed up front because a
- * workflow package import is reported against the graphs and catalogs it references; every other
- * test leaves them empty, which costs nothing.
- */
+/** Plugin-only state; tests opt into other domains when their behavior needs them. */
 function createFixtureState() {
-  return {
-    ...createPluginMemory(),
-    workflows: createWorkflowMemory(),
-    skills: createSkillMemory(),
-  };
+  return createPluginMemory();
 }
 
 type FixtureState = ReturnType<typeof createFixtureState>;
 
 /** Explicit domain composition for the behaviors exercised by this test file. */
 function createFixtureHandlers(state: FixtureState): TestHandlers {
-  return {
-    ...pluginHandlers(state),
+  return pluginHandlers(state);
+}
+
+/** Workflow imports explicitly compose the graph and Skill catalogs their report reads. */
+function clientWithWorkflowPackage() {
+  const { state: plugins } = clientWithWeather();
+  const state = {
+    ...plugins,
+    workflows: createWorkflowMemory(),
+    skills: createSkillMemory(),
+  };
+  const handlers: TestHandlers = {
+    ...createFixtureHandlers(state),
     ...workflowHandlers(state.workflows),
     ...skillHandlers(state.skills),
   };
+  return { state, handlers, client: createTestClient(handlers) };
 }
 
 /** One Agent node bound to the given Skills and MCPs, shaped like an exported graph envelope. */
@@ -89,7 +93,7 @@ function agentGraph(bindings: { skills?: string[]; mcps?: string[] } = {}) {
 
 /** Seeds one workflow the import created, so its report can read the graph back by id. */
 function seedImportedWorkflow(
-  state: FixtureState,
+  state: ReturnType<typeof clientWithWorkflowPackage>["state"],
   workflowId: string,
   name: string,
   graph: string,
@@ -1171,7 +1175,7 @@ it("imports a local archive through the backend", async () => {
  */
 it("reports the workflow documents and their plugin readiness after importing a package", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1235,7 +1239,7 @@ it("reports the workflow documents and their plugin readiness after importing a 
 /** A package whose documents all imported lists every workflow and has no refusal section. */
 it("lists every imported workflow without a refusal section", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1283,7 +1287,7 @@ it("lists every imported workflow without a refusal section", async () => {
  */
 it("reports an unreadable plugin catalog instead of a dependency verdict", async () => {
   const user = userEvent.setup();
-  const { state, handlers } = clientWithWeather();
+  const { state, handlers } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1334,7 +1338,7 @@ it("reports an unreadable plugin catalog instead of a dependency verdict", async
  */
 it("offers the missing dependency's install entry from the import report", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.installedPlugins.push({
     ...weatherInstalled(),
@@ -1401,7 +1405,11 @@ it("offers the missing dependency's install entry from the import report", async
  */
 it("reports only the refused documents when the package created no workflow", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, handlers } = clientWithWeather();
+  const listSkills = vi.fn(async () => {
+    throw new Error("No dependency catalog is needed for refused documents");
+  });
+  const client = createTestClient({ ...handlers, listSkills });
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1429,6 +1437,112 @@ it("reports only the refused documents when the package created no workflow", as
   expect(
     within(report).queryByText(/没有引用任何|reference no MCP/),
   ).toBeNull();
+  expect(listSkills).not.toHaveBeenCalled();
+});
+
+/** Catalog failures must not erase import outcomes that the backend already returned. */
+it.each(["listSkills", "listInstalledPlugins"] as const)(
+  "preserves imported and refused documents when %s fails",
+  async (operation) => {
+    const user = userEvent.setup();
+    const { state, handlers } = clientWithWorkflowPackage();
+    state.importTarget = weatherInstalled();
+    state.importedWorkflows = [
+      {
+        state: "imported",
+        sourceFile: "assets/workflows/1.0.0.json",
+        workflowId: "workflow-1",
+        name: "发布流程",
+        version: "1.0.0",
+      },
+      {
+        state: "failed",
+        sourceFile: "assets/workflows/broken.json",
+        reason: "document is not valid JSON",
+      },
+    ];
+    seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
+    const client = createTestClient({
+      ...handlers,
+      [operation]: async () => {
+        throw new Error("catalog unavailable");
+      },
+    });
+    renderSettings(client, platformPickingWorkflowPackage());
+
+    const report = await openImportReport(user);
+    await within(report).findByText(
+      /无法读取已安装插件|Unable to read the installed plugins/,
+    );
+    expect(
+      within(report).getByText(/已导入 1 个工作流|Imported 1 workflow/),
+    ).toBeVisible();
+    expect(within(report).getByText("发布流程")).toBeVisible();
+    expect(
+      within(report).getByText("assets/workflows/broken.json"),
+    ).toBeVisible();
+    expect(
+      within(report).getByText("document is not valid JSON"),
+    ).toBeVisible();
+    expect(
+      within(report).queryByText(/可以直接运行|can run right away/),
+    ).toBeNull();
+    expect(
+      within(report).queryByText(/没有引用任何|reference no MCP/),
+    ).toBeNull();
+  },
+);
+
+/** Import results remain visible while the independent dependency catalog is still loading. */
+it("preserves import outcomes while the Skills catalog is pending", async () => {
+  const user = userEvent.setup();
+  const { state, handlers } = clientWithWorkflowPackage();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+    {
+      state: "failed",
+      sourceFile: "assets/workflows/broken.json",
+      reason: "document is not valid JSON",
+    },
+  ];
+  seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
+  let completeCatalog!: () => void;
+  const catalog = new Promise<{ skills: [] }>((resolve) => {
+    completeCatalog = () => resolve({ skills: [] });
+  });
+  const client = createTestClient({
+    ...handlers,
+    listSkills: () => catalog,
+  });
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  expect(
+    within(report).getByText(/正在检查插件依赖|Checking the plugins/),
+  ).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(
+    within(report).getByText("assets/workflows/broken.json"),
+  ).toBeVisible();
+  expect(within(report).getByText("document is not valid JSON")).toBeVisible();
+  expect(
+    within(report).queryByText(/没有引用任何|reference no MCP/),
+  ).toBeNull();
+
+  await act(async () => completeCatalog());
+  expect(
+    await within(report).findByText(/没有引用任何|reference no MCP/),
+  ).toBeVisible();
+  expect(
+    within(report).getByText("assets/workflows/broken.json"),
+  ).toBeVisible();
 });
 
 /**
@@ -1438,7 +1552,7 @@ it("reports only the refused documents when the package created no workflow", as
  */
 it("withholds the readiness verdict when no imported graph could be read", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1475,7 +1589,7 @@ it("withholds the readiness verdict when no imported graph could be read", async
  */
 it("keeps a partly unreadable package from claiming the workflows can run", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.importedWorkflows = [
     {
@@ -1517,7 +1631,7 @@ it("keeps a partly unreadable package from claiming the workflows can run", asyn
 /** A referenced MCP that still needs configuration is finished in this pane's own editor. */
 it("opens an imported MCP's configuration from the report", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.installedPlugins.push({
     ...weatherInstalled(),
@@ -1584,9 +1698,9 @@ it("opens an imported MCP's configuration from the report", async () => {
 });
 
 /** An MCP whose declaration is invalid is inspected in the manager row that reports the error. */
-it("sends an invalid MCP back to the manager row that names the error", async () => {
+it("reveals an invalid MCP from the report despite an existing manager search", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.installedPlugins.push({
     ...weatherInstalled(),
@@ -1616,7 +1730,16 @@ it("sends an invalid MCP back to the manager row that names the error", async ()
   );
   renderSettings(client, platformPickingWorkflowPackage());
 
-  const report = await openImportReport(user);
+  await openManagePlugins(user);
+  await user.type(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+    "no-match-before-import",
+  );
+  expect(screen.queryByText("Broken MCP")).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: /导入插件|Import plugin/ }),
+  );
+  const report = await screen.findByRole("dialog");
   expect(within(report).getByText("Broken MCP")).toBeVisible();
   await user.click(
     within(report).getByRole("button", { name: /去查看|Review/ }),
@@ -1627,12 +1750,15 @@ it("sends an invalid MCP back to the manager row that names the error", async ()
   expect(
     screen.getByText(/配置声明无效|Invalid configuration declaration/),
   ).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  ).toHaveValue("official/mcp-broken");
 });
 
 /** An unusable Skill is reviewed on the Skills page, which this pane opens through Settings. */
 it("sends an unavailable Skill to the Skills settings page", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWeather();
+  const { state, client } = clientWithWorkflowPackage();
   state.importTarget = weatherInstalled();
   state.skills.skills.push({
     id: "skill-release-notes",

@@ -97,7 +97,11 @@ imported from the plugin manager or from the editor's workflow import.
 
 A workflow whose graph cannot be read back is reported as unreadable instead of as needing nothing;
 while one of those is outstanding the result states no package-wide readiness verdict and covers
-only what it could read. When every document was refused, the result lists just the refusals.
+only what it could read. Import counts, workflow names, and refused documents remain visible while
+dependency reads are pending or fail; a catalog failure only prevents the dependency verdict.
+When every document was refused, the result lists just the refusals without querying dependency
+catalogs. The review action for an invalid MCP targets its plugin id in the manager's search, so an
+earlier search cannot hide the plugin's diagnostic.
 
 ## Version
 

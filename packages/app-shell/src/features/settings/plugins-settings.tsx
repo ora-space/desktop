@@ -126,6 +126,7 @@ export function PluginsSettings({
     initialRequest?.kind === "manage" || initialRequest?.kind === "configure",
   );
   const [managingSources, setManagingSources] = useState(false);
+  const [managerQuery, setManagerQuery] = useState("");
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
@@ -280,6 +281,7 @@ export function PluginsSettings({
         });
         return;
       case "manageMcp":
+        setManagerQuery(dependency.id);
         setManaging(true);
         return;
       case "reviewSkill":
@@ -365,7 +367,10 @@ export function PluginsSettings({
             }
             pluginId={configurationPlugin.id}
             displayName={configurationPlugin.displayName}
-            onBack={() => setConfigurationPlugin(null)}
+            onBack={() => {
+              setConfigurationPlugin(null);
+              setManagerQuery("");
+            }}
             onNavigationGuardChange={onNavigationGuardChange}
           />
         </PluginsScroll>
@@ -375,6 +380,8 @@ export function PluginsSettings({
       <PluginsScroll>
         <PluginManager
           plugins={installed.data ?? []}
+          query={managerQuery}
+          onQueryChange={setManagerQuery}
           onBack={() => setManaging(false)}
           availableById={availableById}
           onImport={() => void handleImport()}
@@ -414,7 +421,12 @@ export function PluginsSettings({
               <IconSettings className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuItem onClick={() => setManaging(true)}>
+              <DropdownMenuItem
+                onClick={() => {
+                  setManagerQuery("");
+                  setManaging(true);
+                }}
+              >
                 {t("settings.plugins.manageInstalled")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setManagingSources(true)}>

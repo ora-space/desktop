@@ -50,6 +50,8 @@ function renderManager(
           <AppI18nProvider>
             <PluginManager
               plugins={plugins}
+              query=""
+              onQueryChange={() => undefined}
               onBack={() => undefined}
               onConfigure={() => undefined}
               onImport={() => undefined}
