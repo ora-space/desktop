@@ -92,6 +92,8 @@ import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
+import { WorkflowScrollSelectedNode } from "./workflow-flow/controls";
+import { collapsedIterationAncestorIds } from "./workflow-flow/scroll-geometry";
 import {
   authoredWorkflowNodesEqual,
   isNodeDragGestureActive,
@@ -2669,27 +2671,47 @@ function WorkflowEditorContent({
           >
             {displayedWorkflow !== null ? (
               <WorkflowMembershipProvider unusedNodeIds={excludedNodeIds}>
-                {unusedNodeIds.length > 0 && (
-                  <p
-                    role="status"
-                    className="px-3 py-1 text-xs text-muted-foreground"
-                  >
-                    {t("workflowNode.unusedCount", {
-                      count: unusedNodeIds.length,
-                    })}
-                  </p>
-                )}
-                {unrecognizedNodes.length > 0 && (
-                  <p
-                    role="status"
-                    className="px-3 py-1 text-xs text-muted-foreground"
-                  >
-                    {t("workflowNode.unrecognizedCount", {
-                      count: unrecognizedNodes.length,
-                      kinds: unrecognizedKinds,
-                    })}
-                  </p>
-                )}
+                <div className="relative shrink-0 pt-1">
+                  <div className="min-w-0 px-3 pb-1">
+                    {unusedNodeIds.length > 0 && (
+                      <p
+                        role="status"
+                        className="text-xs text-muted-foreground"
+                      >
+                        {t("workflowNode.unusedCount", {
+                          count: unusedNodeIds.length,
+                        })}
+                      </p>
+                    )}
+                    {unrecognizedNodes.length > 0 && (
+                      <p
+                        role="status"
+                        className="text-xs text-muted-foreground"
+                      >
+                        {t("workflowNode.unrecognizedCount", {
+                          count: unrecognizedNodes.length,
+                          kinds: unrecognizedKinds,
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="pointer-events-auto absolute left-1/2 top-1 z-10 -translate-x-1/2">
+                    <WorkflowScrollSelectedNode
+                      onRevealHiddenSelection={(ids) => {
+                        const current = workflowRef.current ?? workflow;
+                        if (current === null) {
+                          return;
+                        }
+                        for (const iterationId of collapsedIterationAncestorIds(
+                          ids,
+                          current.nodes,
+                        )) {
+                          toggleIterationCollapsed(iterationId);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
                 <WorkflowCanvas
                   key={displayedWorkflow.id}
                   capabilities={capabilities}
