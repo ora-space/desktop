@@ -3,9 +3,11 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  queryOptions,
 } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type {
+  ContractsClient,
   WorkflowSnapshot,
   WorkflowSummary,
   WorkflowVersion,
@@ -54,14 +56,22 @@ export function useWorkflowLibrary() {
   });
 }
 
-/** Loads one workflow's record and draft snapshot (with its full graph envelope). */
-export function useWorkflowDraft(workflowId: string | null | undefined) {
-  const client = useContractsClient();
-  return useQuery({
+/** One fetch policy for every observer of a persisted workflow draft. */
+function workflowDraftOptions(
+  client: ContractsClient,
+  workflowId: string | null | undefined,
+) {
+  return queryOptions({
     queryKey: workflowDraftKey(workflowId ?? ""),
     queryFn: async () => client.workflow.get({ workflowId: workflowId! }),
     enabled: workflowId != null && workflowId !== "",
   });
+}
+
+/** Loads one workflow's record and draft snapshot (with its full graph envelope). */
+export function useWorkflowDraft(workflowId: string | null | undefined) {
+  const client = useContractsClient();
+  return useQuery(workflowDraftOptions(client, workflowId));
 }
 
 /**
@@ -74,11 +84,9 @@ export function useWorkflowDraft(workflowId: string | null | undefined) {
 export function useWorkflowDrafts(workflowIds: readonly string[]) {
   const client = useContractsClient();
   return useQueries({
-    queries: workflowIds.map((workflowId) => ({
-      queryKey: workflowDraftKey(workflowId),
-      queryFn: () => client.workflow.get({ workflowId }),
-      enabled: workflowId !== "",
-    })),
+    queries: workflowIds.map((workflowId) =>
+      workflowDraftOptions(client, workflowId),
+    ),
   });
 }
 
