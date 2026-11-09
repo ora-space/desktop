@@ -1,5 +1,11 @@
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useReactFlow, useViewport } from "@xyflow/react";
+import {
+  useReactFlow,
+  useStore,
+  useStoreApi,
+  useViewport,
+} from "@xyflow/react";
 import {
   IconArrowsMaximize,
   IconFocusCentered,
@@ -19,6 +25,188 @@ interface WorkflowCanvasControlsProps {
 
 interface WorkflowCanvasInspectorRestoreProps {
   onExpandInspector: () => void;
+}
+
+export interface ScreenBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Screen-pixel pan that puts the target box in the middle of the pane. */
+export function viewportDeltaToCenter(
+  pane: ScreenBox,
+  target: ScreenBox,
+): { x: number; y: number } {
+  return {
+    x: pane.left + pane.width / 2 - (target.left + target.width / 2),
+    y: pane.top + pane.height / 2 - (target.top + target.height / 2),
+  };
+}
+
+export interface SelectionAncestorNode {
+  id: string;
+  parentId?: string;
+  data: { kind: string; collapsed?: boolean };
+}
+
+/**
+ * Iterations that must be expanded before a selected card can be measured.
+ * Collapsing a frame unmounts its members, so the scroll button otherwise
+ * has nothing on screen to center.
+ */
+export function collapsedIterationAncestorIds(
+  ids: readonly string[],
+  nodes: readonly SelectionAncestorNode[],
+): string[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const collapsed: string[] = [];
+  for (const id of ids) {
+    let parentId = byId.get(id)?.parentId;
+    while (parentId !== undefined) {
+      const parent = byId.get(parentId);
+      if (parent === undefined) {
+        break;
+      }
+      if (
+        parent.data.kind === "iteration" &&
+        parent.data.collapsed === true &&
+        !collapsed.includes(parent.id)
+      ) {
+        collapsed.push(parent.id);
+      }
+      parentId = parent.parentId;
+    }
+  }
+  return collapsed;
+}
+
+/** Bounding box around every selected card, in screen pixels. */
+export function unionScreenBox(boxes: readonly ScreenBox[]): ScreenBox | null {
+  if (boxes.length === 0) {
+    return null;
+  }
+  const left = Math.min(...boxes.map((box) => box.left));
+  const top = Math.min(...boxes.map((box) => box.top));
+  const right = Math.max(...boxes.map((box) => box.left + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.top + box.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+/**
+ * Pans the current zoom so the selected card sits in the middle of the canvas.
+ * Measures the rendered card, because iteration members are drawn inside a
+ * parent frame and their graph position is not the on-screen position.
+ */
+export function WorkflowScrollSelectedNode({
+  onRevealHiddenSelection,
+}: {
+  /** Expands collapsed frames that are hiding the cards about to be centered. */
+  onRevealHiddenSelection?: (ids: readonly string[]) => void;
+}) {
+  const { t } = useTranslation();
+  const selectedIds = useStore((state) =>
+    state.nodes
+      .filter((node) => node.selected)
+      .map((node) => node.id)
+      .join("\0"),
+  );
+  const { getViewport, setViewport } = useReactFlow();
+  const store = useStoreApi();
+  // Closing the right-hand inspector clears the selection. Keep the last card
+  // so the button can still bring it back.
+  const rememberedIds = useRef<string[]>([]);
+  const liveIds = selectedIds === "" ? [] : selectedIds.split("\0");
+  if (liveIds.length > 0) {
+    rememberedIds.current = liveIds;
+  }
+  const ids = liveIds.length > 0 ? liveIds : rememberedIds.current;
+
+  /** Pans to the rendered cards. Returns false when none are measurable yet. */
+  const panToIds = (targetIds: readonly string[]): boolean => {
+    const boxes = targetIds.flatMap((id) => {
+      const card = document.querySelector(
+        `[data-workflow-node-id="${CSS.escape(id)}"]`,
+      );
+      if (!(card instanceof HTMLElement)) {
+        return [];
+      }
+      const rect = card.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        return [];
+      }
+      return [
+        {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        },
+      ];
+    });
+    const target = unionScreenBox(boxes);
+    const pane = document.querySelector(".workflow-flow");
+    if (target === null || !(pane instanceof HTMLElement)) {
+      return false;
+    }
+    const paneRect = pane.getBoundingClientRect();
+    const delta = viewportDeltaToCenter(
+      {
+        left: paneRect.left,
+        top: paneRect.top,
+        width: paneRect.width,
+        height: paneRect.height,
+      },
+      target,
+    );
+    const viewport = getViewport();
+    void setViewport(
+      {
+        x: viewport.x + delta.x,
+        y: viewport.y + delta.y,
+        zoom: viewport.zoom,
+      },
+      { duration: 220 },
+    );
+    return true;
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="nopan nodrag nowheel relative z-50 h-7 rounded-full bg-background/95 px-3 text-xs shadow-sm backdrop-blur"
+      disabled={ids.length === 0}
+      title={ids.length === 0 ? t("settings.workflow.noSelection") : undefined}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={() => {
+        if (liveIds.length === 0) {
+          store.getState().addSelectedNodes(ids);
+        }
+        const retry = (attempt: number): void => {
+          if (panToIds(ids)) {
+            return;
+          }
+          if (attempt === 0) {
+            onRevealHiddenSelection?.(ids);
+          }
+          if (attempt >= 12) {
+            return;
+          }
+          requestAnimationFrame(() => {
+            retry(attempt + 1);
+          });
+        };
+        retry(0);
+      }}
+    >
+      {t("settings.workflow.scrollToSelectedNode")}
+    </Button>
+  );
 }
 
 /** Renders a compact Dify-style zoom group anchored to the canvas bottom-right. */
