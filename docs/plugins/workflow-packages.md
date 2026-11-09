@@ -63,9 +63,8 @@ library and drop the file into `assets/workflows/`.
 
 ## Import
 
-Workflow packages are imported through the ordinary local archive import (`importPlugin`); there is
-no separate entry point, and the package's `kind` decides what happens. Marketplace installation of
-workflow packages does not import documents.
+Workflow packages are imported through the ordinary local archive import (`importPlugin`) and through
+marketplace installation and upgrade; the package's `kind` decides what happens.
 
 1. The archive is verified, extracted and committed under the `local` namespace. A package that fails
    to install creates no workflows.
@@ -79,6 +78,31 @@ Because validation reuses the run engine's parser, an imported workflow is held 
 a run would apply; a document that could never execute is refused at import. A broken document costs
 only itself, and each document either becomes a workflow with one published snapshot or does not
 become one at all.
+
+### Marketplace install and upgrade
+
+A marketplace install of a Workflow package imports the documents it carries, so the package is
+usable as soon as it lands; a pack imports what each newly installed workflow member carries. The
+copy that results is the user's data, so the marketplace keeps a durable record per source path
+(`(source namespace, plugin identifier, document path)`) and only imports paths without a terminal
+record:
+
+- A path that already has a copy is skipped on every later install, upgrade and retry. The copy is
+  never overwritten, renamed, or removed, even when the new version changes that document.
+- A document whose name is already taken keeps the user's workflow and is reported as a conflict
+  skip once; later upgrades report it as an already handled path instead of failing again.
+- Any other failure leaves no record, so it can be retried. `InstallPluginResponse` and
+  `UpdatePluginResponse` report these outcomes per document, distinguishing imported, already
+  handled, first name-conflict skip, and failed, and naming the member plugin that carried each
+  document.
+- The installed Workflow package's card offers "retry failed document imports". It reconsiders only
+  paths without a terminal record, so a successful or conflict-skipped path stays as it is, and an
+  upgrade retries those same paths on its way through.
+- The records outlive the copy: uninstalling and reinstalling the package, or deleting a workflow,
+  does not make a path look new. A workflow the user deleted therefore stays deleted.
+
+Local `.orax` import is unchanged: it imports every document it carries and reports a name conflict
+as that document's failure.
 
 ### Plugin readiness
 
