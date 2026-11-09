@@ -32,7 +32,8 @@ pub use repository::{
     SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
     SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
     SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository,
-    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository, SqliteWorkflowRepository,
+    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository,
+    SqliteWorkflowDocumentSourceRepository, SqliteWorkflowRepository,
     SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };

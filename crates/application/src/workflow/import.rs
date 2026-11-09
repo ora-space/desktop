@@ -83,21 +83,12 @@ where
 
     /// Creates and publishes the workflow one document describes.
     fn try_import(&self, document: &WorkflowDocument) -> Result<ImportedWorkflowOutcome, String> {
-        let declared: DeclaredDocument = serde_json::from_str(&document.contents)
-            .map_err(|error| format!("document is not valid JSON: {error}"))?;
-        let name = declared.name.as_deref().unwrap_or_default().trim();
-        if name.is_empty() {
-            return Err("document declares no workflow name".to_string());
-        }
-        // The run engine owns graph validation, so a document that could never execute is refused
-        // here rather than stored and discovered when a run starts.
-        WorkflowGraph::parse(&document.contents)
-            .map_err(|error| format!("document is not an executable workflow graph: {error}"))?;
+        let parsed = parse_workflow_document(&document.contents)?;
 
         let created = self
             .create
             .handle(CreateWorkflowRequest {
-                name: name.to_string(),
+                name: parsed.name.clone(),
                 // The stored graph is the document verbatim. The engine ignores the editor
                 // metadata written beside the graph, so no field needs projecting out first, and
                 // keeping the document intact means an exported file round-trips unchanged.
@@ -105,8 +96,11 @@ where
             })
             .map_err(|error| error.to_string())?;
 
-        let version =
-            derive_publish_version(declared.version.as_deref(), &document.source_file, name);
+        let version = derive_publish_version(
+            parsed.version.as_deref(),
+            &document.source_file,
+            &parsed.name,
+        );
         let published = self
             .publish
             .handle(PublishWorkflowRequest {
@@ -118,10 +112,39 @@ where
         Ok(ImportedWorkflowOutcome::Imported {
             source_file: document.source_file.clone(),
             workflow_id: created.workflow.id,
-            name: name.to_string(),
+            name: parsed.name,
             version: published.snapshot.version,
         })
     }
+}
+
+/// The workflow one document declares, once its text parses into an executable graph.
+pub(super) struct ParsedWorkflowDocument {
+    /// Workflow name the created record owns.
+    pub(super) name: String,
+    /// Explicit publish version, preferred over the file name.
+    pub(super) version: Option<String>,
+}
+
+/// Reads the workflow one document declares, refusing text that could never become one.
+///
+/// Both import paths share this so a marketplace document is refused for exactly the reason the
+/// same document would be refused when it arrives in a local `.orax` package.
+pub(super) fn parse_workflow_document(contents: &str) -> Result<ParsedWorkflowDocument, String> {
+    let declared: DeclaredDocument = serde_json::from_str(contents)
+        .map_err(|error| format!("document is not valid JSON: {error}"))?;
+    let name = declared.name.as_deref().unwrap_or_default().trim();
+    if name.is_empty() {
+        return Err("document declares no workflow name".to_string());
+    }
+    // The run engine owns graph validation, so a document that could never execute is refused
+    // here rather than stored and discovered when a run starts.
+    WorkflowGraph::parse(contents)
+        .map_err(|error| format!("document is not an executable workflow graph: {error}"))?;
+    Ok(ParsedWorkflowDocument {
+        name: name.to_string(),
+        version: declared.version,
+    })
 }
 
 /// The fields import reads out of a document before storing the rest as the graph.

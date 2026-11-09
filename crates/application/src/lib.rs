@@ -76,11 +76,13 @@ pub use user_config::{DeveloperMode, NetworkProxySettings, UserConfigService};
 pub use workflow::{
     ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
     DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
-    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler, ImportWorkflowsHandler,
-    ListVersionsHandler, ListWorkflowsHandler, PublishSnapshotResult, PublishWorkflowHandler,
-    RollbackDraftResult, RollbackWorkflowHandler, UpdateDraftHandler, UpdateDraftResult,
-    UpdateWorkflowHandler, UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowDocument,
-    WorkflowIdGenerator, WorkflowRepository,
+    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
+    ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
+    ListWorkflowsHandler, MarketplaceWorkflowDocument, NewImportedWorkflow, PublishSnapshotResult,
+    PublishWorkflowHandler, RollbackDraftResult, RollbackWorkflowHandler, UpdateDraftHandler,
+    UpdateDraftResult, UpdateWorkflowHandler, UpdateWorkflowResult, UuidWorkflowIdGenerator,
+    WorkflowDocument, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
+    WorkflowDocumentSourceState, WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
     AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentMcp,
