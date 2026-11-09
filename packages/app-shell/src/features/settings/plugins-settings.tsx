@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AvailablePlugin,
-  ImportedWorkflowOutcome,
   InstalledPlugin,
   PackInstallationStatus,
   PackMemberReconciliationState,
@@ -61,7 +60,15 @@ import {
   type HookExecutionAction,
 } from "./hook-execution-confirm";
 import { useUiStore } from "../../state/stores/ui-store";
-import type { TFunction } from "i18next";
+import {
+  type WorkflowDependency,
+  type WorkflowDependencyFix,
+} from "../workflow-editor/workflow-transfer";
+import {
+  WorkflowImportReportDialog,
+  type WorkflowImportReportInput,
+} from "./workflow-import-report-dialog";
+import { importedArchiveName } from "./workflow-import-report";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -119,6 +126,7 @@ export function PluginsSettings({
     initialRequest?.kind === "manage" || initialRequest?.kind === "configure",
   );
   const [managingSources, setManagingSources] = useState(false);
+  const [managerQuery, setManagerQuery] = useState("");
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
@@ -131,9 +139,13 @@ export function PluginsSettings({
       : null,
   );
   const [selecting, setSelecting] = useState(false);
+  /** Outcomes of the last import that carried workflow documents; absent for every other kind. */
+  const [importReport, setImportReport] =
+    useState<WorkflowImportReportInput | null>(null);
   const [readmePlugin, setReadmePlugin] = useState<AvailablePlugin | null>(
     null,
   );
+  const openSettingsAt = useUiStore((state) => state.openSettingsAt);
   const [uninstallingPack, setUninstallingPack] = useState<string | null>(null);
   const packInstallations = usePackInstallations();
   const queryClient = useQueryClient();
@@ -243,6 +255,41 @@ export function PluginsSettings({
           time: new Date(Number(updatedAt) * 1000).toLocaleString(),
         });
 
+  /**
+   * Resolves one dependency of an imported workflow without leaving this pane.
+   *
+   * The report is a nested dialog of the plugin manager, so the shared Settings deep link would
+   * only be adopted by the next mount of this pane. The manager already holds every destination
+   * the report links to, so it moves its own view instead.
+   */
+  const resolveImportDependency = (
+    dependency: WorkflowDependency,
+    fix: WorkflowDependencyFix,
+  ) => {
+    setImportReport(null);
+    switch (fix) {
+      case "install":
+        // Missing MCPs and Skills are installed from the marketplace, which is this pane's list.
+        setConfigurationPlugin(null);
+        setManaging(false);
+        setQuery(dependency.id);
+        return;
+      case "configureMcp":
+        setConfigurationPlugin({
+          id: dependency.id,
+          displayName: dependency.label,
+        });
+        return;
+      case "manageMcp":
+        setManagerQuery(dependency.id);
+        setManaging(true);
+        return;
+      case "reviewSkill":
+        openSettingsAt("skills");
+        return;
+    }
+  };
+
   const handleImport = async () => {
     setSelecting(true);
     try {
@@ -252,19 +299,21 @@ export function PluginsSettings({
         { path },
         {
           onSuccess: (response) => {
-            // Only a package that carried workflow documents says anything about workflows.
-            // Every other kind leaves the description unset, so an ordinary plugin import still
-            // produces the one-argument success toast its callers already match against.
-            const description =
-              response.workflows.length === 0
-                ? undefined
-                : workflowImportSummary(response.workflows, t);
+            // A package that carried workflow documents gets a result surface of its own: the
+            // documents are installed whatever their plugin readiness is, so the dialog reports
+            // what arrived and which references are still missing. Every other kind keeps the
+            // plain success toast its callers already match against.
             showPluginInstallOutcome(
               response.outcome,
               t,
               "settings.plugins.importSuccess",
-              description,
             );
+            if (response.workflows.length > 0) {
+              setImportReport({
+                fileName: importedArchiveName(path),
+                outcomes: response.workflows,
+              });
+            }
           },
           onError: (cause) =>
             showContractError(cause, t("settings.plugins.importFailed")),
@@ -318,7 +367,10 @@ export function PluginsSettings({
             }
             pluginId={configurationPlugin.id}
             displayName={configurationPlugin.displayName}
-            onBack={() => setConfigurationPlugin(null)}
+            onBack={() => {
+              setConfigurationPlugin(null);
+              setManagerQuery("");
+            }}
             onNavigationGuardChange={onNavigationGuardChange}
           />
         </PluginsScroll>
@@ -328,6 +380,8 @@ export function PluginsSettings({
       <PluginsScroll>
         <PluginManager
           plugins={installed.data ?? []}
+          query={managerQuery}
+          onQueryChange={setManagerQuery}
           onBack={() => setManaging(false)}
           availableById={availableById}
           onImport={() => void handleImport()}
@@ -339,6 +393,15 @@ export function PluginsSettings({
             })
           }
         />
+        {/* The report belongs to the manager step that started the import, so it is composed
+            beside the list and closes with it rather than outliving the surface it came from. */}
+        {importReport !== null && (
+          <WorkflowImportReportDialog
+            input={importReport}
+            onClose={() => setImportReport(null)}
+            onResolve={resolveImportDependency}
+          />
+        )}
       </PluginsScroll>
     );
   }
@@ -358,7 +421,12 @@ export function PluginsSettings({
               <IconSettings className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuItem onClick={() => setManaging(true)}>
+              <DropdownMenuItem
+                onClick={() => {
+                  setManagerQuery("");
+                  setManaging(true);
+                }}
+              >
                 {t("settings.plugins.manageInstalled")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setManagingSources(true)}>
@@ -820,24 +888,4 @@ function CompletedInstallIcon({
       />
     </span>
   );
-}
-
-/**
- * Summarizes the per-document outcomes of a workflow package import.
- *
- * Every document imports on its own, so the summary reports both counts instead of only
- * failures: "all imported" and "some refused" are different results, and the user has to be able
- * to tell them apart without going to the workflow library to count rows.
- */
-function workflowImportSummary(
-  outcomes: readonly ImportedWorkflowOutcome[],
-  t: TFunction,
-): string {
-  const imported = outcomes.filter(
-    (outcome) => outcome.state === "imported",
-  ).length;
-  const failed = outcomes.length - imported;
-  return failed === 0
-    ? t("settings.plugins.importWorkflowsImported", { count: imported })
-    : t("settings.plugins.importWorkflowsSummary", { imported, failed });
 }

@@ -58,6 +58,8 @@ export function PluginManager({
   availableById,
   onImport,
   importing,
+  query,
+  onQueryChange,
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
@@ -65,9 +67,11 @@ export function PluginManager({
   availableById?: ReadonlyMap<string, AvailablePlugin>;
   onImport: () => void;
   importing: boolean;
+  /** The settings pane owns search so dependency navigation can reveal a target plugin. */
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
   const { t } = useTranslation();
-  const [query, setQuery] = useState("");
   const scan = usePluginScan();
   // Plugin log controls are developer tooling: they only appear once developer mode is on.
   const developerTools = useDeveloperMode().state?.enabled === true;
@@ -119,7 +123,7 @@ export function PluginManager({
           <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             placeholder={t("settings.plugins.search")}
             aria-label={t("settings.plugins.search")}
             className="pl-8"

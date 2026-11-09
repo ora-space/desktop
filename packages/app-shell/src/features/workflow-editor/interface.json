@@ -13,6 +13,18 @@
       "exports": ["useWorkflowEditorStore", "useWorkflowEditorRenderRecovery"],
       "purpose": "Sidebar and shell integration tests coordinate editor selection; the workspace boundary observes editor-owned render recovery. Persisted definitions remain state/data owned."
     },
+    "./workflow-transfer": {
+      "exports": [
+        "collectWorkflowDependencies",
+        "WorkflowDependency",
+        "WorkflowDependencyFix"
+      ],
+      "purpose": "Settings resolves the plugin dependencies of the workflows an imported package carries with the same rules the editor's import preview uses, so both import entries agree."
+    },
+    "./workflow-transfer-dependencies": {
+      "exports": ["WorkflowTransferDependencies"],
+      "purpose": "Settings renders an imported package's workflow dependencies with the same list, statuses, node usage, and install entries as the editor import preview."
+    },
     "./translations": {
       "exports": ["workflowEditorTranslations"],
       "purpose": "The single i18n composition loads this feature's pure resource bundle.",

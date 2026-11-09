@@ -1,6 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type {
+  ContractsClient,
   WorkflowSnapshot,
   WorkflowSummary,
   WorkflowVersion,
@@ -49,13 +56,37 @@ export function useWorkflowLibrary() {
   });
 }
 
-/** Loads one workflow's record and draft snapshot (with its full graph envelope). */
-export function useWorkflowDraft(workflowId: string | null | undefined) {
-  const client = useContractsClient();
-  return useQuery({
+/** One fetch policy for every observer of a persisted workflow draft. */
+function workflowDraftOptions(
+  client: ContractsClient,
+  workflowId: string | null | undefined,
+) {
+  return queryOptions({
     queryKey: workflowDraftKey(workflowId ?? ""),
     queryFn: async () => client.workflow.get({ workflowId: workflowId! }),
     enabled: workflowId != null && workflowId !== "",
+  });
+}
+
+/** Loads one workflow's record and draft snapshot (with its full graph envelope). */
+export function useWorkflowDraft(workflowId: string | null | undefined) {
+  const client = useContractsClient();
+  return useQuery(workflowDraftOptions(client, workflowId));
+}
+
+/**
+ * Loads several workflows' records and draft snapshots at once, in the requested order.
+ *
+ * The editor reads one workflow through `useWorkflowDraft`; a caller that must resolve a whole set
+ * at once (the plugin import report resolves every imported document's graph) needs the same query
+ * identity and fetch without mounting one hook per id.
+ */
+export function useWorkflowDrafts(workflowIds: readonly string[]) {
+  const client = useContractsClient();
+  return useQueries({
+    queries: workflowIds.map((workflowId) =>
+      workflowDraftOptions(client, workflowId),
+    ),
   });
 }
 
