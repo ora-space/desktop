@@ -124,6 +124,7 @@ desktop_command_registry! {
     commands::session::resume_session_history,
     commands::workflow_run::resume_workflow_run_from_failure,
     commands::effect::retry_effect_target,
+    commands::plugin::retry_workflow_import,
     commands::scheduled_task::revoke_scheduled_task_approval,
     commands::workflow::rollback_workflow,
     commands::plugin::save_plugin_configuration,

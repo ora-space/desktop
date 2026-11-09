@@ -122,6 +122,7 @@ export const tauriCommands = {
   resumeSessionHistory: "resume_session_history",
   resumeWorkflowRunFromFailure: "resume_workflow_run_from_failure",
   retryEffectTarget: "retry_effect_target",
+  retryWorkflowImport: "retry_workflow_import",
   revokeScheduledTaskApproval: "revoke_scheduled_task_approval",
   rollbackWorkflow: "rollback_workflow",
   savePluginConfiguration: "save_plugin_configuration",

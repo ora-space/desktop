@@ -4,13 +4,12 @@
 //! namespace, proxy policy, and object-store scoping can never diverge between the two operations.
 //! Both expose an observed variant that forwards byte-level transfer progress to the host shell.
 
-use super::PluginApi;
+use super::{InstalledPackage, PluginApi, UpdatedPackage};
 use crate::error::{BackendError, ErrorClassification};
 use crate::proxy;
 use ora_contracts::{
-    EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
-    PluginPackageInvalidParams, PublicError, StopPluginRequest, UpdatePluginRequest,
-    UpdatePluginResponse,
+    EmptyErrorParams, InstallOutcome, InstallPluginRequest, PluginPackageInvalidParams,
+    PublicError, StopPluginRequest, UpdatePluginRequest,
 };
 use ora_domain::{PluginId, PluginNamespace};
 use ora_logging::ora_info;
@@ -36,7 +35,7 @@ impl PluginApi {
     pub(crate) async fn install(
         &self,
         request: InstallPluginRequest,
-    ) -> Result<InstallPluginResponse, BackendError> {
+    ) -> Result<InstalledPackage, BackendError> {
         self.install_package(request, /*progress*/ None).await
     }
 
@@ -45,7 +44,7 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
         progress: ProgressCallback,
-    ) -> Result<InstallPluginResponse, BackendError> {
+    ) -> Result<InstalledPackage, BackendError> {
         self.install_package(request, Some(progress)).await
     }
 
@@ -54,7 +53,7 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
         progress: Option<ProgressCallback>,
-    ) -> Result<InstallPluginResponse, BackendError> {
+    ) -> Result<InstalledPackage, BackendError> {
         let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id).await?;
         // A pack is an orchestration entry: it resolves like any listing but expands into member
@@ -108,7 +107,7 @@ impl PluginApi {
         release_source: ora_plugin_manager::ResolvedReleaseSource,
         installer: &Installer<D>,
         progress: Option<ProgressCallback>,
-    ) -> Result<InstallPluginResponse, BackendError>
+    ) -> Result<InstalledPackage, BackendError>
     where
         D: HttpDownload,
     {
@@ -144,9 +143,15 @@ impl PluginApi {
         .map_err(|error| map_install_error("failed to install plugin", error))?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
-        Ok(InstallPluginResponse {
+        // Read after the snapshot refresh: the documents are located through the discovered
+        // contribution rather than guessed from the package layout. A package that carries none
+        // reports an empty list, which is what an ordinary plugin install produces.
+        let workflow_documents =
+            self.contributed_workflow_documents(std::slice::from_ref(&request.plugin_id))?;
+        Ok(InstalledPackage {
             plugin_id: request.plugin_id,
             outcome: InstallOutcome::Installed,
+            workflow_documents,
         })
     }
 
@@ -159,7 +164,7 @@ impl PluginApi {
     pub(crate) async fn update(
         &self,
         request: UpdatePluginRequest,
-    ) -> Result<UpdatePluginResponse, BackendError> {
+    ) -> Result<UpdatedPackage, BackendError> {
         self.update_package(request, /*progress*/ None).await
     }
 
@@ -168,7 +173,7 @@ impl PluginApi {
         &self,
         request: UpdatePluginRequest,
         progress: ProgressCallback,
-    ) -> Result<UpdatePluginResponse, BackendError> {
+    ) -> Result<UpdatedPackage, BackendError> {
         self.update_package(request, Some(progress)).await
     }
 
@@ -178,7 +183,7 @@ impl PluginApi {
         &self,
         request: UpdatePluginRequest,
         progress: Option<ProgressCallback>,
-    ) -> Result<UpdatePluginResponse, BackendError> {
+    ) -> Result<UpdatedPackage, BackendError> {
         let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id).await?;
         // A pack is never installed, so it has nothing to update; refreshing members means
@@ -228,7 +233,7 @@ impl PluginApi {
         release_source: ora_plugin_manager::ResolvedReleaseSource,
         installer: &Installer<D>,
         progress: Option<ProgressCallback>,
-    ) -> Result<UpdatePluginResponse, BackendError>
+    ) -> Result<UpdatedPackage, BackendError>
     where
         D: HttpDownload,
     {
@@ -272,8 +277,13 @@ impl PluginApi {
         .map_err(|error| self.map_update_error("failed to update plugin", error))?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "updated marketplace plugin");
-        Ok(UpdatePluginResponse {
+        // The new version's documents are read after the snapshot refresh, so the upgrade imports
+        // exactly what the version it just landed carries and nothing it removed.
+        let workflow_documents =
+            self.contributed_workflow_documents(std::slice::from_ref(&request.plugin_id))?;
+        Ok(UpdatedPackage {
             plugin_id: request.plugin_id,
+            workflow_documents,
         })
     }
 

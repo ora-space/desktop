@@ -275,6 +275,10 @@ impl Backend {
                 plugin,
                 agent_runtime.clone(),
                 Arc::new(crate::workflow::workflow_import(pool.clone(), clock)),
+                Arc::new(crate::workflow::marketplace_workflow_import(
+                    pool.clone(),
+                    clock,
+                )),
             ),
             agent_runtime: AgentRuntime::new(agent_runtime),
             skill: Arc::new(SkillApi::new(

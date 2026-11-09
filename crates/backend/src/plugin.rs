@@ -189,6 +189,37 @@ pub(crate) struct ImportedPlugin {
     pub workflow_documents: Vec<WorkflowDocument>,
 }
 
+/// One workflow document a marketplace package contributed, attributed to the member carrying it.
+///
+/// The attribution is what makes a pack report usable: several members can each deliver documents,
+/// and the durable source record is keyed by the member's canonical id, not by the pack's.
+pub(crate) struct ContributedWorkflowDocument {
+    /// Namespace segment of the canonical identifier of the member that delivered the document.
+    pub namespace: String,
+    /// Name segment of that member's canonical identifier.
+    pub identifier: String,
+    /// The document text and its package-relative path, still uninterpreted.
+    pub document: WorkflowDocument,
+}
+
+/// Carries one installed package and the workflow documents it contributed.
+pub(crate) struct InstalledPackage {
+    /// Canonical identifier of the installed package or pack.
+    pub plugin_id: String,
+    /// The typed installation outcome.
+    pub outcome: InstallOutcome,
+    /// Documents contributed by the newly installed package, or by the members a pack installed.
+    pub workflow_documents: Vec<ContributedWorkflowDocument>,
+}
+
+/// Carries one updated package and the workflow documents its new version contributed.
+pub(crate) struct UpdatedPackage {
+    /// Canonical identifier of the updated package.
+    pub plugin_id: String,
+    /// Documents contributed by the newly installed version.
+    pub workflow_documents: Vec<ContributedWorkflowDocument>,
+}
+
 impl PluginApi {
     /// Opens plugin lifecycle state with the concrete backend adapters.
     pub(crate) fn open(
@@ -716,6 +747,19 @@ impl PluginApi {
         }
         self.notify_mcp_desired_changed();
         Ok(())
+    }
+
+    /// Reads the workflow documents every plugin in `plugin_ids` currently contributes.
+    ///
+    /// The plugin layer stops at reading text: what a workflow is belongs to the workflow use case,
+    /// which the caller sequences once the package is committed and the agent set is reconciled.
+    /// Ids that are not installed, or whose package carries no documents, are absent from the
+    /// result rather than an error, so an ordinary plugin needs no special case.
+    pub(crate) fn contributed_workflow_documents(
+        &self,
+        plugin_ids: &[String],
+    ) -> Result<Vec<ContributedWorkflowDocument>, BackendError> {
+        workflow_documents::read_contributed_workflow_documents(&self.home_directory, plugin_ids)
     }
 
     /// Projects validated static Skill metadata into the shared catalog and Effect source tables.

@@ -15,9 +15,10 @@ use crate::settings::Settings;
 use ora_contracts::{
     HookLifecycleOutcome, HookLifecyclePhase, ImportPluginRequest, ImportedWorkflowOutcome,
     InitializeHookRequest, InstallOutcome, InstallPluginRequest, ListHookLifecycleReportsRequest,
-    ListInstalledPluginsRequest, ListPackInstallationsRequest, PackInstallFailure,
-    PackUninstallPlanRequest, PluginDataDisposition, PluginPackageInvalidParams, PublicError,
-    UninstallPluginRequest, UpdatePluginRequest,
+    ListInstalledPluginsRequest, ListPackInstallationsRequest, MarketplaceWorkflowOutcome,
+    PackInstallFailure, PackUninstallPlanRequest, PluginDataDisposition,
+    PluginPackageInvalidParams, PublicError, RetryWorkflowImportRequest, UninstallPluginRequest,
+    UpdatePluginRequest,
 };
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqlitePackInstallationRepository,
@@ -87,6 +88,10 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
         host,
         runtime,
         Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+        Arc::new(crate::workflow::marketplace_workflow_import(
+            pool.clone(),
+            SystemClock,
+        )),
     )
 }
 
@@ -378,6 +383,10 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
             host.clone(),
             runtime,
             Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+            Arc::new(crate::workflow::marketplace_workflow_import(
+                pool.clone(),
+                SystemClock,
+            )),
         ),
         host,
     )
@@ -1333,8 +1342,21 @@ const WORKFLOW_DOCUMENT: &str = r#"{"name":"导入流程","version":"1.0.0","vie
 
 /// Writes a Workflow `.orax` carrying the given `assets/workflows/<name>` documents.
 fn write_workflow_orax(path: &Path, identifier: &str, documents: &[(&str, &str)]) {
+    write_workflow_orax_version(path, identifier, "0.1.0", documents);
+}
+
+/// Writes a Workflow `.orax` whose manifest declares `version`.
+///
+/// The installer refuses a package whose own version disagrees with the listing that delivered it,
+/// so an upgrade fixture has to state the new version in both places.
+fn write_workflow_orax_version(
+    path: &Path,
+    identifier: &str,
+    version: &str,
+    documents: &[(&str, &str)],
+) {
     let manifest = format!(
-        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"workflow\"\nversion = \"0.1.0\"\ndescription = \"Workflow package\"\n"
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"workflow\"\nversion = \"{version}\"\ndescription = \"Workflow package\"\n"
     );
     let mut writer = ZipWriter::new(File::create(path).unwrap());
     let options = SimpleFileOptions::default();
@@ -3965,6 +3987,7 @@ async fn installing_a_hook_without_authorization_runs_nothing() {
         ora_contracts::InstallPluginResponse {
             plugin_id: HOOK_ID.to_owned(),
             outcome: InstallOutcome::Installed,
+            workflows: Vec::new(),
         }
     );
     assert!(
@@ -4258,5 +4281,679 @@ async fn a_pack_install_does_not_run_a_hook_member() {
         runner.calls().len(),
         1,
         "the member's own authorization is what runs its program"
+    );
+}
+
+/// A second Start-only workflow document, distinct from [`WORKFLOW_DOCUMENT`] by name and version.
+const SECOND_WORKFLOW_DOCUMENT: &str = r#"{"name":"发布流程","version":"2.0.0","viewport":{"x":0,"y":0,"zoom":1},"nodes":[{"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","title":"开始"}}],"edges":[]}"#;
+
+/// Builds one marketplace listing for a Workflow package at `version` with `sha`.
+fn workflow_listing(identifier: &str, version: &str, sha: &str) -> String {
+    format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"workflow\"\nversion = \"{version}\"\ndescription = \"Workflow package\"\nurl = \"https://example.com/{identifier}-{version}.orax\"\nsha256 = \"{sha}\"\n"
+    )
+}
+
+/// Lists the local workflow library's names, sorted so the assertion ignores creation order.
+fn listed_workflow_names(pool: &RepositoryPool) -> Vec<String> {
+    let listed = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock)
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    let mut names = listed
+        .workflows
+        .iter()
+        .map(|workflow| workflow.name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// Returns one installed package's document path for a document a test rewrites in place.
+fn installed_workflow_document(
+    root: &Path,
+    plugin: &str,
+    version: &str,
+    document: &str,
+) -> PathBuf {
+    root.join("plugins")
+        .join("installed")
+        .join("official")
+        .join(plugin)
+        .join(version)
+        .join("assets")
+        .join("workflows")
+        .join(document)
+}
+
+/// Writes a Workflow `.orax` under the data directory's artifacts and returns its digest.
+fn build_workflow_artifact(
+    root: &Path,
+    identifier: &str,
+    version: &str,
+    documents: &[(&str, &str)],
+) -> (PathBuf, String) {
+    let artifact = root
+        .join("artifacts")
+        .join(format!("{identifier}-{version}.orax"));
+    fs::create_dir_all(artifact.parent().unwrap()).expect("create artifacts dir");
+    write_workflow_orax_version(&artifact, identifier, version, documents);
+    let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
+    (artifact, sha)
+}
+
+/// Commits one already-staged marketplace listing as a new origin commit.
+fn publish_listing(root: &Path, identifier: &str, listing: &str, message: &str) {
+    let origin = root.join("marketplace-origin");
+    let git_config = root.join("gitconfig");
+    stage_listing(&origin, identifier, listing);
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(&origin, &git_config, &["commit", "-m", message]);
+}
+
+/// Returns the member plugin a marketplace document outcome is attributed to.
+fn attributed_plugin_id(outcome: &MarketplaceWorkflowOutcome) -> &str {
+    match outcome {
+        MarketplaceWorkflowOutcome::Imported { plugin_id, .. }
+        | MarketplaceWorkflowOutcome::SkippedProcessed { plugin_id, .. }
+        | MarketplaceWorkflowOutcome::SkippedConflict { plugin_id, .. }
+        | MarketplaceWorkflowOutcome::Failed { plugin_id, .. } => plugin_id,
+    }
+}
+
+/// Returns the package-relative document path one outcome is about.
+fn outcome_source_file(outcome: &MarketplaceWorkflowOutcome) -> &str {
+    match outcome {
+        MarketplaceWorkflowOutcome::Imported { source_file, .. }
+        | MarketplaceWorkflowOutcome::SkippedProcessed { source_file, .. }
+        | MarketplaceWorkflowOutcome::SkippedConflict { source_file, .. }
+        | MarketplaceWorkflowOutcome::Failed { source_file, .. } => source_file,
+    }
+}
+
+/// circus#1010 repro promoted to a regression: a marketplace install of a Workflow package imports
+/// its documents exactly like the local `.orax` path does.
+///
+/// The package lands on both paths with the same on-disk layout, so the only observable difference
+/// is the workflow library and the per-document report the install returns.
+#[tokio::test]
+async fn marketplace_install_imports_workflow_documents() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package from the marketplace");
+
+    assert_eq!(installed.outcome, InstallOutcome::Installed);
+    assert_eq!(listed_workflow_names(&pool), vec!["导入流程".to_string()]);
+    assert!(
+        matches!(
+            installed.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Imported {
+                plugin_id,
+                source_file,
+                name,
+                version,
+                ..
+            }] if plugin_id == PLUGIN_ID
+                && source_file == "assets/workflows/1.0.0.json"
+                && name == "导入流程"
+                && version == "1.0.0"
+        ),
+        "the install reports the document it imported: {:?}",
+        installed.workflows
+    );
+}
+
+/// circus#1010 repro promoted to a regression: the local `.orax` import keeps refusing a second
+/// workflow of the same name, which is what makes a repeated import observable.
+///
+/// A fix that re-imported documents on `update` or on a repeated install would report a failed
+/// document on every attempt after the first; the marketplace path answers with a skip instead.
+#[tokio::test]
+async fn importing_the_same_document_name_twice_refuses_the_second_import() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = test_plugin_api(data_dir.path(), &pool);
+
+    let mut outcomes = Vec::new();
+    for identifier in ["ora.wf-a", "ora.wf-b"] {
+        let archive = data_dir.path().join(format!("{identifier}.orax"));
+        write_workflow_orax(&archive, identifier, &[("1.0.0.json", WORKFLOW_DOCUMENT)]);
+        let response = api
+            .import(ImportPluginRequest {
+                path: archive.to_string_lossy().into_owned(),
+                hook_execution_acknowledged: false,
+            })
+            .await
+            .expect("import the workflow package");
+        outcomes.push(response.workflows);
+    }
+
+    assert!(
+        matches!(
+            outcomes[0].as_slice(),
+            [ImportedWorkflowOutcome::Imported { .. }]
+        ),
+        "the first import creates the workflow: {:?}",
+        outcomes[0]
+    );
+    assert!(
+        matches!(
+            outcomes[1].as_slice(),
+            [ImportedWorkflowOutcome::Failed { .. }]
+        ),
+        "the second import of the same workflow name must be refused: {:?}",
+        outcomes[1]
+    );
+}
+
+/// circus#1010 repro promoted to a regression: a pack install imports the documents its installed
+/// member contributed, attributed to that member rather than to the pack.
+#[tokio::test]
+async fn pack_install_imports_workflow_documents_of_its_members() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER: &str = "ora-space.cdase-workflow";
+    const MEMBER_ID: &str = "official/ora-space.cdase-workflow";
+    const PACK: &str = "ora-space.cdase-pack";
+    const PACK_ID: &str = "official/ora-space.cdase-pack";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        MEMBER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[
+            (MEMBER, workflow_listing(MEMBER, "0.1.0", &sha)),
+            (PACK, pack_listing(PACK, &member_table(MEMBER))),
+        ],
+    );
+    host.use_local_marketplace_release(MEMBER_ID, artifact);
+
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PACK_ID.to_owned(),
+        })
+        .await
+        .expect("install the pack");
+
+    assert_eq!(
+        installed.outcome,
+        InstallOutcome::PackInstalled {
+            members: vec![MEMBER_ID.to_owned()],
+            skipped: Vec::new(),
+            failed: None,
+        }
+    );
+    assert!(
+        member_installed(data_dir.path(), MEMBER, "0.1.0"),
+        "the member package lands"
+    );
+    assert_eq!(listed_workflow_names(&pool), vec!["导入流程".to_string()]);
+    assert_eq!(
+        installed
+            .workflows
+            .iter()
+            .map(attributed_plugin_id)
+            .collect::<Vec<_>>(),
+        vec![MEMBER_ID],
+        "the report attributes the document to the member, not to the pack"
+    );
+}
+
+/// An upgrade imports only the documents the new version added, and never rewrites the copy an
+/// earlier version delivered.
+#[tokio::test]
+async fn marketplace_upgrade_imports_only_new_documents() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let (v1, sha_v1) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha_v1))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, v1);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the first version");
+
+    // The upgrade carries the same document under a changed graph plus one genuinely new document.
+    let changed_first_document = WORKFLOW_DOCUMENT.replace("\"zoom\":1", "\"zoom\":2");
+    let (v2, sha_v2) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.2.0",
+        &[
+            ("1.0.0.json", changed_first_document.as_str()),
+            ("2.0.0.json", SECOND_WORKFLOW_DOCUMENT),
+        ],
+    );
+    publish_listing(
+        data_dir.path(),
+        IDENTIFIER,
+        &workflow_listing(IDENTIFIER, "0.2.0", &sha_v2),
+        "publish workflow package 0.2.0",
+    );
+    plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    host.use_local_marketplace_release(PLUGIN_ID, v2);
+    let updated = plugins
+        .update(UpdatePluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("update the workflow package");
+
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["发布流程".to_string(), "导入流程".to_string()]
+    );
+    assert_eq!(
+        updated
+            .workflows
+            .iter()
+            .map(outcome_source_file)
+            .collect::<Vec<_>>(),
+        vec!["assets/workflows/1.0.0.json", "assets/workflows/2.0.0.json"],
+        "the upgrade reports every document it considered, in package order"
+    );
+    assert!(
+        matches!(
+            &updated.workflows[0],
+            MarketplaceWorkflowOutcome::SkippedProcessed { .. }
+        ),
+        "a path the first version delivered stays untouched: {:?}",
+        updated.workflows[0]
+    );
+    assert!(
+        matches!(
+            &updated.workflows[1],
+            MarketplaceWorkflowOutcome::Imported { name, .. } if name == "发布流程"
+        ),
+        "the new document is imported: {:?}",
+        updated.workflows[1]
+    );
+
+    // The earlier delivery must still hold the graph the first version shipped.
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    let imported = listed
+        .workflows
+        .iter()
+        .find(|workflow| workflow.name == "导入流程")
+        .expect("the first workflow survives the upgrade");
+    let detail = workflows
+        .get(ora_contracts::GetWorkflowRequest {
+            workflow_id: imported.id.clone(),
+        })
+        .expect("load the imported workflow");
+    assert_eq!(
+        detail.draft.graph, WORKFLOW_DOCUMENT,
+        "an upgrade never rewrites a copy an earlier version delivered"
+    );
+}
+
+/// A name conflict with the user's own workflow is reported once and then remembered as terminal.
+#[tokio::test]
+async fn marketplace_install_reports_a_name_conflict_once() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    // The user already has a workflow of that name; the package must keep it, not replace it.
+    let mine = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock)
+        .create(ora_contracts::CreateWorkflowRequest {
+            name: "导入流程".to_owned(),
+            graph: None,
+        })
+        .expect("create the user's workflow");
+
+    let (v1, sha_v1) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha_v1))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, v1);
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+    assert_eq!(
+        installed.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedConflict {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+        }]
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["导入流程".to_string()],
+        "the user's workflow keeps its name and the package adds no second copy"
+    );
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    assert_eq!(
+        listed.workflows[0].id, mine.workflow.id,
+        "the copy that keeps the name is the user's own"
+    );
+
+    let (v2, sha_v2) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.2.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    publish_listing(
+        data_dir.path(),
+        IDENTIFIER,
+        &workflow_listing(IDENTIFIER, "0.2.0", &sha_v2),
+        "publish workflow package 0.2.0",
+    );
+    plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    host.use_local_marketplace_release(PLUGIN_ID, v2);
+    let updated = plugins
+        .update(UpdatePluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("update the workflow package");
+    assert_eq!(
+        updated.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedProcessed {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+        }],
+        "the conflict is reported once, not on every upgrade"
+    );
+}
+
+/// Only a document without a terminal record is retried; a successfully imported path stays done.
+#[tokio::test]
+async fn retry_workflow_import_reconsiders_only_unrecorded_paths() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+    const MEMBER: &str = "ora-space.cdase-workflow";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[
+            ("1.0.0.json", WORKFLOW_DOCUMENT),
+            ("2.0.0.json", "{ not json"),
+        ],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+    assert!(
+        matches!(
+            installed.workflows.as_slice(),
+            [
+                MarketplaceWorkflowOutcome::Imported { .. },
+                MarketplaceWorkflowOutcome::Failed { .. }
+            ]
+        ),
+        "one broken document must not cost the working one: {:?}",
+        installed.workflows
+    );
+
+    // The user fixes the document in place (a repaired package would ship the same bytes), then
+    // asks for a retry without reinstalling anything.
+    let broken = installed_workflow_document(data_dir.path(), MEMBER, "0.1.0", "2.0.0.json");
+    fs::write(&broken, SECOND_WORKFLOW_DOCUMENT).expect("repair the document");
+
+    let retried = plugins
+        .retry_workflow_import(RetryWorkflowImportRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .expect("retry the document import");
+    assert!(
+        matches!(
+            retried.workflows.as_slice(),
+            [
+                MarketplaceWorkflowOutcome::SkippedProcessed {
+                    source_file: first,
+                    ..
+                },
+                MarketplaceWorkflowOutcome::Imported {
+                    source_file: second,
+                    name,
+                    version,
+                    ..
+                }
+            ] if first == "assets/workflows/1.0.0.json"
+                && second == "assets/workflows/2.0.0.json"
+                && name == "发布流程"
+                && version == "2.0.0"
+        ),
+        "the retry skips the imported path and imports the repaired one: {:?}",
+        retried.workflows
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["发布流程".to_string(), "导入流程".to_string()]
+    );
+}
+
+/// A workflow the user deleted stays deleted: its source path is terminal, so an upgrade and a
+/// retry both refuse to bring it back.
+#[tokio::test]
+async fn a_deleted_workflow_is_not_resurrected_by_an_upgrade_or_retry() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let (v1, sha_v1) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha_v1))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, v1);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    workflows
+        .delete(ora_contracts::DeleteWorkflowRequest {
+            workflow_id: listed.workflows[0].id.clone(),
+        })
+        .expect("the user deletes the imported workflow");
+
+    let (v2, sha_v2) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.2.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    publish_listing(
+        data_dir.path(),
+        IDENTIFIER,
+        &workflow_listing(IDENTIFIER, "0.2.0", &sha_v2),
+        "publish workflow package 0.2.0",
+    );
+    plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    host.use_local_marketplace_release(PLUGIN_ID, v2);
+    let updated = plugins
+        .update(UpdatePluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("update the workflow package");
+    assert!(
+        matches!(
+            updated.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::SkippedProcessed { .. }]
+        ),
+        "an upgrade leaves a deleted copy deleted: {:?}",
+        updated.workflows
+    );
+    assert_eq!(listed_workflow_names(&pool), Vec::<String>::new());
+
+    let retried = plugins
+        .retry_workflow_import(RetryWorkflowImportRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .expect("retry the document import");
+    assert!(
+        matches!(
+            retried.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::SkippedProcessed { .. }]
+        ),
+        "a retry does not reset the user's choice either: {:?}",
+        retried.workflows
+    );
+}
+
+/// Uninstalling and reinstalling the package keeps the source record, so no copy comes back.
+#[tokio::test]
+async fn reinstalling_the_package_does_not_import_the_documents_again() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact.clone());
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall the workflow package");
+
+    let reinstalled = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("reinstall the workflow package");
+    assert_eq!(
+        reinstalled.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedProcessed {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+        }],
+        "a reinstall keeps every terminal record"
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["导入流程".to_string()],
+        "the reinstall adds no second copy"
     );
 }
