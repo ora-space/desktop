@@ -4,8 +4,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AvailablePlugin,
   InstalledPlugin,
+  InstallPluginResponse,
   PackInstallationStatus,
   PackMemberReconciliationState,
+  UpdatePluginResponse,
 } from "@ora/contracts";
 import {
   Alert,
@@ -54,7 +56,10 @@ import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
-import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import {
+  showPluginInstallOutcome,
+  workflowDocumentSummary,
+} from "./plugin-install-feedback";
 import {
   HookExecutionConfirm,
   type HookExecutionAction,
@@ -694,11 +699,27 @@ function AvailablePluginCard({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: {
-    outcome: Parameters<typeof showPluginInstallOutcome>[0];
-  }) => showPluginInstallOutcome(response.outcome, t);
+  const succeedInstall = (response: InstallPluginResponse) =>
+    showPluginInstallOutcome(
+      response.outcome,
+      t,
+      "settings.plugins.installSuccess",
+      response.workflows,
+    );
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
+  };
+  /**
+   * Reports an upgrade that delivered document outcomes.
+   *
+   * An upgrade of any other kind keeps its previous silent success: the only news an upgrade can
+   * bring is a workflow document that arrived, was skipped, or failed to import.
+   */
+  const succeedUpdate = (response: UpdatePluginResponse) => {
+    if (response.workflows.length === 0) return;
+    toast.success(t("settings.plugins.updateSuccess"), {
+      description: workflowDocumentSummary(response.workflows, t),
+    });
   };
   /** Asks for the Hook execution disclosure before the one action that would run a program. */
   const start = (action: HookExecutionAction) => {
@@ -710,7 +731,7 @@ function AvailablePluginCard({
       install.mutate({}, { onError: failInstall, onSuccess: succeedInstall });
       return;
     }
-    update.mutate({}, { onError: failUpdate });
+    update.mutate({}, { onError: failUpdate, onSuccess: succeedUpdate });
   };
   const confirm = (action: HookExecutionAction) => {
     setConfirmAction(null);
@@ -721,7 +742,10 @@ function AvailablePluginCard({
       );
       return;
     }
-    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
+    update.mutate(
+      { hookExecutionAcknowledged: true },
+      { onError: failUpdate, onSuccess: succeedUpdate },
+    );
   };
 
   return (

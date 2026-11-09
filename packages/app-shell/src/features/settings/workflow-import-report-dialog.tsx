@@ -44,7 +44,7 @@ interface WorkflowImportReportDialogProps {
    * dialog of the plugin manager, so the shared Settings deep link would be adopted only by a
    * later mount; the host navigates its own panes instead.
    */
-  onResolve: (
+  onResolve?: (
     dependency: WorkflowDependency,
     fix: WorkflowDependencyFix,
   ) => void;

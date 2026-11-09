@@ -9,6 +9,7 @@ import {
   type InstalledPlugin,
   type ImportedWorkflowOutcome,
   type InstallOutcome,
+  type MarketplaceWorkflowOutcome,
   type McpHealthEntry,
   type PackInstallationStatus,
   type PackUninstallPlan,
@@ -59,6 +60,17 @@ export interface PluginMemoryState {
    * is what every kind other than a Workflow package reports.
    */
   importedWorkflows?: ImportedWorkflowOutcome[];
+  /**
+   * Per-document workflow outcomes a marketplace install should report. Defaults to none, which is
+   * what an ordinary package reports.
+   */
+  installedWorkflows?: MarketplaceWorkflowOutcome[];
+  /** Per-document workflow outcomes an update should report; defaults to none. */
+  updatedWorkflows?: MarketplaceWorkflowOutcome[];
+  /** Per-document workflow outcomes an explicit retry should report; defaults to none. */
+  retriedWorkflows?: MarketplaceWorkflowOutcome[];
+  /** Rejects the explicit retry with this message, which is how a test drives its failure path. */
+  retryWorkflowImportFailure?: string;
   /**
    * Host MCP health per view, keyed by the resolved Session cwd; the empty key is the plugin-card
    * view. A view a test never seeds answers "no health recorded yet", which is what an untouched
@@ -592,6 +604,7 @@ export function pluginHandlers(state: PluginMemoryState) {
         return {
           pluginId: req.pluginId,
           outcome: installPack(state, available),
+          workflows: state.installedWorkflows ?? [],
         };
       }
       const outcome = state.installOutcome ?? {
@@ -604,6 +617,7 @@ export function pluginHandlers(state: PluginMemoryState) {
       return {
         pluginId: req.pluginId,
         outcome,
+        workflows: state.installedWorkflows ?? [],
       };
     },
     updatePlugin: async (req) => {
@@ -622,7 +636,20 @@ export function pluginHandlers(state: PluginMemoryState) {
       installed.logo = available.logo;
       if (installed.kind === "hook" && req.hookExecutionAcknowledged)
         recordHookExecution(state, installed, "init");
-      return { pluginId: req.pluginId };
+      return {
+        pluginId: req.pluginId,
+        workflows: state.updatedWorkflows ?? [],
+      };
+    },
+    retryWorkflowImport: async (req) => {
+      if (state.retryWorkflowImportFailure !== undefined)
+        throw new Error(state.retryWorkflowImportFailure);
+      if (!state.installedPlugins.some((p) => p.id === req.pluginId))
+        throw new Error(`installed plugin ${req.pluginId} not found`);
+      return {
+        pluginId: req.pluginId,
+        workflows: state.retriedWorkflows ?? [],
+      };
     },
     listHookLifecycleReports: async () => ({
       reports: [...state.hookLifecycleReports.values()],
