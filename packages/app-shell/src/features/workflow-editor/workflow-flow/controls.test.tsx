@@ -3,13 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../../i18n/i18n";
 import { appI18n } from "../../../i18n/i18n-instance";
+import { WorkflowCanvasControls, WorkflowScrollSelectedNode } from "./controls";
 import {
   collapsedIterationAncestorIds,
   unionScreenBox,
   viewportDeltaToCenter,
-  WorkflowCanvasControls,
-  WorkflowScrollSelectedNode,
-} from "./controls";
+} from "./scroll-geometry";
 
 const { fitView, setViewport, zoomTo, flow } = vi.hoisted(() => ({
   fitView: vi.fn(),

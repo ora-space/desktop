@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useReactFlow,
@@ -18,6 +18,7 @@ import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
 } from "../../workflow-node-chrome/viewport";
+import { unionScreenBox, viewportDeltaToCenter } from "./scroll-geometry";
 
 interface WorkflowCanvasControlsProps {
   defaultViewport: { x: number; y: number; zoom: number };
@@ -25,73 +26,6 @@ interface WorkflowCanvasControlsProps {
 
 interface WorkflowCanvasInspectorRestoreProps {
   onExpandInspector: () => void;
-}
-
-export interface ScreenBox {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-/** Screen-pixel pan that puts the target box in the middle of the pane. */
-export function viewportDeltaToCenter(
-  pane: ScreenBox,
-  target: ScreenBox,
-): { x: number; y: number } {
-  return {
-    x: pane.left + pane.width / 2 - (target.left + target.width / 2),
-    y: pane.top + pane.height / 2 - (target.top + target.height / 2),
-  };
-}
-
-export interface SelectionAncestorNode {
-  id: string;
-  parentId?: string;
-  data: { kind: string; collapsed?: boolean };
-}
-
-/**
- * Iterations that must be expanded before a selected card can be measured.
- * Collapsing a frame unmounts its members, so the scroll button otherwise
- * has nothing on screen to center.
- */
-export function collapsedIterationAncestorIds(
-  ids: readonly string[],
-  nodes: readonly SelectionAncestorNode[],
-): string[] {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const collapsed: string[] = [];
-  for (const id of ids) {
-    let parentId = byId.get(id)?.parentId;
-    while (parentId !== undefined) {
-      const parent = byId.get(parentId);
-      if (parent === undefined) {
-        break;
-      }
-      if (
-        parent.data.kind === "iteration" &&
-        parent.data.collapsed === true &&
-        !collapsed.includes(parent.id)
-      ) {
-        collapsed.push(parent.id);
-      }
-      parentId = parent.parentId;
-    }
-  }
-  return collapsed;
-}
-
-/** Bounding box around every selected card, in screen pixels. */
-export function unionScreenBox(boxes: readonly ScreenBox[]): ScreenBox | null {
-  if (boxes.length === 0) {
-    return null;
-  }
-  const left = Math.min(...boxes.map((box) => box.left));
-  const top = Math.min(...boxes.map((box) => box.top));
-  const right = Math.max(...boxes.map((box) => box.left + box.width));
-  const bottom = Math.max(...boxes.map((box) => box.top + box.height));
-  return { left, top, width: right - left, height: bottom - top };
 }
 
 /**
@@ -115,13 +49,14 @@ export function WorkflowScrollSelectedNode({
   const { getViewport, setViewport } = useReactFlow();
   const store = useStoreApi();
   // Closing the right-hand inspector clears the selection. Keep the last card
-  // so the button can still bring it back.
-  const rememberedIds = useRef<string[]>([]);
+  // so the button can still bring it back. Updating state during render is the
+  // supported way to remember a previous value without reading a ref.
+  const [rememberedIds, setRememberedIds] = useState<string[]>([]);
   const liveIds = selectedIds === "" ? [] : selectedIds.split("\0");
-  if (liveIds.length > 0) {
-    rememberedIds.current = liveIds;
+  if (liveIds.length > 0 && rememberedIds.join("\0") !== selectedIds) {
+    setRememberedIds(liveIds);
   }
-  const ids = liveIds.length > 0 ? liveIds : rememberedIds.current;
+  const ids = liveIds.length > 0 ? liveIds : rememberedIds;
 
   /** Pans to the rendered cards. Returns false when none are measurable yet. */
   const panToIds = (targetIds: readonly string[]): boolean => {

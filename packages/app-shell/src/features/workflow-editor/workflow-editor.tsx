@@ -92,10 +92,8 @@ import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
-import {
-  collapsedIterationAncestorIds,
-  WorkflowScrollSelectedNode,
-} from "./workflow-flow/controls";
+import { WorkflowScrollSelectedNode } from "./workflow-flow/controls";
+import { collapsedIterationAncestorIds } from "./workflow-flow/scroll-geometry";
 import {
   authoredWorkflowNodesEqual,
   isNodeDragGestureActive,
