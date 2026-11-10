@@ -263,6 +263,7 @@ function WorkflowCanvasInner({
   const [selectionMenu, setSelectionMenu] = useState<{
     x: number;
     y: number;
+    deleteIds: string[];
   } | null>(null);
   const closeSelectionMenu = useCallback(() => {
     setSelectionMenu(null);
@@ -612,37 +613,50 @@ function WorkflowCanvasInner({
   );
 
   const openSelectionMenu = useCallback(
-    (event: {
-      clientX: number;
-      clientY: number;
-      preventDefault: () => void;
-      stopPropagation: () => void;
-    }): void => {
+    (
+      event: {
+        clientX: number;
+        clientY: number;
+        preventDefault: () => void;
+        stopPropagation: () => void;
+      },
+      deleteIds: readonly string[],
+    ): void => {
       event.preventDefault();
       event.stopPropagation();
-      setSelectionMenu({ x: event.clientX, y: event.clientY });
+      setSelectionMenu({
+        x: event.clientX,
+        y: event.clientY,
+        deleteIds: [...deleteIds],
+      });
     },
     [],
   );
 
-  /** Right-click selects an unselected card, then offers copy, paste, and duplicate. */
+  /** Right-click selects an unselected card, then offers copy, paste, duplicate, and delete. */
   const handleNodeContextMenu = useCallback(
     (event: ReactMouseEvent, node: WorkflowCanvasNode): void => {
       if (readOnly) {
         return;
       }
-      openSelectionMenu(event);
+      const selectedIds = nodes
+        .filter((candidate) => candidate.selected)
+        .map((candidate) => candidate.id);
+      openSelectionMenu(
+        event,
+        node.type === WORKFLOW_FLOW_NODE_TYPE && node.selected === true
+          ? selectedIds
+          : [node.id],
+      );
       if (node.type !== WORKFLOW_FLOW_NODE_TYPE || node.selected === true) {
         return;
       }
       onNodesChange([
-        ...nodes
-          .filter((candidate) => candidate.selected)
-          .map((candidate) => ({
-            id: candidate.id,
-            type: "select" as const,
-            selected: false,
-          })),
+        ...selectedIds.map((id) => ({
+          id,
+          type: "select" as const,
+          selected: false,
+        })),
         { id: node.id, type: "select" as const, selected: true },
       ]);
     },
@@ -654,10 +668,24 @@ function WorkflowCanvasInner({
       if (readOnly) {
         return;
       }
-      openSelectionMenu(event);
+      openSelectionMenu(
+        event,
+        nodes
+          .filter((candidate) => candidate.selected)
+          .map((candidate) => candidate.id),
+      );
     },
-    [openSelectionMenu, readOnly],
+    [nodes, openSelectionMenu, readOnly],
   );
+
+  const deleteMenuNodes = useCallback((): void => {
+    if (selectionMenu === null || selectionMenu.deleteIds.length === 0) {
+      return;
+    }
+    void deleteElements({
+      nodes: selectionMenu.deleteIds.map((id) => ({ id })),
+    });
+  }, [deleteElements, selectionMenu]);
 
   /** Deletes an edge on double click through React Flow's own removal pipeline. */
   const handleEdgeDoubleClick = useCallback(
@@ -1057,9 +1085,11 @@ function WorkflowCanvasInner({
           point={selectionMenu}
           canCopy={nodes.some((node) => node.selected === true)}
           canPaste={canPasteSelection}
+          canDelete={selectionMenu.deleteIds.length > 0}
           onCopy={onCopySelection}
           onPaste={onPasteSelection}
           onDuplicate={onDuplicateSelection}
+          onDelete={deleteMenuNodes}
           onClose={closeSelectionMenu}
         />
       )}

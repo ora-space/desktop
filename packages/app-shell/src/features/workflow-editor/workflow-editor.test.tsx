@@ -1447,6 +1447,23 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("deletes the right-clicked node from the canvas menu", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    fireEvent.contextMenu(agent.closest(".react-flow__node") ?? agent);
+    await user.click(await screen.findByRole("menuitem", { name: /^删除/ }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Agent节点: 理解改动"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("duplicates the right-clicked node from the canvas menu", async () => {
     const user = userEvent.setup();
     renderEditor();

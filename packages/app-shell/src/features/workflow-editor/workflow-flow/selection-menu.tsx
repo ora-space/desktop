@@ -1,14 +1,17 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { cn } from "@ora/ui";
 
 interface WorkflowSelectionMenuProps {
   point: { x: number; y: number };
   canCopy: boolean;
   canPaste: boolean;
+  canDelete: boolean;
   onCopy: () => void;
   onPaste: () => void;
   onDuplicate: () => void;
+  onDelete: () => void;
   onClose: () => void;
 }
 
@@ -17,9 +20,11 @@ export function WorkflowSelectionMenu({
   point,
   canCopy,
   canPaste,
+  canDelete,
   onCopy,
   onPaste,
   onDuplicate,
+  onDelete,
   onClose,
 }: WorkflowSelectionMenuProps) {
   const { t } = useTranslation();
@@ -81,6 +86,17 @@ export function WorkflowSelectionMenu({
           onClose();
         }}
       />
+      <div className="-mx-1 my-1 h-px bg-border" role="separator" />
+      <SelectionMenuItem
+        label={t("settings.workflow.deleteNodes")}
+        shortcut="Delete"
+        disabled={!canDelete}
+        destructive
+        onSelect={() => {
+          onDelete();
+          onClose();
+        }}
+      />
     </div>,
     document.body,
   );
@@ -90,18 +106,24 @@ function SelectionMenuItem({
   label,
   shortcut,
   disabled,
+  destructive = false,
   onSelect,
 }: {
   label: string;
   shortcut: string;
   disabled: boolean;
+  destructive?: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
-      className="flex w-full items-center gap-3 rounded-md px-1.5 py-1 text-left text-sm outline-hidden select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+      className={cn(
+        "flex w-full items-center gap-3 rounded-md px-1.5 py-1 text-left text-sm outline-hidden select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
+        destructive &&
+          "text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive",
+      )}
       disabled={disabled}
       onClick={onSelect}
     >
