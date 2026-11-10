@@ -1447,6 +1447,47 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("duplicates the selected node beside it and undoes that copy in one step", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    await user.click(agent.closest(".react-flow__node") ?? agent);
+    await user.keyboard("{Control>}d{/Control}");
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+
+    await user.keyboard("{Control>}z{/Control}");
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(1);
+    });
+  });
+
+  it("pastes a copied node without disturbing text-field copy", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    await user.click(agent.closest(".react-flow__node") ?? agent);
+    await user.keyboard("{Control>}c{/Control}");
+    await user.keyboard("{Control>}v{/Control}");
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+
+    const prompt = await screen.findByLabelText("自定义 Prompt");
+    fireEvent.keyDown(prompt, { key: "c", ctrlKey: true });
+    fireEvent.keyDown(prompt, { key: "v", ctrlKey: true });
+    expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+  });
+
   it("restores each workflow from its React Flow viewport snapshot", async () => {
     const user = userEvent.setup();
     renderEditor();

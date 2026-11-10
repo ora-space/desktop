@@ -93,6 +93,13 @@ import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-mod
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowScrollSelectedNode } from "./workflow-flow/controls";
+import {
+  captureSelection,
+  isTextEntryTarget,
+  materializeCopy,
+  WORKFLOW_DUPLICATE_STEP,
+  type WorkflowSelectionCopy,
+} from "./workflow-flow/duplicate-selection";
 import { collapsedIterationAncestorIds } from "./workflow-flow/scroll-geometry";
 import {
   authoredWorkflowNodesEqual,
@@ -488,6 +495,9 @@ function WorkflowEditorContent({
   /** Bumps on every persistable edit so in-flight writes can detect they are stale. */
   const editGenerationRef = useRef(0);
   const workflowRef = useRef<DemoWorkflow | null>(null);
+  const clipboardRef = useRef<
+    (WorkflowSelectionCopy & { pastes: number }) | null
+  >(null);
   const dragStartWorkflowRef = useRef<DemoWorkflow | null>(null);
   /** Names the iteration frame whose manual resize owns the open history transaction. */
   const iterationResizeRef = useRef<string | null>(null);
@@ -1077,6 +1087,7 @@ function WorkflowEditorContent({
     save: persistDraft,
   });
   const markWorkflowDirty = autosave.markDirty;
+  const recordWorkflowHistory = workflowHistory.record;
   const undoHistory = workflowHistory.undo;
   const redoHistory = workflowHistory.redo;
   const jumpHistory = workflowHistory.jump;
@@ -1121,6 +1132,81 @@ function WorkflowEditorContent({
   );
 
   useEffect(() => {
+    function applySelectionShortcut(
+      mode: "copy" | "paste" | "duplicate",
+    ): void {
+      const current = workflowRef.current;
+      if (current === null || previewedVersion !== null) {
+        return;
+      }
+      if (mode === "copy") {
+        const captured = captureSelection(current.nodes, current.edges);
+        if (captured.nodes.length === 0) {
+          return;
+        }
+        clipboardRef.current = { ...captured, pastes: 0 };
+        return;
+      }
+      const source =
+        mode === "paste"
+          ? clipboardRef.current
+          : { ...captureSelection(current.nodes, current.edges), pastes: 0 };
+      if (source === null || source.nodes.length === 0) {
+        return;
+      }
+      const pastes = mode === "paste" ? source.pastes + 1 : 1;
+      if (mode === "paste" && clipboardRef.current !== null) {
+        clipboardRef.current = { ...clipboardRef.current, pastes };
+      }
+      const created = materializeCopy(
+        source,
+        [
+          ...current.nodes.map((node) => node.id),
+          ...(current.annotations ?? []).map((annotation) => annotation.id),
+          ...current.edges.map((edge) => edge.id),
+        ],
+        {
+          x: WORKFLOW_DUPLICATE_STEP * pastes,
+          y: WORKFLOW_DUPLICATE_STEP * pastes,
+        },
+        current.nodes.some(
+          (node) =>
+            node.data.kind === "start" &&
+            node.parentId === undefined &&
+            node.data.containerId === undefined,
+        ),
+      );
+      if (created.nodes.length === 0) {
+        return;
+      }
+      const lead = created.nodes[0]!;
+      const before = captureWorkflowHistorySnapshot(current);
+      const next = {
+        ...current,
+        nodes: [
+          ...current.nodes.map((node) => ({ ...node, selected: false })),
+          ...created.nodes,
+        ],
+        edges: [...current.edges, ...created.edges],
+      };
+      workflowRef.current = next;
+      setWorkflow(next);
+      recordWorkflowHistory(
+        before,
+        captureWorkflowHistorySnapshot(next),
+        "node.add",
+        {
+          nodeIds: created.nodes.map((node) => node.id),
+          edgeIds: created.edges.map((edge) => edge.id),
+          subject: lead.data.title,
+          nodeTitle: lead.data.title,
+          nodeKind: lead.data.kind,
+        },
+      );
+      editGenerationRef.current += 1;
+      markWorkflowDirty();
+    }
+
     function handleHistoryShortcut(event: KeyboardEvent): void {
       if (
         event.isComposing ||
@@ -1141,11 +1227,29 @@ function WorkflowEditorContent({
       } else if (key === "y") {
         event.preventDefault();
         redoWorkflow();
+      } else if (
+        !event.altKey &&
+        !event.shiftKey &&
+        (key === "c" || key === "v" || key === "d")
+      ) {
+        if (isTextEntryTarget(event.target)) {
+          return;
+        }
+        event.preventDefault();
+        applySelectionShortcut(
+          key === "c" ? "copy" : key === "v" ? "paste" : "duplicate",
+        );
       }
     }
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, [previewedVersion, redoWorkflow, undoWorkflow]);
+  }, [
+    markWorkflowDirty,
+    previewedVersion,
+    redoWorkflow,
+    recordWorkflowHistory,
+    undoWorkflow,
+  ]);
 
   /** Switches the active workflow after flushing any pending draft write. */
   async function selectWorkflow(workflowId: string): Promise<void> {
