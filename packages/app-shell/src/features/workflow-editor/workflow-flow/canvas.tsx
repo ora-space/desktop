@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -93,6 +94,7 @@ import {
   type ConnectionDraft,
 } from "./connection-gesture";
 import { isValidWorkflowConnection } from "./connection-validation";
+import { WorkflowSelectionMenu } from "./selection-menu";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -226,6 +228,10 @@ function WorkflowCanvasInner({
   onDelete,
   onNodeDragStart,
   onNodeDragStop,
+  canPasteSelection,
+  onCopySelection,
+  onPasteSelection,
+  onDuplicateSelection,
   canUndo,
   canRedo,
   historyPast,
@@ -254,6 +260,14 @@ function WorkflowCanvasInner({
   const canvasRef = useRef<HTMLDivElement>(null);
   const [interactionMode, setInteractionMode] =
     useState<CanvasInteractionMode>("pointer");
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number;
+    y: number;
+    deleteIds: string[];
+  } | null>(null);
+  const closeSelectionMenu = useCallback(() => {
+    setSelectionMenu(null);
+  }, []);
   const [connectionDraft, setConnectionDraft] =
     useState<ConnectionDraft | null>(null);
   const connectionCandidateFrameRef = useRef<number | null>(null);
@@ -598,6 +612,81 @@ function WorkflowCanvasInner({
     [inspectorCollapsed, inspectorAvailable, onExpandInspector],
   );
 
+  const openSelectionMenu = useCallback(
+    (
+      event: {
+        clientX: number;
+        clientY: number;
+        preventDefault: () => void;
+        stopPropagation: () => void;
+      },
+      deleteIds: readonly string[],
+    ): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectionMenu({
+        x: event.clientX,
+        y: event.clientY,
+        deleteIds: [...deleteIds],
+      });
+    },
+    [],
+  );
+
+  /** Right-click selects an unselected card, then offers copy, paste, duplicate, and delete. */
+  const handleNodeContextMenu = useCallback(
+    (event: ReactMouseEvent, node: WorkflowCanvasNode): void => {
+      if (readOnly) {
+        return;
+      }
+      const selectedIds = nodes
+        .filter((candidate) => candidate.selected)
+        .map((candidate) => candidate.id);
+      openSelectionMenu(
+        event,
+        node.type === WORKFLOW_FLOW_NODE_TYPE && node.selected === true
+          ? selectedIds
+          : [node.id],
+      );
+      if (node.type !== WORKFLOW_FLOW_NODE_TYPE || node.selected === true) {
+        return;
+      }
+      onNodesChange([
+        ...selectedIds.map((id) => ({
+          id,
+          type: "select" as const,
+          selected: false,
+        })),
+        { id: node.id, type: "select" as const, selected: true },
+      ]);
+    },
+    [nodes, onNodesChange, openSelectionMenu, readOnly],
+  );
+
+  const handlePaneContextMenu = useCallback(
+    (event: ReactMouseEvent | MouseEvent): void => {
+      if (readOnly) {
+        return;
+      }
+      openSelectionMenu(
+        event,
+        nodes
+          .filter((candidate) => candidate.selected)
+          .map((candidate) => candidate.id),
+      );
+    },
+    [nodes, openSelectionMenu, readOnly],
+  );
+
+  const deleteMenuNodes = useCallback((): void => {
+    if (selectionMenu === null || selectionMenu.deleteIds.length === 0) {
+      return;
+    }
+    void deleteElements({
+      nodes: selectionMenu.deleteIds.map((id) => ({ id })),
+    });
+  }, [deleteElements, selectionMenu]);
+
   /** Deletes an edge on double click through React Flow's own removal pipeline. */
   const handleEdgeDoubleClick = useCallback(
     (_event: unknown, edge: Edge): void => {
@@ -898,6 +987,8 @@ function WorkflowCanvasInner({
                     onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={handleNodeDragStop}
                     onNodeClick={handleNodeClick}
+                    onNodeContextMenu={handleNodeContextMenu}
+                    onPaneContextMenu={handlePaneContextMenu}
                     onConnectStart={handleConnectStart}
                     onConnect={onConnect}
                     onConnectEnd={finishNewConnection}
@@ -988,6 +1079,19 @@ function WorkflowCanvasInner({
             onDrop={dropNodeAtClientPosition}
           />
         </div>
+      )}
+      {selectionMenu !== null && !readOnly && (
+        <WorkflowSelectionMenu
+          point={selectionMenu}
+          canCopy={nodes.some((node) => node.selected === true)}
+          canPaste={canPasteSelection}
+          canDelete={selectionMenu.deleteIds.length > 0}
+          onCopy={onCopySelection}
+          onPaste={onPasteSelection}
+          onDuplicate={onDuplicateSelection}
+          onDelete={deleteMenuNodes}
+          onClose={closeSelectionMenu}
+        />
       )}
     </div>
   );
