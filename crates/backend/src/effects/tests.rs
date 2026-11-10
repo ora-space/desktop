@@ -1,7 +1,7 @@
 use super::Effects;
 use ora_contracts::{
     EmptyErrorParams, GetEffectTargetStatusRequest, GetEffectTargetStatusResponse, PublicError,
-    RecoverEffectTargetRequest,
+    RecoverEffectTargetRequest, RetryEffectTargetRequest, RetryEffectTargetResponse,
 };
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
 use pretty_assertions::assert_eq;
@@ -49,6 +49,31 @@ fn missing_targets_and_storage_failures_stay_distinct_without_runtime_compositio
             &PublicError::InternalError(EmptyErrorParams {})
         );
         assert!(std::error::Error::source(&error).is_some());
+    });
+}
+
+/// Retrying a missing Target is a no-op instead of inventing a request or surfacing storage failure.
+#[test]
+fn retrying_a_missing_target_reports_no_durable_request() {
+    ora_logging::initialize_test_clock();
+    ora_logging::with_trace_logging(|| {
+        let temporary = tempfile::tempdir().expect("Effect retry fixture");
+        let path = temporary.path().join("ora.sqlite3");
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&path),
+                &default_migration_catalog().expect("catalog"),
+            )
+            .expect("database");
+        let effects = Effects::new(pool, crate::effect_worker::EffectWorkerHandle::detached());
+
+        let response = effects
+            .retry_target(RetryEffectTargetRequest {
+                target_id: "missing-target".to_string(),
+            })
+            .expect("missing Target retry is a no-op");
+
+        assert_eq!(response, RetryEffectTargetResponse { requested: false });
     });
 }
 

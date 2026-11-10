@@ -26,7 +26,10 @@ import {
   type WorkflowNodeErrorDetail,
   type WorkflowNodeAiDiagnosis,
   type WorkflowNodeFileChange,
+  type WorkflowNodeParkKind,
   type WorkflowNodeRetryWait,
+  type WorkflowNodeStopCause,
+  type WorkflowNodeTurnOrigin,
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
@@ -305,11 +308,23 @@ export function useCompleteWorkflowNode() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { runId: string; nodeId: string; force?: boolean }) =>
+    mutationFn: (input: {
+      runId: string;
+      nodeId: string;
+      force?: boolean;
+      /**
+       * Explicitly accepts the workflow's opening turn. `confirmInitialTurn` only lifts
+       * `turn_unconfirmed`; it is a normal completion and must never be combined with `force`.
+       */
+      confirmInitialTurn?: boolean;
+    }) =>
       client.workflowRun.completeNode({
         runId: input.runId,
         nodeId: input.nodeId,
         force: input.force ?? false,
+        ...(input.confirmInitialTurn === undefined
+          ? {}
+          : { confirmInitialTurn: input.confirmInitialTurn }),
       }),
     onSuccess: (_result, variables) => {
       invalidateRunViews(queryClient, variables.runId);
@@ -924,6 +939,9 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
     userSeq?: unknown;
     turnKey?: unknown;
     stopReason?: unknown;
+    turnOrigin?: unknown;
+    stopCause?: unknown;
+    parkKind?: unknown;
     blockers?: unknown;
     warnings?: unknown;
     outputDigest?: unknown;
@@ -955,6 +973,9 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
   const provisional =
     typeof snapshot.provisional === "boolean" ? snapshot.provisional : false;
   const turnKey = parseTurnKey(snapshot.turnKey);
+  const turnOrigin = parseTurnOrigin(snapshot.turnOrigin);
+  const stopCause = parseStopCause(snapshot.stopCause);
+  const parkKind = parseParkKind(snapshot.parkKind);
   return {
     ...(typeof snapshot.userSeq === "number"
       ? { userSeq: snapshot.userSeq }
@@ -963,6 +984,9 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
     ...(typeof snapshot.stopReason === "string"
       ? { stopReason: snapshot.stopReason }
       : {}),
+    ...(turnOrigin !== undefined ? { turnOrigin } : {}),
+    ...(stopCause !== undefined ? { stopCause } : {}),
+    ...(parkKind !== undefined ? { parkKind } : {}),
     blockers,
     warnings: Array.isArray(snapshot.warnings)
       ? snapshot.warnings.filter(
@@ -974,7 +998,55 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
       : {}),
     provisional,
     ready: blockers.length === 0 && !provisional,
+    needsConfirmation:
+      !provisional &&
+      blockers.length === 1 &&
+      blockers[0]?.kind === "turn_unconfirmed",
   };
+}
+
+/** Keeps an unknown future turn origin absent instead of guessing whose turn it was. */
+function parseTurnOrigin(value: unknown): WorkflowNodeTurnOrigin | undefined {
+  switch (value) {
+    case "workflow":
+    case "human":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+/** Parses the stop cause; an explicit `null` stays null while a missing field stays undefined. */
+function parseStopCause(
+  value: unknown,
+): WorkflowNodeStopCause | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  switch (value) {
+    case "user_stopped":
+    case "prompt_timed_out":
+    case "stream_dropped":
+    case "session_crashed":
+    case "unknown":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+/** Keeps an unknown future park kind absent so the UI falls back to the legacy presentation. */
+function parseParkKind(value: unknown): WorkflowNodeParkKind | undefined {
+  switch (value) {
+    case "awaiting_user":
+    case "abnormal":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 /** Parses the turn identity without letting one bad field invalidate the whole snapshot. */
@@ -999,6 +1071,7 @@ function normalizeCompletionBlockerKind(
     case "turn_truncated":
     case "turn_refused":
     case "turn_unknown":
+    case "turn_unconfirmed":
     case "structured_invalid":
     case "output_missing":
       return kind;

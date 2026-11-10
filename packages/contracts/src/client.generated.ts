@@ -30,6 +30,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
     effect: {
       getTargetStatus: (request, options) => executeOperation("getEffectTargetStatus", request, transport, options),
       recoverTarget: (request, options) => executeOperation("recoverEffectTarget", request, transport, options),
+      retryTarget: (request, options) => executeOperation("retryEffectTarget", request, transport, options),
     },
     fileSystem: {
       copyProjectEntry: (request, options) => executeOperation("copyProjectEntry", request, transport, options),
@@ -71,6 +72,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       probeMcpHealth: (request, options) => executeOperation("probeMcpHealth", request, transport, options),
       readReadme: (request, options) => executeOperation("readPluginReadme", request, transport, options),
       resetConfiguration: (request, options) => executeOperation("resetPluginConfiguration", request, transport, options),
+      retryWorkflowImport: (request, options) => executeOperation("retryWorkflowImport", request, transport, options),
       saveConfiguration: (request, options) => executeOperation("savePluginConfiguration", request, transport, options),
       scan: (request, options) => executeOperation("scanPlugins", request, transport, options),
       setLogLevel: (request, options) => executeOperation("setPluginLogLevel", request, transport, options),

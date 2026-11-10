@@ -347,6 +347,7 @@ mod tests {
     /// A recorded session that resumes a prior Revision and lists two Workspaces.
     fn resumed() -> proto::ExecutionRecord {
         proto::ExecutionRecord {
+            created_at: None,
             operation_id: "run".into(),
             node_operation_id: "run".into(),
             execution_id: "session".into(),

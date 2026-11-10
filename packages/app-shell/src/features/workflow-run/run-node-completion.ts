@@ -1,4 +1,21 @@
-import type { GraphWorkflowRun } from "@ora/workflow-runtime";
+import type {
+  GraphWorkflowRun,
+  WorkflowNodeCompletion,
+} from "@ora/workflow-runtime";
+
+/**
+ * True when the workflow's opening turn settled normally but the user has not confirmed the step.
+ *
+ * The projection computes `needsConfirmation` from the snapshot (`!provisional` and exactly the
+ * `turn_unconfirmed` blocker); consumers read that field instead of re-deriving the gate from the
+ * blocker list. The node is awaiting the user rather than paused, and only an explicit
+ * `confirmInitialTurn` completion can advance it.
+ */
+export function isAwaitingConfirmation(
+  completion: WorkflowNodeCompletion | undefined,
+): boolean {
+  return completion?.needsConfirmation === true;
+}
 
 /**
  * Direct successor titles for every node in one frozen graph, keyed by node id.

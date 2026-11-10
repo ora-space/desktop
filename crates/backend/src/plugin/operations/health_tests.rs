@@ -82,6 +82,10 @@ fn test_plugins_with_host(
             host.clone(),
             runtime,
             Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+            Arc::new(crate::workflow::marketplace_workflow_import(
+                pool.clone(),
+                SystemClock,
+            )),
         ),
         events,
         host,

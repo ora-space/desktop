@@ -307,6 +307,7 @@ mod tests {
     #[test]
     fn only_clone_records_belong_to_the_clone_family() {
         let record = |spec: proto::execution_input::Spec| proto::ExecutionRecord {
+            created_at: None,
             node_operation_id: "execution".into(),
             operation_id: "operation".into(),
             execution_id: "execution".into(),
@@ -345,6 +346,7 @@ mod tests {
     #[test]
     fn records_rebuild_the_original_command() {
         let record = proto::ExecutionRecord {
+            created_at: None,
             node_operation_id: "operation".into(),
             operation_id: "operation".into(),
             execution_id: "execution".into(),

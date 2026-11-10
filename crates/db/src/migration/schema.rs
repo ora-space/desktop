@@ -22,6 +22,7 @@ mod schema_v0019;
 mod schema_v0020;
 mod schema_v0021;
 mod schema_v0022;
+mod schema_v0023;
 
 /// Distribution-specific initialization applied only to a brand-new database.
 ///
@@ -54,5 +55,6 @@ pub(super) fn migrations() -> Vec<Migration> {
         schema_v0020::migration(),
         schema_v0021::migration(),
         schema_v0022::migration(),
+        schema_v0023::migration(),
     ]
 }

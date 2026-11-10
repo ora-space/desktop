@@ -10,6 +10,7 @@ mod attach;
 mod clock;
 mod command;
 mod connection;
+mod end_cause;
 mod error;
 mod events;
 mod handoff;
@@ -49,6 +50,7 @@ mod replaced_sessions_tests;
 #[cfg(test)]
 mod test_host;
 
+pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,

@@ -19,6 +19,8 @@ mod permit_expiry;
 mod plugins;
 #[path = "workspaces/restores.rs"]
 mod restores;
+#[path = "workspaces/short_rounds_joint.rs"]
+mod short_rounds_joint;
 #[path = "support/workspace_cloud.rs"]
 mod workspace_cloud;
 

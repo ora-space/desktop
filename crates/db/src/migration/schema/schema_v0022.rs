@@ -1,114 +1,115 @@
 use super::Migration;
 
-// Remote locations keep `provisioning`: a provisioner does exist for them. Provisioning rows are
-// released first because the second statement changes the lifecycle both statements select on.
-const UP_STATEMENTS: &[&str] = &[
-    "UPDATE workspace_provisioning SET state = 'ready'
-     WHERE provisioner_kind = 'local_git' AND state = 'pending'
-       AND workspace_id IN (
-           SELECT w.id
-           FROM workspaces w
-           JOIN workspace_locations l ON l.id = w.location_id
-           WHERE w.workspace_kind = 'main' AND w.lifecycle = 'provisioning'
-             AND w.is_deleted = 0 AND l.location_kind = 'local_filesystem'
-       );",
-    "UPDATE workspaces SET lifecycle = 'active'
-     WHERE workspace_kind = 'main' AND lifecycle = 'provisioning' AND is_deleted = 0
-       AND location_id IN (
-           SELECT id FROM workspace_locations WHERE location_kind = 'local_filesystem'
-       );",
-];
+const UP_STATEMENTS: &[&str] = &[r#"
+CREATE TABLE workflow_document_imports (
+    source_namespace TEXT NOT NULL,
+    identifier       TEXT NOT NULL,
+    document_path    TEXT NOT NULL,
+    state            TEXT NOT NULL CHECK (state IN ('imported', 'conflict_skipped')),
+    workflow_id      TEXT,
+    recorded_at      INTEGER NOT NULL,
+    PRIMARY KEY (source_namespace, identifier, document_path),
+    CHECK ((state = 'imported') = (workflow_id IS NOT NULL))
+);
+"#];
 
-/// Intentionally empty: an older build admits an active local Workspace exactly as this one does,
-/// and restoring `provisioning` would strand those projects again.
-const DOWN_STATEMENTS: &[&str] = &[];
+const DOWN_STATEMENTS: &[&str] = &["DROP TABLE IF EXISTS workflow_document_imports;"];
 
-/// Releases local main Workspaces stranded in `provisioning` by earlier project creation.
+/// Records which document paths a marketplace plugin already delivered a workflow for.
 ///
-/// Creation used to probe the directory once and store `provisioning` when it was absent, but no
-/// code ever promotes a local Workspace, so such a project could never list models or start a
-/// session even after its directory appeared. Local Workspaces are now always active and their
-/// directory is checked on every use, so the stranded rows only need their state corrected.
+/// The table holds terminal outcomes only: a path either produced a copy, or collided with a
+/// workflow of the same name the user already had. Both are permanent for that source path, which
+/// is what makes an upgrade additive and a user deletion stay deleted. The record is deliberately
+/// not a foreign key to `workflows`: it outlives the copy so re-importing a deleted workflow stays
+/// refused, and `workflow_id` is informational only.
 pub fn migration() -> Migration {
     Migration::new("0022", UP_STATEMENTS, DOWN_STATEMENTS)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::migration::reconcile_database_versions;
-    use crate::{MigrationCatalog, default_migration_catalog, test_clock::TestClock};
-    use ora_logging::with_trace_logging;
-    use pretty_assertions::assert_eq;
     use rusqlite::Connection;
 
-    /// Promotes only stranded local main Workspaces and leaves every other row untouched.
+    use super::UP_STATEMENTS;
+
     #[test]
-    fn releases_stranded_local_main_workspaces_only() {
-        with_trace_logging(|| {
-            let latest = default_migration_catalog().unwrap();
-            let previous = MigrationCatalog::new(
-                latest
-                    .target_versions()
-                    .iter()
-                    .filter(|version| **version < "0022")
-                    .map(|version| latest.migration(version).unwrap().clone())
-                    .collect(),
-            )
-            .unwrap();
-            let mut connection = Connection::open_in_memory().unwrap();
-            reconcile_database_versions(&mut connection, &previous, &TestClock::new(1)).unwrap();
+    fn keeps_one_terminal_state_per_source_path() {
+        let connection = Connection::open_in_memory().expect("open database");
+        for statement in UP_STATEMENTS {
             connection
-                .execute_batch(
-                    "INSERT INTO projects (id, name, created_at, updated_at, is_deleted) VALUES
-                         ('stranded', 'Stranded', 1, 1, 0),
-                         ('ready', 'Ready', 1, 1, 0),
-                         ('remote', 'Remote', 1, 1, 0),
-                         ('deleted', 'Deleted', 1, 1, 1);
-                     INSERT INTO workspace_locations (id, location_kind, plugin_id, locator_json, created_at, updated_at) VALUES
-                         ('l-stranded', 'local_filesystem', NULL, '{\"path\":\"D:\\\\missing\"}', 1, 1),
-                         ('l-ready', 'local_filesystem', NULL, '{\"path\":\"D:\\\\ready\"}', 1, 1),
-                         ('l-remote', 'ssh', NULL, '{\"connection_ref\":\"c\",\"path\":\"/r\"}', 1, 1),
-                         ('l-deleted', 'local_filesystem', NULL, '{\"path\":\"D:\\\\gone\"}', 1, 1);
-                     INSERT INTO workspaces (id, project_id, workspace_kind, location_id, lifecycle, created_at, updated_at, is_deleted) VALUES
-                         ('w-stranded', 'stranded', 'main', 'l-stranded', 'provisioning', 1, 1, 0),
-                         ('w-ready', 'ready', 'main', 'l-ready', 'active', 1, 1, 0),
-                         ('w-remote', 'remote', 'main', 'l-remote', 'provisioning', 1, 1, 0),
-                         ('w-deleted', 'deleted', 'main', 'l-deleted', 'retiring', 1, 1, 1);
-                     INSERT INTO workspace_provisioning (workspace_id, provisioner_kind, state, created_at, updated_at) VALUES
-                         ('w-stranded', 'local_git', 'pending', 1, 1),
-                         ('w-ready', 'local_git', 'ready', 1, 1),
-                         ('w-remote', 'ssh', 'pending', 1, 1),
-                         ('w-deleted', 'local_git', 'destroying', 1, 1);",
-                )
-                .unwrap();
+                .execute_batch(statement)
+                .expect("apply migration");
+        }
+        connection
+            .execute(
+                "INSERT INTO workflow_document_imports
+                     (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                 VALUES ('official', 'ora.cdase-workflow', 'assets/workflows/1.0.0.json', 'imported', 'workflow-1', 1)",
+                [],
+            )
+            .expect("insert imported record");
+        connection
+            .execute(
+                "INSERT INTO workflow_document_imports
+                     (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                 VALUES ('official', 'ora.cdase-workflow', 'assets/workflows/2.0.0.json', 'conflict_skipped', NULL, 1)",
+                [],
+            )
+            .expect("insert conflict record");
 
-            reconcile_database_versions(&mut connection, &latest, &TestClock::new(2)).unwrap();
-
-            let rows = connection
-                .prepare(
-                    "SELECT w.id, w.lifecycle, p.state
-                     FROM workspaces w JOIN workspace_provisioning p ON p.workspace_id = w.id
-                     ORDER BY w.id",
+        // The same source path can never carry a second outcome, which is what stops a reinstall
+        // or upgrade from importing a path twice.
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO workflow_document_imports
+                         (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                     VALUES ('official', 'ora.cdase-workflow', 'assets/workflows/1.0.0.json', 'imported', 'workflow-2', 2)",
+                    [],
                 )
-                .unwrap()
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                .unwrap()
-                .collect::<Result<Vec<(String, String, String)>, _>>()
-                .unwrap();
-            assert_eq!(
-                rows,
-                [
-                    ("w-deleted", "retiring", "destroying"),
-                    ("w-ready", "active", "ready"),
-                    ("w-remote", "provisioning", "pending"),
-                    ("w-stranded", "active", "ready"),
-                ]
-                .map(|(id, lifecycle, state)| (
-                    id.into(),
-                    lifecycle.into(),
-                    state.into()
-                ))
-            );
-        });
+                .is_err()
+        );
+
+        // The same file name under another namespace or plugin is a different source path.
+        connection
+            .execute(
+                "INSERT INTO workflow_document_imports
+                     (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                 VALUES ('other', 'ora.cdase-workflow', 'assets/workflows/1.0.0.json', 'imported', 'workflow-3', 2)",
+                [],
+            )
+            .expect("insert same path under another namespace");
+    }
+
+    #[test]
+    fn ties_the_recorded_workflow_to_an_imported_state() {
+        let connection = Connection::open_in_memory().expect("open database");
+        for statement in UP_STATEMENTS {
+            connection
+                .execute_batch(statement)
+                .expect("apply migration");
+        }
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO workflow_document_imports
+                         (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                     VALUES ('official', 'ora.cdase-workflow', 'assets/workflows/1.0.0.json', 'imported', NULL, 1)",
+                    [],
+                )
+                .is_err(),
+            "an imported path must name the copy it created"
+        );
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO workflow_document_imports
+                         (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                     VALUES ('official', 'ora.cdase-workflow', 'assets/workflows/2.0.0.json', 'unknown', NULL, 1)",
+                    [],
+                )
+                .is_err(),
+            "only terminal states may be recorded"
+        );
     }
 }

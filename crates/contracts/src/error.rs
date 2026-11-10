@@ -135,6 +135,8 @@ pub enum WorkflowNodeCompletionBlockerKind {
     TurnTruncated,
     TurnRefused,
     TurnUnknown,
+    /// The workflow's opening turn settled normally, but the user has not confirmed the step.
+    TurnUnconfirmed,
     StructuredInvalid,
     OutputMissing,
 }

@@ -1,6 +1,7 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::{
-    completion_payload, derive_completion_snapshot, unknown_completion_snapshot,
+    StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
+    unknown_completion_snapshot,
 };
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{
@@ -339,17 +340,24 @@ async fn park_first_interactive_turn(
     node_run_id: WorkflowNodeRunId,
     session_id: SessionId,
     output_contract: Option<AgentOutputContract>,
+    stop_cause: Option<StopCause>,
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
         let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
-            Ok(history) => derive_completion_snapshot(&history, output_contract.as_ref(), false),
+            Ok(history) => derive_completion_snapshot(
+                &history,
+                output_contract.as_ref(),
+                false,
+                TurnOrigin::Workflow,
+                stop_cause,
+            ),
             Err(error) => {
                 ora_warn!(
                     node_run_id = %node_run_id,
                     error = %error,
                     "failed to read session history while parking; recording an unknown completion snapshot"
                 );
-                unknown_completion_snapshot(false)
+                unknown_completion_snapshot(false, TurnOrigin::Workflow, Some(StopCause::Unknown))
             }
         };
         transitions
@@ -589,6 +597,9 @@ async fn drive_agent_node(
                 node_run_id.clone(),
                 session_id.clone(),
                 config.output_contract.clone(),
+                // A first turn the user stopped must still park as awaiting them, so the cause
+                // travels with the park instead of being read back from the stop reason.
+                StopCause::of_prompt_end(stream.end_cause()),
             )
             .await?;
             return Ok(AgentNodeOutcome::AwaitingInput);

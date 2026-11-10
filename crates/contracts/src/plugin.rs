@@ -35,7 +35,10 @@ pub use pack_status::{
     PackUninstallPlanRequest, PackUninstallPlanResponse, PackUninstallPreservation,
     PackUninstallPreservationReason,
 };
-pub use workflow_import::ImportedWorkflowOutcome;
+pub use workflow_import::{
+    ImportedWorkflowOutcome, MarketplaceWorkflowOutcome, RetryWorkflowImportRequest,
+    RetryWorkflowImportResponse,
+};
 
 /// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
@@ -601,6 +604,14 @@ pub struct InstallPluginResponse {
     /// anything the package ships; a Hook's lifecycle commands run only on an explicitly
     /// authorized single-plugin operation.
     pub outcome: InstallOutcome,
+    /// One entry per workflow document the installed package (or one of its installed pack
+    /// members) carried, in package order. Empty for every kind that contributes no documents, so
+    /// an ordinary plugin install reports nothing here.
+    ///
+    /// A document outcome is independent of the installation outcome: a workflow that could not be
+    /// imported never turns a successful installation into a failed one, and a successful
+    /// installation never claims that every document was imported.
+    pub workflows: Vec<MarketplaceWorkflowOutcome>,
 }
 
 /// Models the closed set of installation outcomes.
@@ -652,6 +663,11 @@ pub struct UpdatePluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct UpdatePluginResponse {
     pub plugin_id: String,
+    /// One entry per workflow document the new version carried and this update considered, in
+    /// package order. Paths that already reached a terminal source record report as skipped, so an
+    /// upgrade never re-imports, renames, or overwrites a copy the user already has. Empty for
+    /// every kind that contributes no workflow documents.
+    pub workflows: Vec<MarketplaceWorkflowOutcome>,
 }
 
 /// Requests importing one local `.orax` release archive into the installed plugins tree.
@@ -748,8 +764,9 @@ mod tests {
         ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
         ListMarketplaceSourcesResponse, MarketplaceArtifactRetrieval,
         MarketplaceArtifactRetrievalUpdate, MarketplaceS3CredentialsUpdate, MarketplaceSource,
-        PluginConfigurationSummary, PluginInstallationValidity, PluginLogo, PluginRuntimeStatus,
-        ReadPluginReadmeRequest, ReadPluginReadmeResponse, SyncAvailablePluginsRequest,
+        MarketplaceWorkflowOutcome, PluginConfigurationSummary, PluginInstallationValidity,
+        PluginLogo, PluginRuntimeStatus, ReadPluginReadmeRequest, ReadPluginReadmeResponse,
+        RetryWorkflowImportRequest, RetryWorkflowImportResponse, SyncAvailablePluginsRequest,
         SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
         UpdateMarketplaceSourceResponse, UpdatePluginRequest, UpdatePluginResponse,
     };
@@ -1187,6 +1204,10 @@ mod tests {
     }
 
     /// Verifies the install request/response wire shape for a marketplace plugin.
+    ///
+    /// The response always carries the document outcomes: an ordinary package reports an empty
+    /// list rather than omitting the field, so a caller never has to distinguish "no documents"
+    /// from "this operation does not report documents".
     #[test]
     fn serializes_install_plugin_contract() {
         assert_eq!(
@@ -1201,9 +1222,14 @@ mod tests {
             serde_json::to_value(InstallPluginResponse {
                 plugin_id: "official/weather".to_string(),
                 outcome: InstallOutcome::Installed,
+                workflows: Vec::new(),
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather", "outcome": { "state": "installed" } })
+            json!({
+                "pluginId": "official/weather",
+                "outcome": { "state": "installed" },
+                "workflows": []
+            })
         );
     }
 
@@ -1221,9 +1247,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(UpdatePluginResponse {
                 plugin_id: "official/weather".to_string(),
+                workflows: Vec::new(),
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather" })
+            json!({ "pluginId": "official/weather", "workflows": [] })
         );
     }
 
@@ -1286,6 +1313,90 @@ mod tests {
                 "sourceFile": "assets/workflows/2.0.0.json",
                 "reason": "document is not valid JSON"
             })
+        );
+    }
+
+    /// Verifies each marketplace document outcome keeps its own shape and names its member plugin.
+    ///
+    /// A pack install can carry documents from several members, so the member identifier is part
+    /// of every arm rather than a field of the enclosing response.
+    #[test]
+    fn serializes_marketplace_workflow_outcomes() {
+        assert_eq!(
+            serde_json::to_value(MarketplaceWorkflowOutcome::Imported {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                workflow_id: "workflow-1".to_string(),
+                name: "发布流程".to_string(),
+                version: "1.0.0".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "imported",
+                "pluginId": "official/ora.cdase-workflow",
+                "sourceFile": "assets/workflows/1.0.0.json",
+                "workflowId": "workflow-1",
+                "name": "发布流程",
+                "version": "1.0.0"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(MarketplaceWorkflowOutcome::SkippedProcessed {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "skipped_processed",
+                "pluginId": "official/ora.cdase-workflow",
+                "sourceFile": "assets/workflows/1.0.0.json"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(MarketplaceWorkflowOutcome::SkippedConflict {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/2.0.0.json".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "skipped_conflict",
+                "pluginId": "official/ora.cdase-workflow",
+                "sourceFile": "assets/workflows/2.0.0.json"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(MarketplaceWorkflowOutcome::Failed {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/3.0.0.json".to_string(),
+                reason: "document declares no workflow name".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "failed",
+                "pluginId": "official/ora.cdase-workflow",
+                "sourceFile": "assets/workflows/3.0.0.json",
+                "reason": "document declares no workflow name"
+            })
+        );
+    }
+
+    /// Verifies the explicit retry contract reports the same per-document vocabulary.
+    #[test]
+    fn serializes_retry_workflow_import_contract() {
+        assert_eq!(
+            serde_json::to_value(RetryWorkflowImportRequest {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/ora.cdase-workflow" })
+        );
+        assert_eq!(
+            serde_json::to_value(RetryWorkflowImportResponse {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                workflows: Vec::new(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/ora.cdase-workflow", "workflows": [] })
         );
     }
 

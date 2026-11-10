@@ -1,5 +1,6 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
+use super::super::completion_snapshot::StopCause;
 use super::CompletingNodeRuns;
 use super::session::{HumanTurnAdmission, restore_human_turn};
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
@@ -7,10 +8,11 @@ use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use ora_agent_runtime::PromptEndReport;
 use ora_contracts::{PromptSessionEvent, PromptSessionRequest};
 use ora_db::RepositoryPool;
-use ora_domain::PromptInactivityPolicy;
-use std::path::PathBuf;
+use ora_domain::{PromptInactivityPolicy, WorkflowNodeRunId};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Grants only human-turn coordination to Sessions, not workflow scheduling or completion control.
@@ -56,12 +58,13 @@ impl WorkflowSessionTurns {
         agent_runtime: &AgentRuntimeManager,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
+        let session_id = request.session_id.clone();
         let admission = crate::workflow::run::interactive::begin_human_turn(
             &self.pool,
             &self.run_locks,
             &self.completing_node_runs,
             &self.transitions,
-            &request.session_id,
+            &session_id,
         )
         .await?;
         let (prompt_inactivity, step_boundary) = match &admission {
@@ -90,19 +93,47 @@ impl WorkflowSessionTurns {
         let HumanTurnAdmission::Workflow { node_run_id, .. } = admission else {
             return Ok(stream);
         };
+        let end_report = stream.end_report();
         let pool = self.pool.clone();
         let sessions_root = self.sessions_root.clone();
         let transitions = self.transitions.clone();
         Ok(stream.attach_cleanup(move || async move {
-            crate::workflow::run::interactive::end_human_turn(
+            // The runtime attributes this turn's end while it settles: an explicit stop, the
+            // inactivity policy, a dropped stream and a crashed session all end it as `Cancelled`
+            // in history, so the park must be told which one it was (ADR D4).
+            park_ended_turn(
                 &pool,
                 &sessions_root,
                 &transitions,
                 &node_run_id,
+                end_report,
             )
             .await
         }))
     }
+}
+
+/// Parks one workflow-owned turn with the cause the runtime reported for it.
+///
+/// Cleanup runs after the stream's owner settled, which is when the actor's report is final. The
+/// report is the only place the end is attributable: history records a user stop, an inactivity
+/// timeout, a dropped stream and a crash all as the same `Cancelled` stop reason.
+pub(super) async fn park_ended_turn(
+    pool: &RepositoryPool,
+    sessions_root: &Path,
+    transitions: &Arc<WorkflowRunTransitions>,
+    node_run_id: &WorkflowNodeRunId,
+    end_report: Option<PromptEndReport>,
+) -> Result<(), BackendError> {
+    let stop_cause = StopCause::of_prompt_end(end_report.and_then(|report| report.recorded()));
+    crate::workflow::run::interactive::end_human_turn(
+        pool,
+        sessions_root,
+        transitions,
+        node_run_id,
+        stop_cause,
+    )
+    .await
 }
 
 /// Prepends the step boundary to the prompt the agent receives while recording the user's text.

@@ -17,3 +17,11 @@ backend_command!(
     effects.recover_target,
     "Closes one quarantined Effect Target's journals by exact adapter evidence."
 );
+
+backend_command!(
+    retry_effect_target,
+    RetryEffectTargetRequest,
+    RetryEffectTargetResponse,
+    effects.retry_target,
+    "Wakes one Effect Target for explicit reconciliation without changing Desired State."
+);

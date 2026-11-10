@@ -375,6 +375,7 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_truncated"
   | "turn_refused"
   | "turn_unknown"
+  | "turn_unconfirmed"
   | "structured_invalid"
   | "output_missing";
 
@@ -384,6 +385,37 @@ export interface WorkflowNodeCompletionBlocker {
   /** Blocker-specific detail; absent when the backend has none, never used for control flow. */
   params: Record<string, unknown>;
 }
+
+/**
+ * Which prompt opened a parked turn.
+ *
+ * `workflow` is the workflow's own opening prompt: its `EndTurn` never completes the step by
+ * itself, because the agent may have ended that reply with a question. `human` turns were opened
+ * by the user, so their normal end keeps the completion ADR's ready rule.
+ */
+export type WorkflowNodeTurnOrigin = "workflow" | "human";
+
+/**
+ * Why the prompt owning a parked turn ended without a usable turn.
+ *
+ * The blocker kind describes what the turn looked like; the stop cause names which side ended it.
+ * `user_stopped` must never be presented as a system failure, and a timeout or dropped stream must
+ * never be presented as the user's own stop.
+ */
+export type WorkflowNodeStopCause =
+  | "user_stopped"
+  | "prompt_timed_out"
+  | "stream_dropped"
+  | "session_crashed"
+  | "unknown";
+
+/**
+ * How a parked node is shown: waiting for the user's participation, or stopped abnormally.
+ *
+ * The backend writes this where it parks (or prepares) the node, where the turn origin and stop
+ * cause are known. The projection must not re-infer it from blockers.
+ */
+export type WorkflowNodeParkKind = "awaiting_user" | "abnormal";
 
 /** Identity of one settled turn: its user message and the `TurnEnded` that closed it. */
 export interface WorkflowNodeTurnKey {
@@ -405,6 +437,15 @@ export interface WorkflowNodeCompletion {
   turnKey?: WorkflowNodeTurnKey;
   /** Snake-case ACP stop reason of the settled turn; absent when it did not settle. */
   stopReason?: string;
+  /** Which prompt opened the turn; absent on snapshots written before the field existed. */
+  turnOrigin?: WorkflowNodeTurnOrigin;
+  /** Why the owning prompt stopped; `null` when the cause does not apply. */
+  stopCause?: WorkflowNodeStopCause | null;
+  /**
+   * Park classification written by the backend park/prepare path; absent on ready snapshots and
+   * older snapshots. Consumers read it rather than re-inferring it from blockers.
+   */
+  parkKind?: WorkflowNodeParkKind;
   blockers: WorkflowNodeCompletionBlocker[];
   warnings: string[];
   /** SHA-256 of the final assistant text; absent when the turn did not settle. */
@@ -413,6 +454,13 @@ export interface WorkflowNodeCompletion {
   provisional: boolean;
   /** No blockers and not provisional; the node can advance without an explicit force. */
   ready: boolean;
+  /**
+   * The workflow's opening turn ended normally and waits for an explicit confirmation.
+   *
+   * True exactly when the snapshot is not provisional and its only blocker is `turn_unconfirmed`;
+   * a plain completion would still be rejected, and only `confirmInitialTurn` lifts this gate.
+   */
+  needsConfirmation: boolean;
 }
 
 /** Structured failure persisted on a node run as `payload.error_detail`. */

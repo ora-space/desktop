@@ -3,8 +3,9 @@ use crate::clock::SystemClock;
 use ora_application::{
     ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler, DeleteWorkflowHandler,
     GetDraftHandler, GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
-    ImportWorkflowsHandler, ListVersionsHandler, ListWorkflowsHandler, PublishWorkflowHandler,
-    RollbackWorkflowHandler, UpdateDraftHandler, UpdateWorkflowHandler, UuidWorkflowIdGenerator,
+    ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
+    ListWorkflowsHandler, PublishWorkflowHandler, RollbackWorkflowHandler, UpdateDraftHandler,
+    UpdateWorkflowHandler, UuidWorkflowIdGenerator,
 };
 use ora_contracts::{
     ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest,
@@ -16,7 +17,7 @@ use ora_contracts::{
     RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest, UpdateDraftResponse,
     UpdateWorkflowRequest, UpdateWorkflowResponse,
 };
-use ora_db::{RepositoryPool, SqliteWorkflowRepository};
+use ora_db::{RepositoryPool, SqliteWorkflowDocumentSourceRepository, SqliteWorkflowRepository};
 use std::sync::Arc;
 
 /// The concrete workflow import use case, composed alongside the other workflow handlers.
@@ -30,6 +31,31 @@ pub(crate) type WorkflowImport =
 pub(crate) fn workflow_import(pool: RepositoryPool, clock: SystemClock) -> WorkflowImport {
     ImportWorkflowsHandler::new(
         Arc::new(SqliteWorkflowRepository::new(pool)),
+        UuidWorkflowIdGenerator::new(),
+        clock,
+    )
+}
+
+/// The concrete marketplace workflow document import use case.
+///
+/// It keeps its own two stores instead of reusing [`WorkflowImport`]: a marketplace document is
+/// only imported once its source path has no terminal record, and the record has to commit with
+/// the copy it describes.
+pub(crate) type MarketplaceWorkflowImport = ImportMarketplaceWorkflowsHandler<
+    SqliteWorkflowRepository,
+    SqliteWorkflowDocumentSourceRepository,
+    UuidWorkflowIdGenerator,
+    SystemClock,
+>;
+
+/// Builds the marketplace workflow import use case from the shared repository pool.
+pub(crate) fn marketplace_workflow_import(
+    pool: RepositoryPool,
+    clock: SystemClock,
+) -> MarketplaceWorkflowImport {
+    ImportMarketplaceWorkflowsHandler::new(
+        Arc::new(SqliteWorkflowRepository::new(pool.clone())),
+        SqliteWorkflowDocumentSourceRepository::new(pool),
         UuidWorkflowIdGenerator::new(),
         clock,
     )

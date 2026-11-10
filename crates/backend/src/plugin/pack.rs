@@ -11,16 +11,16 @@
 //! the ownership journal and reconciliation first, then executed through the ordinary
 //! single-plugin uninstall chain.
 
-use super::PluginApi;
 use super::marketplace::map_install_error;
 use super::pack_reconcile::PackMemberReconciliation;
 use super::pack_uninstall::PackPreserveReason;
+use super::{InstalledPackage, PluginApi};
 use crate::error::{BackendError, ErrorClassification};
 use ora_application::Clock;
 use ora_contracts::{
-    EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
-    PackInstallFailure, PackInstallationStatus, PackMemberParams, PackMemberReconciliationState,
-    PackMemberStatus, PackUninstallPlan as PackUninstallPlanDto, PackUninstallPreservation,
+    EmptyErrorParams, InstallOutcome, InstallPluginRequest, PackInstallFailure,
+    PackInstallationStatus, PackMemberParams, PackMemberReconciliationState, PackMemberStatus,
+    PackUninstallPlan as PackUninstallPlanDto, PackUninstallPreservation,
     PackUninstallPreservationReason, PluginDataDisposition, PublicError, UninstallPluginRequest,
 };
 use ora_db::{PackInstallationMemberRecord, PackInstallationRecord, PackMemberOwnership};
@@ -189,7 +189,7 @@ impl PluginApi {
         use_proxy: bool,
         s3_config: Option<S3Config>,
         progress: Option<ProgressCallback>,
-    ) -> Result<InstallPluginResponse, BackendError> {
+    ) -> Result<InstalledPackage, BackendError> {
         let preflight = self.preflight_pack(
             &manifest,
             &namespace,
@@ -213,7 +213,7 @@ impl PluginApi {
         manifest: PluginManifest,
         namespace: PluginNamespace,
         progress: Option<ProgressCallback>,
-    ) -> Result<InstallPluginResponse, BackendError> {
+    ) -> Result<InstalledPackage, BackendError> {
         let mut preflight = self.preflight_pack(
             &manifest,
             &namespace,
@@ -251,7 +251,7 @@ impl PluginApi {
         preflight: PackPreflight,
         installer: &Installer<D>,
         progress: Option<ProgressCallback>,
-    ) -> Result<InstallPluginResponse, BackendError>
+    ) -> Result<InstalledPackage, BackendError>
     where
         D: HttpDownload,
     {
@@ -283,9 +283,19 @@ impl PluginApi {
             }
         }
         ora_info!(plugin_id = %request.plugin_id, outcome = ?outcome, "installed marketplace pack");
-        Ok(InstallPluginResponse {
+        // Only members this run landed can contribute new documents: a skipped member was already
+        // installed and its paths are already recorded, and a failed member was rolled back.
+        let installed_members = match &outcome {
+            InstallOutcome::PackInstalled { members, .. } => members.clone(),
+            // A pack never reports the single-package outcome; treating it as no members keeps the
+            // document read empty rather than guessing one.
+            InstallOutcome::Installed => Vec::new(),
+        };
+        let workflow_documents = self.contributed_workflow_documents(&installed_members)?;
+        Ok(InstalledPackage {
             plugin_id: request.plugin_id,
             outcome,
+            workflow_documents,
         })
     }
 

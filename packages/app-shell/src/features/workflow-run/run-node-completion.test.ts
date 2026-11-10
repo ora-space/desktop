@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { GraphWorkflowRun } from "@ora/workflow-runtime";
-import { directSuccessorNodeTitles } from "./run-node-completion";
+import type {
+  GraphWorkflowRun,
+  WorkflowNodeCompletion,
+} from "@ora/workflow-runtime";
+import {
+  directSuccessorNodeTitles,
+  isAwaitingConfirmation,
+} from "./run-node-completion";
 
 function node(id: string, title: string) {
   return {
@@ -51,5 +57,46 @@ describe("directSuccessorNodeTitles", () => {
       a: ["Step B", "Step C"],
     });
     expect(titles.b).toBeUndefined();
+  });
+});
+
+describe("isAwaitingConfirmation", () => {
+  function completion(
+    overrides: Partial<WorkflowNodeCompletion>,
+  ): WorkflowNodeCompletion {
+    return {
+      blockers: [],
+      warnings: [],
+      provisional: false,
+      ready: false,
+      needsConfirmation: false,
+      ...overrides,
+    };
+  }
+
+  it("reads the projected needsConfirmation flag instead of re-deriving blockers", () => {
+    expect(isAwaitingConfirmation(undefined)).toBe(false);
+    expect(isAwaitingConfirmation(completion({ ready: true }))).toBe(false);
+    expect(
+      isAwaitingConfirmation(
+        completion({
+          provisional: true,
+          blockers: [{ kind: "turn_unconfirmed", params: {} }],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isAwaitingConfirmation(
+        completion({ blockers: [{ kind: "turn_unconfirmed", params: {} }] }),
+      ),
+    ).toBe(false);
+    expect(
+      isAwaitingConfirmation(
+        completion({
+          blockers: [{ kind: "turn_unconfirmed", params: {} }],
+          needsConfirmation: true,
+        }),
+      ),
+    ).toBe(true);
   });
 });

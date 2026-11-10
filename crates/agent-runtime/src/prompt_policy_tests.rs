@@ -8,12 +8,15 @@ use crate::host::SessionStore;
 use crate::session_setup::LiveMcpState;
 use crate::suspend::AgentProcess;
 use crate::test_host::{TestHost, test_runtime};
-use crate::{ActorSetup, MemorySessionStore, NoSessionMcp, SessionEventStream};
+use crate::{ActorSetup, MemorySessionStore, NoSessionMcp, PromptEndCause, SessionEventStream};
 use agent_client_protocol_schema::v1::{
     ContentBlock, PromptResponse, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use ora_acp::AcpPeer;
-use ora_contracts::{PromptSessionEvent, PromptSessionRequest};
+use ora_contracts::{
+    CancelSessionPromptRequest, EmptyErrorParams, PromptSessionEvent, PromptSessionRequest,
+    PublicError,
+};
 use ora_domain::{
     AuditFields, PromptInactivityPolicy, Session, SessionId, SessionMcpSelection, WorkspaceId,
 };
@@ -562,6 +565,98 @@ fn waiting_prompt_survives_silence_while_default_session_retries() {
             ))
             .unwrap();
         assert_eq!(completion(&mut waiting).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// The runtime names why a turn ended, because history records every early end as `Cancelled`.
+///
+/// See specs/test-cases/desktop/core/workflow/first-turn-confirmation.md.
+#[test]
+fn the_prompt_reports_who_ended_the_turn() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+
+        // The user cancels the active prompt from the session UI.
+        fixture.add_session("stopped");
+        let mut stopped = fixture
+            .manager
+            .prompt_session(prompt("stopped"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .manager
+            .cancel_session_prompt(CancelSessionPromptRequest {
+                session_id: "stopped".to_string(),
+            })
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(completion(&mut stopped).await, StopReason::Cancelled);
+        assert_eq!(stopped.end_cause(), Some(PromptEndCause::UserStopped));
+
+        // The turn's owner abandons the stream without answering it.
+        fixture.add_session("dropped");
+        let mut dropped = fixture
+            .manager
+            .prompt_session(prompt("dropped"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        dropped.cancel_and_wait().await.unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(dropped.end_cause(), Some(PromptEndCause::StreamDropped));
+
+        // The inactivity schedule runs out of retries while the provider stays silent.
+        fixture.add_session("timed-out");
+        let mut timed_out = fixture
+            .manager
+            .prompt_session(prompt("timed-out"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let mut failure = None;
+        while let Some(event) = timed_out.recv().await {
+            if let Err(error) = event {
+                failure = Some(error);
+                break;
+            }
+        }
+        assert!(
+            failure.is_some(),
+            "the exhausted policy reports its own timeout as a failure"
+        );
+        assert_eq!(
+            timed_out.end_cause(),
+            Some(PromptEndCause::InactivityTimeout)
+        );
+
+        fixture.shutdown().await;
+    });
+}
+
+/// A provider that dies mid-turn is attributed to the session, not to a stream its owner dropped.
+///
+/// History records the end as `Cancelled`, so only the actor's report distinguishes a crash from
+/// the owner abandoning the stream; this asserts that branch on a real provider EOF.
+#[test]
+fn a_provider_crash_reports_session_crashed_rather_than_a_dropped_stream() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("crashed");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("crashed"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture.agent.send(AgentInput::Disconnect).unwrap();
+        let error = stream.recv().await.unwrap().unwrap_err();
+        assert_eq!(
+            error.public_error(),
+            &PublicError::AgentRuntimeUnavailable(EmptyErrorParams {})
+        );
+        assert_eq!(stream.end_cause(), Some(PromptEndCause::SessionCrashed));
         fixture.shutdown().await;
     });
 }

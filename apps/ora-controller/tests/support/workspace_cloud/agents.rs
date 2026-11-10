@@ -270,6 +270,7 @@ impl WorkspaceCloud {
             return Err(conflict("wrong_input"));
         }
         let record = proto::ExecutionRecord {
+            created_at: None,
             operation_id: message.operation_id.clone(),
             execution_id: message.execution_id.clone(),
             node_operation_id: format!("node-{}", message.execution_id),

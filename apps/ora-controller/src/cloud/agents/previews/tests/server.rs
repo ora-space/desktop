@@ -107,6 +107,7 @@ impl ExecutionService for Server {
         }
         Ok(Response::new(proto::GetDispatchResponse {
             record: Some(proto::ExecutionRecord {
+                created_at: None,
                 operation_id: "cloud-run".into(),
                 execution_id: "execution".into(),
                 node_operation_id: "node-operation".into(),

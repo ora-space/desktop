@@ -11,11 +11,11 @@ sessions in `crates/backend/src/workflow/run`. The UI is described in
 
 ## Model
 
-| Domain type | Table | Records |
-|---|---|---|
-| `WorkflowRun` | `workflow_runs` | The pinned `snapshot_id`, display name, `workspace_id`, kickoff `input`, status and the run payload (variable pool and scheduler state) |
-| `WorkflowNodeRun` | `workflow_node_runs` | One executed node attempt with its scope, iteration round, session, output and payload |
-| `WorkflowExecutionScope` | `workflow_execution_scopes` | Root executions and Loop rounds, see [Loops and iterations](loops-and-iterations.md#execution-scopes) |
+| Domain type              | Table                       | Records                                                                                                                                 |
+| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `WorkflowRun`            | `workflow_runs`             | The pinned `snapshot_id`, display name, `workspace_id`, kickoff `input`, status and the run payload (variable pool and scheduler state) |
+| `WorkflowNodeRun`        | `workflow_node_runs`        | One executed node attempt with its scope, iteration round, session, output and payload                                                  |
+| `WorkflowExecutionScope` | `workflow_execution_scopes` | Root executions and Loop rounds, see [Loops and iterations](loops-and-iterations.md#execution-scopes)                                   |
 
 Run and node status share `Pending | Running | Succeeded | Failed | Cancelled`. Nodes that never
 started have no row; the frontend derives "not started" by comparing graph nodes with recorded rows.
@@ -24,17 +24,17 @@ a running run with such a node as `AwaitingInput` so the sidebar can show that a
 
 ## Lifecycle
 
-| Operation | Effect |
-|---|---|
-| `createWorkflowRun` | Validate and persist a `Pending` run |
-| `startWorkflowRun` | Validate executability and begin scheduling |
-| `updateWorkflowRunInput` | Fill Start inputs before the run starts |
-| `cancelWorkflowRun`, `restartWorkflowRun` | Cancel; restart from scratch with a fresh root execution |
-| `previewWorkflowRunResume`, `resumeWorkflowRunFromFailure` | Inspect and perform a resume, see [Resuming](#resuming-a-failed-run) |
-| `completeWorkflowNode` | Manually complete an interactive node |
-| `diagnoseWorkflowNodeFailure` | On-demand AI diagnosis of a failed node |
-| `getWorkflowRun`, `listWorkflowRuns`, `listWorkflowRunsByWorkflow`, `listWorkflowNodeRuns` | Read runs, project-scoped summaries and node history |
-| `renameWorkflowRun`, `deleteWorkflowRun` | Rename; delete a non-active run |
+| Operation                                                                                  | Effect                                                               |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `createWorkflowRun`                                                                        | Validate and persist a `Pending` run                                 |
+| `startWorkflowRun`                                                                         | Validate executability and begin scheduling                          |
+| `updateWorkflowRunInput`                                                                   | Fill Start inputs before the run starts                              |
+| `cancelWorkflowRun`, `restartWorkflowRun`                                                  | Cancel; restart from scratch with a fresh root execution             |
+| `previewWorkflowRunResume`, `resumeWorkflowRunFromFailure`                                 | Inspect and perform a resume, see [Resuming](#resuming-a-failed-run) |
+| `completeWorkflowNode`                                                                     | Manually complete an interactive node                                |
+| `diagnoseWorkflowNodeFailure`                                                              | On-demand AI diagnosis of a failed node                              |
+| `getWorkflowRun`, `listWorkflowRuns`, `listWorkflowRunsByWorkflow`, `listWorkflowNodeRuns` | Read runs, project-scoped summaries and node history                 |
+| `renameWorkflowRun`, `deleteWorkflowRun`                                                   | Rename; delete a non-active run                                      |
 
 ### Creation
 
@@ -123,6 +123,24 @@ the expected and actual identity. The step card at the end of the conversation a
 action are the two explicit ways to advance: continue, a confirmed forced completion, or
 complete-and-advance when the card is ready.
 
+The opening, workflow-owned turn never reads as ready on its own. Its `EndTurn` only means the
+agent finished that reply, which may be a question for the user, so the snapshot carries a
+`turn_unconfirmed` blocker. The step card offers "confirm and complete" — a normal completion sent
+with `confirmInitialTurn`, never audited as forced — beside "continue this step", and the
+bottom-right action stays disabled until the turn is ready. A turn opened by the user's reply keeps
+the rule above: an `EndTurn` without blockers completes normally and the card names the next step.
+`force` cannot stand in for confirmation, and a request that sets both is rejected as
+`invalid_request`.
+
+Every park is classified where it is written. `parkKind` is `awaiting_user` for an unconfirmed
+opening turn, the user's own stop, or a provisional snapshot, and `abnormal` for a timeout,
+truncation, refusal, unknown end, session crash, stream drop, or output-contract failure; `stopCause`
+names why the owning prompt ended (`user_stopped`, `prompt_timed_out`, `stream_dropped`,
+`session_crashed`, `unknown`). The card shows an abnormal stop with its reason and offers only
+continue or a confirmed forced completion; the bottom-right action is enabled only for a ready turn.
+Older snapshots without these fields keep their previous paused/unknown display, and a repaired
+provisional snapshot keeps the turn origin and stop cause it was parked with.
+
 A turn whose stream dropped before its stop reason became durable parks provisionally from the last
 readable history: the snapshot keeps the `userSeq` it describes and a `turn_not_settled` warning, and
 a later completion attempt repairs it once the turn settles for that same user message. A node that
@@ -135,10 +153,10 @@ the current step and its direct successors, and states that only this step is in
 promise about the runtime stopping later nodes, and the prompt recorded for the user stays exactly
 what the user typed.
 
-A `force` completion is audited in the node payload under `completion_forced`, with the blockers that
-were bypassed, whether the node had a settled turn, and where the accepted output came from
-(`turn_window` or `last_assistant_message`). The audit is written in the same transaction as the
-completion, so a completed node never lacks its record.
+A `force` completion is audited in the node payload under `completion_forced`, with the effective
+blockers it covered, the stop cause that explains them, whether the node had a settled turn, and
+where the accepted output came from (`turn_window` or `last_assistant_message`). The audit is
+written in the same transaction as the completion, so a completed node never lacks its record.
 
 ## Variables and types
 
@@ -178,13 +196,13 @@ scheduler then dispatches nothing more. The failed node run records `payload.err
 mechanical classification, never inferred by a model), `message`, `source_chain`, `attempt`,
 `resumable`, `injects_previous_failure`, `auto_retryable` and `recorded_at`.
 
-| Kind | Resumable | Retried automatically |
-|---|---|---|
-| `session`, `session_ended_without_stop_reason`, `session_binding_rejected` | yes | yes |
-| `workflow_model_not_found`, `missing_agent_config`, `interrupted_by_restart`, `repository`, `baseline_persist` | yes | no |
-| `structured_output`, `agent_refusal`, `unknown_stop_reason` | no | yes |
-| `multiple_outputs` | no | no |
-| `prompt_template`, `missing_agent_ref`, `missing_skill_materialization`, `invalid_run_payload`, `condition_evaluation`, `aggregator_no_match` | no | no |
+| Kind                                                                                                                                          | Resumable | Retried automatically |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------- |
+| `session`, `session_ended_without_stop_reason`, `session_binding_rejected`                                                                    | yes       | yes                   |
+| `workflow_model_not_found`, `missing_agent_config`, `interrupted_by_restart`, `repository`, `baseline_persist`                                | yes       | no                    |
+| `structured_output`, `agent_refusal`, `unknown_stop_reason`                                                                                   | no        | yes                   |
+| `multiple_outputs`                                                                                                                            | no        | no                    |
+| `prompt_template`, `missing_agent_ref`, `missing_skill_materialization`, `invalid_run_payload`, `condition_evaluation`, `aggregator_no_match` | no        | no                    |
 
 `resumable` predicts whether re-running the same snapshot is a sensible first move; resume is always
 offered for a failed or cancelled idle run. Only agent-behavior failures (`structured_output`,
@@ -240,10 +258,10 @@ Each node records a Git checkpoint under `refs/ora/checkpoints/<node_run_id>` be
 its payload. Resume offers three rollback modes; before rolling back, the Workspace is snapshotted as
 `pre-rollback-<run>-<ts>` so the operator can undo.
 
-| Mode | Effect | Unavailable when |
-|---|---|---|
-| `keep` | Leave the Workspace as is | Never |
-| `node_files` | Restore only the paths the failed nodes changed | `no_file_changes`; `composite_region` for a container resume unit |
+| Mode         | Effect                                                      | Unavailable when                                                  |
+| ------------ | ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| `keep`       | Leave the Workspace as is                                   | Never                                                             |
+| `node_files` | Restore only the paths the failed nodes changed             | `no_file_changes`; `composite_region` for a container resume unit |
 | `checkpoint` | Restore the whole Workspace to the resume unit's checkpoint | `no_checkpoint`, `siblings_ran_after_checkpoint`, `not_resumable` |
 
 A node replaced by automatic retries rolls back as one unit with every attempt of its retry chain

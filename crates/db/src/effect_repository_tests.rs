@@ -988,4 +988,21 @@ fn unfinished_operation_is_quarantined_with_target_and_resource_conditions() {
             1,
         )
     );
+    let status = repository
+        .load_target_status(&target)
+        .unwrap_or_else(|error| panic!("load Target status: {error}"))
+        .unwrap_or_else(|| panic!("Target status is missing"));
+    assert_eq!(status.conditions.len(), 2);
+    assert!(
+        status
+            .conditions
+            .iter()
+            .any(|condition| matches!(condition.owner, ConditionOwner::Target(_)))
+    );
+    assert!(
+        status
+            .conditions
+            .iter()
+            .any(|condition| matches!(condition.owner, ConditionOwner::Resource(_)))
+    );
 }

@@ -109,18 +109,27 @@ function readyCompletion(): WorkflowNodeCompletion {
     userSeq: 1,
     turnKey: { userSeq: 1, endedSeq: 2 },
     stopReason: "end_turn",
+    turnOrigin: "human",
+    stopCause: null,
     blockers: [],
     warnings: [],
     outputDigest: "sha256:ready",
     provisional: false,
     ready: true,
+    needsConfirmation: false,
   };
 }
 
-/** A parked turn with one blocker; `provisional` marks cleanup that has not settled yet. */
+/**
+ * A parked turn with one blocker.
+ *
+ * `overrides` carries the backend classification (`parkKind`, `stopCause`, `turnOrigin`) so a test
+ * can exercise one state of the ADR table without restating the whole snapshot.
+ */
 function blockedCompletion(
   kind: WorkflowNodeCompletionBlockerKind,
   provisional = false,
+  overrides: Partial<WorkflowNodeCompletion> = {},
 ): WorkflowNodeCompletion {
   return {
     userSeq: 1,
@@ -128,6 +137,31 @@ function blockedCompletion(
     warnings: [],
     provisional,
     ready: false,
+    needsConfirmation: !provisional && kind === "turn_unconfirmed",
+    ...overrides,
+  };
+}
+
+/** The minimal run payload a successfully completed node returns in this fixture. */
+function completedRunResponse() {
+  return {
+    run: {
+      id: runId,
+      workspaceId: "workspace-1",
+      workflowId: "workflow-1",
+      snapshotId: "snapshot-1",
+      name: "Run 1",
+      status: "running" as const,
+      state: null,
+      input: null,
+      output: null,
+      error: null,
+      payload: null,
+      startedAt: 1n,
+      finishedAt: null,
+      createdAt: 1n,
+      updatedAt: 2n,
+    },
   };
 }
 
@@ -764,14 +798,17 @@ describe("RunNodeSessionChat", () => {
 
       const card = screen.getByTestId("node-step-card");
       expect(within(card).getByText("已暂停")).toBeInTheDocument();
+      expect(card).not.toHaveTextContent("异常停靠");
+      expect(card).not.toHaveTextContent("等待参与");
       expect(card).toHaveTextContent("本轮未完成");
       expect(card).toHaveTextContent(reason);
       expect(screen.getByTestId("continue-current-step")).toBeInTheDocument();
       expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+      expect(screen.getByTestId("complete-current-node")).toBeDisabled();
     },
   );
 
-  it("offers the ordinary completion for a provisional turn and re-checks it", async () => {
+  it("offers the ordinary completion for a provisional human turn and re-checks it", async () => {
     const { client } = renderDock(
       "awaiting_input",
       false,
@@ -779,7 +816,10 @@ describe("RunNodeSessionChat", () => {
       undefined,
       undefined,
       undefined,
-      blockedCompletion("turn_unknown", true),
+      blockedCompletion("turn_unknown", true, {
+        turnOrigin: "human",
+        parkKind: "awaiting_user",
+      }),
     );
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
@@ -789,7 +829,7 @@ describe("RunNodeSessionChat", () => {
       "本轮仍在收尾；点完成时会按本轮重新校验，未结束会给出原因。",
     );
     expect(within(card).getByTestId("force-complete-node")).toBeInTheDocument();
-    expect(screen.getByTestId("complete-current-node")).toBeEnabled();
+    expect(screen.getByTestId("complete-current-node")).toBeDisabled();
 
     await userEvent.click(screen.getByTestId("complete-ready-node"));
 
@@ -801,6 +841,231 @@ describe("RunNodeSessionChat", () => {
       }),
     );
   });
+
+  it("confirms a provisional workflow turn instead of completing it plainly", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unknown", true, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const action = screen.getByTestId("confirm-initial-turn");
+    expect(action).toHaveTextContent("确认并完成");
+    expect(screen.queryByTestId("complete-ready-node")).toBeNull();
+
+    await userEvent.click(action);
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmInitialTurn: true,
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("keeps the opening step awaiting confirmation instead of offering to advance", () => {
+    renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        stopCause: null,
+        parkKind: "awaiting_user",
+      }),
+      ["Review changes"],
+    );
+
+    const card = screen.getByTestId("node-step-card");
+    expect(within(card).getByText("等待参与")).toBeInTheDocument();
+    expect(card).toHaveTextContent("等待你的确认");
+    expect(card).toHaveTextContent("首轮结果尚未确认");
+    expect(card).toHaveTextContent(
+      "本次停靠来自 workflow 的首轮自动回合，不代表本步骤已完成。",
+    );
+    expect(card).not.toHaveTextContent("完成并进入下一步");
+    expect(card).not.toHaveTextContent("异常停靠");
+    expect(screen.queryByTestId("complete-ready-node")).toBeNull();
+    expect(screen.queryByTestId("force-complete-node")).toBeNull();
+    expect(screen.getByTestId("confirm-initial-turn")).toHaveTextContent(
+      "确认并完成：Review changes",
+    );
+    expect(screen.getByTestId("continue-current-step")).toBeInTheDocument();
+    expect(screen.getByTestId("complete-current-node")).toBeDisabled();
+  });
+
+  it("sends the unconfirmed scoped turn when continuing the opening step", async () => {
+    const { client } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+      }),
+    );
+    const promptSpy = vi.spyOn(client.session, "prompt");
+
+    await userEvent.click(screen.getByTestId("continue-current-step"));
+
+    await waitFor(() => expect(promptSpy).toHaveBeenCalledTimes(1));
+    const request = promptSpy.mock.calls[0]![0];
+    const text = request.prompt
+      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+      .join("\n");
+    expect(text).toContain("首轮结果尚未确认");
+    expect(text).toContain("本轮自动回合已经结束");
+    expect(text).toContain("不要执行后续节点");
+    expect(text).not.toContain("本轮没有正常结束");
+  });
+
+  it("confirms the opening step with confirmInitialTurn and without force", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    await userEvent.click(screen.getByTestId("confirm-initial-turn"));
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmInitialTurn: true,
+      }),
+    );
+    expect(completeSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ force: true }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("keeps a user-stopped turn awaiting input instead of reading as an abnormal stop", () => {
+    renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_stopped", false, {
+        turnOrigin: "human",
+        stopCause: "user_stopped",
+        parkKind: "awaiting_user",
+      }),
+    );
+
+    const card = screen.getByTestId("node-step-card");
+    expect(within(card).getByText("等待参与")).toBeInTheDocument();
+    expect(card).toHaveTextContent("你已停止本轮");
+    expect(card).not.toHaveTextContent("异常停靠");
+    expect(card).not.toHaveTextContent("上一轮异常结束");
+    expect(screen.queryByTestId("complete-ready-node")).toBeNull();
+    expect(screen.queryByTestId("confirm-initial-turn")).toBeNull();
+    expect(screen.getByTestId("continue-current-step")).toBeInTheDocument();
+    expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+    expect(screen.getByTestId("complete-current-node")).toBeDisabled();
+  });
+
+  it("sends a scoped turn that does not frame a user stop as a system failure", async () => {
+    const { client } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_stopped", false, {
+        turnOrigin: "human",
+        stopCause: "user_stopped",
+        parkKind: "awaiting_user",
+      }),
+    );
+    const promptSpy = vi.spyOn(client.session, "prompt");
+
+    await userEvent.click(screen.getByTestId("continue-current-step"));
+
+    await waitFor(() => expect(promptSpy).toHaveBeenCalledTimes(1));
+    const request = promptSpy.mock.calls[0]![0];
+    const text = request.prompt
+      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+      .join("\n");
+    expect(text).toContain("我主动停止");
+    expect(text).toContain("不是系统故障");
+    expect(text).not.toContain("上一轮异常结束");
+  });
+
+  it.each([
+    ["turn_stopped", "prompt_timed_out", "上一轮异常结束：超时"],
+    ["turn_truncated", "stream_dropped", "上一轮异常结束：截断"],
+    ["turn_unknown", "session_crashed", "上一轮异常结束：会话崩溃"],
+    ["turn_refused", null, "上一轮异常结束：拒答"],
+    ["turn_unknown", null, "上一轮异常结束：未知"],
+    ["structured_invalid", null, "上一轮异常结束：结构化输出不符合"],
+    ["output_missing", null, "上一轮异常结束：没有输出"],
+  ] as const)(
+    "shows %s with stop cause %s as an abnormal stop",
+    (blockerKind, stopCause, reason) => {
+      renderDock(
+        "awaiting_input",
+        false,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        blockedCompletion(blockerKind, false, {
+          turnOrigin: "human",
+          stopCause,
+          parkKind: "abnormal",
+        }),
+      );
+
+      const card = screen.getByTestId("node-step-card");
+      expect(within(card).getByText("异常停靠")).toBeInTheDocument();
+      expect(card).toHaveTextContent(reason);
+      // An abnormal stop never offers the ordinary completion: only continue or force.
+      expect(screen.queryByTestId("complete-ready-node")).toBeNull();
+      expect(screen.queryByTestId("confirm-initial-turn")).toBeNull();
+      expect(screen.getByTestId("continue-current-step")).toBeInTheDocument();
+      expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+      expect(screen.getByTestId("complete-current-node")).toBeDisabled();
+    },
+  );
 
   it("shows non-blocking warnings from a ready turn", () => {
     renderDock("awaiting_input", false, [], undefined, undefined, undefined, {
@@ -863,7 +1128,7 @@ describe("RunNodeSessionChat", () => {
     expect(text).toContain("暂时不要结束当前步骤");
   });
 
-  it("requires confirmation before force-completing an incomplete step", async () => {
+  it("requires confirmation before force-completing an abnormal stop", async () => {
     const { client } = renderDock(
       "awaiting_input",
       false,
@@ -871,10 +1136,16 @@ describe("RunNodeSessionChat", () => {
       undefined,
       undefined,
       undefined,
-      blockedCompletion("turn_refused"),
+      blockedCompletion("turn_refused", false, {
+        turnOrigin: "human",
+        parkKind: "abnormal",
+      }),
     );
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
+    expect(
+      within(screen.getByTestId("node-step-card")).getByText("异常停靠"),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByTestId("force-complete-node"));
     expect(completeSpy).not.toHaveBeenCalled();
 

@@ -60,6 +60,8 @@ pub enum DatabaseError {
     CorruptScheduledOccurrenceOutcome(String),
     #[error("scheduled occurrence missed reason is corrupt: {0}")]
     CorruptScheduledMissReason(String),
+    #[error("workflow document import state is corrupt: {0}")]
+    CorruptWorkflowDocumentSourceState(String),
     #[error("Effect state is corrupt: {0}")]
     CorruptEffectState(String),
     #[error("workflow run execution context is incomplete")]

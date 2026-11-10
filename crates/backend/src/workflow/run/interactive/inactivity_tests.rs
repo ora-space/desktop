@@ -63,7 +63,7 @@ fn every_human_turn_uses_the_frozen_policy_after_a_draft_edit() {
                 step_boundary.starts_with("<workflow_step_boundary>"),
                 "every human turn carries the step boundary"
             );
-            end_human_turn(&pool, &sessions_root, &transitions, &node_run_id)
+            end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
                 .await
                 .unwrap();
         }

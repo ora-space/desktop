@@ -1,12 +1,13 @@
-//! Reads the workflow documents an imported Workflow package contributes.
+//! Reads the workflow documents an imported or installed Workflow package contributes.
 //!
 //! This stays out of the plugin API itself so the plugin layer only has to hand over document
 //! text. Deciding what a workflow is belongs to the workflow use case, which the caller sequences
 //! once the package is committed.
 
+use super::ContributedWorkflowDocument;
 use crate::BackendError;
 use ora_application::WorkflowDocument;
-use ora_plugin_manager::{PluginContribution, PluginManager};
+use ora_plugin_manager::{InstalledPlugin, PluginContribution, PluginManager};
 use std::path::Path;
 
 /// Reads every workflow document the freshly installed package contributes.
@@ -25,6 +26,42 @@ pub(crate) fn read_workflow_documents(
     else {
         return Ok(Vec::new());
     };
+    read_package_documents(plugin)
+}
+
+/// Reads the documents every plugin in `plugin_ids` contributes, each attributed to its member.
+///
+/// One discovery pass serves the whole batch, because a pack install asks about several members at
+/// once and re-scanning the plugin tree per member would multiply that cost for no benefit. A
+/// member that is not installed, or whose package carries no documents, simply contributes nothing
+/// rather than failing the operation the caller already reported on.
+pub(crate) fn read_contributed_workflow_documents(
+    home_directory: &Path,
+    plugin_ids: &[String],
+) -> Result<Vec<ContributedWorkflowDocument>, BackendError> {
+    let manager = PluginManager::discover(home_directory);
+    let installed = manager.installed_plugins();
+    let mut contributed = Vec::new();
+    for plugin_id in plugin_ids {
+        let Some(plugin) = installed
+            .iter()
+            .find(|plugin| plugin.id.canonical() == *plugin_id)
+        else {
+            continue;
+        };
+        for document in read_package_documents(plugin)? {
+            contributed.push(ContributedWorkflowDocument {
+                namespace: plugin.id.namespace().to_string(),
+                identifier: plugin.id.name().to_string(),
+                document,
+            });
+        }
+    }
+    Ok(contributed)
+}
+
+/// Reads one discovered package's workflow documents in the order discovery reports them.
+fn read_package_documents(plugin: &InstalledPlugin) -> Result<Vec<WorkflowDocument>, BackendError> {
     let PluginContribution::Workflow(descriptor) = &plugin.contributes else {
         return Ok(Vec::new());
     };

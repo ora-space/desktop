@@ -486,6 +486,7 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_truncated"
   | "turn_refused"
   | "turn_unknown"
+  | "turn_unconfirmed"
   | "structured_invalid"
   | "output_missing";
 

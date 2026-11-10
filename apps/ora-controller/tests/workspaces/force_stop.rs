@@ -212,6 +212,74 @@ fn force_stop_preserves_all_cloud_effect_targets_and_evidence() {
     });
 }
 
+/// Force-stop owns a separate task, so a held ordinary effect read cannot prevent termination.
+#[test]
+fn force_stop_progresses_while_an_ordinary_operation_is_waiting() {
+    scenario("main", |world| async move {
+        let (arrived, read_started) = oneshot::channel();
+        let (release, held) = oneshot::channel();
+        world.substrate.replies.lock().unwrap().get_barrier = Some((arrived, held));
+        let ordinary = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+        let ordinary_effect = tokio::time::timeout(Duration::from_secs(/*secs*/ 10), read_started)
+            .await
+            .unwrap()
+            .unwrap();
+        world.substrate.replies.lock().unwrap().by_id.insert(
+            "independent-force".into(),
+            reply(json!({"terminated":true,"lateEnsureFenced":true})),
+        );
+        world.cloud.force_plans(
+            vec![plan(
+                "force-during-ordinary-wait",
+                vec![terminate("independent-force", "independent-sandbox")],
+            )],
+            HashMap::new(),
+        );
+        world
+            .timeline
+            .until(|_| world.cloud.force_calls().1.len() == 1)
+            .await;
+
+        // The held ordinary RPC has not been released: only the independent task can finish here.
+        assert_eq!(
+            world.cloud.operation(&ordinary).state(),
+            proto::OperationState::Running
+        );
+        assert_eq!(
+            world
+                .cloud
+                .force_calls()
+                .1
+                .into_iter()
+                .map(|confirmation| (
+                    confirmation.force_stop_id,
+                    confirmation.effect_id,
+                    confirmation.terminated,
+                    confirmation.late_ensure_fenced,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                "force-during-ordinary-wait".into(),
+                "independent-force".into(),
+                true,
+                true
+            )],
+        );
+        assert!(
+            world
+                .substrate
+                .replies
+                .lock()
+                .unwrap()
+                .puts
+                .iter()
+                .all(|(id, _)| id != &ordinary_effect)
+        );
+        release.send(()).unwrap();
+        settled(&world, &ordinary, proto::OperationState::Succeeded).await;
+    });
+}
+
 /// Shutdown is attempted before a new terminate PUT, but even a missing close acknowledgement
 /// cannot become a terminal-result prerequisite or a substitute for Substrate evidence.
 #[test]

@@ -1,5 +1,6 @@
 import { act, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { UpdatePluginResponse } from "@ora/contracts";
 import {
   createTestClient,
   type TestHandlers,
@@ -84,7 +85,7 @@ describe("useUpdatePlugin", () => {
     const state = createFixtureState();
     const handlers: TestHandlers = createFixtureHandlers(state);
     const client = createTestClient(handlers);
-    let resolveUpdate: ((response: { pluginId: string }) => void) | undefined;
+    let resolveUpdate: ((response: UpdatePluginResponse) => void) | undefined;
     // The update stays in flight so the durable operation state, not the query cache, is what
     // carries progress across the unmount below.
     const update = vi.spyOn(handlers, "updatePlugin").mockImplementation(
@@ -127,7 +128,7 @@ describe("useUpdatePlugin", () => {
     expect(update).toHaveBeenCalledOnce();
 
     await act(async () => {
-      resolveUpdate?.({ pluginId: "official/weather" });
+      resolveUpdate?.({ pluginId: "official/weather", workflows: [] });
     });
     await waitFor(() => expect(second.result.current.isPending).toBe(false));
   });

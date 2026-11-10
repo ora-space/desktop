@@ -13,13 +13,11 @@ export const effectKeys = {
     [...agentEffectStatuses, workspaceId, agentRef] as const,
 };
 
-/** Recovers one Target and refreshes only cached selectors that observed that Target. */
-export async function recoverEffectTarget(
-  client: ContractsClient,
+/** Refreshes only cached selectors that observed the changed Target. */
+async function refreshEffectTargetStatus(
   queryClient: QueryClient,
   targetId: string,
 ) {
-  const response = await client.effect.recoverTarget({ targetId });
   // Target identity comes from authoritative status responses. Multiple selectors may
   // observe the same Target; other workspaces and agents keep their readiness caches.
   const selectors = queryClient.getQueriesData<GetEffectTargetStatusResponse>({
@@ -32,5 +30,26 @@ export async function recoverEffectTarget(
         queryClient.invalidateQueries({ queryKey, exact: true }),
       ),
   );
+}
+
+/** Recovers one Target and refreshes only cached selectors that observed that Target. */
+export async function recoverEffectTarget(
+  client: ContractsClient,
+  queryClient: QueryClient,
+  targetId: string,
+) {
+  const response = await client.effect.recoverTarget({ targetId });
+  await refreshEffectTargetStatus(queryClient, targetId);
+  return response;
+}
+
+/** Wakes one Target after external cleanup and refreshes only its cached selectors. */
+export async function retryEffectTarget(
+  client: ContractsClient,
+  queryClient: QueryClient,
+  targetId: string,
+) {
+  const response = await client.effect.retryTarget({ targetId });
+  await refreshEffectTargetStatus(queryClient, targetId);
   return response;
 }

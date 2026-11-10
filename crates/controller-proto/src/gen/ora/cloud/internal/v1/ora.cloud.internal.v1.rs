@@ -965,6 +965,9 @@ pub struct ExecutionRecord {
     /// Stable Node operation for this execution attempt; distinct from the durable business intent.
     #[prost(string, tag="6")]
     pub node_operation_id: ::prost::alloc::string::String,
+    /// Cloud's durable registration wall clock, RFC3339. Clone result windows start here.
+    #[prost(string, optional, tag="7")]
+    pub created_at: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaimWorkRequest {
@@ -1622,6 +1625,9 @@ pub struct Operation {
     pub controller_epoch: ::core::option::Option<i64>,
     #[prost(string, optional, tag="9")]
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+    /// Consecutive Node-unavailable rounds; only a real step advance resets this count.
+    #[prost(int64, tag="10")]
+    pub node_unavailable_attempts: i64,
 }
 /// The Project an operation belongs to. Its external repository, branch and credential reference
 /// never reach a Controller: a Workspace clones only the Git Server snapshot its clone step was
@@ -1954,7 +1960,8 @@ pub struct DeferOperationRequest {
     pub state: i32,
     #[prost(enumeration="DeferReason", tag="6")]
     pub reason: i32,
-    /// 1 to 3600 seconds.
+    /// 1 to 3600 seconds for generic reasons. Ignored (including zero) for Node unavailable,
+    /// clone pending and clone timeout: Cloud owns their retry policy and durable deadline.
     #[prost(uint32, tag="7")]
     pub retry_seconds: u32,
 }
@@ -2329,6 +2336,10 @@ pub enum DeferReason {
     PluginExecutionFailed = 7,
     /// The Node could not tell the plugin execution's outcome; not retried automatically.
     PluginResultUnknown = 8,
+    /// Continue waiting for the same clone execution; Cloud owns the one-second reclaim delay.
+    CloneResultPending = 9,
+    /// No result within 1800 seconds of execution registration; late known results still resume it.
+    CloneResultTimeout = 10,
 }
 impl DeferReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2346,6 +2357,8 @@ impl DeferReason {
             Self::CloneResultUnknown => "DEFER_REASON_CLONE_RESULT_UNKNOWN",
             Self::PluginExecutionFailed => "DEFER_REASON_PLUGIN_EXECUTION_FAILED",
             Self::PluginResultUnknown => "DEFER_REASON_PLUGIN_RESULT_UNKNOWN",
+            Self::CloneResultPending => "DEFER_REASON_CLONE_RESULT_PENDING",
+            Self::CloneResultTimeout => "DEFER_REASON_CLONE_RESULT_TIMEOUT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2360,6 +2373,8 @@ impl DeferReason {
             "DEFER_REASON_CLONE_RESULT_UNKNOWN" => Some(Self::CloneResultUnknown),
             "DEFER_REASON_PLUGIN_EXECUTION_FAILED" => Some(Self::PluginExecutionFailed),
             "DEFER_REASON_PLUGIN_RESULT_UNKNOWN" => Some(Self::PluginResultUnknown),
+            "DEFER_REASON_CLONE_RESULT_PENDING" => Some(Self::CloneResultPending),
+            "DEFER_REASON_CLONE_RESULT_TIMEOUT" => Some(Self::CloneResultTimeout),
             _ => None,
         }
     }

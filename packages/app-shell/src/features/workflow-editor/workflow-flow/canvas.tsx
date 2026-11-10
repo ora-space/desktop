@@ -470,11 +470,20 @@ function WorkflowCanvasInner({
     [],
   );
 
+  const appliedPreviewRef = useRef<typeof previewedVersion | undefined>(
+    undefined,
+  );
   useEffect(() => {
     // Version preview replaces the displayed graph without remounting the
-    // history popover, so the viewport follows the selected graph directly.
+    // history popover, so the viewport follows that snapshot. Autosave also
+    // writes the live viewport back into state; reapplying it here snaps the
+    // camera away from "scroll to selected node".
+    if (appliedPreviewRef.current === previewedVersion) {
+      return;
+    }
+    appliedPreviewRef.current = previewedVersion;
     void setViewport(initialViewport);
-  }, [initialViewport, setViewport]);
+  }, [initialViewport, previewedVersion, setViewport]);
 
   /**
    * Mirrors mid-drag position ticks into the local overlay so dragged cards

@@ -217,6 +217,7 @@ mod non_launch_tests {
     };
     use pretty_assertions::assert_eq;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
 
     /// Recovery must not let an authoritative cancellation overwrite an earlier confirmed launch.
     #[test]
@@ -268,7 +269,20 @@ mod non_launch_tests {
             ));
             assert_eq!(state.observed_run(intent.run)?, Some(original.clone()));
             drop(state);
-            let mut recovered = HostState::recover(&root)?;
+            // Parallel fork/exec fixtures may briefly retain the old flock after this drop.
+            // Match the other host-recovery fixtures: retry only contention, with a fixed bound.
+            let deadline = Instant::now() + Duration::from_secs(/*secs*/ 10);
+            let mut recovered = loop {
+                match HostState::recover(&root) {
+                    Err(ProcessStateError::Io(error))
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(/*millis*/ 5));
+                    }
+                    result => break result?,
+                }
+            };
             assert!(matches!(
                 recovered.observe_run(&contradiction),
                 Err(ProcessStateError::ContradictoryRunObservation(run)) if run == intent.run

@@ -273,6 +273,56 @@ fn unowned_observed_item_is_preserved_and_never_becomes_a_mutation() {
 }
 
 #[test]
+fn preserved_item_conflict_names_the_conflicting_native_identity() {
+    let resource = resource();
+    let (desired, revision) = desired_skill();
+    let native_identity = NativeResourceIdentity::parse("grilling")
+        .unwrap_or_else(|error| panic!("native identity: {error}"));
+    let fingerprint = Fingerprint::sha256(b"old package");
+    let observed = ResourceObservation {
+        resource: resource.identity.clone(),
+        items: BTreeMap::from([(
+            native_identity.clone(),
+            ObservedItem {
+                native_identity,
+                fingerprint: fingerprint.clone(),
+                ownership_evidence: OwnershipEvidence::NoOwnershipEvidence,
+            },
+        )]),
+        fingerprint,
+    };
+    let requirement = ResourceRequirement {
+        target: EffectTargetId::new("target-1"),
+        resource: resource.identity.clone(),
+        desired_effects: BTreeSet::from([desired.identity.clone()]),
+        materialization_contract: MaterializationContract::skill_directory_v1(),
+        digest: Digest::sha256(b"requirement"),
+    };
+
+    let result = SkillPlanner
+        .plan_resource(ResourcePlanningInput {
+            resource: &resource,
+            generation: Generation::new(1),
+            requirements: &[requirement],
+            desired_effects: &BTreeMap::from([(desired.identity.clone(), desired)]),
+            revisions: &BTreeMap::from([(revision.identity.clone(), revision)]),
+            managed: &[],
+            observed: &observed,
+        })
+        .unwrap_or_else(|error| panic!("resource projection: {error}"));
+    let PlanningResult::Blocked(conditions) = result else {
+        panic!("a preserved item must block the conflicting desired item");
+    };
+
+    assert_eq!(conditions.len(), 1);
+    assert_eq!(conditions[0].code.as_str(), "preserved_item_conflict");
+    assert_eq!(
+        conditions[0].safe_details.message,
+        "A Preserved Item already occupies the required native identity: grilling."
+    );
+}
+
+#[test]
 fn shared_resource_merges_target_contributors_before_planning_one_create() {
     let resource = resource();
     let (desired, revision) = desired_skill();

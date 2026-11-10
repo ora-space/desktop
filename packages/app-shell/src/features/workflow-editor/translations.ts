@@ -194,6 +194,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.zoomOut": "缩小画布",
     "settings.workflow.zoomIn": "放大画布",
     "settings.workflow.fitView": "显示完整工作流",
+    "settings.workflow.scrollToSelectedNode": "滚动至选中节点",
     "settings.workflow.resetView": "重置画布视图",
     "settings.workflow.minimap": "工作流小地图",
     "settings.workflow.canvasHint":
@@ -749,6 +750,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.zoomOut": "Zoom out",
     "settings.workflow.zoomIn": "Zoom in",
     "settings.workflow.fitView": "Fit workflow to view",
+    "settings.workflow.scrollToSelectedNode": "Scroll to selected node",
     "settings.workflow.resetView": "Reset canvas view",
     "settings.workflow.minimap": "Workflow minimap",
     "settings.workflow.canvasHint":

@@ -4,10 +4,10 @@
 //! assertions describe the contract a client observes rather than a helper's return value.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnKey, completion_payload,
-    parse_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, StopCause, TurnKey,
+    TurnOrigin, completion_payload, parse_completion_snapshot,
 };
-use super::completion::prepare_completion;
+use super::completion::{CompletionApproval, prepare_completion};
 use crate::workflow::run::test_fixture::{
     INTERACTIVE_AGENT_GRAPH, bind_and_park, bootstrap, end_fixture_turn, run_test, started_run,
     write_open_turn, write_settled_turn,
@@ -32,6 +32,9 @@ fn stopped_snapshot() -> CompletionSnapshot {
             ended_seq: 2,
         }),
         stop_reason: Some("cancelled".to_string()),
+        turn_origin: Some(TurnOrigin::Human),
+        stop_cause: Some(StopCause::UserStopped),
+        park_kind: Some(ParkKind::AwaitingUser),
         blockers: vec![CompletionBlocker {
             kind: CompletionBlockerKind::TurnStopped,
             params: serde_json::Value::Null,
@@ -112,7 +115,7 @@ fn a_changed_turn_wins_over_the_blockers_gate() {
             &sessions_root,
             &run_id,
             "agent",
-            /*force*/ false,
+            CompletionApproval::PLAIN,
         )
         .expect_err("a completion against a superseded turn is rejected");
 
@@ -144,8 +147,14 @@ fn changed_output_text_reports_the_two_digests() {
         stored.blockers = Vec::new();
         store_snapshot(&pool, &node_run_id, &stored);
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect_err("a completion against rewritten output is rejected");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("a completion against rewritten output is rejected");
 
         assert_eq!(
             error.public_error(),
@@ -174,8 +183,14 @@ fn blocked_turn_returns_every_blocker_with_its_detail() {
         });
         store_snapshot(&pool, &node_run_id, &stored);
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect_err("a blocked turn cannot be completed without force");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("a blocked turn cannot be completed without force");
 
         assert_eq!(
             error.public_error(),
@@ -214,8 +229,14 @@ fn a_node_that_left_the_awaiting_state_is_rejected_before_its_snapshot() {
             )
             .expect("the node leaves the awaiting state");
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", true)
-            .expect_err("a terminal node cannot be completed, even with force");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect_err("a terminal node cannot be completed, even with force");
 
         assert_eq!(
             error.public_error(),
@@ -233,8 +254,14 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
         write_open_turn(&sessions_root, "session-1", "go", "still going");
         assert_eq!(stored_snapshot(&pool, &run_id), None, "no snapshot yet");
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect_err("an unsettled turn cannot be completed");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("an unsettled turn cannot be completed");
         assert_eq!(
             error.public_error(),
             &PublicError::WorkflowNodeIncomplete(ora_contracts::WorkflowNodeIncompleteParams {
@@ -252,6 +279,9 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
                 user_seq: Some(0),
                 turn_key: None,
                 stop_reason: None,
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: Some(ParkKind::Abnormal),
                 blockers: vec![CompletionBlocker {
                     kind: CompletionBlockerKind::TurnUnknown,
                     params: serde_json::Value::Null,
@@ -277,8 +307,14 @@ fn a_legacy_node_with_a_settled_turn_completes_on_its_turn_window() {
             "here is the plan",
         );
 
-        let prepared =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", false).expect("ready");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("ready");
 
         assert_eq!(prepared.output, Some("here is the plan".to_string()));
         assert_eq!(prepared.audit, None);
@@ -306,6 +342,9 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
                 user_seq: Some(0),
                 turn_key: None,
                 stop_reason: None,
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: Some(ParkKind::AwaitingUser),
                 blockers: vec![CompletionBlocker {
                     kind: CompletionBlockerKind::TurnUnknown,
                     params: serde_json::Value::Null,
@@ -321,8 +360,14 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
             agent_client_protocol_schema::v1::StopReason::EndTurn,
         );
 
-        let prepared =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", false).expect("repaired");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("repaired");
 
         assert_eq!(prepared.output, Some("done".to_string()));
         let repaired = stored_snapshot(&pool, &run_id).expect("repaired snapshot");
@@ -334,6 +379,95 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
             })
         );
         assert!(!repaired.provisional);
+    });
+}
+
+/// A snapshot written before `turnOrigin` existed is repaired as a human turn, not blocked.
+///
+/// The field is absent on snapshots from older versions. Defaulting it to the workflow's own
+/// opening turn would add `turn_unconfirmed` to a turn the user already answered, so the upgrade
+/// path must read such a snapshot as human and complete it normally (ADR D7).
+#[test]
+fn legacy_snapshot_without_turn_origin_defaults_to_human() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        // Serialize the pre-field park shape: the older version wrote no `turnOrigin`, and the
+        // classification fields added with it are absent too.
+        let mut legacy = completion_payload(&CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: None,
+            stop_reason: None,
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: vec![CompletionBlocker {
+                kind: CompletionBlockerKind::TurnUnknown,
+                params: serde_json::Value::Null,
+            }],
+            warnings: vec!["turn_not_settled".to_string()],
+            output_digest: None,
+            provisional: true,
+        });
+        legacy["completion"]
+            .as_object_mut()
+            .expect("completion snapshot object")
+            .remove("turnOrigin");
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(pool.clone())
+                .repair_node_payload(&node_run_id, &legacy, 60)
+                .expect("seed the pre-turnOrigin snapshot")
+        );
+        assert_eq!(
+            stored_snapshot(&pool, &run_id),
+            Some(CompletionSnapshot {
+                user_seq: Some(0),
+                turn_key: None,
+                stop_reason: None,
+                turn_origin: None,
+                stop_cause: None,
+                park_kind: None,
+                blockers: vec![CompletionBlocker {
+                    kind: CompletionBlockerKind::TurnUnknown,
+                    params: serde_json::Value::Null,
+                }],
+                warnings: vec!["turn_not_settled".to_string()],
+                output_digest: None,
+                provisional: true,
+            }),
+            "the seeded snapshot is the pre-field shape"
+        );
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("a pre-turnOrigin snapshot completes as a human turn");
+
+        assert_eq!(prepared.output, Some("done".to_string()));
+        assert_eq!(
+            stored_snapshot(&pool, &run_id),
+            Some(CompletionSnapshot {
+                user_seq: Some(0),
+                turn_key: Some(TurnKey {
+                    user_seq: 0,
+                    ended_seq: 2,
+                }),
+                stop_reason: Some("end_turn".to_string()),
+                turn_origin: Some(TurnOrigin::Human),
+                stop_cause: None,
+                park_kind: None,
+                blockers: Vec::new(),
+                warnings: Vec::new(),
+                output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+                provisional: false,
+            }),
+            "the repair defaults the missing origin to a human turn"
+        );
     });
 }
 
@@ -349,6 +483,9 @@ fn a_provisional_snapshot_of_another_turn_is_left_alone() {
             user_seq: Some(0),
             turn_key: None,
             stop_reason: None,
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: Some(ParkKind::AwaitingUser),
             blockers: vec![CompletionBlocker {
                 kind: CompletionBlockerKind::TurnUnknown,
                 params: serde_json::Value::Null,
@@ -359,8 +496,14 @@ fn a_provisional_snapshot_of_another_turn_is_left_alone() {
         };
         store_snapshot(&pool, &node_run_id, &provisional);
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect_err("another turn cannot complete this one");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("another turn cannot complete this one");
         assert!(matches!(
             error.public_error(),
             PublicError::WorkflowNodeIncomplete(_)
@@ -381,8 +524,14 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
         let (run_id, _node_run_id, sessions_root) = parked_run(&temp, &pool);
         write_open_turn(&sessions_root, "session-1", "go", "draft only");
 
-        let prepared =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", true).expect("forced");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect("forced");
 
         assert_eq!(prepared.output, Some("draft only".to_string()));
         assert_eq!(
@@ -390,6 +539,7 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
             Some(serde_json::json!({
                 "completion_forced": {
                     "blockers": [{ "kind": "turn_unknown" }],
+                    "stop_cause": null,
                     "without_turn": true,
                     "output_source": "last_assistant_message",
                 }
@@ -407,8 +557,14 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
         write_settled_turn(&sessions_root, "session-1", "go", "partial");
         store_snapshot(&pool, &node_run_id, &stopped_snapshot());
 
-        let prepared =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", true).expect("forced");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect("forced");
 
         assert_eq!(prepared.output, Some("partial".to_string()));
         assert_eq!(
@@ -416,6 +572,7 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
             Some(serde_json::json!({
                 "completion_forced": {
                     "blockers": [{ "kind": "turn_stopped" }],
+                    "stop_cause": "user_stopped",
                     "without_turn": false,
                     "output_source": "turn_window",
                 }
@@ -434,9 +591,14 @@ fn forcing_a_changed_turn_still_reports_the_conflict() {
         write_settled_turn(&sessions_root, "session-1", "carry on", "final");
         store_snapshot(&pool, &node_run_id, &stopped_snapshot());
 
-        let error =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", /*force*/ true)
-                .expect_err("force cannot overrule a superseded turn");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect_err("force cannot overrule a superseded turn");
 
         assert_eq!(
             error.public_error(),
@@ -466,9 +628,14 @@ fn forcing_a_rewritten_output_still_reports_the_conflict() {
         stored.blockers = Vec::new();
         store_snapshot(&pool, &node_run_id, &stored);
 
-        let error =
-            prepare_completion(&pool, &sessions_root, &run_id, "agent", /*force*/ true)
-                .expect_err("force cannot accept rewritten output");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect_err("force cannot accept rewritten output");
 
         assert_eq!(
             error.public_error(),
@@ -493,8 +660,14 @@ fn forcing_a_structured_failure_keeps_raw_output_without_structured_output() {
             parked_run_on(&temp, &pool, INTERACTIVE_STRUCTURED_GRAPH);
         write_settled_turn(&sessions_root, "session-1", "go", "not json");
 
-        let prepared = prepare_completion(&pool, &sessions_root, &run_id, "agent", true)
-            .expect("force takes the current output");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect("force takes the current output");
 
         assert_eq!(prepared.output.as_deref(), Some("not json"));
         assert_eq!(prepared.structured_output, None);
@@ -529,6 +702,9 @@ fn an_existing_ready_snapshot_is_not_rewritten() {
                 ended_seq: 2,
             }),
             stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
             blockers: Vec::new(),
             warnings: Vec::new(),
             output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
@@ -536,8 +712,14 @@ fn an_existing_ready_snapshot_is_not_rewritten() {
         };
         store_snapshot(&pool, &node_run_id, &ready);
 
-        let prepared = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect("ready without a rewrite");
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("ready without a rewrite");
 
         assert_eq!(prepared.output, Some("done".to_string()));
         assert_eq!(stored_snapshot(&pool, &run_id), Some(ready));
@@ -552,12 +734,178 @@ fn a_missing_history_file_is_read_as_an_empty_turn() {
         let (run_id, _node_run_id, sessions_root) = parked_run(&temp, &pool);
         assert!(!Path::new(&sessions_root).exists());
 
-        let error = prepare_completion(&pool, &sessions_root, &run_id, "agent", false)
-            .expect_err("an empty session has no turn to complete");
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("an empty session has no turn to complete");
 
         assert!(matches!(
             error.public_error(),
             PublicError::WorkflowNodeIncomplete(_)
         ));
+    });
+}
+
+/// A stored opening snapshot with a settled `EndTurn` turn, as the first park writes it.
+fn opening_snapshot(final_text: &[u8]) -> CompletionSnapshot {
+    CompletionSnapshot {
+        user_seq: Some(0),
+        turn_key: Some(TurnKey {
+            user_seq: 0,
+            ended_seq: 2,
+        }),
+        stop_reason: Some("end_turn".to_string()),
+        turn_origin: Some(TurnOrigin::Workflow),
+        stop_cause: None,
+        park_kind: Some(ParkKind::AwaitingUser),
+        blockers: vec![CompletionBlocker {
+            kind: CompletionBlockerKind::TurnUnconfirmed,
+            params: serde_json::Value::Null,
+        }],
+        warnings: Vec::new(),
+        output_digest: Some(format!("sha256:{}", sha256_hex(final_text))),
+        provisional: false,
+    }
+}
+
+/// Confirming the opening turn is a normal completion: no forced audit and no re-derived blocker.
+#[test]
+fn confirming_the_opening_turn_completes_without_a_forced_audit() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let opening = opening_snapshot(b"done");
+        store_snapshot(&pool, &node_run_id, &opening);
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::CONFIRM,
+        )
+        .expect("the confirmed opening turn completes");
+
+        assert_eq!(prepared.output, Some("done".to_string()));
+        assert_eq!(
+            prepared.audit, None,
+            "confirmation is not a forced completion"
+        );
+        // The snapshot stays as the record of the park the user answered.
+        assert_eq!(stored_snapshot(&pool, &run_id), Some(opening));
+    });
+}
+
+/// Confirmation lifts only `turn_unconfirmed`: every other stored blocker still rejects it.
+#[test]
+fn confirmation_cannot_lift_other_blockers() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let mut opening = opening_snapshot(b"done");
+        opening.blockers.push(CompletionBlocker {
+            kind: CompletionBlockerKind::OutputMissing,
+            params: serde_json::Value::Null,
+        });
+        store_snapshot(&pool, &node_run_id, &opening);
+
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::CONFIRM,
+        )
+        .expect_err("the remaining blocker still rejects the completion");
+
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowNodeIncomplete(ora_contracts::WorkflowNodeIncompleteParams {
+                node_id: "agent".to_string(),
+                blockers: vec![WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::OutputMissing,
+                    message: None,
+                }],
+            }),
+            "the already-confirmed marker is not listed again"
+        );
+    });
+}
+
+/// `force` cannot stand in for confirmation: the opening turn stays blocked and unforced.
+#[test]
+fn force_cannot_stand_in_for_confirmation() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let opening = opening_snapshot(b"done");
+        store_snapshot(&pool, &node_run_id, &opening);
+
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect_err("force is not confirmation");
+
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowNodeIncomplete(ora_contracts::WorkflowNodeIncompleteParams {
+                node_id: "agent".to_string(),
+                blockers: vec![WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
+                    message: None,
+                }],
+            })
+        );
+        assert_eq!(stored_snapshot(&pool, &run_id), Some(opening));
+    });
+}
+
+/// Confirmation on an already ready snapshot is an idempotent no-op.
+#[test]
+fn confirmation_is_a_noop_on_a_ready_snapshot() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        let ready = CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: Some(TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+            provisional: false,
+        };
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        store_snapshot(&pool, &node_run_id, &ready);
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::CONFIRM,
+        )
+        .expect("confirmation does not block a ready turn");
+
+        assert_eq!(prepared.output, Some("done".to_string()));
+        assert_eq!(prepared.audit, None);
+        assert_eq!(stored_snapshot(&pool, &run_id), Some(ready));
     });
 }

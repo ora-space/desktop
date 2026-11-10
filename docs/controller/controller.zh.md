@@ -34,7 +34,10 @@ ora-controller --config /absolute/path/controller.json [--single-node]
     "controller_id": "deployment-controller",
     "protected_state_directories": ["/home/node/state", "/home/node/process"],
     "nodes": [
-      { "node_id": "deployment-node", "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" } }
+      {
+        "node_id": "deployment-node",
+        "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" }
+      }
     ],
     "session": { "io_timeout_ms": 10000, "query_interval_ms": 1000 },
     "reconnect_ms": 1000,
@@ -87,11 +90,11 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 持有租约期间，Controller 保持一条 `Watch` 流：
 
-| 流状态 | 何时进入 | 认领时机 |
-|---|---|---|
-| 无 | 启动；流以错误结束；租约 epoch 被丢弃 | 每 `claim_interval_ms` 一次，每次都尝试重新打开流 |
-| 活跃 | Cloud 发来了响应头 | 打开时、每个 `WorkAvailable`/`OperationAvailable`，以及每次续租之后 |
-| 排空 | Cloud 发来 `Drain` 或正常结束了流 | 从不；保留租约，会话继续 |
+| 流状态 | 何时进入                              | 认领时机                                                            |
+| ------ | ------------------------------------- | ------------------------------------------------------------------- |
+| 无     | 启动；流以错误结束；租约 epoch 被丢弃 | 每 `claim_interval_ms` 一次，每次都尝试重新打开流                   |
+| 活跃   | Cloud 发来了响应头                    | 打开时、每个 `WorkAvailable`/`OperationAvailable`，以及每次续租之后 |
+| 排空   | Cloud 发来 `Drain` 或正常结束了流     | 从不；保留租约，会话继续                                            |
 
 信号只是加快认领；归属在 `RecordDispatch` 提交时决定，续租后的兜底认领会拾起信号丢失的工作。排空表示 Cloud 实例正在停止：Controller 持续重试，在新的流打开时离开排空状态；如果正在服务的 Cloud 以 `UNAVAILABLE` 之外的状态拒绝流，就退回到周期性认领。
 
@@ -99,16 +102,20 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 配置了 `substrate` 时，Controller 还会驱动 Cloud 的 Workspace 操作（ADR [Controller 驱动 Workspace 沙盒](https://github.com/ora-space/specs/blob/main/decisions/controller/node-management/0-controller-drives-workspace-sandboxes.md)）。它用 `ClaimOperation` 一次认领一个操作（Cloud 交回最早可运行的那个并决定步骤顺序），记录每一步的 effect 计划，执行它，然后以认领时的版本推进或推迟操作：
 
-| 步骤 | Controller 做什么 |
-|---|---|
-| sandbox | 执行 ensure effect，并带着证据（`sandboxInstanceId`、`nodeId`）推进 |
-| node | 通过 `router_url` 以 `ate-target-actor: <atespace>/<externalId>` 打开 Node 会话，并等待 Cloud 把它列为已连接 |
-| clone | 把 Cloud 冻结的快照输入（`clone_input`）原样交给 `RecordDispatch` 和 Node，就绪后推进 |
-| plugin | 派发冻结的插件安装或删除计划，见 [Node 插件](../node/plugins.zh.md) |
-| quiesce | 关闭沙盒的派发闸门，只有没有待处理或未解决的工作时才报告空闲 |
-| terminate | 先停止 Node 会话，再执行 terminate effect |
-| cleanup | 执行数据删除 effect |
+| 步骤      | Controller 做什么                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------ |
+| sandbox   | 执行 ensure effect，并带着证据（`sandboxInstanceId`、`nodeId`）推进                                          |
+| node      | 通过 `router_url` 以 `ate-target-actor: <atespace>/<externalId>` 打开 Node 会话，并等待 Cloud 把它列为已连接 |
+| clone     | 把 Cloud 冻结的快照输入（`clone_input`）原样交给 `RecordDispatch` 和 Node，就绪后推进                        |
+| plugin    | 派发冻结的插件安装或删除计划，见 [Node 插件](../node/plugins.zh.md)                                          |
+| quiesce   | 关闭沙盒的派发闸门，只有没有待处理或未解决的工作时才报告空闲                                                 |
+| terminate | 先停止 Node 会话，再执行 terminate effect                                                                    |
+| cleanup   | 执行数据删除 effect                                                                                          |
 
 `effects_url` 是 Substrate 的 effect API（`GET`/`PUT /effects/{id}`）。Controller 在写入 effect 之前先读取，超时或服务端错误之后重新读取同一个 id，所以回复丢失的 effect 永远不会以新身份发送第二次。effect 失败以 `external_failure` 推迟，超时以 `substrate_timeout` 推迟，终止未得到确认以 `termination_unconfirmed` 阻塞。Controller 从不用 Project 或 Workspace 的字段拼 clone 输入：快照中没有 `clone_input` 的 clone 步骤，或 Node 协议拒绝的输入（见 [仓库 clone](../node/repository-clone.zh.md#输入)），会以 `external_failure` 阻塞而不派发。只有 commit 等于输入的 `base_commit` 时才接管就绪的 clone；否则既不接管也不确认。
+
+普通 operation 每轮只给不可用的 Node 一次不可续期的两秒握手宽限，Node 就绪检查、quiesce 与 clone 断连共用这次宽限。没有目标立即延后；目标已就绪立即继续。Controller 只提交 `node_unavailable` 原因，不指定重试秒数；Cloud 持久计算连续不可用轮次的 5/10/20/40/60 秒退避，只在真实推进时清零。会话和全局租约继续运行。
+
+已经登记的 clone 跨轮保留原 execution、Node 和冻结输入，每轮按单调时钟最多等五秒，然后提交 `clone_result_pending`，由 Cloud 安排一秒后再领取。重连和 pending 回复都不续期。Controller 先接管已知结果；从 Cloud 持久的 execution `created_at` 起满三十分钟仍无结果，才请求 `blocked/clone_result_timeout`，Cloud 提交前重新核对登记时间和并发到达的结果。原执行的已知成功或失败晚到时，Cloud 自动接管；失败仍遵守原 clone 失败预算。Node 报告的 Unknown 继续按原未决结果规则保持 `clone_result_unknown`。等待到期不授权重派、清理或终止；force-stop 仍由独立任务处理。
 
 沙盒 Node 目标只来自 Cloud 的沙盒行；NodeId 与静态 Node 冲突的沙盒被拒绝，Controller 从不自己重建沙盒。握手之后它用 `RegisterNode` 登记 Node incarnation，每十秒报告一次已连接，会话丢失时报告一次断开（Controller 自己停止它时不报告），并在登记新 incarnation 之前结束旧的。第一次持有某个租约 epoch 时，它调用 `ListLiveSandboxes`，为列出的每个沙盒启动会话，并停止不在列表中的会话，所以重启后的 Controller 在认领操作之前就会重新连上。路由细节见[沙盒路由](../operations/sandbox-routing.zh.md)。

@@ -1,6 +1,7 @@
 //! Commands serialize session operations while retaining each prompt's admission policy.
 
 use crate::RuntimeError;
+use crate::end_cause::PromptEndReport;
 use crate::prompt::RecordedTurn;
 use crate::title_acquisition::PollAttempt;
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate};
@@ -35,6 +36,8 @@ pub(crate) enum RuntimeCommand {
         inactivity_policy: PromptInactivityPolicy,
         /// Applied by the attach this prompt performs, and ignored when none is needed.
         model: Option<String>,
+        /// Where the actor reports why this turn ended, read by the turn's owner.
+        end_report: PromptEndReport,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
         accepted: oneshot::Sender<Result<(), RuntimeError>>,
     },

@@ -114,6 +114,11 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "retryWorkflowImport",
+        handler: "commands::plugin::retry_workflow_import",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "listHookLifecycleReports",
         handler: "commands::plugin::list_hook_lifecycle_reports",
         permission: Permission::MainWebview,

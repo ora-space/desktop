@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
+import type {
+  AvailablePlugin,
+  InstalledPlugin,
+  MarketplaceWorkflowOutcome,
+  UpdatePluginResponse,
+} from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -22,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
+  toast,
 } from "@ora/ui";
 import {
   IconArrowBigUpLines,
@@ -37,6 +43,13 @@ import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
+import { workflowDocumentSummary } from "./plugin-install-feedback";
+import { marketplaceReportOutcomes } from "./workflow-import-report";
+import {
+  WorkflowImportReportDialog,
+  type WorkflowImportReportInput,
+} from "./workflow-import-report-dialog";
+import { useRetryWorkflowImport } from "../../state/hooks/use-retry-workflow-import";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
@@ -58,6 +71,8 @@ export function PluginManager({
   availableById,
   onImport,
   importing,
+  query,
+  onQueryChange,
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
@@ -65,9 +80,11 @@ export function PluginManager({
   availableById?: ReadonlyMap<string, AvailablePlugin>;
   onImport: () => void;
   importing: boolean;
+  /** The settings pane owns search so dependency navigation can reveal a target plugin. */
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
   const { t } = useTranslation();
-  const [query, setQuery] = useState("");
   const scan = usePluginScan();
   // Plugin log controls are developer tooling: they only appear once developer mode is on.
   const developerTools = useDeveloperMode().state?.enabled === true;
@@ -119,7 +136,7 @@ export function PluginManager({
           <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             placeholder={t("settings.plugins.search")}
             aria-label={t("settings.plugins.search")}
             className="pl-8"
@@ -200,26 +217,70 @@ function InstalledPluginRow({
   );
   const isHook = plugin.kind === "hook";
   const initialize = useInitializeHook(plugin.id);
+  const retryImport = useRetryWorkflowImport(plugin.id);
   const reports = useHookLifecycleReports(isHook);
   // Only an `init` result answers "is this Hook initialized": a `deinit` result belongs to a
   // removal, and a package reinstalled after one has not run anything in this session yet.
   const lastInit = reports.data?.get(plugin.id);
   const report = lastInit?.phase === "init" ? lastInit : undefined;
   const uninstalling = mutations.uninstall.isPending;
-  const busy = uninstalling || update.isPending || initialize.isPending;
+  const busy =
+    uninstalling ||
+    update.isPending ||
+    initialize.isPending ||
+    retryImport.isPending;
   const hasUpdate =
     available !== undefined && available.version !== plugin.version;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [importReport, setImportReport] =
+    useState<WorkflowImportReportInput | null>(null);
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
+  };
+  /**
+   * Reports an upgrade that delivered document outcomes.
+   *
+   * Every other upgrade keeps its previous silent success: the only news an upgrade of a Workflow
+   * package can bring is a document that arrived, was already handled, or failed to import.
+   */
+  const succeedUpdate = (response: UpdatePluginResponse) => {
+    if (response.workflows.length === 0) return;
+    toast.success(t("settings.plugins.updateSuccess"), {
+      description: workflowDocumentSummary(response.workflows, t),
+    });
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
   };
   const failInitialize = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.hook.initializeFailed"));
+  };
+  const failRetryImport = (cause: unknown) => {
+    showContractError(cause, t("settings.plugins.retryWorkflowImportFailed"));
+  };
+  /**
+   * Presents one document retry without pretending it is a reinstall.
+   *
+   * The toast carries the counts for every state the retry reported, and the report dialog opens
+   * only when there is a document to read about, so a retry that only skipped handled paths stays
+   * a one-line answer.
+   */
+  const succeedRetryImport = (response: {
+    pluginId: string;
+    workflows: MarketplaceWorkflowOutcome[];
+  }) => {
+    const description = workflowDocumentSummary(response.workflows, t);
+    if (description !== "") {
+      toast.success(t("settings.plugins.retryWorkflowImportDone"), {
+        description,
+      });
+    }
+    const outcomes = marketplaceReportOutcomes(response.workflows);
+    if (outcomes.length > 0) {
+      setImportReport({ fileName: response.pluginId, outcomes });
+    }
   };
   /**
    * Runs the update the user just authorized.
@@ -232,11 +293,14 @@ function InstalledPluginRow({
       setConfirmOpen(true);
       return;
     }
-    update.mutate({}, { onError: failUpdate });
+    update.mutate({}, { onError: failUpdate, onSuccess: succeedUpdate });
   };
   const confirmUpdate = () => {
     setConfirmOpen(false);
-    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
+    update.mutate(
+      { hookExecutionAcknowledged: true },
+      { onError: failUpdate, onSuccess: succeedUpdate },
+    );
   };
 
   return (
@@ -338,6 +402,31 @@ function InstalledPluginRow({
                 plugin.configuration.completeness === "complete")) && (
               <McpHealthRow pluginId={plugin.id} />
             )}
+          {plugin.kind === "workflow" && (
+            // A Workflow package retries the documents it could not import without reinstalling:
+            // handled paths stay handled, so this is the only way a temporarily failed document
+            // becomes a workflow once its cause is fixed.
+            <span className="mt-1 flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() =>
+                  retryImport.mutate(undefined, {
+                    onError: failRetryImport,
+                    onSuccess: succeedRetryImport,
+                  })
+                }
+              >
+                {retryImport.isPending ? (
+                  <IconLoader2 className="animate-spin" />
+                ) : (
+                  <IconRefresh />
+                )}
+                {t("settings.plugins.retryWorkflowImport")}
+              </Button>
+            </span>
+          )}
         </span>
 
         {hasUpdate && (
@@ -482,6 +571,14 @@ function InstalledPluginRow({
           onOpenChange={setConfirmOpen}
           onConfirm={confirmUpdate}
           busy={update.isPending}
+        />
+      )}
+      {importReport !== null && (
+        // The manager borrows the same report the local import uses, so a user reads one set of
+        // per-document outcomes whichever entry point delivered them.
+        <WorkflowImportReportDialog
+          input={importReport}
+          onClose={() => setImportReport(null)}
         />
       )}
     </>
