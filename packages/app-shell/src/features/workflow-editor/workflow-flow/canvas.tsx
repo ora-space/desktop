@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -93,6 +94,7 @@ import {
   type ConnectionDraft,
 } from "./connection-gesture";
 import { isValidWorkflowConnection } from "./connection-validation";
+import { WorkflowSelectionMenu } from "./selection-menu";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -226,6 +228,10 @@ function WorkflowCanvasInner({
   onDelete,
   onNodeDragStart,
   onNodeDragStop,
+  canPasteSelection,
+  onCopySelection,
+  onPasteSelection,
+  onDuplicateSelection,
   canUndo,
   canRedo,
   historyPast,
@@ -254,6 +260,13 @@ function WorkflowCanvasInner({
   const canvasRef = useRef<HTMLDivElement>(null);
   const [interactionMode, setInteractionMode] =
     useState<CanvasInteractionMode>("pointer");
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const closeSelectionMenu = useCallback(() => {
+    setSelectionMenu(null);
+  }, []);
   const [connectionDraft, setConnectionDraft] =
     useState<ConnectionDraft | null>(null);
   const connectionCandidateFrameRef = useRef<number | null>(null);
@@ -598,6 +611,54 @@ function WorkflowCanvasInner({
     [inspectorCollapsed, inspectorAvailable, onExpandInspector],
   );
 
+  const openSelectionMenu = useCallback(
+    (event: {
+      clientX: number;
+      clientY: number;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    }): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectionMenu({ x: event.clientX, y: event.clientY });
+    },
+    [],
+  );
+
+  /** Right-click selects an unselected card, then offers copy, paste, and duplicate. */
+  const handleNodeContextMenu = useCallback(
+    (event: ReactMouseEvent, node: WorkflowCanvasNode): void => {
+      if (readOnly) {
+        return;
+      }
+      openSelectionMenu(event);
+      if (node.type !== WORKFLOW_FLOW_NODE_TYPE || node.selected === true) {
+        return;
+      }
+      onNodesChange([
+        ...nodes
+          .filter((candidate) => candidate.selected)
+          .map((candidate) => ({
+            id: candidate.id,
+            type: "select" as const,
+            selected: false,
+          })),
+        { id: node.id, type: "select" as const, selected: true },
+      ]);
+    },
+    [nodes, onNodesChange, openSelectionMenu, readOnly],
+  );
+
+  const handlePaneContextMenu = useCallback(
+    (event: ReactMouseEvent | MouseEvent): void => {
+      if (readOnly) {
+        return;
+      }
+      openSelectionMenu(event);
+    },
+    [openSelectionMenu, readOnly],
+  );
+
   /** Deletes an edge on double click through React Flow's own removal pipeline. */
   const handleEdgeDoubleClick = useCallback(
     (_event: unknown, edge: Edge): void => {
@@ -898,6 +959,8 @@ function WorkflowCanvasInner({
                     onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={handleNodeDragStop}
                     onNodeClick={handleNodeClick}
+                    onNodeContextMenu={handleNodeContextMenu}
+                    onPaneContextMenu={handlePaneContextMenu}
                     onConnectStart={handleConnectStart}
                     onConnect={onConnect}
                     onConnectEnd={finishNewConnection}
@@ -988,6 +1051,17 @@ function WorkflowCanvasInner({
             onDrop={dropNodeAtClientPosition}
           />
         </div>
+      )}
+      {selectionMenu !== null && !readOnly && (
+        <WorkflowSelectionMenu
+          point={selectionMenu}
+          canCopy={nodes.some((node) => node.selected === true)}
+          canPaste={canPasteSelection}
+          onCopy={onCopySelection}
+          onPaste={onPasteSelection}
+          onDuplicate={onDuplicateSelection}
+          onClose={closeSelectionMenu}
+        />
       )}
     </div>
   );

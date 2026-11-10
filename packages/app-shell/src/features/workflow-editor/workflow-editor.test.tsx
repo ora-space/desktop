@@ -1447,6 +1447,26 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("duplicates the right-clicked node from the canvas menu", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    fireEvent.contextMenu(agent.closest(".react-flow__node") ?? agent);
+
+    expect(
+      await screen.findByRole("menuitem", { name: /原位复制/ }),
+    ).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: /粘贴/ })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: /原位复制/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+  });
+
   it("duplicates the selected node beside it and undoes that copy in one step", async () => {
     const user = userEvent.setup();
     renderEditor();

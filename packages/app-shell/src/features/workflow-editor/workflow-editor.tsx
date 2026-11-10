@@ -498,6 +498,7 @@ function WorkflowEditorContent({
   const clipboardRef = useRef<
     (WorkflowSelectionCopy & { pastes: number }) | null
   >(null);
+  const [canPasteSelection, setCanPasteSelection] = useState(false);
   const dragStartWorkflowRef = useRef<DemoWorkflow | null>(null);
   /** Names the iteration frame whose manual resize owns the open history transaction. */
   const iterationResizeRef = useRef<string | null>(null);
@@ -1131,10 +1132,8 @@ function WorkflowEditorContent({
     [jumpHistory, markWorkflowDirty, previewedVersion],
   );
 
-  useEffect(() => {
-    function applySelectionShortcut(
-      mode: "copy" | "paste" | "duplicate",
-    ): void {
+  const applySelectionShortcut = useCallback(
+    (mode: "copy" | "paste" | "duplicate"): void => {
       const current = workflowRef.current;
       if (current === null || previewedVersion !== null) {
         return;
@@ -1145,6 +1144,7 @@ function WorkflowEditorContent({
           return;
         }
         clipboardRef.current = { ...captured, pastes: 0 };
+        setCanPasteSelection(true);
         return;
       }
       const source =
@@ -1205,8 +1205,11 @@ function WorkflowEditorContent({
       );
       editGenerationRef.current += 1;
       markWorkflowDirty();
-    }
+    },
+    [markWorkflowDirty, previewedVersion, recordWorkflowHistory],
+  );
 
+  useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent): void {
       if (
         event.isComposing ||
@@ -1243,13 +1246,7 @@ function WorkflowEditorContent({
     }
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, [
-    markWorkflowDirty,
-    previewedVersion,
-    redoWorkflow,
-    recordWorkflowHistory,
-    undoWorkflow,
-  ]);
+  }, [applySelectionShortcut, previewedVersion, redoWorkflow, undoWorkflow]);
 
   /** Switches the active workflow after flushing any pending draft write. */
   async function selectWorkflow(workflowId: string): Promise<void> {
@@ -2838,6 +2835,12 @@ function WorkflowEditorContent({
                   onNodeDragStart={startNodeDrag}
                   onNodeDragStop={stopNodeDrag}
                   onDeleteAnnotation={deleteAnnotation}
+                  canPasteSelection={canPasteSelection}
+                  onCopySelection={() => applySelectionShortcut("copy")}
+                  onPasteSelection={() => applySelectionShortcut("paste")}
+                  onDuplicateSelection={() =>
+                    applySelectionShortcut("duplicate")
+                  }
                   canUndo={workflowHistory.canUndo}
                   canRedo={workflowHistory.canRedo}
                   historyPast={workflowHistory.past}
