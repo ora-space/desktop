@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
+  AvailablePlugin,
   ContractsClient,
   InstallOutcome,
   InstalledPlugin,
@@ -687,6 +688,7 @@ it("reports a Pack member failure with an error toast", async () => {
   };
   const successToast = vi
     .spyOn(toast, "success")
+    .mockClear()
     .mockImplementation(() => "toast");
   const errorToast = vi
     .spyOn(toast, "error")
@@ -2504,4 +2506,128 @@ it("disables the sync action while the host is refreshing the marketplace", asyn
   act(() => useMarketplaceSyncStore.getState().setHostRefreshing(false));
 
   await waitFor(() => expect(sync).toBeEnabled());
+});
+
+const WORKFLOW_PLUGIN_ID = "official/ora.cdase-workflow";
+
+/** One marketplace listing for a Workflow package. */
+function workflowListing(): AvailablePlugin {
+  return {
+    id: WORKFLOW_PLUGIN_ID,
+    name: "ora.cdase-workflow",
+    title: "CDase Workflow",
+    kind: "workflow",
+    namespace: "official",
+    sourceUrl: "https://github.com/ora-space/marketplace",
+    version: "0.1.0",
+    description: "Workflow package",
+    logo: null,
+    compatibility: "compatible",
+  };
+}
+
+/** An installed Workflow package whose card owns the document retry action. */
+function workflowInstalled(): InstalledPlugin {
+  return {
+    id: WORKFLOW_PLUGIN_ID,
+    namespace: "official",
+    name: "ora.cdase-workflow",
+    displayName: "ora.cdase-workflow",
+    version: "0.1.0",
+    description: "Workflow package",
+    homepage: null,
+    license: null,
+    kind: "workflow",
+    logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
+    runtime: "stopped",
+  };
+}
+
+/**
+ * A marketplace install of a Workflow package reports the documents it imported.
+ *
+ * The install toast is the only feedback the marketplace grid gives, so the import summary has to
+ * arrive with it; the workflow library is checked separately and would not tell the user why a
+ * document was skipped.
+ */
+it("reports the workflow documents a marketplace install imported", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins = [];
+  state.availablePlugins = [workflowListing()];
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "导入流程",
+      version: "1.0.0",
+    },
+  ];
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+    /导入 1 个工作流文档|Imported 1 workflow document/,
+  );
+});
+
+/**
+ * The installed Workflow card retries only the paths without a terminal record, and shows what the
+ * retry decided: handled paths are counts, a document that still fails is named with its reason.
+ */
+it("retries failed workflow document imports from the installed card", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins = [workflowInstalled()];
+  state.availablePlugins = [];
+  state.retriedWorkflows = [
+    {
+      state: "skipped_processed",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+    },
+    {
+      state: "failed",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/2.0.0.json",
+      reason: "document is not valid JSON",
+    },
+  ];
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+  await openManagePlugins(user);
+
+  await user.click(
+    await screen.findByRole("button", {
+      name: /重试导入失败的文档|Retry failed document imports/,
+    }),
+  );
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+    /此前已处理|already handled/,
+  );
+  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+    /导入失败|failed to import/,
+  );
+  const report = await screen.findByRole("dialog");
+  expect(
+    within(report).getByText("assets/workflows/2.0.0.json"),
+  ).toBeInTheDocument();
+  expect(
+    within(report).getByText("document is not valid JSON"),
+  ).toBeInTheDocument();
 });

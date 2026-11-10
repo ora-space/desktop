@@ -304,6 +304,16 @@ export type InstallPluginResponse = {
    * authorized single-plugin operation.
    */
   outcome: InstallOutcome;
+  /**
+   * One entry per workflow document the installed package (or one of its installed pack
+   * members) carried, in package order. Empty for every kind that contributes no documents, so
+   * an ordinary plugin install reports nothing here.
+   *
+   * A document outcome is independent of the installation outcome: a workflow that could not be
+   * imported never turns a successful installation into a failed one, and a successful
+   * installation never claims that every document was imported.
+   */
+  workflows: Array<MarketplaceWorkflowOutcome>;
 };
 
 /**
@@ -545,6 +555,74 @@ export type MarketplaceSourceSyncFailure = {
    * local checkout paths; the complete error is only written to the log.
    */
   message: string;
+};
+
+/**
+ * Describes what happened to one workflow document a marketplace install, update, or retry
+ * considered.
+ *
+ * The marketplace imports documents by the same rules as a local `.orax` package, but it also
+ * keeps a durable record per source path. A path that already reached a terminal state is skipped
+ * without touching the user's copy, the first name conflict is reported once and then remembered
+ * as terminal, and only a genuine failure stays retryable. Every arm names the member plugin that
+ * carried the document, because one pack install can carry documents from several members.
+ */
+export type MarketplaceWorkflowOutcome = {
+  "state": "imported";
+  /**
+   * Canonical identifier of the member plugin that carried the document.
+   */
+  pluginId: string;
+  /**
+   * Package-relative path the document was read from, e.g. `assets/workflows/1.0.0.json`.
+   */
+  sourceFile: string;
+  /**
+   * Identifier of the created workflow.
+   */
+  workflowId: string;
+  /**
+   * Workflow name taken from the document.
+   */
+  name: string;
+  /**
+   * The version the new snapshot was published under.
+   */
+  version: string;
+} | {
+  "state": "skipped_processed";
+  /**
+   * Canonical identifier of the member plugin that carried the document.
+   */
+  pluginId: string;
+  /**
+   * Package-relative path that already reached a terminal state.
+   */
+  sourceFile: string;
+} | {
+  "state": "skipped_conflict";
+  /**
+   * Canonical identifier of the member plugin that carried the document.
+   */
+  pluginId: string;
+  /**
+   * Package-relative path whose document name collided with an existing workflow.
+   */
+  sourceFile: string;
+} | {
+  "state": "failed";
+  /**
+   * Canonical identifier of the member plugin that carried the document.
+   */
+  pluginId: string;
+  /**
+   * Package-relative path the document was read from, e.g. `assets/workflows/1.0.0.json`.
+   */
+  sourceFile: string;
+  /**
+   * Human-readable reason the document could not become a workflow.
+   */
+  reason: string;
 };
 
 /**
@@ -822,6 +900,37 @@ export type ResetPluginConfigurationResponse = {
 };
 
 /**
+ * Requests a retry of the workflow document import for one installed plugin.
+ *
+ * The retry is an explicit action on an installed plugin card rather than a second install, so it
+ * never downloads or replaces a package; it reconsiders only the documents whose source paths do
+ * not have a terminal record yet.
+ */
+export type RetryWorkflowImportRequest = {
+  /**
+   * Canonical identifier of the installed plugin whose documents are retried.
+   */
+  pluginId: string;
+};
+
+/**
+ * Reports the per-document outcomes of one explicit workflow document retry.
+ *
+ * The shape mirrors the install and update responses so the surface can present a retry summary
+ * with the same success, skip, and failure vocabulary instead of inventing a second one.
+ */
+export type RetryWorkflowImportResponse = {
+  /**
+   * Canonical identifier of the plugin whose documents were retried.
+   */
+  pluginId: string;
+  /**
+   * One entry per document the retry considered, in package order.
+   */
+  workflows: Array<MarketplaceWorkflowOutcome>;
+};
+
+/**
  * Replaces every explicit override recognized by the loaded declaration.
  */
 export type SavePluginConfigurationRequest = {
@@ -936,4 +1045,13 @@ export type UpdatePluginRequest = {
 /**
  * Confirms the identifier updated after the new release is verified and stale versions removed.
  */
-export type UpdatePluginResponse = { pluginId: string };
+export type UpdatePluginResponse = {
+  pluginId: string;
+  /**
+   * One entry per workflow document the new version carried and this update considered, in
+   * package order. Paths that already reached a terminal source record report as skipped, so an
+   * upgrade never re-imports, renames, or overwrites a copy the user already has. Empty for
+   * every kind that contributes no workflow documents.
+   */
+  workflows: Array<MarketplaceWorkflowOutcome>;
+};

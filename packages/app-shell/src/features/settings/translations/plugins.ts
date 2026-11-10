@@ -256,6 +256,14 @@ export const pluginTranslations = {
       "无法读取「{{name}}」的图，暂时无法检查它依赖的插件。",
     "settings.plugins.importReportRefusedTitle": "{{count}} 个文档未导入",
     "settings.plugins.importReportClose": "关闭",
+    "settings.plugins.updateSuccess": "插件已升级。",
+    "settings.plugins.retryWorkflowImport": "重试导入失败的文档",
+    "settings.plugins.retryWorkflowImportDone": "已重试导入工作流文档。",
+    "settings.plugins.retryWorkflowImportFailed": "重试导入失败",
+    "settings.plugins.workflowDocumentsImported": "导入 {{count}} 个工作流文档",
+    "settings.plugins.workflowDocumentsProcessed": "{{count}} 份此前已处理",
+    "settings.plugins.workflowDocumentsConflicts": "{{count}} 份因同名冲突跳过",
+    "settings.plugins.workflowDocumentsFailed": "{{count}} 份导入失败",
     "settings.plugins.pathSelectionError": "无法选择插件文件。",
     "settings.plugins.uninstalling": "卸载中",
     "settings.plugins.runtimeFailing": "运行失败",
@@ -672,6 +680,19 @@ export const pluginTranslations = {
     "settings.plugins.importReportRefusedTitle":
       "{{count}} document(s) were not imported",
     "settings.plugins.importReportClose": "Close",
+    "settings.plugins.updateSuccess": "Plugin updated.",
+    "settings.plugins.retryWorkflowImport": "Retry failed document imports",
+    "settings.plugins.retryWorkflowImportDone":
+      "Retried the workflow document import.",
+    "settings.plugins.retryWorkflowImportFailed":
+      "Failed to retry the document import",
+    "settings.plugins.workflowDocumentsImported":
+      "Imported {{count}} workflow document(s)",
+    "settings.plugins.workflowDocumentsProcessed": "{{count}} already handled",
+    "settings.plugins.workflowDocumentsConflicts":
+      "{{count}} skipped by a name conflict",
+    "settings.plugins.workflowDocumentsFailed":
+      "{{count}} document(s) failed to import",
     "settings.plugins.pathSelectionError": "Unable to select a plugin file.",
     "settings.plugins.uninstalling": "Uninstalling",
     "settings.plugins.runtimeFailing": "Runtime failed",

@@ -107,6 +107,7 @@ describe("useInstallPlugin", () => {
       resolveInstall?.({
         pluginId: "official/weather",
         outcome: { state: "installed" },
+        workflows: [],
       });
     });
     await waitFor(() => expect(second.result.current.isPending).toBe(false));

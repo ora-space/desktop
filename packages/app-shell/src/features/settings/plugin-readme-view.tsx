@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
+import type {
+  AvailablePlugin,
+  InstalledPlugin,
+  InstallPluginResponse,
+  UpdatePluginResponse,
+} from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -16,6 +21,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
   Button,
+  toast,
 } from "@ora/ui";
 import {
   IconArrowBigUpLines,
@@ -32,7 +38,10 @@ import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { MarkdownDocument } from "../chat/markdown-message";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { PluginLogo } from "./plugin-logo";
-import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import {
+  showPluginInstallOutcome,
+  workflowDocumentSummary,
+} from "./plugin-install-feedback";
 import {
   HookExecutionConfirm,
   HookRemovalDisclosure,
@@ -136,11 +145,22 @@ function PluginDetailAction({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: {
-    outcome: Parameters<typeof showPluginInstallOutcome>[0];
-  }) => showPluginInstallOutcome(response.outcome, t);
+  const succeedInstall = (response: InstallPluginResponse) =>
+    showPluginInstallOutcome(
+      response.outcome,
+      t,
+      "settings.plugins.installSuccess",
+      response.workflows,
+    );
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
+  };
+  /** Reports an upgrade that delivered document outcomes; other upgrades stay silent. */
+  const succeedUpdate = (response: UpdatePluginResponse) => {
+    if (response.workflows.length === 0) return;
+    toast.success(t("settings.plugins.updateSuccess"), {
+      description: workflowDocumentSummary(response.workflows, t),
+    });
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
@@ -155,7 +175,7 @@ function PluginDetailAction({
       install.mutate({}, { onError: failInstall, onSuccess: succeedInstall });
       return;
     }
-    update.mutate({}, { onError: failUpdate });
+    update.mutate({}, { onError: failUpdate, onSuccess: succeedUpdate });
   };
   const confirm = (action: HookExecutionAction) => {
     setConfirmAction(null);
@@ -166,7 +186,10 @@ function PluginDetailAction({
       );
       return;
     }
-    update.mutate({ hookExecutionAcknowledged: true }, { onError: failUpdate });
+    update.mutate(
+      { hookExecutionAcknowledged: true },
+      { onError: failUpdate, onSuccess: succeedUpdate },
+    );
   };
 
   if (install.isPending) {

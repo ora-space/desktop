@@ -1,6 +1,7 @@
 import type {
   ImportedWorkflowOutcome,
   InstalledPlugin,
+  MarketplaceWorkflowOutcome,
   Skill,
 } from "@ora/contracts";
 import { parseWorkflowGraph } from "@ora/workflow-runtime";
@@ -60,6 +61,44 @@ export interface WorkflowImportReport {
 export function importedArchiveName(path: string): string {
   const segment = path.split(/[\\/]/).pop() ?? path;
   return segment === "" ? path : segment;
+}
+
+/**
+ * Reduces a marketplace document report to the local import outcomes the report dialog renders.
+ *
+ * The dialog lists the documents that became workflows and the ones that were refused; the skips a
+ * marketplace upgrade reports are counts rather than rows, so they stay in the toast summary shown
+ * beside it. Keeping one report surface for both entry points means a user reads the same
+ * vocabulary whichever path delivered the document.
+ */
+export function marketplaceReportOutcomes(
+  outcomes: readonly MarketplaceWorkflowOutcome[],
+): ImportedWorkflowOutcome[] {
+  const converted: ImportedWorkflowOutcome[] = [];
+  for (const outcome of outcomes) {
+    switch (outcome.state) {
+      case "imported":
+        converted.push({
+          state: "imported",
+          sourceFile: outcome.sourceFile,
+          workflowId: outcome.workflowId,
+          name: outcome.name,
+          version: outcome.version,
+        });
+        break;
+      case "failed":
+        converted.push({
+          state: "failed",
+          sourceFile: outcome.sourceFile,
+          reason: outcome.reason,
+        });
+        break;
+      case "skipped_processed":
+      case "skipped_conflict":
+        break;
+    }
+  }
+  return converted;
 }
 
 /**

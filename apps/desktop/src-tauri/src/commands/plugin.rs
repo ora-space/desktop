@@ -236,6 +236,13 @@ async_backend_command!(
     plugins.import,
     "Imports one local .orax release archive; the installed plugin is immediately available."
 );
+backend_command!(
+    retry_workflow_import,
+    RetryWorkflowImportRequest,
+    RetryWorkflowImportResponse,
+    plugins.retry_workflow_import,
+    "Retries the workflow document import of one installed plugin without reinstalling it."
+);
 async_backend_command!(
     initialize_hook,
     InitializeHookRequest,

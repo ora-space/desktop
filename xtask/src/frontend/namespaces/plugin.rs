@@ -182,6 +182,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "retryWorkflowImport",
+        namespace: NAMESPACE,
+        member_name: "retryWorkflowImport",
+        request_type: "RetryWorkflowImportRequest",
+        response_type: "RetryWorkflowImportResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "listHookLifecycleReports",
         namespace: NAMESPACE,
         member_name: "listHookLifecycleReports",

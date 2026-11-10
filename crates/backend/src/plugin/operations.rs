@@ -1,11 +1,13 @@
 //! Public plugin use cases, including reconciliation of the process-local agent set.
 
-use super::{ImportedPlugin, PluginApi};
+use super::{ImportedPlugin, InstalledPackage, PluginApi, UpdatedPackage};
 use crate::BackendError;
 use crate::agent_runtime::AgentRuntimeManager;
+use crate::error::ErrorClassification;
 use crate::plugin_gateway::PluginGateway;
 use crate::session_setup::SessionMcpHost;
-use crate::workflow::WorkflowImport;
+use crate::workflow::{MarketplaceWorkflowImport, WorkflowImport};
+use ora_application::{MarketplaceWorkflowDocument, WorkflowDocumentSource};
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -55,6 +57,7 @@ pub struct Plugins {
     host: Arc<PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     workflow_import: Arc<WorkflowImport>,
+    marketplace_workflow_import: Arc<MarketplaceWorkflowImport>,
 }
 
 impl Plugins {
@@ -62,11 +65,13 @@ impl Plugins {
         host: Arc<PluginApi>,
         agent_runtime: Arc<AgentRuntimeManager>,
         workflow_import: Arc<WorkflowImport>,
+        marketplace_workflow_import: Arc<MarketplaceWorkflowImport>,
     ) -> Self {
         Self {
             host,
             agent_runtime,
             workflow_import,
+            marketplace_workflow_import,
         }
     }
 
@@ -351,12 +356,12 @@ impl Plugins {
     ) -> Result<InstallPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
-        let response = self.host.install(request).await?;
+        let installed = self.host.install(request).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
-        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+        self.initialize_hook_landed(&installed.plugin_id, &installed.outcome, acknowledged)
             .await;
-        Ok(response)
+        Ok(self.installed_package_response(installed))
     }
 
     /// Installs a marketplace plugin while forwarding download progress to a host callback.
@@ -367,12 +372,12 @@ impl Plugins {
     ) -> Result<InstallPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
-        let response = self.host.install_with_progress(request, progress).await?;
+        let installed = self.host.install_with_progress(request, progress).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
-        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+        self.initialize_hook_landed(&installed.plugin_id, &installed.outcome, acknowledged)
             .await;
-        Ok(response)
+        Ok(self.installed_package_response(installed))
     }
 
     /// Updates one installed marketplace plugin to the version its source publishes and
@@ -403,7 +408,7 @@ impl Plugins {
         if acknowledged {
             self.host.initialize_installed_hook(&plugin_id).await;
         }
-        Ok(response)
+        Ok(self.updated_package_response(response))
     }
 
     /// Updates one installed marketplace plugin while forwarding download progress to a host
@@ -426,7 +431,7 @@ impl Plugins {
         if acknowledged {
             self.host.initialize_installed_hook(&plugin_id).await;
         }
-        Ok(response)
+        Ok(self.updated_package_response(response))
     }
 
     /// Imports one local release archive, its workflow documents, and reconciles the agent set.
@@ -455,6 +460,67 @@ impl Plugins {
             plugin_id,
             outcome,
             workflows,
+        })
+    }
+
+    /// Builds an install response that reports the installed package's document outcomes.
+    ///
+    /// The installation outcome and the per-document outcomes stay separate on purpose: a
+    /// document that could not be imported must never turn a successful installation into a failed
+    /// one, and a successful installation must never claim every document was imported.
+    fn installed_package_response(&self, installed: InstalledPackage) -> InstallPluginResponse {
+        let workflows = self
+            .marketplace_workflow_import
+            .handle(marketplace_documents(installed.workflow_documents));
+        InstallPluginResponse {
+            plugin_id: installed.plugin_id,
+            outcome: installed.outcome,
+            workflows,
+        }
+    }
+
+    /// Builds an update response that reports the new version's document outcomes.
+    fn updated_package_response(&self, updated: UpdatedPackage) -> UpdatePluginResponse {
+        let workflows = self
+            .marketplace_workflow_import
+            .handle(marketplace_documents(updated.workflow_documents));
+        UpdatePluginResponse {
+            plugin_id: updated.plugin_id,
+            workflows,
+        }
+    }
+
+    /// Retries the workflow document import of one installed plugin.
+    ///
+    /// This is the explicit action on an installed plugin card, not a second installation: it
+    /// reconsiders only the document paths without a terminal source record, so already imported
+    /// and conflict-skipped paths stay untouched and no package is downloaded or replaced. A pack's
+    /// workflow member is retried through its own card, which is why the request names a member.
+    pub fn retry_workflow_import(
+        &self,
+        request: RetryWorkflowImportRequest,
+    ) -> Result<RetryWorkflowImportResponse, BackendError> {
+        let installed = self
+            .host
+            .list(ListInstalledPluginsRequest {})
+            .plugins
+            .iter()
+            .any(|plugin| plugin.id == request.plugin_id);
+        if !installed {
+            return Err(BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "the plugin to retry workflow import for is not installed",
+            ));
+        }
+        let documents = self
+            .host
+            .contributed_workflow_documents(std::slice::from_ref(&request.plugin_id))?;
+        Ok(RetryWorkflowImportResponse {
+            plugin_id: request.plugin_id,
+            workflows: self
+                .marketplace_workflow_import
+                .handle(marketplace_documents(documents)),
         })
     }
 
@@ -541,6 +607,27 @@ impl Plugins {
         self.host.mcp_health().invalidate_plugin(&plugin_id);
         self.probe_installed_mcp(Some(plugin_id));
     }
+}
+
+/// Adapts the plugin layer's attributed documents to the marketplace import use case's input.
+///
+/// The plugin layer reports the member's canonical id in two segments because that is the shape its
+/// own identity has; the import use case keeps the same two segments because they are the first two
+/// thirds of its durable source key.
+fn marketplace_documents(
+    documents: Vec<super::ContributedWorkflowDocument>,
+) -> Vec<MarketplaceWorkflowDocument> {
+    documents
+        .into_iter()
+        .map(|contributed| MarketplaceWorkflowDocument {
+            source: WorkflowDocumentSource {
+                namespace: contributed.namespace,
+                identifier: contributed.identifier,
+                document_path: contributed.document.source_file,
+            },
+            contents: contributed.document.contents,
+        })
+        .collect()
 }
 
 /// One admitted marketplace rebuild, held from admission until it runs.
