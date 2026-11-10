@@ -315,4 +315,74 @@ describe("ScheduledTaskManager consent handling", () => {
       approvalChange: { kind: "keep" },
     });
   });
+
+  it("shows the localized schedule kind on the closed select trigger", async () => {
+    const user = userEvent.setup();
+    renderManager(scheduledTaskHandlers([], []));
+    await user.click(
+      await screen.findByRole("button", { name: "新建定时任务" }),
+    );
+
+    const schedule = await screen.findByRole("combobox", { name: "计划" });
+    expect(schedule).toHaveTextContent("每隔几小时");
+    expect(schedule).not.toHaveTextContent("every_hours");
+    expect(screen.queryByText("every_hours")).toBeNull();
+  });
+
+  it("keeps the localized schedule label when create validation fails", async () => {
+    const user = userEvent.setup();
+    renderManager(scheduledTaskHandlers([], []));
+    await user.click(
+      await screen.findByRole("button", { name: "新建定时任务" }),
+    );
+
+    expect(
+      await screen.findByRole("combobox", { name: "计划" }),
+    ).toHaveTextContent("每隔几小时");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    expect(
+      await screen.findByText(
+        "请填写必填字段，并在启用任务时确认无人值守授权。",
+      ),
+    ).toBeInTheDocument();
+    const schedule = screen.getByRole("combobox", { name: "计划" });
+    expect(schedule).toHaveTextContent("每隔几小时");
+    expect(schedule).not.toHaveTextContent("every_hours");
+  });
+
+  it("keeps the localized daily label while an edit save is in flight", async () => {
+    const user = userEvent.setup();
+    const tasks = [CONSENTED_TASK];
+    const updates: UpdateScheduledTaskRequest[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handlers = scheduledTaskHandlers(tasks, updates);
+    const updateScheduledTask = handlers.updateScheduledTask;
+    handlers.updateScheduledTask = async (request, options) => {
+      await gate;
+      return updateScheduledTask!(request, options);
+    };
+    renderManager(handlers);
+
+    await user.click(
+      await screen.findByRole("button", { name: "编辑定时任务" }),
+    );
+    const schedule = await screen.findByRole("combobox", { name: "计划" });
+    expect(schedule).toHaveTextContent("每天");
+    expect(schedule).not.toHaveTextContent("daily");
+    expect(screen.queryByText("daily")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("button", { name: /保存/ })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(schedule).toHaveTextContent("每天");
+    expect(schedule).not.toHaveTextContent("daily");
+    expect(screen.queryByText("daily")).toBeNull();
+    release?.();
+    await waitFor(() => expect(updates).toHaveLength(1));
+  });
 });
