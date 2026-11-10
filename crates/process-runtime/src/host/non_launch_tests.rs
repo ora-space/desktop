@@ -30,7 +30,8 @@ async fn contradictory_nonlaunch_preserves_facts_and_keeps_tick_serving() -> Tes
         .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
         .tempdir_in(home)?;
     let root = directory.path().join("s");
-    let mut host = HostCoordinator::new(HostState::create(&root)?, directory.path().join("unused"));
+    let mut host =
+        HostCoordinator::new(HostState::create(&root)?, directory.path().join("unused"))?;
     let scope = ScopeId::new();
     let other_scope = ScopeId::new();
     let run = RunId::new();
@@ -72,7 +73,7 @@ async fn contradictory_nonlaunch_preserves_facts_and_keeps_tick_serving() -> Tes
     for recovered in [false, true] {
         if recovered {
             drop(host);
-            host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"));
+            host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"))?;
         }
         // Inject only the typed worker result; tick and its durable journal remain production code.
         for (scope, runs) in [
@@ -174,7 +175,7 @@ async fn restart_before_first_dispatch_distinguishes_recorded_and_unknown_runs()
                 host_disconnect: GuardianHostDisconnect::KeepRunning,
             };
             let state = HostState::create(&root)?;
-            let mut host = HostCoordinator::new(state, directory.path().join("unused"));
+            let mut host = HostCoordinator::new(state, directory.path().join("unused"))?;
             host.create_scope(scope)?;
             if registered {
                 host.start(intent.clone())?;
@@ -182,7 +183,7 @@ async fn restart_before_first_dispatch_distinguishes_recorded_and_unknown_runs()
             // Drop before tick: the journal is real but no guardian/Start can have been dispatched.
             let old_binding = host.binding();
             drop(host);
-            let mut host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"));
+            let mut host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"))?;
             assert!(host.binding().epoch > old_binding.epoch);
             host.close(scope)?;
             let deadline = Instant::now() + Duration::from_secs(/*secs*/ 2);

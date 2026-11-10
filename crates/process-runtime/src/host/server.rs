@@ -24,7 +24,7 @@ pub async fn serve_process_host(
     let (control, output) = state.bind_endpoints().await?;
     // SAFETY: geteuid reads the current process identity without mutation.
     let owner = unsafe { libc::geteuid() };
-    let host = Arc::new(Mutex::new(HostCoordinator::new(state, guardian)));
+    let host = Arc::new(Mutex::new(HostCoordinator::new(state, guardian)?));
     let mut control_workers = JoinSet::new();
     let mut output_workers = JoinSet::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
