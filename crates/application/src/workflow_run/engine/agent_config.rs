@@ -36,6 +36,16 @@ pub enum StructuredTextExposure {
     IncludeFinalText,
 }
 
+/// Whether an agent node requires an explicit completion signal from the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentCompletionSignal {
+    /// The node completes only after the agent calls the host completion tool.
+    Agent,
+    /// Legacy behavior: a normal `EndTurn` with no blockers is ready.
+    #[default]
+    EndTurn,
+}
+
 /// The executable contract of an `agent` node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -47,6 +57,10 @@ pub struct AgentConfig {
     /// When true the node is a persistent interactive session: its first turn pauses at
     /// `Pending` (awaiting input) instead of completing, and the user drives completion.
     pub interactive: bool,
+    /// Whether the node requires the agent's explicit completion signal.
+    pub completion_signal: AgentCompletionSignal,
+    /// Whether an accepted signal completes the node without a separate human confirmation.
+    pub auto_accept_agent_completion: bool,
     /// Optional structured parsing performed in addition to persisting the raw output.
     pub output_contract: Option<AgentOutputContract>,
     /// Automatic retry of failed attempts; graphs without `agentConfig.retry` get the default
@@ -114,6 +128,10 @@ pub(super) struct WireAgentConfig {
     prompt: Option<String>,
     #[serde(default)]
     interactive: Option<bool>,
+    #[serde(default)]
+    completion_signal: Option<String>,
+    #[serde(default)]
+    auto_accept_agent_completion: Option<bool>,
     output_contract: Option<WireOutputContract>,
     /// Kept as raw JSON so a malformed policy is rejected with a field-level reason instead of
     /// the generic "not valid JSON" a typed serde failure would produce.
@@ -167,6 +185,15 @@ impl WireAgentConfig {
             })
             .transpose()?
             .unwrap_or_default();
+        let completion_signal = match self.completion_signal.as_deref() {
+            None | Some("endTurn") => AgentCompletionSignal::EndTurn,
+            Some("agent") => AgentCompletionSignal::Agent,
+            Some(other) => {
+                return Err(GraphError::InvalidNode {
+                    reason: format!("node {node_id} has invalid completionSignal: {other}"),
+                });
+            }
+        };
         Ok(AgentConfig {
             executor: AgentExecutor {
                 agent_cli: self
@@ -190,6 +217,8 @@ impl WireAgentConfig {
             prompt: self.prompt.unwrap_or_default(),
             // Missing `interactive` defaults to false so existing graphs stay fully automatic.
             interactive: self.interactive.unwrap_or(false),
+            completion_signal,
+            auto_accept_agent_completion: self.auto_accept_agent_completion.unwrap_or(false),
             output_contract: self
                 .output_contract
                 .and_then(WireOutputContract::into_model),
@@ -316,6 +345,37 @@ mod tests {
                 },
             );
         }
+    }
+
+    /// Missing completion policy keeps legacy end-turn semantics; the agent policy is explicit.
+    #[test]
+    fn completion_signal_defaults_to_end_turn_and_parses_agent() {
+        let legacy = parse_config(json!({})).unwrap();
+        let config = legacy.node("agent").unwrap().agent_config.as_ref().unwrap();
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::EndTurn
+        );
+        assert!(!config.auto_accept_agent_completion);
+
+        let graph = parse_config(
+            json!({"completionSignal": "agent", "autoAcceptAgentCompletion": true}),
+        )
+        .unwrap();
+        let config = graph.node("agent").unwrap().agent_config.as_ref().unwrap();
+        assert_eq!(config.completion_signal, super::AgentCompletionSignal::Agent);
+        assert!(config.auto_accept_agent_completion);
+    }
+
+    /// An unknown completion policy is rejected with the node and field context.
+    #[test]
+    fn rejects_invalid_completion_signal_with_node_context() {
+        let error = parse_config(json!({"completionSignal": "human"})).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("invalid node: node agent has invalid completionSignal: human")
+        );
     }
 
     /// Invalid silence handling cannot be silently replaced by a different execution policy.

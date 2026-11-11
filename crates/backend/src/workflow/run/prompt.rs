@@ -749,6 +749,8 @@ mod tests {
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: None,
             }),
             condition_config: None,
@@ -848,6 +850,8 @@ mod tests {
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
                         "type": "object",
@@ -947,6 +951,8 @@ mod tests {
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
                         "type": "object",
@@ -1027,6 +1033,8 @@ mod tests {
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: None,
             }),
             condition_config: None,
