@@ -41,8 +41,8 @@ pub use engine::WorkflowRunEngine;
 pub use execution_document::{AuthoringParticipation, UnrecognizedAuthoringNode};
 pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};
 pub use graph::{
-    AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError, StructuredTextExposure,
-    WorkflowGraph, WorkflowGraphNode,
+    AgentCompletionSignal, AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError,
+    StructuredTextExposure, WorkflowGraph, WorkflowGraphNode,
 };
 pub use handlers::WorkflowRunControlHandler;
 pub use iteration::{

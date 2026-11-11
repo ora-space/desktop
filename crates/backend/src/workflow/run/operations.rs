@@ -2,7 +2,9 @@
 
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
-use super::interactive::{CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns};
+use super::interactive::{
+    CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns, signal_fingerprint,
+};
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::OwnerStreamDropControl;
 use super::transitions::WorkflowRunTransitions;
@@ -199,9 +201,8 @@ impl WorkflowRuns {
         request: CompleteWorkflowNodeRequest,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
         let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
-        // The two approvals contradict each other: one accepts the completion gate, the other
-        // overrides it. Reject before claiming the node so a contradictory request changes no
-        // state (ADR D2 row 1).
+        // TODO(#1070): allow the first-turn no-signal combination once the pre-claim snapshot
+        // check can prove a `turn_unconfirmed` and a force-coverable signal blocker are present.
         if request.force && confirm_initial_turn {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,
@@ -209,13 +210,15 @@ impl WorkflowRuns {
                 "force and confirmInitialTurn cannot be combined",
             ));
         }
-        let approval = if request.force {
-            CompletionApproval::FORCE
-        } else if confirm_initial_turn {
-            CompletionApproval::CONFIRM
-        } else {
-            CompletionApproval::PLAIN
-        };
+        // The combined first-turn exception is tracked in #1070; until the pre-claim snapshot
+        // check exists, keep the original contradiction rule and validate the remaining flags.
+        let mut approval = CompletionApproval::PLAIN;
+        approval.force = request.force;
+        approval.confirm_initial_turn = confirm_initial_turn;
+        approval.confirm_agent_completion = request
+            .confirm_agent_completion
+            .as_ref()
+            .map(|confirmation| signal_fingerprint(&confirmation.signal_id));
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let node_id = request.node_id.clone();
 

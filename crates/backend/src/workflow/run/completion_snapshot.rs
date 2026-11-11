@@ -98,6 +98,10 @@ pub(crate) enum CompletionBlockerKind {
     TurnUnknown,
     /// The workflow's opening turn ended normally, but the user has not confirmed the step.
     TurnUnconfirmed,
+    /// The current turn has no accepted agent completion signal.
+    AgentSignalPending,
+    /// The current turn has an accepted signal, but no human has confirmed it yet.
+    AgentConfirmationPending,
     StructuredInvalid,
     OutputMissing,
 }
@@ -113,7 +117,7 @@ pub(crate) struct CompletionBlocker {
 
 impl CompletionBlocker {
     /// Builds a blocker without extra params.
-    fn new(kind: CompletionBlockerKind) -> Self {
+    pub(crate) fn new(kind: CompletionBlockerKind) -> Self {
         Self {
             kind,
             params: Value::Null,

@@ -1,7 +1,7 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::{
-    StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
-    unknown_completion_snapshot,
+    CompletionMeta, CompletionPolicy, StopCause, TurnOrigin, completion_payload_with_meta,
+    derive_completion_snapshot, unknown_completion_snapshot,
 };
 use super::last_failure::previous_failure_for_injection;
 #[cfg(feature = "test-support")]
@@ -361,9 +361,19 @@ async fn park_first_interactive_turn(
     node_run_id: WorkflowNodeRunId,
     session_id: SessionId,
     output_contract: Option<AgentOutputContract>,
+    completion_signal: ora_application::AgentCompletionSignal,
     stop_cause: Option<StopCause>,
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
+        let policy = match completion_signal {
+            ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
+            ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
+        };
+        let meta = CompletionMeta {
+            policy,
+            agent_signal: None,
+            confirmation: None,
+        };
         let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
             Ok(history) => derive_completion_snapshot(
                 &history,
@@ -385,7 +395,7 @@ async fn park_first_interactive_turn(
             .park_node_run(
                 &run_id,
                 &node_run_id,
-                &completion_payload(&snapshot),
+                &completion_payload_with_meta(&snapshot, &meta),
             )
             .map_err(NodeExecutionError::from)
     })
@@ -628,6 +638,7 @@ async fn drive_agent_node(
                 node_run_id.clone(),
                 session_id.clone(),
                 config.output_contract.clone(),
+                config.completion_signal,
                 // A first turn the user stopped must still park as awaiting them, so the cause
                 // travels with the park instead of being read back from the stop reason.
                 StopCause::of_prompt_end(stream.end_cause()),
