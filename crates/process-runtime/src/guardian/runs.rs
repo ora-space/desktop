@@ -54,6 +54,11 @@ impl Runs {
         })
     }
 
+    /// Terminal: the closed Scope and every accepted Run snapshot are already committed.
+    pub(super) fn settled(&self) -> bool {
+        self.settled
+    }
+
     /// Runs under the same execution mutex as host takeover; no await separates checks from effects.
     pub(super) fn execute(
         &mut self,

@@ -203,3 +203,57 @@ fn persistence_failure_and_reopen_never_reset_authority() -> TestResult {
     );
     Ok(())
 }
+
+/// Builds a Run-ledger request on the channel its operation is served from.
+fn run_request(
+    owner: &Management,
+    operation: ora_process_protocol::GuardianRunOperation,
+) -> ora_process_protocol::GuardianRunRequest {
+    ora_process_protocol::GuardianRunRequest {
+        version: ora_process_protocol::GUARDIAN_WIRE_VERSION,
+        intent: owner.intent.clone(),
+        channel: operation.channel(),
+        session: GuardianHostSession {
+            host: owner.intent.created_by,
+        },
+        operation,
+    }
+}
+
+/// The service loop disarms its timer on this signal, so it must flip only at the terminal
+/// state and must not take the query path down with it.
+#[test]
+fn reconcile_reports_settled_only_after_close_and_queries_still_answer() -> TestResult {
+    use ora_process_protocol::{
+        CleanupEvidence, GuardianRunOperation, GuardianRunReply, GuardianRunResult, ScopeState,
+    };
+    let mut owner = fixture(Connection::open_in_memory()?)?;
+    assert!(!owner.reconcile(), "an open Scope still needs its timer");
+    let session = GuardianHostSession {
+        host: owner.intent.created_by,
+    };
+    let closed = GuardianRunResult::Scope(ScopeState::Closed(CleanupEvidence::BestEffortComplete));
+    let close = run_request(&owner, GuardianRunOperation::Close);
+    assert_eq!(
+        owner.execute_run(close.channel, close),
+        GuardianRunReply {
+            intent: owner.intent.clone(),
+            session: session.clone(),
+            result: closed.clone(),
+        }
+    );
+    assert!(owner.reconcile());
+    // Settled is terminal: later reconciles keep reporting it and never touch the journal again.
+    owner.connection.execute_batch("PRAGMA query_only=ON;")?;
+    assert!(owner.reconcile());
+    let query = run_request(&owner, GuardianRunOperation::Scope);
+    assert_eq!(
+        owner.execute_run(query.channel, query),
+        GuardianRunReply {
+            intent: owner.intent.clone(),
+            session,
+            result: closed,
+        }
+    );
+    Ok(())
+}

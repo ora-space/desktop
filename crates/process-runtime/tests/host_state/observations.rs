@@ -28,7 +28,7 @@ fn version_five_upgrade_preserves_stop_and_close() -> TestResult {
         "DROP TABLE run_observations; DROP TABLE scope_observations; PRAGMA user_version=5;",
     )?;
     drop(old);
-    let host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"));
+    let host = HostCoordinator::new(recover(&root)?, directory.path().join("unused"))?;
     assert_eq!(
         host.query_run(intent.run)?,
         ora_process_protocol::HostRunView {
