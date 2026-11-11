@@ -156,7 +156,99 @@ pub(crate) struct CompletionSnapshot {
     pub provisional: bool,
 }
 
-/// Classifies a parked snapshot as waiting for the user or stopped abnormally.
+/// Whether the node requires an explicit agent completion signal.
+///
+/// `EndTurn` is the legacy policy: a normal `EndTurn` with no blockers is ready. `Agent` keeps the
+/// node awaiting until the agent's completion request for the settled turn is accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompletionPolicy {
+    Agent,
+    #[default]
+    EndTurn,
+}
+
+/// The agent's accepted completion request for one settled turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentSignal {
+    pub signal_id: String,
+    pub requested_at: i64,
+    pub turn_key: TurnKey,
+}
+
+/// Who approved an accepted agent completion signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConfirmationBy {
+    Human,
+    Auto,
+}
+
+/// The human (or configured auto-accept) approval of an accepted signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CompletionConfirmation {
+    pub by: ConfirmationBy,
+    pub at: i64,
+}
+
+/// Completion metadata that lives beside the snapshot on the node payload.
+///
+/// Keeping it outside `CompletionSnapshot` lets legacy snapshots stay byte-compatible: old
+/// payloads have no policy and therefore read as `EndTurn`. New parks write it through
+/// [`completion_payload_with_meta`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CompletionMeta {
+    pub policy: CompletionPolicy,
+    pub agent_signal: Option<AgentSignal>,
+    pub confirmation: Option<CompletionConfirmation>,
+}
+
+impl CompletionMeta {
+    /// Reads the policy, signal and confirmation from a node payload, defaulting to legacy end-turn.
+    pub(crate) fn from_payload(payload: Option<&str>) -> Self {
+        let Some(payload) = payload.and_then(|payload| serde_json::from_str::<Value>(payload).ok())
+        else {
+            return Self::default();
+        };
+        let policy = payload
+            .get("completionPolicy")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let agent_signal = payload
+            .get("agentSignal")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+        let confirmation = payload
+            .get("confirmation")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+        Self {
+            policy,
+            agent_signal,
+            confirmation,
+        }
+    }
+}
+
+/// Wraps a snapshot and its completion metadata in the node-run payload shape.
+pub(crate) fn completion_payload_with_meta(
+    snapshot: &CompletionSnapshot,
+    meta: &CompletionMeta,
+) -> Value {
+    let mut payload = completion_payload(snapshot);
+    payload["completionPolicy"] = serde_json::to_value(meta.policy).unwrap_or(Value::Null);
+    if let Some(signal) = &meta.agent_signal {
+        payload["agentSignal"] = serde_json::to_value(signal).unwrap_or(Value::Null);
+    }
+    if let Some(confirmation) = &meta.confirmation {
+        payload["confirmation"] = serde_json::to_value(confirmation).unwrap_or(Value::Null);
+    }
+    payload
+}
+
 ///
 /// `awaiting_user` is reserved for the three cases where the turn belongs to the user's
 /// participation: an unconfirmed opening turn, the user's own stop, and a provisional snapshot
@@ -480,9 +572,10 @@ fn assistant_text(update: &SessionUpdate) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompletionBlocker, CompletionBlockerKind, ParkKind, StopCause, TurnKey, TurnOrigin,
-        completion_payload, derive_completion_snapshot, forced_completion_audit,
-        trailing_assistant_text, unknown_completion_snapshot,
+        AgentSignal, CompletionBlocker, CompletionBlockerKind, CompletionConfirmation,
+        CompletionMeta, CompletionPolicy, ConfirmationBy, ParkKind, StopCause, TurnKey, TurnOrigin,
+        completion_payload, completion_payload_with_meta, derive_completion_snapshot,
+        forced_completion_audit, trailing_assistant_text, unknown_completion_snapshot,
     };
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
@@ -1145,6 +1238,43 @@ mod tests {
         assert_eq!(
             snapshot.blockers.first().map(|blocker| blocker.kind),
             Some(CompletionBlockerKind::TurnUnknown)
+        );
+    }
+
+    /// Legacy payloads have no policy and read as end-turn; agent metadata round-trips beside it.
+    #[test]
+    fn completion_meta_defaults_to_end_turn_and_round_trips_agent_fields() {
+        let snapshot = unknown_completion_snapshot(false, TurnOrigin::Human, None);
+        let default_meta = CompletionMeta::default();
+        assert_eq!(default_meta.policy, CompletionPolicy::EndTurn);
+        let payload = completion_payload_with_meta(&snapshot, &default_meta);
+        assert_eq!(payload["completionPolicy"], json!("end_turn"));
+        assert_eq!(
+            CompletionMeta::from_payload(Some(&payload.to_string())),
+            default_meta
+        );
+
+        let meta = CompletionMeta {
+            policy: CompletionPolicy::Agent,
+            agent_signal: Some(AgentSignal {
+                signal_id: "signal-1".to_string(),
+                requested_at: 42,
+                turn_key: TurnKey {
+                    user_seq: 1,
+                    ended_seq: 2,
+                },
+            }),
+            confirmation: Some(CompletionConfirmation {
+                by: ConfirmationBy::Human,
+                at: 43,
+            }),
+        };
+        let payload = completion_payload_with_meta(&snapshot, &meta);
+        assert_eq!(payload["agentSignal"]["signalId"], json!("signal-1"));
+        assert_eq!(payload["confirmation"]["by"], json!("human"));
+        assert_eq!(
+            CompletionMeta::from_payload(Some(&payload.to_string())),
+            meta
         );
     }
 }
