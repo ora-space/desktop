@@ -116,7 +116,7 @@ impl WorkflowRuns {
     }
 
     /// Grants Sessions only the admission/cleanup capability sharing this run's coordination.
-    pub(crate) fn session_turns(&self) -> WorkflowSessionTurns {
+    pub(crate) fn session_turns(self: &Arc<Self>) -> WorkflowSessionTurns {
         WorkflowSessionTurns::new(
             self.pool.clone(),
             self.run_locks.clone(),
@@ -124,6 +124,7 @@ impl WorkflowRuns {
             self.transitions.clone(),
             self.sessions_root.clone(),
             self.agent_signals.clone(),
+            Some(Arc::downgrade(self)),
         )
     }
 
@@ -214,6 +215,66 @@ impl WorkflowRuns {
         &self,
         request: CompleteWorkflowNodeRequest,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
+        self.complete_node_with_auto(request, false).await
+    }
+
+    /// Completes a settled human turn automatically when the node opted into auto-accept.
+    ///
+    /// Runs after the turn parks, so the snapshot and signal are already durable. A no-op when the
+    /// policy, signal or auto-accept flag is absent; a failed auto-completion is logged and left to
+    /// the user rather than failing the turn's cleanup.
+    pub(crate) async fn auto_complete_node(
+        &self,
+        node_run_id: &ora_domain::WorkflowNodeRunId,
+    ) -> Result<(), BackendError> {
+        let pool = self.pool.clone();
+        let node_run_id = node_run_id.clone();
+        let node_run = spawn_repository_work(move || {
+            SqliteWorkflowRunEngineRepository::new(pool)
+                .find_node_run_by_id(&node_run_id)
+                .map_err(|error| BackendError::internal("failed to load node run", error))
+        })
+        .await?;
+        let Some(node_run) = node_run else {
+            return Ok(());
+        };
+        let meta = crate::workflow::run::completion_snapshot::CompletionMeta::from_payload(
+            node_run.payload.as_deref(),
+        );
+        if meta.policy != crate::workflow::run::completion_snapshot::CompletionPolicy::Agent
+            || !meta.auto_accept
+        {
+            return Ok(());
+        }
+        let Some(signal) = meta.agent_signal else {
+            return Ok(());
+        };
+        let request = CompleteWorkflowNodeRequest {
+            run_id: node_run.run_id.to_string(),
+            node_id: node_run.node_id,
+            force: false,
+            confirm_initial_turn: None,
+            confirm_agent_completion: Some(ConfirmAgentCompletion {
+                signal_id: signal.signal_id,
+            }),
+            requester: None,
+        };
+        if let Err(error) = self.complete_node_with_auto(request, true).await {
+            ora_warn!(
+                node_run_id = %node_run.id,
+                error = %error,
+                "auto-accept completion failed; leaving the node for the user"
+            );
+        }
+        Ok(())
+    }
+
+    /// Completes one node with an explicit auto-confirm flag for the headless auto-accept path.
+    async fn complete_node_with_auto(
+        &self,
+        request: CompleteWorkflowNodeRequest,
+        auto_confirm: bool,
+    ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
         let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
         // The first-turn exception is the only valid combination of these two flags. Prove it
         // from the parked snapshot before claiming, so a contradictory request changes no state.
@@ -235,6 +296,7 @@ impl WorkflowRuns {
             .confirm_agent_completion
             .as_ref()
             .map(|confirmation| signal_fingerprint(&confirmation.signal_id));
+        approval.auto_confirm = auto_confirm;
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let node_id = request.node_id.clone();
 

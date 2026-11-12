@@ -1,6 +1,7 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
 use super::super::completion_snapshot::{CompletionPolicy, StopCause};
+use super::super::operations::WorkflowRuns;
 use super::CompletingNodeRuns;
 use super::agent_signal::AgentSignalStore;
 use super::session::{HumanTurnAdmission, restore_human_turn};
@@ -25,6 +26,8 @@ pub(crate) struct WorkflowSessionTurns {
     sessions_root: PathBuf,
     /// Per-attempt tokens shared with the host completion MCP server.
     agent_signals: Arc<AgentSignalStore>,
+    /// Weak owner used to run the headless auto-accept after a settled human turn parks.
+    auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
 }
 
 impl WorkflowSessionTurns {
@@ -39,6 +42,7 @@ impl WorkflowSessionTurns {
         transitions: Arc<WorkflowRunTransitions>,
         sessions_root: PathBuf,
         agent_signals: Arc<AgentSignalStore>,
+        auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
     ) -> Self {
         Self {
             pool,
@@ -47,6 +51,7 @@ impl WorkflowSessionTurns {
             transitions,
             sessions_root,
             agent_signals,
+            auto_completer,
         }
     }
 
@@ -139,6 +144,7 @@ impl WorkflowSessionTurns {
         let sessions_root = self.sessions_root.clone();
         let transitions = self.transitions.clone();
         let agent_signals = self.agent_signals.clone();
+        let auto_completer = self.auto_completer.clone();
         Ok(stream.attach_cleanup(move || async move {
             // The runtime attributes this turn's end while it settles: an explicit stop, the
             // inactivity policy, a dropped stream and a crashed session all end it as `Cancelled`
@@ -154,7 +160,18 @@ impl WorkflowSessionTurns {
                 Some(agent_signals),
                 attempt_id,
             )
-            .await
+            .await?;
+            if auto_accept {
+                if let Some(runs) = auto_completer.and_then(|weak| weak.upgrade()) {
+                    // Run outside the cleanup future: completing the node stops its session, and
+                    // waiting for that stop from inside the stream's own cleanup could deadlock.
+                    let node_run_id = node_run_id.clone();
+                    tokio::spawn(async move {
+                        let _ = runs.auto_complete_node(&node_run_id).await;
+                    });
+                }
+            }
+            Ok(())
         }))
     }
 }

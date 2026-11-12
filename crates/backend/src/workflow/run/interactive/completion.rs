@@ -79,6 +79,8 @@ pub(crate) struct CompletionApproval {
     pub(crate) force: bool,
     /// Fingerprint of the confirmed agent signal id; `None` when the request did not confirm one.
     pub(crate) confirm_agent_completion: Option<u64>,
+    /// The host is accepting a settled signal without a user request (headless auto-accept).
+    pub(crate) auto_confirm: bool,
 }
 
 /// FNV-1a fingerprint used to keep the approval `Copy` while still binding the confirmation to
@@ -98,6 +100,7 @@ impl CompletionApproval {
         confirm_initial_turn: false,
         force: false,
         confirm_agent_completion: None,
+        auto_confirm: false,
     };
     /// Adopts the workflow's opening turn as a normal completion.
     #[cfg(test)]
@@ -105,6 +108,7 @@ impl CompletionApproval {
         confirm_initial_turn: true,
         force: false,
         confirm_agent_completion: None,
+        auto_confirm: false,
     };
     /// Completes despite a non-confirmation blocker, recording the forced audit.
     #[cfg(test)]
@@ -112,6 +116,7 @@ impl CompletionApproval {
         confirm_initial_turn: false,
         force: true,
         confirm_agent_completion: None,
+        auto_confirm: false,
     };
 }
 
@@ -474,7 +479,7 @@ pub(crate) fn prepare_completion(
     // Auto-accept is only valid for a settled human turn: the opening turn and every abnormal stop
     // still require the user (ADR D6).
     let auto_confirmed = agent_confirmed
-        && meta.auto_accept
+        && (approval.auto_confirm || meta.auto_accept)
         && snapshot.turn_origin != Some(TurnOrigin::Workflow)
         && !snapshot.blockers.iter().any(|blocker| {
             matches!(

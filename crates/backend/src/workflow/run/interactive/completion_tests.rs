@@ -1018,6 +1018,7 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
                 confirm_initial_turn: false,
                 force: false,
                 confirm_agent_completion: Some(signal_fingerprint("signal-1")),
+                auto_confirm: false,
             },
         )
         .expect("confirming the accepted signal completes the opening turn");
@@ -1028,5 +1029,68 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
             Some(ConfirmationBy::Human)
         );
         assert_eq!(prepared.requester, NodeCompletionRequester::Agent);
+    });
+}
+
+/// A headless auto-accept records `auto` attribution instead of a human confirmation.
+#[test]
+fn a_headless_auto_accept_records_auto_confirmation() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: Some(TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+            provisional: false,
+        };
+        let signal = AgentSignal {
+            signal_id: "signal-auto".to_string(),
+            requested_at: 1,
+            turn_key: TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            },
+        };
+        store_snapshot_with_meta(
+            &pool,
+            &node_run_id,
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(signal),
+                confirmation: None,
+                auto_accept: true,
+            },
+        );
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval {
+                confirm_initial_turn: false,
+                force: false,
+                confirm_agent_completion: Some(signal_fingerprint("signal-auto")),
+                auto_confirm: true,
+            },
+        )
+        .expect("headless auto-accept completes the settled turn");
+
+        assert_eq!(
+            prepared.confirmation.map(|confirmation| confirmation.by),
+            Some(ConfirmationBy::Auto)
+        );
     });
 }
