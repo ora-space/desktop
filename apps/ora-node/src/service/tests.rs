@@ -14,8 +14,6 @@ async fn a_cloud_node_without_git_access_refuses_to_start() {
             "repositories": [],
         },
         "process": {
-            "host_directory": root.join("host"),
-            "expected_uid": 0,
             "git_program": "/usr/bin/git",
             "environment": {},
             "command_timeout_ms": 1000,

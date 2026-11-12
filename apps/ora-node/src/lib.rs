@@ -126,7 +126,7 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
 }
 
 impl Node {
-    /// Composes the explicitly configured host-backed Git adapter under the original Node database lease.
+    /// Composes the Git adapter that runs commands directly under the original Node database lease.
     #[cfg(target_os = "linux")]
     pub fn open(
         config: NodeConfig,
@@ -136,7 +136,7 @@ impl Node {
         Self::open_managed_with_dependencies(config, process, shutdown, DurableWrites, LocalClock)
     }
 
-    /// Injects durable-write boundaries and time without replacing the production host-backed adapter.
+    /// Injects durable-write boundaries and time without replacing the production Git adapter.
     #[cfg(target_os = "linux")]
     pub fn open_managed_with_dependencies<W: WriteGuard, C: Clock>(
         config: NodeConfig,
@@ -153,13 +153,6 @@ impl Node {
         {
             return Err(Error::Configuration(
                 "Node data directory must be absolute without parent traversal".into(),
-            ));
-        }
-        if ora_utils::path::canonicalize_longest_existing_prefix(&config.home_directory)
-            == ora_utils::path::canonicalize_longest_existing_prefix(&process.host_directory)
-        {
-            return Err(Error::Configuration(
-                "Node and host require distinct state directories".into(),
             ));
         }
         if config.home_directory.exists() {
@@ -186,8 +179,13 @@ impl Node {
             ora_utils::path::TrustedPathKind::Directory,
         )
         .map_err(|e| Error::Configuration(e.to_string()))?;
-        let runner = ManagedGitRunner::new(node.database.process_journal()?, process, shutdown)
-            .map_err(|e| Error::Configuration(e.to_string()))?;
+        let runner = ManagedGitRunner::new(
+            node.database.process_journal()?,
+            process,
+            shutdown,
+            &node.home_directory,
+        )
+        .map_err(|e| Error::Configuration(e.to_string()))?;
         Ok(Node {
             repository_config: None,
             #[cfg(target_os = "linux")]
@@ -322,9 +320,11 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                     .into_iter()
                     .filter(|attempt| attempt.stop_unconfirmed)
                     .filter_map(|attempt| {
+                        // The protocol keeps the fields the process host filled. Git now runs
+                        // without a Scope, so the attempt's identity names both.
                         Some(StopUnconfirmed {
-                            scope_id: attempt.process.intent.scope.to_string(),
-                            run_id: attempt.process.intent.run.to_string(),
+                            scope_id: attempt.process.id.to_string(),
+                            run_id: attempt.process.id.to_string(),
                             first_stop_at_ms: attempt.first_stop_at_ms?,
                             bound_at_ms: attempt.stop_bound_at_ms?,
                             guarantee: attempt.guarantee,

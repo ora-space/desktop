@@ -3,7 +3,7 @@
 //! command sequence, no remote ever being configured.
 use super::*;
 use crate::git_server::{GitServerAccess, GitServerFailure, TransportRepository};
-use crate::managed::{AsNode, CloneHost};
+use crate::managed::{AsNode, DirectGit};
 use gitlancer::{GitCommand, GitIntent};
 use std::path::{Path, PathBuf};
 
@@ -56,13 +56,13 @@ pub(super) fn reads_transport(record: &CloneExecution) -> bool {
 /// Fetches the snapshot ref as the Node and checks that it is the base commit, then hands the
 /// transport repository, which holds no credential, to the workload user.
 pub(super) fn fetch(
-    host: &CloneHost,
+    git: &DirectGit,
     access: &GitServerAccess,
     config: &CloneConfig,
     record: &CloneExecution,
 ) -> Fetched {
     let spec = &record.command.payload.spec;
-    let node = AsNode(host);
+    let node = AsNode(git);
     let transport = match TransportRepository::create(
         &node,
         &config.repository_root,
@@ -81,7 +81,7 @@ pub(super) fn fetch(
         &spec.repository_url,
         &record.command.execution_id,
         &[format!("{}:refs/ora/input", spec.snapshot_ref.as_str())],
-        &|| host.stopping(),
+        &|| git.stopping(),
     );
     let failure = match fetched {
         Ok(()) => None,
@@ -109,7 +109,7 @@ pub(super) fn fetch(
         }
         Err(_) => return Fetched::Failed(CloneFailureCode::OperationFailed),
     }
-    if let Err(error) = transport.hand_over(host.workload_uid()) {
+    if let Err(error) = transport.hand_over(git.workload_uid()) {
         ora_logging::ora_warn!(execution_id = %record.command.execution_id.as_str(), error = %error, "clone transport repository could not be handed over");
         return Fetched::Failed(CloneFailureCode::OperationFailed);
     }

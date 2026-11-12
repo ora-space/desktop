@@ -46,8 +46,6 @@ tempfile.workspace = true
 ora-plugin-protocol.workspace = true
 ora-scheduler.workspace = true
 ora-process.workspace = true
-ora-process-client.workspace = true
-ora-process-protocol.workspace = true
 ora-node-transport = { workspace = true, features = ["websocket"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "time", "signal", "macros", "sync", "io-std", "io-util"] }
 libc.workspace = true

@@ -113,11 +113,11 @@ fn snapshot_ref(commit: &str) -> String {
     format!("refs/ora/upstreams/{BINDING}/snapshots/{commit}")
 }
 
-/// Holds the directly managed workload Git before its checkout fetch until released.
+/// Holds the workload Git the Node runs before its checkout fetch until released.
 ///
 /// Pausing an upload-pack child makes termination racy: Git can observe the child's death and
-/// exit with its own error before the host signals Git. These tests require direct-process signal
-/// evidence, so the fixture gates the managed program itself, preserving the real Git command.
+/// exit with its own error before the Node signals Git. These tests require direct-process signal
+/// evidence, so the fixture gates the program the Node runs, preserving the real Git command.
 pub struct WorkloadGate {
     pub ready: PathBuf,
     release: PathBuf,

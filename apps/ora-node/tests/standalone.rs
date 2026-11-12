@@ -11,7 +11,7 @@ use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
 use support::*;
 
-/// The actual executable recovers through host/guardian after SIGKILL, retaining the original result identity.
+/// The actual executable settles its predecessor's Git after SIGKILL before recovering, retaining the original result identity.
 #[test]
 fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
     ora_logging::with_trace_logging(|| {
@@ -65,23 +65,7 @@ fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
     });
 }
 
-/// Owner death alone triggers guardian cleanup, even when no replacement Node starts.
-#[test]
-fn guardian_stops_git_without_node_restart() {
-    ora_logging::with_trace_logging(|| {
-        let fixture = Fixture::new();
-        fixture.seed();
-        fixture.install_hook();
-        let mut node = fixture.launch("owner");
-        until(|| fixture.path().join("hook-ready").exists());
-        let hook = fixture.pin("hook-pid");
-        node.kill();
-        until(|| hook.has_exited().unwrap());
-        assert!(!fixture.path().join("late-write").exists());
-    });
-}
-
-/// Graceful shutdown waits for the configured bound, then stops the original Run before exiting.
+/// Graceful shutdown waits for the configured bound, then ends the original command before exiting.
 #[test]
 fn shutdown_bounds_a_blocked_git_hook() {
     ora_logging::with_trace_logging(|| {
@@ -129,17 +113,18 @@ fn shutdown_allows_git_to_finish_within_grace() {
     });
 }
 
-/// Missing guardian evidence blocks the affected execution, not a distinct task using the same repository.
+/// A descendant that left Git's process group keeps the attempt lock held: the affected
+/// execution stays unknown without blocking a distinct task on the same repository, and it
+/// recovers once that descendant has ended.
 #[test]
-fn guardian_loss_keeps_conflicting_recovery_unknown_but_allows_other_work() {
+fn escaped_descendant_keeps_conflicting_recovery_unknown_but_allows_other_work() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let command = fixture.seed();
-        fixture.install_hook();
+        fixture.install_escaping_hook();
         let mut child = fixture.launch("lost");
         until(|| fixture.path().join("hook-ready").exists());
         let hook = fixture.pin("hook-pid");
-        fixture.kill_guardians();
         child.kill();
         std::fs::remove_file(
             fixture
@@ -184,25 +169,19 @@ fn guardian_loss_keeps_conflicting_recovery_unknown_but_allows_other_work() {
         );
         assert!(!hook.has_exited().unwrap());
         assert!(node.shutdown().is_err());
-    });
-}
+        drop(node);
 
-/// An alias of host state is rejected before Node creates a business database there.
-#[test]
-fn node_data_directory_cannot_alias_host_state() {
-    ora_logging::with_trace_logging(|| {
-        let fixture = Fixture::new();
-        let alias = fixture.path().join("alias");
-        std::os::unix::fs::symlink(fixture.path().join("host"), &alias).unwrap();
-        let mut config = fixture.config();
-        config.home_directory = alias;
-        assert!(Node::open(config, fixture.process(), Shutdown::default()).is_err());
-        assert!(
-            !fixture
-                .path()
-                .join("host")
-                .join("ora-node.sqlite3")
-                .exists()
-        );
+        std::fs::write(fixture.path().join("release"), "continue").unwrap();
+        until(|| hook.has_exited().unwrap());
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        assert_eq!(node.recover().unwrap(), ora_node::NodeState::Ready);
+        assert!(matches!(
+            node.status(&query(&command)).unwrap().payload.state,
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Ready(_)
+            ))
+        ));
+        node.shutdown().unwrap();
     });
 }

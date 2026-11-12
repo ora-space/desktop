@@ -4,8 +4,6 @@ use ora_node::{
 };
 use ora_node_db::NodeIdentity;
 use ora_node_protocol::*;
-use ora_process_client::ProcessHost;
-use ora_process_protocol::{HostOperation, HostReply};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process, linux_process_snapshot};
 use std::{
     fs,
@@ -24,7 +22,6 @@ static PROCESS_SLOTS: tokio::sync::Semaphore =
 pub struct Fixture {
     directory: tempfile::TempDir,
     workload_uid: Option<u32>,
-    host: ChildGuard,
     // Release only after the fixture's children and directory have been torn down.
     _process_slots: tokio::sync::SemaphorePermit<'static>,
 }
@@ -64,7 +61,7 @@ impl WriteGuard for BeforeMutation {
 }
 
 impl Fixture {
-    /// Deploys unique trusted binaries and explicitly separate Node, host, repository and HOME paths.
+    /// Deploys a private Git and explicitly separate Node, repository and HOME paths.
     pub fn new() -> Self {
         Self::with_process_slots(/*slots*/ 1)
     }
@@ -115,43 +112,12 @@ impl Fixture {
         for name in ["main", "trees", "different-home"] {
             fs::create_dir(path.join(name)).unwrap();
         }
-        let binary = Path::new(env!("CARGO_BIN_EXE_ora-node"));
-        fs::copy(
-            binary.with_file_name("ora-process-guardian"),
-            path.join("guardian"),
-        )
-        .unwrap();
-        fs::set_permissions(
-            path.join("guardian"),
-            fs::Permissions::from_mode(/*mode*/ 0o700),
-        )
-        .unwrap();
         fs::copy("/usr/bin/git", path.join("git")).unwrap();
-        let host = ChildGuard(
-            Process::new(binary.with_file_name("ora-process-host"))
-                .arg("create")
-                .arg(path.join("host"))
-                .arg(path.join("guardian"))
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap(),
-        );
-        let mut fixture = Self {
+        let fixture = Self {
             directory,
             workload_uid: None,
-            host,
             _process_slots: process_slots,
         };
-        let client = ProcessHost::new(fixture.path().join("host"), fixture.uid());
-        until(|| {
-            assert!(fixture.host.0.try_wait().unwrap().is_none());
-            matches!(
-                rt.block_on(client.execute(HostOperation::Inspect)),
-                Ok(HostReply::Ready(_))
-            )
-        });
         fixture.git(&["init", "-b", "main"]);
         fixture.git(&[
             "-c",
@@ -168,10 +134,6 @@ impl Fixture {
     /// Returns only this fixture's private deployment root.
     pub fn path(&self) -> &Path {
         self.directory.path()
-    }
-    /// Reads local effective identity without changing process credentials.
-    fn uid(&self) -> u32 {
-        unsafe { libc::geteuid() }
     }
     /// Supplies the same explicit Node data directory to embedding and executable callers.
     pub fn config(&self) -> NodeConfig {
@@ -193,8 +155,8 @@ impl Fixture {
     pub fn process(&self) -> ProcessConfig {
         ProcessConfig {
             workload_uid: self.workload_uid,
-            host_directory: self.path().join("host"),
-            expected_uid: self.uid(),
+            host_directory: None,
+            expected_uid: None,
             git_program: self.path().join("git"),
             environment: if self.workload_uid.is_some() {
                 Default::default()
@@ -258,10 +220,23 @@ impl Fixture {
         fs::write(&hook, "#!/bin/sh\nprintf '%s' \"$$\" > \"$TEST_DIR/hook-pid\"\nprintf ready > \"$TEST_DIR/hook-ready\"\nwhile test ! -f \"$TEST_DIR/release\"; do /bin/sleep 0.02; done\nprintf late > \"$TEST_DIR/late-write\"\n").unwrap();
         fs::set_permissions(hook, fs::Permissions::from_mode(/*mode*/ 0o700)).unwrap();
     }
+    /// The same hook, with its waiting half moved to a session of its own: no process-group
+    /// signal reaches it, yet it still holds what it inherited from Git.
+    pub fn install_escaping_hook(&self) {
+        let hook = self
+            .path()
+            .join("main")
+            .join(".git")
+            .join("hooks")
+            .join("post-checkout");
+        fs::write(&hook, "#!/bin/sh\n/usr/bin/setsid /bin/sh -c 'printf %s \"$$\" > \"$TEST_DIR/hook-pid\"\nprintf ready > \"$TEST_DIR/hook-ready\"\nwhile test ! -f \"$TEST_DIR/release\"; do /bin/sleep 0.02; done\nprintf late > \"$TEST_DIR/late-write\"' &\nwait\n").unwrap();
+        fs::set_permissions(hook, fs::Permissions::from_mode(/*mode*/ 0o700)).unwrap();
+    }
     /// Starts the production executable with no command channel or Backend composition.
     pub fn launch(&self, label: &str) -> ChildGuard {
-        let config = self.path().join("config.json");
-        fs::write(&config, serde_json::to_vec(&serde_json::json!({ "node": self.config(), "process": self.process(), "timezone": "Asia/Shanghai", "recovery_interval_ms": 100 })).unwrap()).unwrap();
+        let process = self.process();
+        let config = self.path().join(format!("{label}.json"));
+        fs::write(&config, serde_json::to_vec(&serde_json::json!({ "node": self.config(), "process": process, "timezone": "Asia/Shanghai", "recovery_interval_ms": 100 })).unwrap()).unwrap();
         let output = fs::File::create(self.path().join(format!("{label}.log"))).unwrap();
         ChildGuard(
             Process::new(env!("CARGO_BIN_EXE_ora-node"))
@@ -279,28 +254,13 @@ impl Fixture {
     pub fn log(&self, label: &str) -> String {
         fs::read_to_string(self.path().join(format!("{label}.log"))).unwrap_or_default()
     }
-    /// Independently pins the hook so assertions do not rely only on the host's projection.
+    /// Independently pins the hook so assertions do not rely only on the Node's own conclusion.
     pub fn pin(&self, name: &str) -> LinuxPidFd {
         let pid = fs::read_to_string(self.path().join(name))
             .unwrap()
             .parse()
             .unwrap();
         LinuxPidFd::from_observation(&linux_process(pid).unwrap()).unwrap()
-    }
-    /// Simulates loss of this deployment's guardians without signaling any workload by a numeric PID.
-    pub fn kill_guardians(&self) {
-        for stat in linux_process_snapshot().unwrap().flatten() {
-            if fs::read_link(Path::new("/proc").join(stat.pid.to_string()).join("exe"))
-                .ok()
-                .as_deref()
-                == Some(self.path().join("guardian").as_path())
-            {
-                LinuxPidFd::from_observation(&stat)
-                    .unwrap()
-                    .signal(ProcessSignal::Kill)
-                    .unwrap();
-            }
-        }
     }
     /// Executes fixture setup/inspection outside the production mutation path.
     pub fn git(&self, args: &[&str]) -> String {
@@ -318,22 +278,15 @@ impl Fixture {
     }
 }
 impl Drop for Fixture {
-    /// Only fixture-owned binaries and their session members are eligible for teardown signaling.
+    /// Only processes running from, or inside, this fixture's private directory are signalled:
+    /// its Git, the hooks and gates Git started, and whatever of them escaped its process group.
     fn drop(&mut self) {
-        let stats: Vec<_> = linux_process_snapshot().unwrap().flatten().collect();
-        let roots: Vec<_> = stats
-            .iter()
-            .filter(|stat| {
-                fs::read_link(Path::new("/proc").join(stat.pid.to_string()).join("exe"))
-                    .ok()
-                    .is_some_and(|path| {
-                        path == self.path().join("git") || path == self.path().join("guardian")
-                    })
-            })
-            .map(|stat| stat.pid)
-            .collect();
-        for stat in stats {
-            if (roots.contains(&stat.pid) || roots.contains(&stat.session))
+        for stat in linux_process_snapshot().unwrap().flatten() {
+            let proc = Path::new("/proc").join(stat.pid.to_string());
+            let inside = |link: &str| {
+                fs::read_link(proc.join(link)).is_ok_and(|path| path.starts_with(self.path()))
+            };
+            if (inside("exe") || inside("cwd"))
                 && let Ok(handle) = LinuxPidFd::from_observation(&stat)
             {
                 let _ = handle.signal(ProcessSignal::Kill);

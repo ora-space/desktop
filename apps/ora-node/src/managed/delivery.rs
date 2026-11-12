@@ -1,16 +1,21 @@
-//! Revision delivery's Git runs through the host like clone's, as separate guarded Runs.
+//! Revision delivery's and `ora-git`'s Git, and a restore's, as directly run commands.
 //!
 //! Restore Git records original identities in the session journal before admission.
 //! Delivery Git only reads the checkout, writes scratch files in its Git directory and moves an
-//! `refs/ora/revisions/` ref, so its Runs are not journaled as business mutations: a delivery
-//! interrupted before freezing prepares again from scratch, and the guardian ends a Run whose
-//! Node exited. Each Run gets its own Scope, closed before the next command starts.
-use super::{CloneHost, RunAs, transport};
+//! `refs/ora/revisions/` ref, so its commands are not journaled as business mutations: a delivery
+//! interrupted before freezing prepares again from scratch. Each still inherits an attempt lock,
+//! because a push that outlived a killed Node must be known to have stopped before the next one
+//! starts. Read-only commands need neither.
+use super::{
+    AttemptSettlement, CAPTURE_LIMIT, DirectGit, RunAs,
+    attempt_lock::LockDurability,
+    exec::{self, Capture, Invocation, StopGrace},
+    repository::clone_environment,
+};
 use crate::revision::RestoreGitRunner;
-use gitlancer::{GitCommand, GitExecError, GitOutput, GitRunner};
-use ora_process_client::ProcessHost;
-use ora_process_protocol::*;
-use std::time::{Duration, Instant};
+use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};
+use ora_node_db::{AttemptCommand, AttemptId, ProcessAttempt};
+use std::time::Instant;
 
 /// A restore caps execution only; delivery and cleanup keep their independent configured budgets.
 enum Budget {
@@ -18,17 +23,17 @@ enum Budget {
     Restore(Instant),
 }
 
-/// The same host Runs as the Node identity, for Git Server access from transport repositories;
-/// it borrows or owns its host side.
+/// The same executor under the Node identity, for Git Server access from transport repositories;
+/// it borrows or owns its executor.
 pub(crate) struct AsNode<H>(pub(crate) H);
 
-impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
-    /// Captures both streams up to the guardian limit.
+impl<H: std::borrow::Borrow<DirectGit>> GitRunner for AsNode<H> {
+    /// Captures both streams up to the capture limit.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
-        self.run_bounded(command, GUARDIAN_CAPTURE_LIMIT, GUARDIAN_CAPTURE_LIMIT)
+        self.run_bounded(command, CAPTURE_LIMIT, CAPTURE_LIMIT)
     }
 
-    /// Runs one command without the workload isolation, in its own closed Scope.
+    /// Runs one command without the workload isolation.
     fn run_bounded(
         &self,
         command: &GitCommand,
@@ -41,7 +46,7 @@ impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
     }
 }
 
-impl<H: std::borrow::BorrowMut<CloneHost>> RestoreGitRunner for AsNode<H> {
+impl<H: std::borrow::BorrowMut<DirectGit>> RestoreGitRunner for AsNode<H> {
     /// A restore's Node-identity commands belong to the original session like the workload's.
     fn bind_restore(
         &mut self,
@@ -56,8 +61,8 @@ impl<H: std::borrow::BorrowMut<CloneHost>> RestoreGitRunner for AsNode<H> {
         self.0.borrow().check_admission()
     }
 
-    /// Runs within the restore's absolute cutoff, with the same original-Run evidence as the
-    /// workload's commands, so a slow Git Server fetch cannot outlive it.
+    /// Runs within the restore's absolute cutoff, with the same stop evidence as the workload's
+    /// commands, so a slow Git Server fetch cannot outlive it.
     fn run_bounded_before(
         &self,
         command: &GitCommand,
@@ -75,14 +80,14 @@ impl<H: std::borrow::BorrowMut<CloneHost>> RestoreGitRunner for AsNode<H> {
     }
 }
 
-impl GitRunner for CloneHost {
-    /// Captures both streams up to the guardian limit.
+impl GitRunner for DirectGit {
+    /// Captures both streams up to the capture limit.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
-        self.run_bounded(command, GUARDIAN_CAPTURE_LIMIT, GUARDIAN_CAPTURE_LIMIT)
+        self.run_bounded(command, CAPTURE_LIMIT, CAPTURE_LIMIT)
     }
 
-    /// Runs one command in a fresh Scope and closes the Scope before returning, so no delivery
-    /// Git can still be writing when the next step reads the result.
+    /// Runs one command and returns once its stop evidence held, so no delivery Git can still
+    /// be writing when the next step reads the result.
     fn run_bounded(
         &self,
         command: &GitCommand,
@@ -93,7 +98,7 @@ impl GitRunner for CloneHost {
     }
 }
 
-impl RestoreGitRunner for CloneHost {
+impl RestoreGitRunner for DirectGit {
     /// The restore mutex provides exclusive ownership while binding the command context.
     fn bind_restore(
         &mut self,
@@ -131,7 +136,7 @@ impl RestoreGitRunner for CloneHost {
         }
     }
 
-    /// Caps the host exchange as well as process polling without clipping Scope cleanup.
+    /// Caps the command at the restore's cutoff without clipping the wait for its stop evidence.
     fn run_bounded_before(
         &self,
         command: &GitCommand,
@@ -149,8 +154,8 @@ impl RestoreGitRunner for CloneHost {
     }
 }
 
-impl CloneHost {
-    /// Runs one command as `identity` in a fresh Scope, closed before returning.
+impl DirectGit {
+    /// Runs one command as `identity` and settles it before returning.
     fn run_scoped(
         &self,
         command: &GitCommand,
@@ -183,55 +188,59 @@ impl CloneHost {
                 "restore execution deadline expired",
             )));
         }
-        let client = ProcessHost::new(self.config.host_directory.clone(), self.config.expected_uid);
-        let intent = HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: self.spec_as(
-                command,
-                OutputPolicy::Capture {
-                    stdout_limit: stdout.min(GUARDIAN_CAPTURE_LIMIT),
-                    stderr_limit: stderr.min(GUARDIAN_CAPTURE_LIMIT),
-                },
-                identity,
-            ),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
+        let command_deadline = Instant::now() + self.config.budget_for(command);
+        let (deadline, stop_grace) = match budget {
+            Budget::Command => (command_deadline, StopGrace::Honored),
+            Budget::Restore(deadline) => (deadline.min(command_deadline), StopGrace::Ignored),
         };
-
-        let command_budget = self.config.budget_for(command);
-        if let Some(context) = &self.restore_context {
-            context
-                .stops
-                .journal
-                .record_restore_attempt(
-                    &ora_node_db::ProcessAttempt {
-                        execution: context.execution.clone(),
-                        host_directory: self.config.host_directory.clone(),
-                        expected_uid: self.config.expected_uid,
-                        intent: intent.clone(),
-                    },
-                    ora_node_protocol::StopContainment::BestEffort,
-                )
-                .map_err(|error| fail(std::io::Error::other(error)))?;
-        }
-        let result = match budget {
-            Budget::Command => self.runtime.block_on(transport::execute(
-                &client,
-                &intent,
-                command_budget,
+        let invocation = |lock, before_cut| Invocation {
+            command,
+            environment: clone_environment(command),
+            identity,
+            capture: Capture::Bounded {
+                stdout: stdout.min(CAPTURE_LIMIT),
+                stderr: stderr.min(CAPTURE_LIMIT),
+            },
+            deadline,
+            stop_grace,
+            before_cut,
+            lock,
+        };
+        let run = |invocation| {
+            self.runtime.block_on(exec::run(
                 &self.config,
+                &self.locks,
                 &self.shutdown,
-            )),
-            Budget::Restore(deadline) => self.runtime.block_on(transport::execute_before(
-                &client,
-                &intent,
-                command_budget,
-                &self.config,
-                &super::Shutdown::default(),
-                deadline,
-            )),
+                invocation,
+            ))
         };
-        if let Some(context) = &self.restore_context {
+        let attempt = AttemptId::generate();
+        let output = if let Some(context) = &self.restore_context {
+            // A restore records every command before it is dispatched: lock file, then record.
+            self.locks
+                .create(&attempt, &command.cwd, LockDurability::Recorded)
+                .map_err(fail)?;
+            let recorded = context.stops.journal.record_restore_attempt(
+                &ProcessAttempt {
+                    execution: context.execution.clone(),
+                    id: attempt.clone(),
+                },
+                &AttemptCommand {
+                    cwd: command.cwd.clone(),
+                    args: command.args.clone(),
+                },
+                ora_node_protocol::StopContainment::BestEffort,
+            );
+            if let Err(error) = recorded {
+                // No record refers to the lock file and nothing was started with it.
+                self.locks.retire(&attempt);
+                return Err(fail(std::io::Error::other(error)));
+            }
+            // The stop clock is anchored before the command is cut, never after the kill.
+            let anchor = || {
+                let _ = context.stops.request(&attempt);
+            };
+            let finished = run(invocation(Some(&attempt), Some(&anchor)));
             if !self
                 .runtime
                 .block_on(
@@ -243,16 +252,29 @@ impl CloneHost {
             {
                 return Err(fail(std::io::Error::other("restore stop is unconfirmed")));
             }
+            finished.output
+        } else if command.intent == GitIntent::ReadOnly {
+            run(invocation(None, None)).output
         } else {
-            self.runtime
-                .block_on(transport::close(
-                    &client,
-                    intent.scope,
-                    Duration::from_millis(self.config.cleanup_timeout_ms),
-                ))
+            // Nothing durable names this command, so the lock is all a restarted Node has. While
+            // an earlier unrecorded command may still be writing, none starts.
+            if !self.locks.leftover_directories().is_empty() {
+                return Err(fail(std::io::Error::other(
+                    "an earlier Git command has not stopped",
+                )));
+            }
+            self.locks
+                .create(&attempt, &command.cwd, LockDurability::Unrecorded)
                 .map_err(fail)?;
-        }
-        let output = result.map_err(fail)?;
+            let finished = run(invocation(Some(&attempt), None));
+            if finished.settlement == AttemptSettlement::Unverified {
+                self.locks.keep_leftover(attempt, command.cwd.clone());
+            } else {
+                self.locks.retire(&attempt);
+            }
+            finished.output
+        };
+        let output = output.map_err(fail)?;
         if output.code == Some(0) {
             Ok(output)
         } else {

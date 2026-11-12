@@ -1,19 +1,20 @@
-//! The clone state machine split at every host interaction.
+//! The clone state machine split at every step that runs Git.
 //!
 //! The thread that owns the Node database advances an execution through its durable phases until
-//! the next step needs the host, then hands that step out. Whoever performs it only talks to the
-//! host and returns what it observed; the owner persists the observation and decides what follows.
+//! the next step needs Git, then hands that step out. Whoever performs it only runs Git and
+//! returns what it observed; the owner persists the observation and decides what follows.
 //! Every step's input is durable before it leaves, so an executor that disappears mid-step leaves
 //! nothing a restart cannot rebuild from the database.
 use super::snapshot::{self, Fetched, MAX_FETCH_ATTEMPTS, WORKLOAD_STEPS};
 use super::*;
 use crate::git_server::GitServerAccess;
-use crate::managed::CloneHost;
+use crate::managed::DirectGit;
+use gitlancer::GitCommand;
 use ora_node_db::ProcessAttempt;
 use std::io;
 use std::time::Duration;
 
-/// One host interaction a clone needs next; everything it depends on is already durable.
+/// One Git step a clone needs next; everything it depends on is already durable.
 pub(crate) struct CloneStep {
     record: CloneExecution,
     effect: CloneEffect,
@@ -27,7 +28,7 @@ enum CloneEffect {
     /// what is left of it and starts the next attempt at once (Node clone ADR D4).
     Backoff(Duration),
     /// Start the recorded attempt and settle it.
-    Dispatch(ProcessAttempt),
+    Dispatch(ProcessAttempt, Box<GitCommand>),
     /// Settle an attempt an earlier pass or process recorded, without starting anything.
     Settle(ProcessAttempt),
     /// Read the checkout facts after Git exited successfully.
@@ -41,7 +42,7 @@ enum Waited {
     Stopped,
 }
 
-/// A performed step, carrying the host's answer back to the database owner.
+/// A performed step, carrying what Git did back to the database owner.
 pub(crate) struct CloneStepResult {
     record: CloneExecution,
     outcome: StepOutcome,
@@ -50,8 +51,8 @@ pub(crate) struct CloneStepResult {
 enum StepOutcome {
     Fetched(Fetched),
     Waited(Waited),
-    Dispatched(ProcessAttempt, io::Result<AttemptSettlement>),
-    Settled(ProcessAttempt, io::Result<AttemptSettlement>),
+    Dispatched(ProcessAttempt, AttemptSettlement),
+    Settled(ProcessAttempt, AttemptSettlement),
     Inspected(io::Result<CommitId>),
 }
 
@@ -61,30 +62,30 @@ impl CloneStep {
         &self.record.command.execution_id
     }
 
-    /// Performs the host interaction without touching the Node database or the Node home.
-    pub(crate) fn perform(self, host: &CloneHost) -> CloneStepResult {
+    /// Runs the step's Git without touching the Node database.
+    pub(crate) fn perform(self, git: &DirectGit) -> CloneStepResult {
         let outcome = match self.effect {
             CloneEffect::Fetch(inputs) => {
                 let (access, config) = *inputs;
-                StepOutcome::Fetched(snapshot::fetch(host, &access, &config, &self.record))
+                StepOutcome::Fetched(snapshot::fetch(git, &access, &config, &self.record))
             }
             CloneEffect::Backoff(delay) => {
-                StepOutcome::Waited(if crate::git_server::pause(delay, &|| host.stopping()) {
+                StepOutcome::Waited(if crate::git_server::pause(delay, &|| git.stopping()) {
                     Waited::Elapsed
                 } else {
                     Waited::Stopped
                 })
             }
-            CloneEffect::Dispatch(attempt) => {
-                let settlement = host.dispatch(&attempt);
+            CloneEffect::Dispatch(attempt, command) => {
+                let settlement = git.dispatch(&attempt, &command);
                 StepOutcome::Dispatched(attempt, settlement)
             }
             CloneEffect::Settle(attempt) => {
-                let settlement = host.settle(&attempt);
+                let settlement = git.settle(&attempt);
                 StepOutcome::Settled(attempt, settlement)
             }
             CloneEffect::Inspect(config) => {
-                StepOutcome::Inspected(inspection::verify(host, &self.record, &config))
+                StepOutcome::Inspected(inspection::verify(git, &self.record, &config))
             }
         };
         CloneStepResult {
@@ -106,13 +107,13 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
     pub(super) fn drive_clone(&mut self, record: CloneExecution) -> Result<(), Error> {
         let mut step = self.begin_clone(record)?;
         while let Some(next) = step {
-            let result = next.perform(self.git.runner().clone_host());
+            let result = next.perform(self.git.runner().direct_git());
             step = self.resume_clone(result)?;
         }
         Ok(())
     }
 
-    /// Advances an execution's durable phases until it needs the host, or until it rests.
+    /// Advances an execution's durable phases until it needs Git, or until it rests.
     ///
     /// `None` means the execution completed, became Unknown, or waits for configuration.
     pub(crate) fn begin_clone(
@@ -179,9 +180,9 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             };
         };
         // Process responsibility is reconciled even if configuration or filesystem ownership
-        // changed, so an existing Run is settled before anything else is checked. Absence of any
-        // Run for the current step proves it was not dispatched; an existing uncertain Run is
-        // never replaced. Each step dispatches at most one Run, after the earlier steps' Runs.
+        // changed, so an existing attempt is settled before anything else is checked. Absence of
+        // any attempt for the current step proves it was not dispatched; an existing uncertain
+        // attempt is never replaced. Each step dispatches at most one, after the earlier steps'.
         match self.git.runner().clone_attempts(&record) {
             Ok(attempts) if attempts.len() == step => {
                 if allowed {
@@ -192,12 +193,21 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             }
             Ok(mut attempts) if attempts.len() == step + 1 => {
                 let attempt = attempts.pop().ok_or(Error::Stopping)?;
-                Ok(Some(CloneStep {
-                    effect: CloneEffect::Settle(attempt),
-                    record,
-                }))
+                // An ending recorded before a crash settles the attempt without another probe:
+                // its lock file may already be gone.
+                match self.git.runner().recorded_settlement(&attempt) {
+                    Ok(Some(settlement)) => {
+                        let settlement = self.persist_settlement(&attempt, settlement);
+                        self.continue_clone(record, Some(settlement))
+                    }
+                    Ok(None) => Ok(Some(CloneStep {
+                        effect: CloneEffect::Settle(attempt),
+                        record,
+                    })),
+                    Err(error) => self.continue_clone(record, Some(Err(error))),
+                }
             }
-            // More Runs than steps cannot be attributed safely.
+            // More attempts than steps cannot be attributed safely.
             Ok(_) => self.continue_clone(record, Some(Ok(AttemptSettlement::Unverified))),
             Err(error) => self.continue_clone(record, Some(Err(error))),
         }
@@ -231,20 +241,19 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         }
     }
 
-    /// A settlement that cannot be journaled is as unproven as one the host could not give.
+    /// A settlement that cannot be journaled is as unproven as one without stop evidence.
     fn persist_settlement(
         &self,
         attempt: &ProcessAttempt,
-        settlement: io::Result<AttemptSettlement>,
+        settlement: AttemptSettlement,
     ) -> io::Result<AttemptSettlement> {
-        let settlement = settlement?;
         self.git.runner().persist_settlement(attempt, settlement)?;
         Ok(settlement)
     }
 
     /// Advances only proven phases; any ambiguity keeps the target and original execution reserved.
     ///
-    /// `recovered` is the settlement of the Run a previous dispatch left behind, if there was one;
+    /// `recovered` is the settlement of the attempt a previous dispatch left behind, if there was one;
     /// without it the execution may still need its first dispatch.
     fn continue_clone(
         &mut self,
@@ -272,7 +281,8 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             // This is accidental-replacement protection, not a sandbox against trusted owners.
             if ora_utils::path::open_trusted_path(
                 &record.target.root,
-                self.git.runner().process_config().expected_uid,
+                // SAFETY: geteuid only reads the process identity.
+                unsafe { libc::geteuid() },
                 ora_utils::path::TrustedPathKind::Directory,
             )
             .is_err()
@@ -355,9 +365,14 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         }
     }
 
-    /// Counts one more snapshot fetch attempt durably, then hands that one attempt to the host
-    /// side. Retries happen here rather than inside the fetch, so every attempt is counted
-    /// before it starts and a restart cannot add attempts beyond the shared limit.
+    /// Counts one more snapshot fetch attempt durably, then hands that one attempt out. Retries
+    /// happen here rather than inside the fetch, so every attempt is counted before it starts
+    /// and a restart cannot add attempts beyond the shared limit.
+    ///
+    /// The fetch's Git is not recorded per command, so its attempt locks are all a restarted
+    /// Node has. While one of them is still held, an earlier fetch may be writing: in this
+    /// clone's own transport repository the clone is Unknown, anywhere else it waits for a
+    /// later pass without spending an attempt.
     fn fetch_attempt(
         &mut self,
         record: CloneExecution,
@@ -368,6 +383,13 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         else {
             return Ok(None);
         };
+        let leftovers = self.git.runner().direct_git().leftover_directories();
+        if leftovers.contains(&snapshot::transport_path(&config, &record)) {
+            return self.unknown_clone(&record).map(|()| None);
+        }
+        if !leftovers.is_empty() {
+            return Ok(None);
+        }
         let record = self.database.advance_clone(
             &record,
             CloneProgress::Pending(ClonePhase::Fetching { identity, attempts }),
@@ -431,7 +453,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
     }
 
     /// Records the workload command of `step` before it leaves this thread, so a restart settles
-    /// this Run instead of dispatching another.
+    /// this attempt instead of dispatching another.
     fn dispatch_step(
         &mut self,
         record: CloneExecution,
@@ -442,7 +464,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         match self.git.runner().record_clone_attempt(&record, &command) {
             Ok(attempt) => Ok(Some(CloneStep {
                 record,
-                effect: CloneEffect::Dispatch(attempt),
+                effect: CloneEffect::Dispatch(attempt, Box::new(command)),
             })),
             Err(_) => self.unknown_clone(&record).map(|()| None),
         }
@@ -472,7 +494,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         // caller may retry with a new execution instead of investigating a Git failure.
         let code = match settlement {
             AttemptSettlement::Exited(code) => code,
-            AttemptSettlement::Terminated(_) => {
+            AttemptSettlement::Terminated(_) | AttemptSettlement::Stopped => {
                 let residual = retained(&record)?;
                 return self
                     .fail_clone(&record, CloneFailureCode::Interrupted, residual)

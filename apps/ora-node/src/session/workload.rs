@@ -39,7 +39,7 @@ pub enum SessionWorkload {
     ///
     /// `identity` is what processes are spawned as; `uid` and `gid` own the session home and the
     /// checkout. Production names the same user in both — a group equal to the user, as the
-    /// clone workload's `setpriv --regid` does — and tests keep `identity` inherited while
+    /// clone workload's identity drop does — and tests keep `identity` inherited while
     /// naming their own ids, since only root may take another identity.
     Separate {
         directory: PathBuf,

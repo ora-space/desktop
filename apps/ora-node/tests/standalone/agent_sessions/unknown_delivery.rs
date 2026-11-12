@@ -1,8 +1,9 @@
-//! Unknown host identity fences the complete executable/IPC/SQLite/Git/HTTP delivery chain.
+//! Missing stop evidence fences the complete executable/IPC/SQLite/Git/HTTP delivery chain.
 use super::*;
-use ora_node_db::{DeliveryPlan, DeliveryProgress, FrozenOutcome, NodeDatabase, ProcessAttempt};
-use ora_process_client::ProcessHost;
-use ora_process_protocol::*;
+use ora_node_db::{
+    AttemptCommand, AttemptId, DeliveryPlan, DeliveryProgress, FrozenOutcome, NodeDatabase,
+    ProcessAttempt,
+};
 use pretty_assertions::assert_eq;
 use std::time::Duration;
 
@@ -162,7 +163,7 @@ async fn complete_control(
 /// Preparing and frozen deliveries retain their original responsibility across bound expiry/reopen.
 /// specs/test-cases/node/revision/restore-deadline-and-stop-confirmation.md#stop-confirmation-also-accepts-a-host-authoritative-notstarted
 #[test]
-fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart() {
+fn missing_lock_blocks_complete_delivery_before_and_after_bound_and_restart() {
     ora_logging::with_trace_logging(|| {
         for window in [Window::BeforeBound, Window::Expired] {
             let fixture = Fixture::new();
@@ -208,23 +209,21 @@ fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart(
             db.start_session(&original, &NodeIncarnationId::new("original"))
                 .unwrap();
             let journal = db.session_journal().unwrap();
+            // The record exists but its lock file does not, so the evidence is missing. Nothing
+            // translates "missing" into "stopped" and no SQL write manufactures a stop fact.
             let attempt = ProcessAttempt {
                 execution: original.execution_id.clone(),
-                host_directory: fixture.process().host_directory,
-                expected_uid: fixture.process().expected_uid,
-                intent: HostRunIntent {
-                    scope: ScopeId::new(),
-                    run: RunId::new(),
-                    spec: RunSpec::new(
-                        "/usr/bin/git",
-                        &original_path,
-                        DescendantPolicy::WaitForAll,
-                    ),
-                    host_disconnect: GuardianHostDisconnect::KeepRunning,
-                },
+                id: AttemptId::generate(),
             };
             journal
-                .record_restore_attempt(&attempt, StopContainment::BestEffort)
+                .record_restore_attempt(
+                    &attempt,
+                    &AttemptCommand {
+                        cwd: original_path.clone(),
+                        args: vec!["fetch".into()],
+                    },
+                    StopContainment::BestEffort,
+                )
                 .unwrap();
             let now = (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64;
             let first = match window {
@@ -232,7 +231,7 @@ fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart(
                 Window::Expired => now - 2 * STOP_BOUND_MS,
             };
             journal
-                .request_restore_stop(attempt.intent.run, first, STOP_BOUND_MS)
+                .request_restore_stop(&attempt.id, first, STOP_BOUND_MS)
                 .unwrap();
             journal
                 .defer_restore_end(
@@ -331,19 +330,6 @@ fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart(
                 .enable_all()
                 .build()
                 .unwrap();
-            // The host owns the original Closed Scope but has never recorded this Run. No stub
-            // translates "unknown" into "not started" and no SQL write manufactures a stop fact.
-            runtime.block_on(async {
-                let host = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
-                assert!(matches!(host.execute(HostOperation::CreateScope { scope: attempt.intent.scope }).await.unwrap(), HostReply::Scope(_)));
-                tokio::time::timeout(Duration::from_secs(/*secs*/ 5), async {
-                    loop {
-                        if matches!(host.execute(HostOperation::Close { scope: attempt.intent.scope }).await.unwrap(), HostReply::Scope(view) if matches!(view.last_observed, Some(ScopeState::Closed(_)))) { break; }
-                        tokio::task::yield_now().await;
-                    }
-                }).await.unwrap();
-                assert_eq!(host.execute(HostOperation::QueryRun { run: attempt.intent.run }).await.unwrap(), HostReply::Rejected(HostRejection::UnknownIdentity));
-            });
             fs::remove_file(fixture.path().join("git")).unwrap();
             fs::write(fixture.path().join("git"), "#!/bin/sh\nprintf '%s\\t%s\\n' \"$PWD\" \"$*\" >> \"${0%/*}/delivery-git-calls\"\nexec /usr/bin/git \"$@\"\n").unwrap();
             fs::set_permissions(
@@ -361,7 +347,7 @@ fn unknown_identity_blocks_complete_delivery_before_and_after_bound_and_restart(
                 let mut child = launch(&fixture, &config);
                 runtime.block_on(async {
                     let (mut stream, _) = connect(&fixture).await;
-                    // A status request takes the production explicit handover path to QueryRun.
+                    // A status request takes the production explicit handover path to the lock probe.
                     send(&mut stream, query()).await;
                     loop {
                         if let NodeToControllerMessage::ExecutionStatus(status) =

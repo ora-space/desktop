@@ -104,10 +104,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 management_tls: None,
                 home_directory: home.clone(),
                 persistence: Persistence::Sqlite,
-                protected_state_directories: vec![
-                    fixture.config().home_directory,
-                    fixture.process().host_directory,
-                ],
+                protected_state_directories: vec![fixture.config().home_directory],
                 controller_id: ControllerId::new("owner"),
                 nodes: vec![NodeTarget {
                     node_id: NodeId::new("test-node"),

@@ -94,9 +94,10 @@ fn accepted_clone_never_adopts_an_existing_directory_or_replaced_root() {
     });
 }
 
-/// Killing a real Node during the workload checkout fetch cannot authorize another Run or a directory-based success.
+/// Killing a real Node during the workload checkout fetch cannot authorize another attempt or a
+/// directory-based success: the restarted Node settles the original attempt before it recovers.
 #[test]
-fn killed_clone_recovers_original_run_without_redispatch() {
+fn killed_clone_recovers_original_attempt_without_redispatch() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let server =
@@ -121,8 +122,9 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
-        // The guardian terminated Git when its owner died, so recovery reads a confirmed
-        // termination: a retryable failure, not success and not permanent Unknown.
+        // Nothing of the old Git was left when recovery took its attempt lock, so the attempt is
+        // found stopped without an exit status: a retryable failure, not success and not
+        // permanent Unknown.
         assert_interrupted(&state, &record, &command);
         drop(node);
         assert_retained_attempts(&fixture, &record, &command, 2);
@@ -174,7 +176,7 @@ fn slow_clone_outlives_the_local_command_budget() {
             pause.store(false, Ordering::SeqCst);
         });
         let mut process = fixture.process();
-        // Keep local host/guardian observation viable on loaded CI machines, while proving
+        // Keep local Git viable on loaded CI machines, while proving
         // that the seven-second network wait exceeds the unchanged five-second local budget.
         process.command_timeout_ms = 5_000;
         process.network_timeout_ms = 30_000;
@@ -233,42 +235,6 @@ fn command_deadline_settles_clone_as_interrupted() {
     });
 }
 
-/// Without guardian evidence the old Git may still write, so nothing is concluded.
-#[test]
-fn guardian_loss_keeps_interrupted_clone_unknown() {
-    ora_logging::with_trace_logging(|| {
-        let fixture = Fixture::new();
-        let server =
-            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
-        let config = configuration(&fixture, &server);
-        let gate = https::WorkloadGate::install(fixture.path());
-        let command = request(&server, "lost", "main");
-        let record = seed(&fixture, &config, &command);
-        let mut child = launch(&fixture, &config, "clone-lost");
-        until(|| gate.ready.exists());
-        fixture.kill_guardians();
-        child.kill();
-        let mut node =
-            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
-        node.configure_clone(config).unwrap();
-        node.configure_git_access(server.access());
-        node.recover_clones().unwrap();
-        assert_eq!(
-            node.submit_clone(command.clone()).unwrap().state,
-            ExecutionState::Unknown
-        );
-        drop(node);
-        let database = NodeDatabase::open(
-            &fixture.config().home_directory.join("ora-node.sqlite3"),
-            fixture.config().identity,
-        )
-        .unwrap();
-        let journal = database.process_journal().unwrap();
-        assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 2);
-        assert!(record.target.path.is_dir());
-    });
-}
-
 /// The seeded target, which an interrupted attempt must keep rather than delete or reuse.
 fn retained(record: &CloneExecution) -> CloneResidual {
     CloneResidual::Retained {
@@ -297,7 +263,7 @@ fn assert_interrupted(
     );
 }
 
-/// One dispatched Run, fully cleaned, and the original directory still in place.
+/// Every recorded attempt settled, and the original directory still in place.
 fn assert_retained_attempts(
     fixture: &Fixture,
     record: &CloneExecution,

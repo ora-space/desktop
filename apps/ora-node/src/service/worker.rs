@@ -30,7 +30,7 @@ pub(super) fn run(
             ControlListen::WebSocket { .. } | ControlListen::MutualTlsWebSocket { .. }
         )
     });
-    // A stop may let the outstanding step settle its Run before the final cleanup.
+    // A stop may let the outstanding step settle its attempt before the final cleanup.
     let drain = Duration::from_millis(
         config
             .process
@@ -82,6 +82,7 @@ pub(super) fn run(
                 .map_err(|error| error.to_string())?,
             node.git.runner().process_config().clone(),
             restore_policy.stop_confirmation,
+            node.git.runner().direct_git().locks().clone(),
         );
         let restorer = agents::restorer(
             &node,
