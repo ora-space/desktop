@@ -6,6 +6,8 @@ use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
 use crate::settings::Settings;
+#[cfg(feature = "test-support")]
+use crate::workflow::run::owner_stream_drop::OwnerStreamDropControl;
 use crate::workflow::run::test_fixture::{
     ClockAt, SeqGen, bootstrap, recording_transitions, run_test, seeded_pending_run,
 };
@@ -118,6 +120,8 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
             let node = graph.node("agent").unwrap();
             let payload: ora_application::WorkflowRunPayload =
                 serde_json::from_str(context.run.payload.as_deref().unwrap()).unwrap();
+            #[cfg(feature = "test-support")]
+            let owner_stream_drop = OwnerStreamDropControl::default();
             let outcome = drive_agent_node(
                 &runtime,
                 &pool,
@@ -133,6 +137,8 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
                 &context,
                 &node_run.scope_id,
                 &payload.variable_pool,
+                #[cfg(feature = "test-support")]
+                &owner_stream_drop,
             )
             .await;
             let error = match outcome {
