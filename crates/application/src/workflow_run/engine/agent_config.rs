@@ -358,12 +358,14 @@ mod tests {
         );
         assert!(!config.auto_accept_agent_completion);
 
-        let graph = parse_config(
-            json!({"completionSignal": "agent", "autoAcceptAgentCompletion": true}),
-        )
-        .unwrap();
+        let graph =
+            parse_config(json!({"completionSignal": "agent", "autoAcceptAgentCompletion": true}))
+                .unwrap();
         let config = graph.node("agent").unwrap().agent_config.as_ref().unwrap();
-        assert_eq!(config.completion_signal, super::AgentCompletionSignal::Agent);
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::Agent
+        );
         assert!(config.auto_accept_agent_completion);
     }
 
