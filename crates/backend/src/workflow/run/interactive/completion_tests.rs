@@ -561,6 +561,7 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
             prepared.audit,
             Some(serde_json::json!({
                 "completion_forced": {
+                    "by": "human",
                     "blockers": [{ "kind": "turn_unknown" }],
                     "stop_cause": null,
                     "without_turn": true,
@@ -594,6 +595,7 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
             prepared.audit,
             Some(serde_json::json!({
                 "completion_forced": {
+                    "by": "human",
                     "blockers": [{ "kind": "turn_stopped" }],
                     "stop_cause": "user_stopped",
                     "without_turn": false,

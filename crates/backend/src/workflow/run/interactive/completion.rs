@@ -8,8 +8,8 @@ use super::super::completion_snapshot::{
     CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
     CompletionPolicy, CompletionSnapshot, ConfirmationBy, TurnOrigin, completion_final_text,
     completion_payload, derive_completion_snapshot, forced_completion_audit,
-    output_contract_blocker, parse_completion_snapshot, trailing_assistant_text,
-    unknown_completion_snapshot,
+    has_precise_stop_blocker, output_contract_blocker, parse_completion_snapshot,
+    trailing_assistant_text, unknown_completion_snapshot,
 };
 use super::super::executor::apply_output_contract;
 use super::super::worktree::{capture_worktree_snapshot, compute_file_changes};
@@ -377,19 +377,10 @@ pub(crate) fn prepare_completion(
     // The agent signal gate only applies to an otherwise normally settled turn. Precise stop or
     // output blockers describe the turn itself; a signal cannot change their outcome.
     let mut agent_confirmed = false;
+    let mut signal_matches = false;
     if meta.policy == CompletionPolicy::Agent {
-        let has_precise_blocker = effective_blockers.iter().any(|blocker| {
-            matches!(
-                blocker.kind,
-                CompletionBlockerKind::TurnStopped
-                    | CompletionBlockerKind::TurnTruncated
-                    | CompletionBlockerKind::TurnRefused
-                    | CompletionBlockerKind::TurnUnknown
-                    | CompletionBlockerKind::StructuredInvalid
-                    | CompletionBlockerKind::OutputMissing
-            )
-        });
-        let signal_matches = snapshot.turn_key.is_some()
+        let has_precise_blocker = has_precise_stop_blocker(&effective_blockers);
+        signal_matches = snapshot.turn_key.is_some()
             && meta
                 .agent_signal
                 .as_ref()
@@ -416,6 +407,15 @@ pub(crate) fn prepare_completion(
             }
         }
         if !has_precise_blocker {
+            // The park already materialized the gate; recompute it here for snapshots written
+            // before that change, replacing rather than appending so a stale value never survives.
+            effective_blockers.retain(|blocker| {
+                !matches!(
+                    blocker.kind,
+                    CompletionBlockerKind::AgentSignalPending
+                        | CompletionBlockerKind::AgentConfirmationPending
+                )
+            });
             if !signal_matches {
                 effective_blockers.push(CompletionBlocker::new(
                     CompletionBlockerKind::AgentSignalPending,
@@ -501,9 +501,9 @@ pub(crate) fn prepare_completion(
             .map(|duration| duration.as_millis() as i64)
             .unwrap_or_default(),
     });
-    // The requester is a server fact: only a settled agent signal attributes the completion to the
-    // agent; every other accepted path remains a human completion.
-    let requester = if meta.agent_signal.is_some() {
+    // The requester is a server fact: only a signal bound to this settled turn attributes the
+    // completion to the agent; a stale or absent signal leaves it a human completion.
+    let requester = if signal_matches {
         NodeCompletionRequester::Agent
     } else {
         NodeCompletionRequester::Human

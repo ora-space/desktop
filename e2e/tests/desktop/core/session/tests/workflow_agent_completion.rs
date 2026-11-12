@@ -6,8 +6,8 @@
 
 use super::workflow_interactive::{wait_for_node, wait_for_run_end};
 use super::{
-    current_thread_runtime, drain_prompt, install_fake_opencode_plugin, open_ready_backend,
-    seed_workspace,
+    current_thread_runtime, drain_load, drain_prompt, install_fake_opencode_plugin,
+    open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
@@ -233,7 +233,15 @@ fn the_agent_signal_binds_to_the_turn_and_the_human_confirmation_completes_it() 
             parked_payload["completion"]["turnOrigin"],
             json!("workflow")
         );
-        assert_eq!(blocker_kinds(&parked_payload), vec!["turn_unconfirmed"]);
+        assert_eq!(
+            blocker_kinds(&parked_payload),
+            vec!["turn_unconfirmed", "agent_confirmation_pending"],
+            "the park materializes the signal gate the card and the completion both read"
+        );
+        assert_eq!(
+            parked_payload["completion"]["parkKind"],
+            json!("awaiting_user")
+        );
 
         // A plain completion cannot cross the signal gate, and the first turn is still unconfirmed.
         let rejected = complete(&backend, &run_id, None, false, None)
@@ -339,7 +347,14 @@ fn the_missing_signal_first_turn_uses_the_documented_force_exception() -> TestRe
             "the marked turn must not signal completion"
         );
         assert!(payload(&parked).get("agentSignal").is_none());
-        assert_eq!(blocker_kinds(&payload(&parked)), vec!["turn_unconfirmed"]);
+        assert_eq!(
+            blocker_kinds(&payload(&parked)),
+            vec!["turn_unconfirmed", "agent_signal_pending"]
+        );
+        assert_eq!(
+            payload(&parked)["completion"]["parkKind"],
+            json!("awaiting_user")
+        );
 
         let plain = complete(&backend, &run_id, None, false, None)
             .await
@@ -500,6 +515,149 @@ fn a_legacy_end_turn_node_never_receives_the_completion_tool() -> TestResult {
             "no attempt token is issued, so the fake agent cannot signal"
         );
         assert_eq!(blocker_kinds(&payload(&parked)), vec!["turn_unconfirmed"]);
+        Ok(())
+    })
+}
+
+/// A new turn without a signal must clear the previous turn's signal and confirmation.
+#[test]
+fn a_new_turn_without_a_signal_clears_the_previous_one() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seeded_workspace(&setup, &backend)?;
+        let run_id = start_run(&backend, &workspace_id, "review the plan", "agent", false)?;
+
+        let first = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+                && node.payload.as_deref().is_some_and(|payload| {
+                    serde_json::from_str::<Value>(payload)
+                        .is_ok_and(|payload| payload["agentSignal"]["signalId"].is_string())
+                })
+        })
+        .await?;
+        let session_id = first.session_id.clone().ok_or("the node owns a session")?;
+        let first_signal = payload(&first)["agentSignal"]["signalId"]
+            .as_str()
+            .ok_or("first signal")?
+            .to_string();
+
+        // The human turn carries the skip marker, so this attempt produces no signal of its own.
+        say(
+            &backend,
+            &session_id,
+            &format!("carry on {SKIP_COMPLETION}"),
+        )
+        .await?;
+
+        let second = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+                && node.payload.as_deref().is_some_and(|payload| {
+                    serde_json::from_str::<Value>(payload)
+                        .is_ok_and(|payload| payload["agentSignal"].is_null())
+                })
+        })
+        .await?;
+        let second_payload = payload(&second);
+        assert_eq!(second_payload["agentSignal"], Value::Null);
+        assert_eq!(second_payload["confirmation"], Value::Null);
+        assert_eq!(
+            blocker_kinds(&second_payload),
+            vec!["agent_signal_pending"],
+            "the settled human turn waits for a fresh signal"
+        );
+        assert_ne!(
+            second_payload["agentSignal"]["signalId"],
+            json!(first_signal),
+            "the previous turn's signal must not survive"
+        );
+
+        // Forcing this turn is a human completion, not the stale agent attribution.
+        complete(&backend, &run_id, None, true, None).await?;
+        let finished = wait_for_run_end(&backend, &run_id).await?;
+        assert_eq!(finished.run.status, WorkflowRunStatus::Succeeded);
+        let agent = finished
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .ok_or("agent node")?;
+        let completed = payload(agent);
+        assert_eq!(completed["requester"], json!("human"));
+        assert!(completed.get("confirmation").is_none());
+        assert_eq!(completed["completion_forced"]["by"], json!("human"));
+        Ok(())
+    })
+}
+
+/// A restarted Backend must restore the completion tool before the next workflow turn.
+#[test]
+fn a_restarted_backend_restores_the_completion_tool() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seeded_workspace(&setup, &backend)?;
+            let run_id = start_run(&backend, &workspace_id, "review the plan", "agent", false)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+                    && node.payload.as_deref().is_some_and(|payload| {
+                        serde_json::from_str::<Value>(payload)
+                            .is_ok_and(|payload| payload["agentSignal"]["signalId"].is_string())
+                    })
+            })
+            .await?;
+            let session_id = parked.session_id.ok_or("the node owns a session")?;
+            (run_id, session_id)
+        };
+
+        // A fresh Backend over the same data directory is what a restart leaves behind.
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        say(&backend, &session_id, "carry on").await?;
+        let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+                && node.payload.as_deref().is_some_and(|payload| {
+                    serde_json::from_str::<Value>(payload)
+                        .is_ok_and(|payload| payload["agentSignal"]["signalId"].is_string())
+                })
+        })
+        .await?;
+        assert!(
+            mcp_calls(&package_root)?
+                .iter()
+                .any(|call| call["method"] == "session/load"
+                    && call["sessionId"].is_string()
+                    && call["servers"].as_array().is_some_and(|servers| servers
+                        .iter()
+                        .any(|server| server == "ora-workflow-completion"))),
+            "the restored session must keep the host completion server"
+        );
+        let signal_id = payload(&parked)["agentSignal"]["signalId"]
+            .as_str()
+            .ok_or("restored turn signal")?
+            .to_string();
+        assert_eq!(
+            completion_calls(&package_root)?.len(),
+            2,
+            "the fake agent called the host tool once per turn"
+        );
+
+        complete(
+            &backend,
+            &run_id,
+            None,
+            false,
+            Some(ConfirmAgentCompletion { signal_id }),
+        )
+        .await?;
+        let finished = wait_for_run_end(&backend, &run_id).await?;
+        assert_eq!(finished.run.status, WorkflowRunStatus::Succeeded);
         Ok(())
     })
 }

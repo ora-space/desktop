@@ -244,6 +244,7 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
         assert_eq!(
             payload["completion_forced"],
             serde_json::json!({
+                "by": "human",
                 "blockers": [{ "kind": "turn_unknown" }],
                 "stop_cause": null,
                 "without_turn": true,
@@ -322,7 +323,7 @@ fn ready_force_does_not_write_an_empty_audit() {
     });
 }
 
-/// A request that both confirms the opening turn and forces has no consistent meaning.
+/// Confirm-and-force outside the first-turn no-signal exception is rejected before claiming.
 #[test]
 fn conflicting_completion_flags_are_rejected_before_claiming() {
     run_test(async {

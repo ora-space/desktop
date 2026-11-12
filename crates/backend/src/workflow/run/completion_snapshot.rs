@@ -245,22 +245,81 @@ impl CompletionMeta {
 }
 
 /// Wraps a snapshot and its completion metadata in the node-run payload shape.
+///
+/// The signal gate is materialized into `completion.blockers` here so the read projection and the
+/// completion gate share one fact. `agentSignal` and `confirmation` are always written, using
+/// `null` when absent: the payload is merged with `json_patch`, and omitting a key would leave a
+/// previous turn's signal or confirmation behind.
 pub(crate) fn completion_payload_with_meta(
     snapshot: &CompletionSnapshot,
     meta: &CompletionMeta,
 ) -> Value {
-    let mut payload = completion_payload(snapshot);
+    let snapshot = snapshot.clone().with_agent_signal_gate(meta);
+    let mut payload = completion_payload(&snapshot);
     payload["completionPolicy"] = serde_json::to_value(meta.policy).unwrap_or(Value::Null);
-    if let Some(signal) = &meta.agent_signal {
-        payload["agentSignal"] = serde_json::to_value(signal).unwrap_or(Value::Null);
-    }
-    if let Some(confirmation) = &meta.confirmation {
-        payload["confirmation"] = serde_json::to_value(confirmation).unwrap_or(Value::Null);
-    }
-    if meta.auto_accept {
-        payload["autoAcceptAgentCompletion"] = Value::Bool(true);
-    }
+    payload["agentSignal"] = meta
+        .agent_signal
+        .as_ref()
+        .and_then(|signal| serde_json::to_value(signal).ok())
+        .unwrap_or(Value::Null);
+    payload["confirmation"] = meta
+        .confirmation
+        .as_ref()
+        .and_then(|confirmation| serde_json::to_value(confirmation).ok())
+        .unwrap_or(Value::Null);
+    payload["autoAcceptAgentCompletion"] = Value::Bool(meta.auto_accept);
     payload
+}
+
+/// Returns whether one blocker describes the turn itself rather than the agent signal gate.
+pub(crate) fn has_precise_stop_blocker(blockers: &[CompletionBlocker]) -> bool {
+    blockers.iter().any(|blocker| {
+        matches!(
+            blocker.kind,
+            CompletionBlockerKind::TurnStopped
+                | CompletionBlockerKind::TurnTruncated
+                | CompletionBlockerKind::TurnRefused
+                | CompletionBlockerKind::TurnUnknown
+                | CompletionBlockerKind::StructuredInvalid
+                | CompletionBlockerKind::OutputMissing
+        )
+    })
+}
+
+impl CompletionSnapshot {
+    /// Materializes the agent policy's signal gate into the persisted blockers and park kind.
+    ///
+    /// A precise stop (timeout, refusal, invalid output) already decides the turn, so the signal
+    /// gate is not stacked on top of it. Normal waiting for a signal or a confirmation is the
+    /// user's participation and must park as `awaiting_user`, not as an abnormal stop.
+    pub(crate) fn with_agent_signal_gate(mut self, meta: &CompletionMeta) -> Self {
+        if meta.policy != CompletionPolicy::Agent || has_precise_stop_blocker(&self.blockers) {
+            return self;
+        }
+        self.blockers.retain(|blocker| {
+            !matches!(
+                blocker.kind,
+                CompletionBlockerKind::AgentSignalPending
+                    | CompletionBlockerKind::AgentConfirmationPending
+            )
+        });
+        let signal_matches = self.turn_key.is_some()
+            && meta
+                .agent_signal
+                .as_ref()
+                .is_some_and(|signal| Some(signal.turn_key) == self.turn_key);
+        if !signal_matches {
+            self.blockers.push(CompletionBlocker::new(
+                CompletionBlockerKind::AgentSignalPending,
+            ));
+        } else if meta.confirmation.is_none() {
+            self.blockers.push(CompletionBlocker::new(
+                CompletionBlockerKind::AgentConfirmationPending,
+            ));
+        }
+        self.park_kind = park_kind(&self.blockers, self.provisional, self.stop_cause);
+        self
+    }
 }
 
 ///
@@ -280,11 +339,23 @@ fn park_kind(
     if provisional {
         return Some(ParkKind::AwaitingUser);
     }
+    // Waiting for the user's participation includes the agent-signal gates: a normal turn without
+    // a signal, or with a signal awaiting confirmation, is not an abnormal stop.
+    let participation_only = blockers.iter().all(|blocker| {
+        matches!(
+            blocker.kind,
+            CompletionBlockerKind::TurnUnconfirmed
+                | CompletionBlockerKind::AgentSignalPending
+                | CompletionBlockerKind::AgentConfirmationPending
+        )
+    });
+    if participation_only {
+        return Some(ParkKind::AwaitingUser);
+    }
     match blockers {
         [blocker]
-            if blocker.kind == CompletionBlockerKind::TurnUnconfirmed
-                || (blocker.kind == CompletionBlockerKind::TurnStopped
-                    && stop_cause == Some(StopCause::UserStopped)) =>
+            if blocker.kind == CompletionBlockerKind::TurnStopped
+                && stop_cause == Some(StopCause::UserStopped) =>
         {
             Some(ParkKind::AwaitingUser)
         }
@@ -333,6 +404,7 @@ pub(crate) fn forced_completion_audit(
     let without_turn = snapshot.turn_key.is_none();
     json!({
         "completion_forced": {
+            "by": "human",
             "blockers": blockers,
             "stop_cause": snapshot.stop_cause,
             "without_turn": without_turn,
@@ -587,9 +659,10 @@ fn assistant_text(update: &SessionUpdate) -> Option<&str> {
 mod tests {
     use super::{
         AgentSignal, CompletionBlocker, CompletionBlockerKind, CompletionConfirmation,
-        CompletionMeta, CompletionPolicy, ConfirmationBy, ParkKind, StopCause, TurnKey, TurnOrigin,
-        completion_payload, completion_payload_with_meta, derive_completion_snapshot,
-        forced_completion_audit, trailing_assistant_text, unknown_completion_snapshot,
+        CompletionMeta, CompletionPolicy, CompletionSnapshot, ConfirmationBy, ParkKind, StopCause,
+        TurnKey, TurnOrigin, completion_payload, completion_payload_with_meta,
+        derive_completion_snapshot, forced_completion_audit, trailing_assistant_text,
+        unknown_completion_snapshot,
     };
     use agent_client_protocol_schema::v1::{
         ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
@@ -1292,5 +1365,64 @@ mod tests {
             CompletionMeta::from_payload(Some(&payload.to_string())),
             meta
         );
+    }
+
+    /// A settled agent-policy turn materializes its signal gate into the persisted blockers.
+    #[test]
+    fn agent_policy_materializes_the_signal_gate() {
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(1),
+            turn_key: Some(TurnKey {
+                user_seq: 1,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            output_digest: None,
+            provisional: false,
+        };
+        let missing = completion_payload_with_meta(
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: None,
+                confirmation: None,
+                auto_accept: false,
+            },
+        );
+        assert_eq!(
+            missing["completion"]["blockers"],
+            json!([{ "kind": "agent_signal_pending" }])
+        );
+        assert_eq!(missing["completion"]["parkKind"], json!("awaiting_user"));
+        assert_eq!(missing["agentSignal"], serde_json::Value::Null);
+        assert_eq!(missing["confirmation"], serde_json::Value::Null);
+
+        let signaled = completion_payload_with_meta(
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(AgentSignal {
+                    signal_id: "signal-1".to_string(),
+                    requested_at: 42,
+                    turn_key: TurnKey {
+                        user_seq: 1,
+                        ended_seq: 2,
+                    },
+                }),
+                confirmation: None,
+                auto_accept: false,
+            },
+        );
+        assert_eq!(
+            signaled["completion"]["blockers"],
+            json!([{ "kind": "agent_confirmation_pending" }])
+        );
+        assert_eq!(signaled["completion"]["parkKind"], json!("awaiting_user"));
+        assert_eq!(signaled["agentSignal"]["signalId"], json!("signal-1"));
     }
 }

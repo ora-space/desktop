@@ -15,7 +15,7 @@ use crate::clock::SystemClock;
 use crate::error::BackendError;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigKind, TextContent};
-use ora_agent_runtime::{RuntimeError, WorkflowHostCapabilities};
+use ora_agent_runtime::RuntimeError;
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
     Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
@@ -27,6 +27,7 @@ use ora_contracts::{
     StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
+use ora_domain::SessionHostCapabilities;
 use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowRunId};
 use ora_history::read_session_history;
 use ora_logging::ora_warn;
@@ -465,9 +466,9 @@ async fn drive_agent_node(
     let host_capabilities = if config.interactive
         && config.completion_signal == ora_application::AgentCompletionSignal::Agent
     {
-        WorkflowHostCapabilities::CompletionSignal
+        SessionHostCapabilities::WorkflowCompletion
     } else {
-        WorkflowHostCapabilities::None
+        SessionHostCapabilities::None
     };
     let started = agent_runtime
         .start_workflow_node_session(

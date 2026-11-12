@@ -6,7 +6,6 @@ use crate::agent_runtime::AgentRuntimeManager;
 use crate::error::BackendError;
 use crate::session_setup::SessionMcpSelection;
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, TextContent};
-use ora_agent_runtime::WorkflowHostCapabilities;
 use ora_application::{
     AgentExecutor, AgentOutputContract, ApplicationError, NodeFailureDetail, NodeType,
     WorkflowGraph, WorkflowRunEngineRepository, WorkflowRunPayload,
@@ -16,6 +15,7 @@ use ora_contracts::{
     WorkflowRunLocale,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
+use ora_domain::SessionHostCapabilities;
 use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkspaceId};
 use ora_history::{HistoryRecord, SessionHistory, read_session_history};
 use ora_logging::ora_warn;
@@ -190,7 +190,7 @@ pub(super) async fn run_diagnosis(
             },
             SessionMcpSelection::Explicit(BTreeSet::new()),
             // Diagnosis is a one-shot host conversation, not a node attempt: no completion tool.
-            WorkflowHostCapabilities::None,
+            SessionHostCapabilities::None,
         )
         .await?;
     let session_id = SessionId::new(started.session.id);
