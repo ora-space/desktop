@@ -975,6 +975,48 @@ describe("RunNodeSessionChat", () => {
     await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
   });
 
+  it("confirms an accepted agent signal by its id without force", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("agent_confirmation_pending", false, {
+        turnOrigin: "human",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-1",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: true,
+        awaitsAgentSignal: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const button = screen.getByTestId("confirm-agent-completion");
+    expect(button).toHaveTextContent("确认并完成");
+    await userEvent.click(button);
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmAgentCompletion: { signalId: "signal-1" },
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
   it("keeps a user-stopped turn awaiting input instead of reading as an abnormal stop", () => {
     renderDock(
       "awaiting_input",
