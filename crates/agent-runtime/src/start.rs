@@ -25,9 +25,9 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_acp::{AcpClient, AcpTransport};
 use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest, StartSessionResponse};
-use ora_domain::SessionMcpSelection;
 use ora_domain::{AgentRef, SessionId};
 use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
+use ora_domain::{SessionHostCapabilities, SessionMcpSelection};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -131,6 +131,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             request,
             SessionVisibility::Published,
             self.inner.session_mcp.clone(),
+            SessionHostCapabilities::None,
         )
         .await
     }
@@ -142,6 +143,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: StartSessionRequest,
         visibility: SessionVisibility,
         session_mcp: H::Setup,
+        host_capabilities: SessionHostCapabilities,
     ) -> Result<StartSessionResponse, RuntimeError> {
         let workspace_id = WorkspaceId::new(request.workspace_id);
         let agent_ref = domain_agent_ref(request.agent_ref)?;
@@ -182,7 +184,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 SessionStatus::Running,
                 session_mcp.selection().clone(),
                 AuditFields::new(now, now, false),
-            );
+            )
+            .with_host_capabilities(host_capabilities);
             let mut opened = self.open_recorder(&session)?;
             let outcome = match opened.failure.take() {
                 Some(reason) => RecordOutcome::JustFailed { reason },
@@ -640,8 +643,8 @@ mod tests {
     };
     use ora_acp::{AcpError, AcpPeer, AcpTransport};
     use ora_contracts::PublicError;
-    use ora_domain::SessionMcpSelection;
     use ora_domain::{AgentRef, PluginId, SessionId};
+    use ora_domain::{SessionHostCapabilities, SessionMcpSelection};
     use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
     use semver::Version;

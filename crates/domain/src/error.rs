@@ -31,6 +31,8 @@ pub enum DomainModelError {
     InvalidGitCleanupJobState(String),
     #[error("invalid session status value: {0}")]
     InvalidSessionStatus(i64),
+    #[error("invalid session host capabilities value: {0}")]
+    InvalidSessionHostCapabilities(String),
     #[error("invalid agent reference: {0}")]
     InvalidAgentRef(String),
     #[error("invalid session title: {0}")]

@@ -57,7 +57,7 @@ pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
-    SessionStore, WorkflowHostCapabilities, WorkspaceDirectory,
+    SessionStore, WorkspaceDirectory,
 };
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
 pub use operations::AgentRuntime;
@@ -269,6 +269,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             self.inner
                 .session_mcp
                 .with_selection(SessionMcpSelection::Automatic),
+            ora_domain::SessionHostCapabilities::None,
         )
         .await
     }
@@ -282,19 +283,16 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         &self,
         request: StartSessionRequest,
         selection: SessionMcpSelection,
-        host_capabilities: WorkflowHostCapabilities,
+        host_capabilities: ora_domain::SessionHostCapabilities,
     ) -> Result<StartSessionResponse, RuntimeError> {
-        let session_mcp = match host_capabilities {
-            WorkflowHostCapabilities::None => self.inner.session_mcp.with_selection(selection),
-            WorkflowHostCapabilities::CompletionSignal => {
-                self.inner.session_mcp.workflow_view(selection)
-            }
-        };
         self.start_session_with_visibility(
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
-            session_mcp,
+            self.inner
+                .session_mcp
+                .view_for_session(selection, host_capabilities),
+            host_capabilities,
         )
         .await
     }
@@ -705,10 +703,12 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         }
         let cwd = self.workspace_cwd(&session.workspace_id)?;
         let connection = self.inner.connections.for_agent(&session.agent_ref)?;
+        // Restore the capability the session was created with. Deriving it from the live actor is
+        // impossible after a restart, and an ordinary view would silently drop the completion tool.
         let session_mcp = self
             .inner
             .session_mcp
-            .with_selection(session.mcp_selection.clone());
+            .view_for_session(session.mcp_selection.clone(), session.host_capabilities);
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),

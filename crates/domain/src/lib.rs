@@ -60,7 +60,9 @@ pub use scheduled_task::{
     FULL_AUTO_IN_WORKTREE_POLICY, ScheduledTask, ScheduledTaskApproval,
     ScheduledTaskExecutionLocation, ScheduledTaskSchedule, ScheduledTaskWeekday,
 };
-pub use session::{HistoryState, Session, SessionMcpSelection, SessionStatus};
+pub use session::{
+    HistoryState, Session, SessionHostCapabilities, SessionMcpSelection, SessionStatus,
+};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{
     BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME, Skill, SkillDescriptionError,

@@ -1,7 +1,7 @@
 use ora_application::{RepositoryError, SessionRepository};
 use ora_domain::{
-    AgentRef, AuditFields, DomainModelError, HistoryState, Session, SessionId, SessionMcpSelection,
-    SessionStatus, SessionTitle, WorkspaceId,
+    AgentRef, AuditFields, DomainModelError, HistoryState, Session, SessionHostCapabilities,
+    SessionId, SessionMcpSelection, SessionStatus, SessionTitle, WorkspaceId,
 };
 use rusqlite::{Row, params};
 
@@ -26,8 +26,8 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let inserted_rows = connection.execute(
-                    "INSERT INTO sessions (id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted)
-                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+                    "INSERT INTO sessions (id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted)
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
                      WHERE EXISTS (
                          SELECT 1 FROM workspaces w
                          JOIN projects p ON p.id = w.project_id AND p.is_deleted = 0
@@ -43,6 +43,7 @@ impl SessionRepository for SqliteSessionRepository {
                         session.history_state.database_value(),
                         serde_json::to_string(&session.mcp_selection)
                             .map_err(crate::DatabaseError::CorruptSessionMcpSelection)?,
+                        session.host_capabilities.database_value(),
                         session.audit_fields.created_at,
                         session.audit_fields.updated_at,
                         bool_to_sqlite(session.audit_fields.is_deleted),
@@ -64,7 +65,7 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted
                      FROM sessions
                      WHERE id = ?1 AND is_deleted = 0",
                 )?;
@@ -83,7 +84,7 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted
                      FROM sessions
                      WHERE is_deleted = 0
                      ORDER BY created_at, id",
@@ -107,7 +108,7 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted
                      FROM sessions s
                      WHERE s.is_deleted = 0
                        AND NOT EXISTS (
@@ -142,7 +143,7 @@ impl SessionRepository for SqliteSessionRepository {
                     "UPDATE sessions SET title = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
                     RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
-                         history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted",
+                         history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows =
                     statement.query(params![session_id.as_ref(), title.as_str(), now])?;
@@ -178,7 +179,7 @@ impl SessionRepository for SqliteSessionRepository {
                              AND w.is_deleted = 0 AND w.lifecycle = 'active'
                        )
                      RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
-                         history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted",
+                         history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows =
                     statement.query(params![session_id.as_ref(), status.database_value(), now])?;
@@ -206,7 +207,7 @@ impl SessionRepository for SqliteSessionRepository {
                     "UPDATE sessions SET agent_cli = ?2, agent_session_id = ?3, updated_at = ?4
                      WHERE id = ?1 AND is_deleted = 0
                     RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
-                         history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted",
+                         history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows = statement.query(params![
                     session_id.as_ref(),
@@ -237,7 +238,7 @@ impl SessionRepository for SqliteSessionRepository {
                     "UPDATE sessions SET history_degraded_reason = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
                     RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
-                         history_degraded_reason, mcp_selection, created_at, updated_at, is_deleted",
+                         history_degraded_reason, mcp_selection, host_capabilities, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows = statement.query(params![
                     session_id.as_ref(),
@@ -291,6 +292,8 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
     let mcp_selection =
         serde_json::from_str::<SessionMcpSelection>(&row.get::<_, String>("mcp_selection")?)
             .map_err(crate::DatabaseError::CorruptSessionMcpSelection)?;
+    let host_capabilities =
+        SessionHostCapabilities::from_database_value(&row.get::<_, String>("host_capabilities")?)?;
 
     Ok(Session::new(
         SessionId::new(row.get::<_, String>("id")?),
@@ -301,6 +304,7 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
         mcp_selection,
         AuditFields::new(row.get("created_at")?, row.get("updated_at")?, is_deleted),
     )
+    .with_host_capabilities(host_capabilities)
     .with_title(title)
     .restoring_history_state(history_state))
 }
