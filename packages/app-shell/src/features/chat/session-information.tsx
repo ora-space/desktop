@@ -70,7 +70,7 @@ export function SessionInformationDialog({
         <DialogHeader>
           <DialogTitle>{t("chat.sessionInformation")}</DialogTitle>
           <DialogDescription className="sr-only">
-            {t("chat.bindingChildLocation")}
+            {t("chat.sessionInformationDescription")}
           </DialogDescription>
         </DialogHeader>
         {sessionId === undefined ? (
@@ -129,6 +129,33 @@ function SessionInformationBody({
     (state) => state.conversations[sessionId],
   );
   const [locationMissing, setLocationMissing] = useState(false);
+  const childButtons = conversation?.turns.flatMap((turn) =>
+    groupSubagentItems(turn.items).flatMap((item) =>
+      item.kind === "subagentGroup"
+        ? [
+            <Button
+              key={`${turn.id}:${item.id}`}
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (
+                  !locateSessionChild(
+                    sessionId,
+                    `${turn.id}:display:${item.id}`,
+                  )
+                ) {
+                  setLocationMissing(true);
+                  return;
+                }
+                flushSync(onClose);
+              }}
+            >
+              {t("chat.bindingLocateChildren")} · {item.title ?? item.sourceId}
+            </Button>,
+          ]
+        : [],
+    ),
+  );
   return (
     <div className="space-y-4 text-xs">
       <Section title="Ora Session ID">
@@ -167,36 +194,9 @@ function SessionInformationBody({
       />
       <Separator />
       <p className="text-muted-foreground">{t("chat.bindingChildLocation")}</p>
-      <div className="flex flex-wrap gap-2">
-        {conversation?.turns.flatMap((turn) =>
-          groupSubagentItems(turn.items).flatMap((item) =>
-            item.kind === "subagentGroup"
-              ? [
-                  <Button
-                    key={`${turn.id}:${item.id}`}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      if (
-                        !locateSessionChild(
-                          sessionId,
-                          `${turn.id}:display:${item.id}`,
-                        )
-                      ) {
-                        setLocationMissing(true);
-                        return;
-                      }
-                      flushSync(onClose);
-                    }}
-                  >
-                    {t("chat.bindingLocateChildren")} ·{" "}
-                    {item.title ?? item.sourceId}
-                  </Button>,
-                ]
-              : [],
-          ),
-        )}
-      </div>
+      {childButtons !== undefined && childButtons.length > 0 && (
+        <div className="flex flex-wrap gap-2">{childButtons}</div>
+      )}
       {locationMissing && (
         <p role="status" className="text-destructive">
           {t("chat.bindingChildrenUnavailable")}
@@ -268,15 +268,25 @@ export function BindingTimeline({ result }: { result?: SessionBindings }) {
   );
 }
 
-/** Copies the entire opaque identifier; feedback replaces the button label in place. */
+/**
+ * Copies the entire opaque identifier. Every feedback state occupies the same grid cell, so the
+ * button keeps the widest label's box and the identifier never reflows when feedback appears.
+ */
 function CopyIdentifier({ value }: { value: string }) {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<"copied" | "copyFailed" | undefined>();
+  const [feedback, setFeedback] = useState<
+    { kind: "copied" | "copyFailed" } | undefined
+  >();
   useEffect(() => {
-    if (!status) return;
-    const timer = setTimeout(() => setStatus(undefined), 1600);
+    if (!feedback) return;
+    const timer = setTimeout(() => setFeedback(undefined), 1600);
     return () => clearTimeout(timer);
-  }, [status]);
+  }, [feedback]);
+  const states = [
+    { kind: undefined, label: t("chat.bindingCopy") },
+    { kind: "copied" as const, label: t("chat.binding_copied") },
+    { kind: "copyFailed" as const, label: t("chat.binding_copyFailed") },
+  ];
   return (
     <div className="flex items-center gap-2">
       <code className="min-w-0 flex-1 select-text break-all rounded-md border bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed">
@@ -285,34 +295,51 @@ function CopyIdentifier({ value }: { value: string }) {
       <Button
         variant="outline"
         size="sm"
-        className="min-w-20 shrink-0"
+        className="shrink-0"
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(value);
-            setStatus("copied");
+            setFeedback({ kind: "copied" });
           } catch {
-            setStatus("copyFailed");
+            setFeedback({ kind: "copyFailed" });
           }
         }}
       >
-        {status === "copied" ? (
-          <IconCheck size={14} className="text-emerald-600" aria-hidden />
-        ) : status === "copyFailed" ? (
-          <IconAlertTriangle
-            size={14}
-            className="text-destructive"
-            aria-hidden
-          />
-        ) : (
-          <IconCopy size={14} aria-hidden />
-        )}
-        {t(status ? `chat.binding_${status}` : "chat.bindingCopy")}
-      </Button>
-      {status && (
-        <span role="status" className="sr-only">
-          {t(`chat.binding_${status}`)}
+        <span className="grid">
+          {states.map((state) => {
+            const active = feedback?.kind === state.kind;
+            return (
+              <span
+                key={state.kind ?? "idle"}
+                aria-hidden={!active}
+                className={`col-start-1 row-start-1 inline-flex items-center gap-1 ${
+                  active ? "" : "invisible"
+                }`}
+              >
+                {state.kind === "copied" ? (
+                  <IconCheck
+                    size={14}
+                    className="text-emerald-600"
+                    aria-hidden
+                  />
+                ) : state.kind === "copyFailed" ? (
+                  <IconAlertTriangle
+                    size={14}
+                    className="text-destructive"
+                    aria-hidden
+                  />
+                ) : (
+                  <IconCopy size={14} aria-hidden />
+                )}
+                {state.label}
+              </span>
+            );
+          })}
         </span>
-      )}
+      </Button>
+      <span role="status" className="sr-only">
+        {feedback ? t(`chat.binding_${feedback.kind}`) : ""}
+      </span>
     </div>
   );
 }
