@@ -8,7 +8,8 @@ use ora_db::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository, TimestampSource,
 };
 use ora_domain::{AgentDefinitionId, AgentRef, Namespace, PluginId};
-use ora_effect::ConsumerDeclaration;
+use ora_effect::{ConsumerDeclaration, SkillName};
+use ora_effect_skill::materialized_skill_directory;
 use ora_utils::path::StrictRelativePath;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -243,6 +244,7 @@ where
 {
     let mut receipt = SkillMaterializationReceipt::default();
     let mut resolved_packages = HashMap::<StrictRelativePath, String>::new();
+    let mut resolved_invocations = HashMap::<StrictRelativePath, String>::new();
     for node in graph
         .execution_scopes()
         .into_iter()
@@ -285,9 +287,36 @@ where
             let catalog_name =
                 resolve_skill_catalog_name(storage, skill_repository, &skill.skill_id)?;
             let invocation_name = normalize_skill_name(&catalog_name);
+            // Distinct catalog names can collapse onto one prompt invocation within the same
+            // discovery root even when their canonical on-disk directories stay distinct. Keep
+            // the previous root-plus-invocation conflict key so different roots stay independent.
+            for root in discovery_roots.iter() {
+                let invocation_path = root.append_segment(&invocation_name);
+                if let Some(existing_catalog_name) = resolved_invocations.get(&invocation_path)
+                    && existing_catalog_name != &catalog_name
+                {
+                    return Err(StartPrerequisitesError::SkillMaterializationError {
+                        message: format!(
+                            "skills {existing_catalog_name} and {catalog_name} resolve to the same prompt invocation /{invocation_name} under discovery root {root}"
+                        ),
+                    });
+                }
+                resolved_invocations
+                    .entry(invocation_path)
+                    .or_insert_with(|| catalog_name.clone());
+            }
+            // Effect materializes the canonical `SkillName`, which lowercases ASCII but keeps `_`.
+            // The prompt's `/name` invocation spelling above is separate and may use `-`.
+            let materialized_name = SkillName::parse(&catalog_name).map_err(|error| {
+                StartPrerequisitesError::SkillMaterializationError {
+                    message: format!(
+                        "catalog skill name {catalog_name} is not a valid Skill name: {error}"
+                    ),
+                }
+            })?;
             let package_paths = discovery_roots
                 .iter()
-                .map(|root| root.append_segment(&invocation_name))
+                .map(|root| root.append_segment(materialized_skill_directory(&materialized_name)))
                 .collect::<Vec<_>>();
             for package_path in &package_paths {
                 if let Some(existing_catalog_name) = resolved_packages.get(package_path) {
@@ -372,8 +401,10 @@ fn skill_package_usable(
     })
 }
 
-/// Resolves an enabled skill id to the executable `/name` the agent CLI uses to invoke it: the
-/// normalized catalog name, matching the directory materialized by the Effect subsystem.
+/// Resolves an enabled skill id to the executable `/name` spelling the prompt presents.
+///
+/// This Agent-facing invocation spelling is separate from the materialized directory identity, so
+/// it may normalize `_` to `-` even though the package stays at its canonical on-disk name.
 #[cfg(test)]
 fn resolve_executable_skill_name(
     storage: &FilesystemSkillStorage,
@@ -387,7 +418,11 @@ fn resolve_executable_skill_name(
     )?))
 }
 
-/// Normalizes a catalog name for an Agent discovery directory: lowercase, `_` becomes `-`.
+/// Normalizes a catalog name for the prompt's Agent-facing `/name` invocation: lowercase, `_`
+/// becomes `-`.
+///
+/// This is deliberately not the materialized directory identity; use
+/// [`ora_effect_skill::materialized_skill_directory`] for the package path.
 fn normalize_skill_name(name: &str) -> String {
     name.to_lowercase().replace('_', "-")
 }
@@ -395,10 +430,24 @@ fn normalize_skill_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::run::prompt::{
+        RequiredWorkflowSkill, render_prompt_path, render_required_skills,
+    };
+    use ora_contracts::WorkflowRunLocale;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, default_migration_catalog,
     };
     use ora_domain::PluginId;
+    use ora_effect::{
+        Digest, EffectMutation, EffectResource, EffectResourceId, EffectScopeId, ExactPlannedState,
+        ExactPreviousState, FilesystemDirectoryDescriptor, Fingerprint, Generation, LocalTimestamp,
+        ManagedIdentity, MaterializationFormat, NativeResourceIdentity, PlannedMutation,
+        ReconcileAttemptId, ResourceAdapter, ResourceAdapterIdentity, ResourceKey,
+        ResourceLifecycle, ResourcePath, SkillMaterializationInput, SkillSourceKey,
+        SkillSourceKind, VersionedAdapterPlan, VersionedMaterializationInput,
+        VersionedResourceDescriptor,
+    };
+    use ora_effect_skill::SkillDirectoryResourceAdapter;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -413,6 +462,24 @@ mod tests {
             _agent_ref: &AgentRef,
         ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
             Ok(self.delivery.clone())
+        }
+    }
+
+    /// Supplies the delivery capability declared by each Agent in a multi-root test graph.
+    #[derive(Clone)]
+    struct AgentKeyedDeliveryProvider {
+        deliveries: HashMap<String, AgentSkillDelivery>,
+    }
+
+    impl AgentSkillDeliveryProvider for AgentKeyedDeliveryProvider {
+        fn skill_delivery(
+            &self,
+            agent_ref: &AgentRef,
+        ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
+            self.deliveries
+                .get(agent_ref.as_str())
+                .cloned()
+                .ok_or(ora_application::AgentSkillDeliveryError::Unavailable)
         }
     }
 
@@ -451,6 +518,80 @@ mod tests {
                 10,
             )
             .unwrap();
+    }
+
+    /// Materializes one Skill package through the production Effect adapter at `relative_root`.
+    ///
+    /// Returns the path the adapter actually wrote, so tests compare receipt paths with
+    /// materialization instead of re-deriving the naming policy under test.
+    fn materialize_skill_at(
+        worktree: &Path,
+        relative_root: &str,
+        source: &Path,
+        skill_name: &str,
+    ) -> PathBuf {
+        let typed_name = SkillName::parse(skill_name).unwrap();
+        let resource = EffectResource {
+            identity: EffectResourceId::new("resource-1"),
+            scope: EffectScopeId::Workspace(ora_domain::WorkspaceId::new("workspace-1")),
+            resource_key: ResourceKey::parse(format!("filesystem-directory:{relative_root}"))
+                .unwrap(),
+            adapter: ResourceAdapterIdentity::parse("ora/filesystem-directory").unwrap(),
+            descriptor: VersionedResourceDescriptor::FilesystemDirectoryV1(
+                FilesystemDirectoryDescriptor {
+                    workspace_root: worktree.to_path_buf(),
+                    relative_path: ResourcePath::parse(relative_root).unwrap(),
+                },
+            ),
+            format: MaterializationFormat::skill_directory_v1(),
+            lifecycle: ResourceLifecycle::Active,
+        };
+        let fingerprint =
+            Fingerprint::from(ora_utils::directory::fingerprint_directory(source, &[]).unwrap());
+        let managed_identity = ManagedIdentity::random();
+        let native_identity =
+            NativeResourceIdentity::parse(materialized_skill_directory(&typed_name)).unwrap();
+        let operation = SkillDirectoryResourceAdapter
+            .prepare_operation(
+                &resource,
+                ReconcileAttemptId::random(),
+                Generation::new(1),
+                /*sequence*/ 0,
+                PlannedMutation {
+                    managed_identity: managed_identity.clone(),
+                    desired_effect: None,
+                    mutation: EffectMutation::Create,
+                    expected: ExactPreviousState::Missing,
+                    planned: ExactPlannedState::Present {
+                        native_identity: native_identity.clone(),
+                        managed_identity,
+                        fingerprint: fingerprint.clone(),
+                    },
+                    input: Some(VersionedMaterializationInput::SkillDirectoryV1(
+                        SkillMaterializationInput {
+                            name: typed_name.clone(),
+                            source: SkillSourceKey {
+                                source_kind: SkillSourceKind::Local,
+                                namespace: Namespace::local(),
+                                name: typed_name,
+                            },
+                            package_root: source.to_path_buf(),
+                            skill_md_digest: Digest::sha256(b"manifest"),
+                            package_fingerprint: fingerprint,
+                        },
+                    )),
+                },
+                LocalTimestamp::from_millis(1),
+            )
+            .unwrap()
+            .operation;
+        let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
+            panic!("Skill adapter must plan a filesystem directory");
+        };
+        let materialized_path = plan.resource_root.join(native_identity.as_str());
+        SkillDirectoryResourceAdapter.apply(&operation).unwrap();
+        assert!(materialized_path.join("SKILL.md").is_file());
+        materialized_path
     }
 
     /// Builds one declared Skill directory at `path` for declaration-resolution tests.
@@ -689,9 +830,299 @@ mod tests {
                     skill_id: "sfmea_review".to_string(),
                     invocation_name: "sfmea-review".to_string(),
                     package_paths: vec![
-                        StrictRelativePath::parse(".agents/skills/sfmea-review").unwrap()
+                        StrictRelativePath::parse(".agents/skills/sfmea_review").unwrap()
                     ],
                 }],
+            }
+        );
+    }
+
+    /// The receipt names the path Effect materializes for an underscored catalog name, while the
+    /// prompt keeps the Agent-facing hyphenated invocation. Both discovery-root shapes are covered.
+    #[test]
+    fn initialize_workspace_reports_the_materialized_path_for_an_underscored_skill() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("skills");
+        let skill_dir = skills_root.join("sfmea_review");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: sfmea_review\ndescription: review\n---\n\nbody\n",
+        )
+        .unwrap();
+        let pool = test_pool(&temp);
+        let worktree = temp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let codeagent_path =
+            materialize_skill_at(&worktree, ".agents/skills", &skill_dir, "sfmea_review");
+        let opencode_path =
+            materialize_skill_at(&worktree, ".opencode/skills", &skill_dir, "sfmea_review");
+        let codeagent_expected = worktree.join(".agents").join("skills").join("sfmea_review");
+        let opencode_expected = worktree
+            .join(".opencode")
+            .join("skills")
+            .join("sfmea_review");
+        assert_eq!(
+            (
+                std::fs::canonicalize(&codeagent_path).unwrap(),
+                std::fs::canonicalize(&opencode_path).unwrap(),
+            ),
+            (
+                std::fs::canonicalize(&codeagent_expected).unwrap(),
+                std::fs::canonicalize(&opencode_expected).unwrap(),
+            )
+        );
+
+        let initializer = SkillRoleWorkspaceInitializer::with_delivery_provider(
+            skills_root,
+            pool,
+            FixedDeliveryProvider {
+                delivery: AgentSkillDelivery::Filesystem {
+                    discovery_roots: SkillDiscoveryRoots::new(
+                        StrictRelativePath::parse(".agents/skills").unwrap(),
+                        vec![StrictRelativePath::parse(".opencode/skills").unwrap()],
+                    ),
+                },
+            },
+        );
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[{"id":"review","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"acme.agent","modelId":"m"},"skills":[{"skillId":"sfmea_review","enabled":true}]}}}],"edges":[]}"#,
+        )
+        .unwrap();
+
+        let receipt = initializer.initialize_workspace(&graph, &worktree).unwrap();
+
+        assert_eq!(
+            receipt,
+            SkillMaterializationReceipt {
+                bindings: vec![MaterializedSkillBinding {
+                    node_id: "review".to_string(),
+                    skill_id: "sfmea_review".to_string(),
+                    invocation_name: "sfmea-review".to_string(),
+                    package_paths: vec![
+                        StrictRelativePath::parse(".agents/skills/sfmea_review").unwrap(),
+                        StrictRelativePath::parse(".opencode/skills/sfmea_review").unwrap(),
+                    ],
+                }],
+            }
+        );
+        let frozen_paths = receipt.bindings[0].absolute_package_paths(&worktree);
+        assert_eq!(
+            frozen_paths
+                .iter()
+                .map(|path| std::fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                std::fs::canonicalize(&codeagent_path).unwrap(),
+                std::fs::canonicalize(&opencode_path).unwrap(),
+            ]
+        );
+        assert!(
+            frozen_paths
+                .iter()
+                .all(|path| path.join("SKILL.md").is_file()),
+            "every frozen package path must exist: {frozen_paths:?}"
+        );
+
+        let prompt = render_required_skills(
+            &[RequiredWorkflowSkill {
+                invocation_name: receipt.bindings[0].invocation_name.clone(),
+                package_paths: frozen_paths.clone(),
+            }],
+            WorkflowRunLocale::EnUs,
+        );
+        assert!(prompt.contains("- /sfmea-review"), "{prompt}");
+        for path in &frozen_paths {
+            assert!(
+                prompt.contains(&render_prompt_path(path)),
+                "the prompt must name the materialized package path: {prompt}"
+            );
+        }
+        assert!(
+            !prompt.contains("sfmea-review/"),
+            "the prompt must not substitute the invocation spelling for the package directory: {prompt}"
+        );
+    }
+
+    /// A mixed-case catalog name resolves to the canonical receipt path and prompt package path
+    /// while keeping the Agent-facing invocation spelling.
+    #[test]
+    fn initialize_workspace_reports_a_mixed_case_skill_at_the_canonical_path() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("skills");
+        let skill_dir = skills_root.join("SfMeA_Review");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: SfMeA_Review\ndescription: review\n---\n\nbody\n",
+        )
+        .unwrap();
+        let worktree = temp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let materialized_path =
+            materialize_skill_at(&worktree, ".agents/skills", &skill_dir, "SfMeA_Review");
+        let initializer =
+            SkillRoleWorkspaceInitializer::new(skills_root, test_pool(&temp)).unwrap();
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[{"id":"review","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"ora-space.codex","modelId":"m"},"skills":[{"skillId":"SfMeA_Review","enabled":true}]}}}],"edges":[]}"#,
+        )
+        .unwrap();
+
+        let receipt = initializer.initialize_workspace(&graph, &worktree).unwrap();
+
+        assert_eq!(
+            receipt,
+            SkillMaterializationReceipt {
+                bindings: vec![MaterializedSkillBinding {
+                    node_id: "review".to_string(),
+                    skill_id: "SfMeA_Review".to_string(),
+                    invocation_name: "sfmea-review".to_string(),
+                    package_paths: vec![
+                        StrictRelativePath::parse(".agents/skills/sfmea_review").unwrap(),
+                    ],
+                }],
+            }
+        );
+        let frozen_paths = receipt.bindings[0].absolute_package_paths(&worktree);
+        assert_eq!(
+            frozen_paths
+                .iter()
+                .map(|path| std::fs::canonicalize(path).unwrap())
+                .collect::<Vec<_>>(),
+            vec![std::fs::canonicalize(&materialized_path).unwrap()]
+        );
+        assert!(frozen_paths[0].join("SKILL.md").is_file());
+
+        let prompt = render_required_skills(
+            &[RequiredWorkflowSkill {
+                invocation_name: receipt.bindings[0].invocation_name.clone(),
+                package_paths: frozen_paths.clone(),
+            }],
+            WorkflowRunLocale::EnUs,
+        );
+        assert!(prompt.contains("- /sfmea-review"), "{prompt}");
+        assert!(
+            prompt.contains(&render_prompt_path(&frozen_paths[0])),
+            "the prompt must name the materialized package path: {prompt}"
+        );
+    }
+
+    /// Two catalog names whose materialized directories differ but whose prompt invocation
+    /// normalizes to the same `/name` remain rejected, preserving the previous ambiguity gate.
+    #[test]
+    fn initialize_workspace_rejects_catalog_names_that_share_a_prompt_invocation() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("skills");
+        for name in ["sfmea_review", "sfmea-review"] {
+            let skill_dir = skills_root.join(name);
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: review\n---\n\nbody\n"),
+            )
+            .unwrap();
+        }
+        let initializer =
+            SkillRoleWorkspaceInitializer::new(skills_root, test_pool(&temp)).unwrap();
+        assert_ne!(
+            materialized_skill_directory(&SkillName::parse("sfmea_review").unwrap()),
+            materialized_skill_directory(&SkillName::parse("sfmea-review").unwrap()),
+            "the physical directories differ; only the prompt invocation collides"
+        );
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[{"id":"review","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"ora-space.codex","modelId":"m"},"skills":[{"skillId":"sfmea_review","enabled":true},{"skillId":"sfmea-review","enabled":true}]}}}],"edges":[]}"#,
+        )
+        .unwrap();
+        let worktree = temp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let error = initializer
+            .initialize_workspace(&graph, &worktree)
+            .expect_err("colliding prompt invocations must not deploy");
+
+        assert!(matches!(
+            error,
+            StartPrerequisitesError::SkillMaterializationError { ref message }
+                if message.contains("sfmea_review")
+                    && message.contains("sfmea-review")
+                    && message.contains("same prompt invocation /sfmea-review")
+                    && message.contains("under discovery root .agents/skills")
+        ));
+    }
+
+    /// The same invocation spelling is unambiguous when each colliding catalog name belongs to a
+    /// different Agent discovery root, matching the previous root-plus-invocation conflict key.
+    #[test]
+    fn initialize_workspace_allows_one_prompt_invocation_per_distinct_discovery_root() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("skills");
+        for name in ["sfmea_review", "sfmea-review"] {
+            let skill_dir = skills_root.join(name);
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: review\n---\n\nbody\n"),
+            )
+            .unwrap();
+        }
+        let deliveries = HashMap::from([
+            (
+                "acme.codex".to_string(),
+                AgentSkillDelivery::Filesystem {
+                    discovery_roots: SkillDiscoveryRoots::new(
+                        StrictRelativePath::parse(".agents/skills").unwrap(),
+                        Vec::new(),
+                    ),
+                },
+            ),
+            (
+                "acme.opencode".to_string(),
+                AgentSkillDelivery::Filesystem {
+                    discovery_roots: SkillDiscoveryRoots::new(
+                        StrictRelativePath::parse(".opencode/skills").unwrap(),
+                        Vec::new(),
+                    ),
+                },
+            ),
+        ]);
+        let initializer = SkillRoleWorkspaceInitializer::with_delivery_provider(
+            skills_root,
+            test_pool(&temp),
+            AgentKeyedDeliveryProvider { deliveries },
+        );
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[
+                {"id":"codeagent","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"acme.codex","modelId":"m"},"skills":[{"skillId":"sfmea_review","enabled":true}]}}},
+                {"id":"opencode","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"acme.opencode","modelId":"m"},"skills":[{"skillId":"sfmea-review","enabled":true}]}}}
+            ],"edges":[]}"#,
+        )
+        .unwrap();
+
+        let receipt = initializer
+            .initialize_workspace(&graph, temp.path())
+            .expect("one invocation per distinct discovery root must remain deployable");
+
+        assert_eq!(
+            receipt,
+            SkillMaterializationReceipt {
+                bindings: vec![
+                    MaterializedSkillBinding {
+                        node_id: "codeagent".to_string(),
+                        skill_id: "sfmea_review".to_string(),
+                        invocation_name: "sfmea-review".to_string(),
+                        package_paths: vec![
+                            StrictRelativePath::parse(".agents/skills/sfmea_review").unwrap(),
+                        ],
+                    },
+                    MaterializedSkillBinding {
+                        node_id: "opencode".to_string(),
+                        skill_id: "sfmea-review".to_string(),
+                        invocation_name: "sfmea-review".to_string(),
+                        package_paths: vec![
+                            StrictRelativePath::parse(".opencode/skills/sfmea-review").unwrap(),
+                        ],
+                    },
+                ],
             }
         );
     }
