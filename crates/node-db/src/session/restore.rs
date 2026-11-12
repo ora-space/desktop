@@ -1,7 +1,6 @@
 //! Restore safety facts share the session lease and survive actor and Node restarts.
 use super::*;
-use crate::ProcessAttempt;
-use ora_process_protocol::RunId;
+use crate::{AttemptCommand, AttemptId, ProcessAttempt};
 
 /// Durable admission facts, rather than guesses from terminal reasons or missing process rows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,7 +12,7 @@ pub enum RestorePhase {
     LegacyUnknown,
 }
 
-/// Original host association and a stop clock that is anchored exactly once.
+/// Original attempt identity and a stop clock that is anchored exactly once.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreAttempt {
     pub process: ProcessAttempt,
@@ -64,10 +63,11 @@ impl<G: WriteGuard> SessionJournal<G> {
         Ok(())
     }
 
-    /// Persists the complete immutable intent before the first host exchange can cause a write.
+    /// Persists the attempt before its command is dispatched and can cause a write.
     pub fn record_restore_attempt(
         &self,
         attempt: &ProcessAttempt,
+        command: &AttemptCommand,
         guarantee: StopContainment,
     ) -> Result<(), Error> {
         let mut db = self.lock()?;
@@ -91,11 +91,11 @@ impl<G: WriteGuard> SessionJournal<G> {
             return Err(Error::InvalidTransition);
         }
         db.guard.before_write(WritePoint::Process)?;
-        let frame = ora_process_protocol::encode_guardian_frame(attempt)?;
+        let data = serde_json::to_vec(command)?;
         let tx = db
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        tx.execute("INSERT INTO restore_process_attempts(run,execution,data,guarantee) VALUES(?1,?2,?3,?4)", params![attempt.intent.run.to_string(), attempt.execution.as_str(), &frame[4..], match guarantee { StopContainment::BestEffort => "best_effort", StopContainment::Strong => "strong" }])?;
+        tx.execute("INSERT INTO restore_process_attempts(run,execution,data,guarantee) VALUES(?1,?2,?3,?4)", params![attempt.id.as_str(), attempt.execution.as_str(), data, match guarantee { StopContainment::BestEffort => "best_effort", StopContainment::Strong => "strong" }])?;
         tx.execute(
             "UPDATE session_restores SET phase='git_admitted' WHERE execution=?1",
             [attempt.execution.as_str()],
@@ -104,7 +104,7 @@ impl<G: WriteGuard> SessionJournal<G> {
         Ok(())
     }
 
-    /// The durable stop marker fences local staging as well as host command admission.
+    /// The durable stop marker fences local staging as well as command admission.
     pub fn restore_stop_requested(&self, execution: &ExecutionId) -> Result<bool, Error> {
         let db = self.lock()?;
         Ok(db
@@ -140,10 +140,11 @@ impl<G: WriteGuard> SessionJournal<G> {
         Ok(())
     }
 
-    /// Anchors before Close; retries and changed configuration cannot extend an existing clock.
+    /// Anchors before the stop request; retries and changed configuration cannot extend an
+    /// existing clock.
     pub fn request_restore_stop(
         &self,
-        run: RunId,
+        attempt: &AttemptId,
         now_ms: i64,
         bound_ms: i64,
     ) -> Result<(), Error> {
@@ -153,25 +154,29 @@ impl<G: WriteGuard> SessionJournal<G> {
             .filter(|at| *at > now_ms)
             .ok_or(Error::InvalidTransition)?;
         db.guard.before_write(WritePoint::Process)?;
-        db.connection.execute("UPDATE restore_process_attempts SET first_stop_at_ms=?2,stop_bound_at_ms=?3 WHERE run=?1 AND first_stop_at_ms IS NULL AND cleaned=0", params![run.to_string(), now_ms, expires])?;
+        db.connection.execute("UPDATE restore_process_attempts SET first_stop_at_ms=?2,stop_bound_at_ms=?3 WHERE run=?1 AND first_stop_at_ms IS NULL AND cleaned=0", params![attempt.as_str(), now_ms, expires])?;
         Ok(())
     }
 
     /// Leaves every identity and conflict responsibility intact when its independent bound expires.
-    pub fn mark_restore_stop_unconfirmed(&self, run: RunId, now_ms: i64) -> Result<(), Error> {
+    pub fn mark_restore_stop_unconfirmed(
+        &self,
+        attempt: &AttemptId,
+        now_ms: i64,
+    ) -> Result<(), Error> {
         let db = self.lock()?;
         db.guard.before_write(WritePoint::Process)?;
-        db.connection.execute("UPDATE restore_process_attempts SET stop_unconfirmed=1 WHERE run=?1 AND cleaned=0 AND stop_bound_at_ms<=?2", params![run.to_string(), now_ms])?;
+        db.connection.execute("UPDATE restore_process_attempts SET stop_unconfirmed=1 WHERE run=?1 AND cleaned=0 AND stop_bound_at_ms<=?2", params![attempt.as_str(), now_ms])?;
         Ok(())
     }
 
-    /// The caller must possess original Scope Closed and original Run direct-exit evidence.
-    pub fn confirm_restore_stop(&self, run: RunId) -> Result<(), Error> {
+    /// The caller must hold the attempt's stop evidence: its lock could be taken again.
+    pub fn confirm_restore_stop(&self, attempt: &AttemptId) -> Result<(), Error> {
         let db = self.lock()?;
         db.guard.before_write(WritePoint::Process)?;
         db.connection.execute(
             "UPDATE restore_process_attempts SET cleaned=1 WHERE run=?1",
-            [run.to_string()],
+            [attempt.as_str()],
         )?;
         Ok(())
     }
@@ -245,11 +250,11 @@ pub(super) fn pending(
     connection: &rusqlite::Connection,
     execution: &ExecutionId,
 ) -> Result<Vec<RestoreAttempt>, Error> {
-    connection.prepare("SELECT data,first_stop_at_ms,stop_bound_at_ms,stop_unconfirmed,guarantee FROM restore_process_attempts WHERE execution=?1 AND cleaned=0 ORDER BY rowid")?
-        .query_map([execution.as_str()], |r| Ok((r.get::<_, Vec<u8>>(/*idx*/ 0)?,r.get(/*idx*/ 1)?,r.get(/*idx*/ 2)?,r.get(/*idx*/ 3)?,r.get::<_,String>(/*idx*/ 4)?)))?
+    connection.prepare("SELECT run,first_stop_at_ms,stop_bound_at_ms,stop_unconfirmed,guarantee FROM restore_process_attempts WHERE execution=?1 AND cleaned=0 ORDER BY rowid")?
+        .query_map([execution.as_str()], |r| Ok((r.get::<_, String>(/*idx*/ 0)?,r.get(/*idx*/ 1)?,r.get(/*idx*/ 2)?,r.get(/*idx*/ 3)?,r.get::<_,String>(/*idx*/ 4)?)))?
         .map(|row| {
-            let (data,first_stop_at_ms,stop_bound_at_ms,stop_unconfirmed, guarantee) = row?;
+            let (id,first_stop_at_ms,stop_bound_at_ms,stop_unconfirmed, guarantee) = row?;
             let guarantee = match guarantee.as_str() { "best_effort" => StopContainment::BestEffort, "strong" => StopContainment::Strong, _ => return Err(Error::InvalidSchema) };
-            Ok(RestoreAttempt { guarantee, process: ora_process_protocol::decode_guardian_payload(&data)?, first_stop_at_ms, stop_bound_at_ms, stop_unconfirmed })
+            Ok(RestoreAttempt { guarantee, process: ProcessAttempt { execution: execution.clone(), id: AttemptId::parse(&id).ok_or(Error::InvalidSchema)? }, first_stop_at_ms, stop_bound_at_ms, stop_unconfirmed })
         }).collect()
 }

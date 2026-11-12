@@ -287,15 +287,16 @@ impl<G: WriteGuard> NodeDatabase<G> {
             let codes: Vec<i32> = self.connection.prepare(
                 "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1 ORDER BY process_attempts.rowid",
             )?.query_map([record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0))?.collect::<Result<_, _>>()?;
+            // A signal and a stop without an exit status both mean Git never reached a verdict.
             let terminations: i64 = self.connection.query_row(
-                "SELECT count(*) FROM process_terminations JOIN process_attempts USING(run) WHERE execution=?1",
+                "SELECT (SELECT count(*) FROM process_terminations JOIN process_attempts USING(run) WHERE execution=?1) + (SELECT count(*) FROM process_stops JOIN process_attempts USING(run) WHERE execution=?1)",
                 [record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0),
             )?;
             let success = matches!(result, CloneExecutionResult::CloneReady(_));
             let step = *step as usize;
             // One ending per dispatched command decides which results are attributable: every
             // command before the current one exited 0; the current one's exit code backs success
-            // or a Git failure, and a signal termination of it backs only Interrupted.
+            // or a Git failure, and its ending without a verdict backs only Interrupted.
             let earlier_succeeded =
                 |count: usize| codes.len() >= count && codes[..count].iter().all(|code| *code == 0);
             let attributable = match terminations {

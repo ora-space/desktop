@@ -8,7 +8,6 @@ workspace = true
 
 [dependencies]
 ora-node-protocol = { workspace = true }
-ora-process-protocol.workspace = true
 ora-utils.workspace = true
 rusqlite = { workspace = true, features = ["bundled"] }
 serde = { workspace = true, features = ["derive"] }

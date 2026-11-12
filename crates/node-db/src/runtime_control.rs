@@ -59,7 +59,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
     }
 
     /// A new Node process closes its persisted input before recovery. Old accepted process
-    /// responsibility may be settled; the old host incarnation cannot start another process.
+    /// responsibility may be settled; the old incarnation cannot start another process.
     pub fn enforce_runtime_incarnation(&mut self, incarnation: &str) -> Result<(), Error> {
         self.enforce_runtime_control()?;
         if let Some(mut binding) = self.runtime_binding()?

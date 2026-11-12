@@ -1,6 +1,5 @@
 use super::*;
 use ora_node_protocol::*;
-use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
 /// The snapshot commit of the clone fixture.
@@ -219,16 +218,9 @@ pub(super) fn dispatch<G: WriteGuard>(
         .unwrap();
     let attempt = ProcessAttempt {
         execution: record.command.execution_id.clone(),
-        host_directory: record.target.root.join("host"),
-        expected_uid: 42,
-        intent: HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: RunSpec::new("git", &record.target.root, DescendantPolicy::WaitForAll),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        },
+        id: AttemptId::generate(),
     };
-    journal.record(&attempt).unwrap();
+    journal.record(&attempt, &git_command()).unwrap();
     (dispatched, attempt)
 }
 
@@ -316,21 +308,21 @@ fn clone_completion_requires_process_evidence_and_survives_exact_ack() {
         Err(Error::InvalidTransition)
     ));
     journal
-        .record_outcome(attempt.intent.run, /*exit_code*/ 0)
+        .record_ending(&attempt.id, AttemptEnding::Exited(0))
         .unwrap();
     assert!(matches!(
         db.complete_clone(&record, result.clone()),
         Err(Error::InvalidTransition)
     ));
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal.cleaned(&attempt.id).unwrap();
     let mut second = attempt.clone();
-    second.intent.run = RunId::new();
+    second.id = AttemptId::generate();
     assert!(matches!(
-        journal.record(&second),
+        journal.record(&second, &git_command()),
         Err(Error::InvalidTransition)
     ));
     assert!(matches!(
-        journal.record_outcome(attempt.intent.run, /*exit_code*/ 1),
+        journal.record_ending(&attempt.id, AttemptEnding::Exited(1)),
         Err(Error::IdentityConflict)
     ));
     fault.set(Some(WritePoint::Outbox));
@@ -414,9 +406,9 @@ fn clone_failure_retains_destination_and_unknown_never_restarts() {
     ));
     let journal = db.process_journal().unwrap();
     journal
-        .record_outcome(attempt.intent.run, /*exit_code*/ 128)
+        .record_ending(&attempt.id, AttemptEnding::Exited(128))
         .unwrap();
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal.cleaned(&attempt.id).unwrap();
     let result = CloneExecutionResult::CloneFailed(CloneFailed {
         node: NodeRuntimeIdentity {
             node_id: db.node_id().clone(),
@@ -557,20 +549,78 @@ fn clone_interruption_requires_recorded_termination() {
     let (record, attempt) = dispatch(&mut db, &accepted);
     let journal = db.process_journal().unwrap();
     journal
-        .record_termination(attempt.intent.run, /*signal*/ 9)
+        .record_ending(&attempt.id, AttemptEnding::Terminated(9))
         .unwrap();
     journal
-        .record_termination(attempt.intent.run, /*signal*/ 9)
+        .record_ending(&attempt.id, AttemptEnding::Terminated(9))
         .unwrap();
     assert!(matches!(
-        journal.record_termination(attempt.intent.run, /*signal*/ 15),
+        journal.record_ending(&attempt.id, AttemptEnding::Terminated(15)),
         Err(Error::IdentityConflict)
     ));
     assert!(matches!(
-        journal.record_outcome(attempt.intent.run, /*exit_code*/ 0),
+        journal.record_ending(&attempt.id, AttemptEnding::Exited(0)),
         Err(Error::IdentityConflict)
     ));
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal.cleaned(&attempt.id).unwrap();
+    for unsupported in [
+        clone_ready(&record),
+        clone_failed(&record, CloneFailureCode::OperationFailed),
+    ] {
+        assert!(matches!(
+            db.complete_clone(&record, unsupported),
+            Err(Error::InvalidTransition)
+        ));
+    }
+    let interrupted = clone_failed(&record, CloneFailureCode::Interrupted);
+    db.complete_clone(&record, interrupted.clone()).unwrap();
+    assert_eq!(
+        db.execution_state(&command.operation_id, &command.execution_id)
+            .unwrap(),
+        ExecutionState::Completed(ExecutionResult::Clone(Box::new(interrupted)))
+    );
+}
+
+/// A restarted Node that finds the attempt stopped has no exit status to record. That ending is
+/// exclusive like the other two and backs Interrupted, never success or a Git failure.
+#[test]
+fn a_stop_without_exit_status_backs_only_an_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (record, attempt) = dispatch(&mut db, &accepted);
+    let journal = db.process_journal().unwrap();
+    assert_eq!(journal.unsettled().unwrap(), vec![attempt.id.clone()]);
+    journal
+        .record_ending(&attempt.id, AttemptEnding::Stopped)
+        .unwrap();
+    journal
+        .record_ending(&attempt.id, AttemptEnding::Stopped)
+        .unwrap();
+    for other in [AttemptEnding::Exited(0), AttemptEnding::Terminated(9)] {
+        assert!(matches!(
+            journal.record_ending(&attempt.id, other),
+            Err(Error::IdentityConflict)
+        ));
+    }
+    // The schema itself refuses a second ending, whoever writes it.
+    let raw = Connection::open(&path).unwrap();
+    for insert in [
+        "INSERT INTO process_outcomes VALUES (?1,0)",
+        "INSERT INTO process_terminations VALUES (?1,9)",
+    ] {
+        assert!(raw.execute(insert, [attempt.id.as_str()]).is_err());
+    }
+    journal.cleaned(&attempt.id).unwrap();
+    assert_eq!(
+        (
+            journal.ending(&attempt.id).unwrap(),
+            journal.unsettled().unwrap()
+        ),
+        (Some(AttemptEnding::Stopped), vec![])
+    );
     for unsupported in [
         clone_ready(&record),
         clone_failed(&record, CloneFailureCode::OperationFailed),
@@ -599,13 +649,13 @@ fn clone_exit_code_cannot_back_an_interruption() {
     let (record, attempt) = dispatch(&mut db, &accepted);
     let journal = db.process_journal().unwrap();
     journal
-        .record_outcome(attempt.intent.run, /*exit_code*/ 128)
+        .record_ending(&attempt.id, AttemptEnding::Exited(128))
         .unwrap();
     assert!(matches!(
-        journal.record_termination(attempt.intent.run, /*signal*/ 9),
+        journal.record_ending(&attempt.id, AttemptEnding::Terminated(9)),
         Err(Error::IdentityConflict)
     ));
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal.cleaned(&attempt.id).unwrap();
     assert!(matches!(
         db.complete_clone(
             &record,
@@ -635,9 +685,10 @@ fn clone_exit_code_cannot_back_an_interruption() {
     ));
 }
 
-/// Version 5 only adds termination evidence; an unfinished dispatched clone is kept untouched.
+/// An unfinished dispatched clone survives the upgrade untouched, while the attempt the retired
+/// host left unsettled ends as stopped without an exit status: that backs Interrupted only.
 #[test]
-fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
+fn version_four_upgrade_ends_the_host_attempt_as_stopped_without_rewriting_clones() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
@@ -660,12 +711,23 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let journal = db.process_journal().unwrap();
-    journal
-        .record_termination(attempt.intent.run, /*signal*/ 9)
-        .unwrap();
-    journal.cleaned(attempt.intent.run).unwrap();
+    assert_eq!(
+        (
+            journal.ending(&attempt.id).unwrap(),
+            journal.pending(&command.execution_id).unwrap()
+        ),
+        (Some(AttemptEnding::Stopped), vec![])
+    );
+    assert!(matches!(
+        journal.record_ending(&attempt.id, AttemptEnding::Exited(0)),
+        Err(Error::IdentityConflict)
+    ));
+    assert!(matches!(
+        db.complete_clone(&record, clone_ready(&record)),
+        Err(Error::InvalidTransition)
+    ));
     db.complete_clone(
         &record,
         clone_failed(&record, CloneFailureCode::Interrupted),
@@ -801,8 +863,10 @@ fn branch_heads_record_the_last_known_value_per_checkout() {
     let (record, attempt) = dispatch(&mut db, &accepted);
     assert_eq!(db.cloned_checkout(&command.execution_id).unwrap(), None);
     let journal = db.process_journal().unwrap();
-    journal.record_outcome(attempt.intent.run, 0).unwrap();
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal
+        .record_ending(&attempt.id, AttemptEnding::Exited(0))
+        .unwrap();
+    journal.cleaned(&attempt.id).unwrap();
     db.complete_clone(&record, clone_ready(&record)).unwrap();
     assert_eq!(
         db.cloned_checkout(&command.execution_id).unwrap(),
@@ -851,20 +915,21 @@ fn clone_records_next_step_only_after_the_previous_run_is_cleaned() {
                 }),
             )
             .unwrap();
-        let previous = attempt.intent.run;
-        attempt.intent.run = RunId::new();
-        attempt.intent.scope = ScopeId::new();
+        let previous = attempt.id.clone();
+        attempt.id = AttemptId::generate();
         assert!(matches!(
-            journal.record(&attempt),
+            journal.record(&attempt, &git_command()),
             Err(Error::InvalidTransition)
         ));
-        journal.record_outcome(previous, /*exit_code*/ 0).unwrap();
-        journal.cleaned(previous).unwrap();
-        journal.record(&attempt).unwrap();
+        journal
+            .record_ending(&previous, AttemptEnding::Exited(0))
+            .unwrap();
+        journal.cleaned(&previous).unwrap();
+        journal.record(&attempt, &git_command()).unwrap();
         let mut duplicate = attempt.clone();
-        duplicate.intent.run = RunId::new();
+        duplicate.id = AttemptId::generate();
         assert!(matches!(
-            journal.record(&duplicate),
+            journal.record(&duplicate, &git_command()),
             Err(Error::InvalidTransition)
         ));
     }

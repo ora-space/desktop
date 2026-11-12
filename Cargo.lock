@@ -3950,8 +3950,6 @@ dependencies = [
  "ora-plugin-protocol",
  "ora-plugin-registry",
  "ora-process",
- "ora-process-client",
- "ora-process-protocol",
  "ora-scheduler",
  "ora-test-support",
  "ora-utils",
@@ -3979,7 +3977,6 @@ name = "ora-node-db"
 version = "0.0.0"
 dependencies = [
  "ora-node-protocol",
- "ora-process-protocol",
  "ora-utils",
  "pretty_assertions",
  "rusqlite",
