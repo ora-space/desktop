@@ -98,7 +98,7 @@ pub(crate) fn declared_file_blockers(
                 undecidable = true;
                 continue;
             }
-            if before != Some(after) {
+            if before.is_none_or(|before| !before.same_content(after)) {
                 changed = true;
                 break;
             }

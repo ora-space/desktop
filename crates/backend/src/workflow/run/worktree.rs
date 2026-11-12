@@ -13,6 +13,7 @@ use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 
@@ -26,6 +27,13 @@ const MAX_BASELINE_BYTES: u64 = 64 * 1024 * 1024;
 /// A declared file larger than this is digested instead of loaded whole, so an explicit
 /// declaration never turns a completion check into an unbounded allocation.
 const MAX_INLINE_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Total bytes of declared-file text content captured into one baseline/diff observation.
+///
+/// A broad declared glob can match many small UTF-8 files. This cap keeps their cached text at the
+/// same 64 MiB order as the ordinary snapshot; matches after the budget is spent are represented by
+/// a streaming digest instead, preserving deterministic change detection without unbounded memory.
+const MAX_INLINE_DECLARED_BYTES: u64 = MAX_BASELINE_BYTES;
 
 /// One file's captured content, represented without assuming text.
 ///
@@ -42,6 +50,19 @@ pub(crate) enum WorktreeFile {
 }
 
 impl WorktreeFile {
+    /// Returns the content digest regardless of whether the file is cached as text or a digest.
+    fn content_digest(&self) -> String {
+        match self {
+            Self::Text(content) => sha256_hex(content.as_bytes()),
+            Self::Binary { sha256 } => sha256.clone(),
+        }
+    }
+
+    /// Reports whether two captures represent the same bytes, even across text/digest forms.
+    pub(crate) fn same_content(&self, other: &Self) -> bool {
+        self.content_digest() == other.content_digest()
+    }
+
     /// Counts display lines for a file, using one unit for binary content.
     fn line_count(&self) -> u64 {
         match self {
@@ -156,7 +177,7 @@ pub(crate) fn capture_completion_baseline(
     let declared = capture_declared_worktree_files(worktree_root, completion);
     match snapshot {
         Some(mut files) => {
-            files.extend(declared);
+            merge_declared_capture(&mut files, declared);
             Some(full_baseline(files))
         }
         // An empty declared map is still a fact: none of the declared files existed at start.
@@ -166,6 +187,27 @@ pub(crate) fn capture_completion_baseline(
             legacy: false,
             scope: BaselineScope::Declared,
         }),
+    }
+}
+
+/// Merges targeted declared entries into the ordinary snapshot without discarding usable text.
+///
+/// The ordinary snapshot may already hold text that the targeted capture digested (single-file or
+/// total inline cap). Keeping the text when bytes are identical preserves line display and avoids
+/// needless information loss; a genuinely different incoming value still wins.
+fn merge_declared_capture(
+    files: &mut BTreeMap<String, Option<WorktreeFile>>,
+    declared: BTreeMap<String, Option<WorktreeFile>>,
+) {
+    for (path, incoming) in declared {
+        let keep_existing_text = matches!(
+            (files.get(&path).and_then(Option::as_ref), incoming.as_ref()),
+            (Some(existing @ WorktreeFile::Text(_)), Some(incoming_file))
+                if existing.same_content(incoming_file)
+        );
+        if !keep_existing_text {
+            files.insert(path, incoming);
+        }
     }
 }
 
@@ -187,15 +229,30 @@ pub(crate) fn capture_declared_worktree_files(
     worktree_root: &Path,
     completion: &AgentCompletion,
 ) -> BTreeMap<String, Option<WorktreeFile>> {
+    capture_declared_worktree_files_with_budget(
+        worktree_root,
+        completion,
+        MAX_INLINE_DECLARED_BYTES,
+    )
+}
+
+/// Captures declared files while bounding total inline text; overflow entries become digests.
+fn capture_declared_worktree_files_with_budget(
+    worktree_root: &Path,
+    completion: &AgentCompletion,
+    inline_budget: u64,
+) -> BTreeMap<String, Option<WorktreeFile>> {
     let Ok(root) = CanonicalPathRoot::new(worktree_root) else {
         return BTreeMap::new();
     };
     let mut captured = BTreeMap::new();
+    let mut inline_bytes = 0_u64;
     for path in declared_candidate_files(worktree_root) {
         if !completion.files.iter().any(|file| file.matches(&path)) {
             continue;
         }
-        if let Some(content) = capture_declared_file(&root, &path) {
+        if let Some(content) = capture_declared_file(&root, &path, &mut inline_bytes, inline_budget)
+        {
             captured.insert(path, Some(content));
         }
     }
@@ -225,26 +282,49 @@ fn declared_candidate_files(worktree_root: &Path) -> BTreeSet<String> {
     paths
 }
 
-/// Reads one declared file, using a streaming digest when the file is too large to load inline.
-fn capture_declared_file(root: &CanonicalPathRoot, path: &str) -> Option<WorktreeFile> {
+/// Reads one declared file within the remaining inline budget, falling back to a streaming digest.
+///
+/// The read is bounded by the actual byte limit rather than only by the earlier metadata length, so
+/// a file that grows between metadata and read still cannot exceed the cache budget.
+fn capture_declared_file(
+    root: &CanonicalPathRoot,
+    path: &str,
+    inline_bytes: &mut u64,
+    inline_budget: u64,
+) -> Option<WorktreeFile> {
     let relative = PortableRelativePath::parse(path).ok()?;
     let resolved = root.resolve_existing(&relative).ok()?;
     let metadata = std::fs::metadata(&resolved).ok()?;
     if !metadata.is_file() {
         return None;
     }
-    if metadata.len() > MAX_INLINE_FILE_BYTES {
-        return ora_utils::hash::sha256_file(&resolved)
-            .ok()
-            .map(|sha256| WorktreeFile::Binary { sha256 });
+    let remaining = inline_budget.saturating_sub(*inline_bytes);
+    let limit = MAX_INLINE_FILE_BYTES.min(remaining);
+    if metadata.len() > limit {
+        return digest_declared_file(&resolved);
     }
-    let bytes = std::fs::read(resolved).ok()?;
+    let file = std::fs::File::open(&resolved).ok()?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > limit {
+        return digest_declared_file(&resolved);
+    }
+    *inline_bytes = inline_bytes.saturating_add(bytes.len() as u64);
     Some(match String::from_utf8(bytes) {
         Ok(content) => WorktreeFile::Text(content),
         Err(error) => WorktreeFile::Binary {
             sha256: sha256_hex(error.as_bytes()),
         },
     })
+}
+
+/// Streams one declared file into its content digest without loading it into the inline budget.
+fn digest_declared_file(path: &Path) -> Option<WorktreeFile> {
+    ora_utils::hash::sha256_file(path)
+        .ok()
+        .map(|sha256| WorktreeFile::Binary { sha256 })
 }
 
 /// Resolves and captures one git-listed path.
@@ -332,7 +412,7 @@ pub(crate) fn compute_file_changes(
             (Some(None), Some(Some(after))) => (after.line_count(), 0),
             (Some(Some(before)), None) => (0, before.line_count()),
             (Some(Some(before)), Some(None)) => (0, before.line_count()),
-            (Some(Some(before)), Some(Some(after))) if before == after => (0, 0),
+            (Some(Some(before)), Some(Some(after))) if before.same_content(after) => (0, 0),
             (Some(Some(before)), Some(Some(after))) => line_diff_counts(before, after),
         };
         if additions > 0 || deletions > 0 {
@@ -466,7 +546,8 @@ pub(super) fn persist_worktree_baseline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_application::FileChange;
+    use ora_application::{AgentCompletion, CompletionFile, FileChange};
+    use ora_utils::path::RelativeGlob;
     use pretty_assertions::assert_eq;
 
     /// Builds a text entry for fixture maps.
@@ -477,6 +558,16 @@ mod tests {
     /// Wraps a complete fixture map as a baseline that permits a display diff.
     fn full(files: BTreeMap<String, Option<WorktreeFile>>) -> WorktreeBaseline {
         full_baseline(files)
+    }
+
+    /// Builds a completion declaration matching one fixture glob.
+    fn declared_completion(pattern: &str) -> AgentCompletion {
+        AgentCompletion {
+            files: vec![CompletionFile {
+                glob: RelativeGlob::parse(pattern).expect("valid fixture glob"),
+                must_change: false,
+            }],
+        }
     }
 
     /// Builds a legacy baseline whose `null` entries may hide unreadable binary content.
@@ -770,6 +861,113 @@ mod tests {
                 deletions: 0
             }]
         );
+    }
+
+    /// Total inline text stops at the declared budget; overflow entries keep deterministic digests.
+    #[test]
+    fn declared_capture_bounds_total_inline_text_and_digests_overflow() {
+        let scaffold = ora_test_support::GitTestScaffold::new("backend-declared-inline-budget")
+            .expect("create Git test scaffold");
+        let root = scaffold.repo_path();
+        std::fs::create_dir_all(root.join("docs")).expect("docs directory");
+        for name in ["a", "b", "c"] {
+            std::fs::write(
+                root.join(format!("docs/{name}.txt")),
+                format!("{name}aaaa\n"),
+            )
+            .expect("write fixture");
+        }
+        let completion = declared_completion("docs/*.txt");
+        // Each fixture is six bytes; ten bytes keep the first file inline and digest the rest.
+        let captured = capture_declared_worktree_files_with_budget(root, &completion, 10);
+        assert_eq!(captured.len(), 3);
+        let inline_bytes: u64 = captured
+            .values()
+            .flatten()
+            .map(|file| match file {
+                WorktreeFile::Text(content) => content.len() as u64,
+                WorktreeFile::Binary { .. } => 0,
+            })
+            .sum();
+        assert!(
+            inline_bytes <= 10,
+            "declared inline text must stay within the budget, got {inline_bytes}"
+        );
+        assert!(matches!(
+            captured.get("docs/a.txt"),
+            Some(Some(WorktreeFile::Text(_)))
+        ));
+        let overflow = captured
+            .get("docs/b.txt")
+            .and_then(Option::as_ref)
+            .expect("overflow file remains captured");
+        assert!(matches!(overflow, WorktreeFile::Binary { .. }));
+        assert!(overflow.same_content(&WorktreeFile::Text("baaaa\n".to_string())));
+        assert!(!overflow.same_content(&WorktreeFile::Text("baaaa!\n".to_string())));
+    }
+
+    /// Text and an equivalent digest compare equal in both the gate and display diff.
+    #[test]
+    fn text_and_digest_representations_compare_by_content() {
+        let same_text = WorktreeFile::Text("same\n".to_string());
+        let same_digest = WorktreeFile::Binary {
+            sha256: sha256_hex(b"same\n"),
+        };
+        assert!(same_text.same_content(&same_digest));
+
+        let mut baseline_files = BTreeMap::new();
+        baseline_files.insert("report.md".to_string(), Some(same_text));
+        let baseline = full(baseline_files);
+        let mut current = BTreeMap::new();
+        current.insert("report.md".to_string(), Some(same_digest));
+        assert_eq!(
+            compute_file_changes(Some(&baseline), Some(&current)),
+            Vec::new()
+        );
+
+        let different = WorktreeFile::Binary {
+            sha256: sha256_hex(b"different\n"),
+        };
+        current.insert("report.md".to_string(), Some(different));
+        assert_eq!(
+            compute_file_changes(Some(&baseline), Some(&current)),
+            vec![FileChange {
+                path: "report.md".to_string(),
+                additions: 1,
+                deletions: 1
+            }]
+        );
+    }
+
+    /// Merging declared captures keeps an already captured identical text entry for display.
+    #[test]
+    fn merge_declared_capture_preserves_identical_existing_text() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "large.txt".to_string(),
+            Some(WorktreeFile::Text("same\n".to_string())),
+        );
+        let same_digest = WorktreeFile::Binary {
+            sha256: sha256_hex(b"same\n"),
+        };
+        let mut declared = BTreeMap::new();
+        declared.insert("large.txt".to_string(), Some(same_digest));
+        merge_declared_capture(&mut files, declared);
+        assert!(matches!(
+            files.get("large.txt"),
+            Some(Some(WorktreeFile::Text(content))) if content == "same\n"
+        ));
+
+        let changed_digest = WorktreeFile::Binary {
+            sha256: sha256_hex(b"changed\n"),
+        };
+        let mut changed = BTreeMap::new();
+        changed.insert("large.txt".to_string(), Some(changed_digest));
+        merge_declared_capture(&mut files, changed);
+        assert!(matches!(
+            files.get("large.txt"),
+            Some(Some(WorktreeFile::Binary { .. }))
+        ));
     }
 
     /// A symbolic link that escapes the workspace is not captured and its target is never read.
