@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod cleanup_tests;
+mod agent_signal;
 mod completion;
 #[cfg(test)]
 mod completion_tests;
