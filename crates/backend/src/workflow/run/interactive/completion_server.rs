@@ -68,13 +68,23 @@ impl Drop for CompletionMcpServer {
     }
 }
 
+/// Largest request body accepted from the agent, protecting the loopback endpoint from a
+/// malformed `Content-Length` exhausting host memory.
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
+/// Total wall-clock budget for one connection, so a slow client cannot hold the accept loop.
+const CONNECTION_DEADLINE: Duration = Duration::from_secs(10);
+/// Per-read sliver of the connection budget; the remaining budget always wins.
+const PER_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Serves one HTTP request on a fresh connection.
 fn serve_connection(
     mut stream: TcpStream,
     store: &Arc<AgentSignalStore>,
     server_token: &str,
 ) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let started = std::time::Instant::now();
+    refresh_read_timeout(&stream, started)?;
+    stream.set_write_timeout(Some(PER_READ_TIMEOUT))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line)? == 0 {
@@ -88,6 +98,7 @@ fn serve_connection(
     }
     let mut content_length = 0_usize;
     loop {
+        refresh_read_timeout(&stream, started)?;
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             break;
@@ -101,11 +112,18 @@ fn serve_connection(
         } else if let Some(value) = trimmed.strip_prefix("Content-Length:") {
             content_length = value.trim().parse().unwrap_or(0);
         }
+        if content_length > MAX_REQUEST_BYTES {
+            return write_response(&mut stream, 413, None);
+        }
     }
 
     match method.as_str() {
         "DELETE" => write_response(&mut stream, 200, None),
         "POST" => {
+            if content_length > MAX_REQUEST_BYTES {
+                return write_response(&mut stream, 413, None);
+            }
+            refresh_read_timeout(&stream, started)?;
             let mut body = vec![0_u8; content_length];
             reader.read_exact(&mut body)?;
             let message: Value = match serde_json::from_slice(&body) {
@@ -123,6 +141,20 @@ fn serve_connection(
     }
 }
 
+/// Bounds one read by whichever is smaller: the per-read sliver or the connection's budget left.
+fn refresh_read_timeout(stream: &TcpStream, started: std::time::Instant) -> std::io::Result<()> {
+    let remaining = CONNECTION_DEADLINE
+        .checked_sub(started.elapsed())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "completion request exceeded its connection deadline",
+            )
+        })?;
+    stream.set_read_timeout(Some(remaining.min(PER_READ_TIMEOUT)))
+}
+
 /// Writes one HTTP response with an optional JSON body.
 fn write_response(
     stream: &mut TcpStream,
@@ -135,6 +167,7 @@ fn write_response(
         400 => "Bad Request",
         401 => "Unauthorized",
         405 => "Method Not Allowed",
+        413 => "Payload Too Large",
         _ => "Error",
     };
     let payload = body.map(Value::to_string).unwrap_or_default();
@@ -230,7 +263,7 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{COMPLETION_TOOL, CompletionMcpServer};
+    use super::{COMPLETION_TOOL, CompletionMcpServer, MAX_REQUEST_BYTES};
     use crate::workflow::run::completion_snapshot::TurnKey;
     use crate::workflow::run::interactive::agent_signal::AgentSignalStore;
     use serde_json::{Value, json};
@@ -377,5 +410,30 @@ mod tests {
             &json!({ "jsonrpc": "2.0", "id": 5, "method": "ping" }),
         );
         assert_eq!(status, 401);
+    }
+
+    #[test]
+    fn an_oversized_request_is_rejected_before_reading_it() {
+        let store = Arc::new(AgentSignalStore::new());
+        let server = CompletionMcpServer::start(store).expect("server");
+        let rest = server
+            .endpoint()
+            .strip_prefix("http://")
+            .expect("http endpoint")
+            .to_string();
+        let (addr, path) = rest.split_once('/').expect("path");
+        let mut stream = TcpStream::connect(addr).expect("connect");
+        write!(
+            stream,
+            "POST /{path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            MAX_REQUEST_BYTES + 1
+        )
+        .expect("write headers");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        assert!(
+            response.starts_with("HTTP/1.1 413"),
+            "unexpected response: {response:?}"
+        );
     }
 }
