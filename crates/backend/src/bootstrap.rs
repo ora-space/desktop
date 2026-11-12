@@ -67,6 +67,8 @@ pub enum BackendBootstrapError {
     PluginSkillCatalog(#[source] BackendError),
     #[error("failed to reconcile skill storage")]
     SkillStorage(#[source] ApplicationError),
+    #[error("failed to initialize the host completion MCP server")]
+    CompletionServer(#[source] std::io::Error),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
     #[error("failed to reconcile skill storage")]
@@ -92,6 +94,8 @@ pub struct Backend {
     workflow: Arc<WorkflowApi>,
     workflow_run: Arc<WorkflowRuns>,
     app_events: Arc<AppEventHub>,
+    /// Keeps the loopback completion MCP server alive for this backend composition.
+    _completion_server: Arc<crate::workflow::run::interactive::CompletionMcpServer>,
 }
 
 impl Backend {
@@ -173,6 +177,19 @@ impl Backend {
         // Side files holding the worktree baseline an interactive node diffs at completion.
         let baselines_root = sessions_root.join("node-baselines");
         let relative_path_base = paths.relative_path_base;
+        let agent_signals = Arc::new(
+            crate::workflow::run::interactive::AgentSignalStore::new(),
+        );
+        let completion_server = Arc::new(
+            crate::workflow::run::interactive::CompletionMcpServer::start(agent_signals)
+                .map_err(BackendBootstrapError::CompletionServer)?,
+        );
+        let host_mcp_servers = vec![agent_client_protocol_schema::v1::McpServer::Http(
+            agent_client_protocol_schema::v1::McpServerHttp::new(
+                "ora-workflow-completion".to_string(),
+                completion_server.endpoint(),
+            ),
+        )];
         let agent_runtime = Arc::new(
             open_agent_runtime(AgentRuntimeSetup {
                 plugin_host: plugin.clone(),
@@ -182,6 +199,7 @@ impl Backend {
                 sessions_root: sessions_root.clone(),
                 scheduler: scheduler.clone(),
                 app_events: app_events.publisher(),
+                host_mcp_servers,
             })
             .map_err(BackendBootstrapError::AgentRuntime)?,
         );
@@ -322,6 +340,7 @@ impl Backend {
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run,
             app_events,
+            _completion_server: completion_server,
             effect: Effects::new(pool, effect_reconcile),
         })
     }

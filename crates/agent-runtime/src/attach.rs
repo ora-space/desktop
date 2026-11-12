@@ -15,6 +15,7 @@ use super::support::{agent_timed_out, map_acp_error, protocol_violation, session
 use super::{RuntimeActor, session_setup_window};
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
+use crate::host::SessionSetup;
 use crate::host::SessionStore;
 use crate::session_setup::{LiveMcpState, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
@@ -131,9 +132,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ) -> Result<Vec<SessionConfigOption>, RuntimeError> {
         let client = channel.connection.client.clone();
         let agent_session_id = self.provider_session_id().to_string();
+        let mut servers = snapshot.servers().to_vec();
+        servers.extend(self.session_mcp.host_mcp_servers());
         let request =
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(snapshot.servers().to_vec());
+                .mcp_servers(servers);
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,

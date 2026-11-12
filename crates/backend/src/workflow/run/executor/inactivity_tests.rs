@@ -101,6 +101,7 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
             sessions_root: temp.path().join("sessions"),
             scheduler: scheduler.clone(),
             app_events: events.publisher(),
+            host_mcp_servers: Vec::new(),
         })
         .unwrap();
         let (transitions, _recording) = recording_transitions(&pool);

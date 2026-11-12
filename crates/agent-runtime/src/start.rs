@@ -297,10 +297,12 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     // request asks the agent to connect any MCP servers.
     let setup_window = session_setup_window(&mcp);
     let setup_registration = supervisor.begin_session_setup();
+    let mut servers = mcp.into_servers();
+    servers.extend(session_mcp.host_mcp_servers());
     let response = await_session_new(
         &connection.client,
         cwd,
-        mcp.into_servers(),
+        servers,
         setup_registration.activity(),
         setup_window,
     )

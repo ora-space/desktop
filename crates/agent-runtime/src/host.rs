@@ -6,6 +6,7 @@
 //! host through these traits. Desktop implements them over SQLite and its plugin API; a sandbox
 //! Node implements them over its own ledger and plugin lifecycle.
 
+use agent_client_protocol_schema::v1::McpServer;
 use crate::error::RuntimeError;
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
 use ora_domain::{
@@ -155,6 +156,14 @@ pub trait SessionSetup: Clone + Send + Sync + 'static {
 
     /// The selection this view resolves.
     fn selection(&self) -> &SessionMcpSelection;
+
+    /// Host-owned servers delivered beside the selected plugin MCP servers.
+    ///
+    /// These are not part of the session selection or its revision; they are a runtime capability
+    /// the host injects into every ACP setup for this session view.
+    fn host_mcp_servers(&self) -> Vec<McpServer> {
+        Vec::new()
+    }
 
     /// Builds the secret-free Desired revision without producing ACP payloads.
     fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError>;

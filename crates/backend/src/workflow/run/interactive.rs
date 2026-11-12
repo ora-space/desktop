@@ -17,10 +17,12 @@ mod turns_tests;
 use ora_domain::WorkflowNodeRunId;
 use std::collections::HashSet;
 
+pub(crate) use agent_signal::AgentSignalStore;
 pub(crate) use completion::{
     CompletionApproval, claim_node_for_completion, completion_file_changes, prepare_completion,
     revalidate_completion, signal_fingerprint,
 };
+pub(crate) use completion_server::CompletionMcpServer;
 pub(crate) use session::{begin_human_turn, end_human_turn};
 pub(crate) use turns::WorkflowSessionTurns;
 

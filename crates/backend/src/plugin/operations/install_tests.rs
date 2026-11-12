@@ -81,6 +81,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
+            host_mcp_servers: Vec::new(),
         })
         .expect("agent runtime"),
     );
@@ -375,6 +376,7 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
+            host_mcp_servers: Vec::new(),
         })
         .expect("agent runtime"),
     );
