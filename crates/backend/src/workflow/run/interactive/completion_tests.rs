@@ -4,11 +4,13 @@
 //! assertions describe the contract a client observes rather than a helper's return value.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionSnapshot,
-    ConfirmationBy, ParkKind, StopCause, TurnKey, TurnOrigin, completion_payload,
-    parse_completion_snapshot,
+    AgentSignal, CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
+    CompletionPolicy, CompletionSnapshot, ConfirmationBy, ParkKind, StopCause, TurnKey, TurnOrigin,
+    completion_payload, completion_payload_with_meta, parse_completion_snapshot,
 };
-use super::completion::{CompletionApproval, merge_completion_patch, prepare_completion};
+use super::completion::{
+    CompletionApproval, merge_completion_patch, prepare_completion, signal_fingerprint,
+};
 use crate::workflow::run::test_fixture::{
     INTERACTIVE_AGENT_GRAPH, bind_and_park, bootstrap, end_fixture_turn, run_test, started_run,
     write_open_turn, write_settled_turn,
@@ -57,6 +59,26 @@ fn store_snapshot(
         repository
             .repair_node_payload(node_run_id, &completion_payload(snapshot), 60)
             .expect("seed completion snapshot"),
+        "the node must still be awaiting input when the snapshot is seeded"
+    );
+}
+
+/// Seeds one snapshot together with the completion policy and signal meta at the payload root.
+fn store_snapshot_with_meta(
+    pool: &RepositoryPool,
+    node_run_id: &WorkflowNodeRunId,
+    snapshot: &CompletionSnapshot,
+    meta: &CompletionMeta,
+) {
+    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    assert!(
+        repository
+            .repair_node_payload(
+                node_run_id,
+                &completion_payload_with_meta(snapshot, meta),
+                60,
+            )
+            .expect("seed completion snapshot with meta"),
         "the node must still be awaiting input when the snapshot is seeded"
     );
 }
@@ -941,4 +963,69 @@ fn confirmation_and_forced_audit_share_one_payload_patch() {
             "requester": "agent"
         }))
     );
+}
+/// Confirming the accepted agent signal also adopts the workflow's opening turn.
+#[test]
+fn confirming_an_agent_signal_completes_the_opening_turn() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: Some(TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Workflow),
+            stop_cause: None,
+            park_kind: None,
+            blockers: vec![CompletionBlocker {
+                kind: CompletionBlockerKind::TurnUnconfirmed,
+                params: serde_json::Value::Null,
+            }],
+            warnings: Vec::new(),
+            output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+            provisional: false,
+        };
+        let signal = AgentSignal {
+            signal_id: "signal-1".to_string(),
+            requested_at: 1,
+            turn_key: TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            },
+        };
+        store_snapshot_with_meta(
+            &pool,
+            &node_run_id,
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(signal),
+                confirmation: None,
+            },
+        );
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval {
+                confirm_initial_turn: false,
+                force: false,
+                confirm_agent_completion: Some(signal_fingerprint("signal-1")),
+            },
+        )
+        .expect("confirming the accepted signal completes the opening turn");
+
+        assert_eq!(prepared.output, Some("done".to_string()));
+        assert_eq!(
+            prepared.confirmation.map(|confirmation| confirmation.by),
+            Some(ConfirmationBy::Human)
+        );
+        assert_eq!(prepared.requester, NodeCompletionRequester::Agent);
+    });
 }

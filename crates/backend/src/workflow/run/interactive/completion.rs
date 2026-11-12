@@ -22,8 +22,8 @@ use ora_application::{
 use ora_contracts::{
     EmptyErrorParams, NodeCompletionRequester, PublicError, WorkflowNodeCompletionBlocker,
     WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
-    WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams,
-    WorkflowNodeTurnKey,
+    WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
+    WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
@@ -412,8 +412,9 @@ pub(crate) fn prepare_completion(
         }
         if !has_precise_blocker {
             if !signal_matches {
-                effective_blockers
-                    .push(CompletionBlocker::new(CompletionBlockerKind::AgentSignalPending));
+                effective_blockers.push(CompletionBlocker::new(
+                    CompletionBlockerKind::AgentSignalPending,
+                ));
             } else if meta.confirmation.is_none() && !agent_confirmed {
                 effective_blockers.push(CompletionBlocker::new(
                     CompletionBlockerKind::AgentConfirmationPending,
@@ -427,10 +428,17 @@ pub(crate) fn prepare_completion(
     let unfulfilled: Vec<CompletionBlocker> = effective_blockers
         .iter()
         .filter(|blocker| {
-            !(approval.confirm_initial_turn
-                && blocker.kind == CompletionBlockerKind::TurnUnconfirmed)
-                && !(agent_confirmed
-                    && blocker.kind == CompletionBlockerKind::AgentConfirmationPending)
+            let lifted_by_initial_confirmation = approval.confirm_initial_turn
+                && blocker.kind == CompletionBlockerKind::TurnUnconfirmed;
+            // Confirming the agent's signal subsumes the opening-turn confirmation: the agent
+            // explicitly reported completion, so the user is approving that same turn.
+            let lifted_by_agent_confirmation = agent_confirmed
+                && matches!(
+                    blocker.kind,
+                    CompletionBlockerKind::TurnUnconfirmed
+                        | CompletionBlockerKind::AgentConfirmationPending
+                );
+            !lifted_by_initial_confirmation && !lifted_by_agent_confirmation
         })
         .cloned()
         .collect();
@@ -465,7 +473,12 @@ pub(crate) fn prepare_completion(
     // forced completion uses the audit instead (ADR D5).
     let confirmation = agent_confirmed.then(|| CompletionConfirmation {
         by: ConfirmationBy::Human,
-        at: (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64,
+        // Wall-clock millis: the acceptance time is a durable fact and must not depend on the
+        // logging clock's initialization.
+        at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or_default(),
     });
     // The requester is a server fact: only a settled agent signal attributes the completion to the
     // agent; every other accepted path remains a human completion.
