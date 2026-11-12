@@ -401,7 +401,7 @@ pub(crate) fn prepare_completion(
                 }
                 _ => {
                     return Err(completion_rejected(PublicError::WorkflowNodeSignalChanged(
-                        WorkflowNodeSignalChangedParams {
+                        Box::new(WorkflowNodeSignalChangedParams {
                             node_id: node_run.node_id.clone(),
                             expected: meta
                                 .agent_signal
@@ -410,7 +410,7 @@ pub(crate) fn prepare_completion(
                             actual: Some(
                                 "confirmation does not match the parked agent signal".to_string(),
                             ),
-                        },
+                        }),
                     )));
                 }
             }

@@ -380,7 +380,7 @@ pub enum PublicError {
     WorkflowNodeIncomplete(WorkflowNodeIncompleteParams),
     WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams),
     WorkflowNodeOutputChanged(WorkflowNodeOutputChangedParams),
-    WorkflowNodeSignalChanged(WorkflowNodeSignalChangedParams),
+    WorkflowNodeSignalChanged(Box<WorkflowNodeSignalChangedParams>),
 }
 
 impl PublicError {
@@ -778,11 +778,11 @@ mod tests {
                 expected: Some("sha256:abc".to_string()),
                 actual: Some("sha256:def".to_string()),
             }),
-            PublicError::WorkflowNodeSignalChanged(WorkflowNodeSignalChangedParams {
+            PublicError::WorkflowNodeSignalChanged(Box::new(WorkflowNodeSignalChangedParams {
                 node_id: "review".to_string(),
                 expected: Some("signal-1".to_string()),
                 actual: Some("signal-2".to_string()),
-            }),
+            })),
         ];
 
         for error in &samples {
