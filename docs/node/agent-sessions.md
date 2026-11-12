@@ -20,8 +20,9 @@ and the [run-scoped model proxy](https://github.com/ora-space/specs/blob/main/de
 The Deno path must be absolute and the timeout positive. With this section the handshake advertises
 `agent_session`; without it new sessions are refused but unfinished ones are still settled at startup.
 When `process.workload_uid` is set, `agent.workload_directory` is required: an existing absolute path
-owned by the Node identity, writable by no one else and not overlapping the Node home, process host
-directory or clone root. The sandbox entrypoint creates it; the Node never does.
+owned by the Node identity, writable by no one else and not overlapping the Node home, the clone
+root or a configured legacy `process.host_directory`. The sandbox entrypoint creates it; the Node
+never does.
 With `agent.ora_git_directory`, `git_access` and a `process.workload_uid` different from the Node's
 effective UID, each session also gets its own
 [ora-git](ora-git.md) socket, exported as `ORA_GIT_SOCKET`.
@@ -161,15 +162,14 @@ order and a crash leaves the JSONL at most one line ahead. Once a Thread append 
 for good and the session ends as `agent_failed{thread_unavailable}`.
 
 After a restart, agents are never resumed. An unfinished restore first hands over its original
-Scope/Run; only stop confirmation permits `interrupted`. Unknown original stop evidence keeps the
+Git attempts; only stop confirmation permits `interrupted`. Unknown original stop evidence keeps the
 session nonterminal and fences delivery and checkout reuse (see [Revision recovery](revisions.md)). Graceful shutdown cancels live conversations, waits for plugin
 cleanup and commits terminal evidence before releasing the database lease. `sealed_history` answers
 `history_unavailable` while a session still runs and otherwise returns its JSONL.
 
 The plugin process and agent CLI are started by the Node directly (process group, whole-tree
-termination) and are not yet inside the host and guardian process scope, because the guardian does not
-provide the stdin and protocol streams a plugin needs. When the Node crashes, the plugin exits on its
-closed stdio, but a descendant that ignores that is not reclaimed.
+termination) and are not registered with the Node's `ora-reaper`. When the Node crashes, the plugin
+exits on its closed stdio, but a descendant that ignores that is not reclaimed.
 
 ## Ledger
 

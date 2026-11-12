@@ -39,10 +39,10 @@ resolve against the repository root. Debug builds use `deno` and `rg` from `PATH
 
 ## Controller and Node
 
-The Controller, Node, process host and guardian are Linux-only:
+The Controller and Node are Linux-only:
 
 ```sh
-cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian
+cargo build -p ora-controller -p ora-node -p ora-reaper
 ```
 
 Their configuration is described in [Controller](../controller/controller.md) and [Node](../node/node.md).

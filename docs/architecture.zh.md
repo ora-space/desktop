@@ -41,8 +41,8 @@ ora-reaper sidecar ── 在退出或崩溃时结束每个登记过的进程树
 Ora Cloud ◀── mTLS gRPC，主动拨出 ── ora-controller ── Substrate effect ──▶ Sandbox Server
                                           │                                     │
                                           └── 经沙盒路由器的 WSS ──▶ 沙盒：ora-node
-                                                                          ├─ ora-process-host
-                                                                          │    └─ guardian ─▶ Git
+                                                                          ├─ Git
+                                                                          ├─ ora-reaper
                                                                           └─ Agent 插件 + CLI
 ```
 
@@ -51,8 +51,8 @@ Ora Cloud ◀── mTLS gRPC，主动拨出 ── ora-controller ── Substr
   [Cloud 契约](controller/cloud-contract.zh.md)。
 - 在每个沙盒中，Node 从 Git Server 快照 clone Workspace、安装插件、用与 Desktop 相同的 Agent 运行时运行 Agent 会话，
   并把 Revision 交付到 Git Server，见 [Node](node/node.zh.md)。
-- Node 运行的每条 Git 命令都经过进程宿主和每个 Scope 一个的 guardian，所以启动和清理都是持久的事实，见
-  [进程运行时](process/process-runtime.zh.md)。
+- Node 把每条 Git 命令作为直接子进程运行，各自一个进程组，并登记给 `ora-reaper` sidecar；有副作用的命令持有一把尝试锁，
+  锁被释放就证明它已经停止，见 [Node](node/node.zh.md#执行与恢复)。
 - 权限从头到尾都有栅栏：Cloud 授权，Controller 每次派发都获取新的许可，Node 隔离过期的资格，见
   [运行时控制](controller/runtime-control.zh.md)。
 - Controller 也可以运行本地的 SQLite 形态，为一个 Node 协调 clone。
@@ -61,8 +61,8 @@ Ora Cloud ◀── mTLS gRPC，主动拨出 ── ora-controller ── Substr
 
 | 路径 | 内容 |
 |---|---|
-| `apps/` | 可执行文件：`desktop/src-tauri`、`ora-controller`、`ora-node`、`ora-process-host`、`ora-process-guardian`、`ora-process-helper`、`ora-reaper` |
-| `crates/` | 共享的 Rust crate，都以 `ora-` 为前缀（domain、contracts、application、db、backend、agent-runtime、plugin-*、node-*、process-*、gitlancer、utils 等） |
+| `apps/` | 可执行文件：`desktop/src-tauri`、`ora-controller`、`ora-node`、`ora-reaper` |
+| `crates/` | 共享的 Rust crate，都以 `ora-` 为前缀（domain、contracts、application、db、backend、agent-runtime、plugin-*、node-*、process、gitlancer、utils 等） |
 | `packages/` | TypeScript 包：`app-shell`、`contracts`、`chat`、`editor`、`ui`、`plugin-sdk`、`workflow-runtime`、`workflow-mock` |
 | `xtask/` | 契约导出、迁移协调和 Rust 大小检查 |
 | `e2e/` | 使用假 ACP Agent 的 Desktop 端到端测试 |

@@ -85,17 +85,17 @@ Invalid flags and configuration fail before any lease is taken.
 }
 ```
 
-- Declare every Node, process host and guardian state root in `protected_state_directories`; IPC
-  socket parents are protected too, and any overlap with Controller state is rejected. Configure the
-  Node's owner to this ControllerId.
+- Declare every Node state root in `protected_state_directories`; IPC socket parents are protected
+  too, and any overlap with Controller state is rejected. Configure the Node's owner to this
+  ControllerId.
 - A Node in a sandbox is reached through its platform WebSocket router:
   `{ "kind": "websocket", "url": "wss://…", "headers": { "ate-target-actor": "atespace/sandbox-id" } }`.
   Headers are sent verbatim and carry vendor addressing and platform credentials; the handshake still
   verifies `node_id`.
 - `--single-node` starts the configured Node, which must use an `ipc` endpoint whose
   `control.controller_id` and `control.listen` match, in its own process group, and waits up to
-  `ready_timeout_ms` for the endpoint. The process host and guardian are prerequisites it does not
-  start. If the hosted Node exits on its own, the Controller exits with failure.
+  `ready_timeout_ms` for the endpoint. If the hosted Node exits on its own, the Controller exits with
+  failure.
 - Normal shutdown stops Node sessions, then the adapter's own work (in the cloud form a bounded lease
   release), then the hosted Node (`SIGTERM`, waiting `stop_timeout_ms`, never `SIGKILL`), then the
   SQLite lease. Accepted Node executions are never cancelled by the Controller stopping.

@@ -17,7 +17,7 @@ checkout 中，只启动该执行指明的 Agent 插件的精确版本，把每�
 
 Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时，握手声明 `agent_session`；没有时拒绝新会话，但启动时仍会结算
 未完成的会话。设置了 `process.workload_uid` 时还需要 `agent.workload_directory`：一个已存在的绝对路径，属于 Node 身份，
-其他人都不可写，且不与 Node home、进程宿主目录或 clone 根目录重叠。它由沙盒入口程序创建，Node 从不创建。
+其他人都不可写，且不与 Node home、clone 根目录或配置的旧字段 `process.host_directory` 重叠。它由沙盒入口程序创建，Node 从不创建。
 配置了 `agent.ora_git_directory`、`git_access`，且 `process.workload_uid` 不同于 Node 有效 UID 时，每个会话还有自己的 [ora-git](ora-git.zh.md) socket，以
 `ORA_GIT_SOCKET` 导出。
 
@@ -116,12 +116,12 @@ Cloud 可以把会话输入作为定时 occurrence 受理（`spec.trigger = sche
 以同样的顺序存在于 JSONL 中，崩溃时 JSONL 最多领先一行。一旦 Thread 追加失败，镜像就永久停止，会话以
 `agent_failed{thread_unavailable}` 结束。
 
-重启后 Agent 从不恢复。未结束的恢复先交接原 Scope/Run，只有停止确认后才报告 `interrupted`；停止未知时会话保留未终态、禁止交付与 checkout 复用（见[Revision 恢复](revisions.zh.md)）。正常关闭会取消进行中的对话，
+重启后 Agent 从不恢复。未结束的恢复先交接原 Git 尝试，只有停止确认后才报告 `interrupted`；停止未知时会话保留未终态、禁止交付与 checkout 复用（见[Revision 恢复](revisions.zh.md)）。正常关闭会取消进行中的对话，
 等待插件清理，并在释放数据库租约之前提交终止证据。会话仍在运行时，`sealed_history` 返回 `history_unavailable`，否则返回
 它的 JSONL。
 
-插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），还不在宿主和 guardian 的进程范围内，因为 guardian 不提供
-插件需要的 stdin 和协议流。Node 崩溃时，插件会因 stdio 关闭而退出，但忽略这一点的后代进程不会被回收。
+插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），不向 Node 的 `ora-reaper` 登记。Node 崩溃时，插件会因
+stdio 关闭而退出，但忽略这一点的后代进程不会被回收。
 
 ## 账本
 

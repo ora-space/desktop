@@ -49,8 +49,8 @@ The former `repository`/`branch` input and SSH sources are rejected. See
   [Revisions](revisions.md#git-server-access-material).
 - Provision the root and configuration before startup; the Node never creates or re-permissions them.
   Every path is absolute, owned by the current user or root and free of symlink components; release
-  builds reject group- or other-writable paths. The root cannot overlap Node or process state or
-  configured worktree checkouts.
+  builds reject group- or other-writable paths. The root cannot overlap Node state, a configured
+  legacy `process.host_directory` or configured worktree checkouts.
 - The filesystem must report birth time: device, inode and birth time identify the root and each newly
   created leaf. Missing or replaced ownership evidence stays `Unknown`; a database reservation alone
   never owns a directory.
@@ -58,8 +58,8 @@ The former `repository`/`branch` input and SSH sources are rejected. See
   There is no SSH setting: clones come only from the Git Server over HTTPS, and SSH is disabled for
   every clone command.
 - `process.command_timeout_ms` bounds local Git commands; network work uses `process.network_timeout_ms`
-  (default 600000, allowed 1..1200000). An expired budget still closes the original Scope and requires
-  host and guardian cleanup evidence before reporting interrupted.
+  (default 600000, allowed 1..1200000). An expired budget kills the command's process group, and the
+  attempt still needs its stop evidence before the clone reports interrupted.
 
 Embedding callers use `configure_clone`, `submit_clone` and `recover_clones`; the executable recovers
 accepted clones at startup and takes new ones only from the control session.
@@ -73,7 +73,7 @@ Each accepted request owns a new, exclusively created directory. A clone has two
    clone execution's `Ora-Execution-Id` header are passed only as arguments of that command; credential
    helpers, redirects, hooks and ambient configuration are disabled. The fetched commit must equal
    `base_commit`. The transport repository holds no credential and is then handed to the workload user.
-2. **Checkout, as the workload user.** Three host-managed workload commands initialize the checkout,
+2. **Checkout, as the workload user.** Three recorded workload commands initialize the checkout,
    fetch the transport repository's objects into the local branch named after `workspace_ref`'s branch
    (the file transport is allowed only for that local fetch) and reset the working tree. Git runs with
    no templates, no recursive submodules and no LFS smudge or process filters; hooks and interactive
@@ -85,12 +85,13 @@ clean tracked files and that HEAD equals `base_commit`.
 
 Transport repositories are removed after use and cleared at startup, except the one of a clone whose
 workload sequence has not finished the step that reads it: that step is never preceded by another
-snapshot fetch, and its Run may still be reading the transport under its guardian.
+snapshot fetch, and its Git command may still be reading the transport.
 
 ## Failures and recovery
 
 The snapshot fetch only changes the private transport repository, so it may simply start again after a
-restart. Retries within a run and fetches after a restart share one durable attempt count: each attempt
+restart, once no unrecorded command of the previous Node process still holds its attempt lock.
+Retries within a run and fetches after a restart share one durable attempt count: each attempt
 adds one to it before it starts, and after three failed attempts in all the clone ends as
 `source_unavailable`. Unreachable-server and 5xx failures are retried after 5 and then 30 seconds;
 after a restart the next attempt starts at once instead of waiting out the pause. 401, 403 and a
@@ -101,17 +102,19 @@ missing ref are not retried.
 | `snapshot_unavailable` | The Git Server says the snapshot ref is missing or not readable (it gives both the same answer), or refuses the Node's git-access identity (401) |
 | `base_commit_mismatch` | The fetched ref is not a commit, or not `base_commit` |
 | `source_unavailable` | The Git Server stayed unreachable or answered 5xx until the three attempts ran out |
-| `destination_conflict`, `operation_failed`, `interrupted` | As before: a destination clash, a local failure, a terminated attempt with confirmed cleanup |
+| `destination_conflict`, `operation_failed`, `interrupted` | As before: a destination clash, a local failure, an attempt terminated or found stopped, with stop evidence |
 
-Each workload command is durably associated before dispatch, and its end (Git exiting, cleanup after
-the stop grace or deadline, or recovery after restart) first closes the original managed Scope and then
-classifies the host's view:
+Each workload command is recorded, with its attempt lock, before dispatch, and its end (Git exiting,
+the kill after the stop grace or deadline, or settlement after a restart) is classified only by its
+stop evidence, see [Node](node.md#execution-and-recovery):
 
-- an exit code with completed cleanup continues to the next step or to verification;
-- a signal termination with completed cleanup fails as `interrupted` and keeps the directory;
-- missing exit or cleanup facts stay `Unknown`.
+- an exit code with stop evidence continues to the next step or to verification;
+- a signal termination with stop evidence fails as `interrupted` and keeps the directory;
+- an attempt a restarted Node finds stopped, without an exit status, fails as `interrupted` and keeps
+  the directory too;
+- missing stop evidence stays `Unknown`.
 
-Missing process evidence never justifies another Run. A known failure keeps its directory; a retry
+Missing process evidence never justifies another attempt. A known failure keeps its directory; a retry
 needs new operation and execution identities and gets a different directory. Terminal replay always
 uses the original durable result and event, without re-inspecting or fetching again.
 
@@ -125,11 +128,11 @@ Clone records live in the Node database:
   active worktree target or retained clone target, and a failure never releases its reservation.
 - Progress records `Reserved`, `DirectoryCreated`, `Fetching` (with the durable attempt count) or
   `Dispatched` (with the current workload step). Directory identity is frozen after creation and
-  `Unknown` keeps its phase. Each workload step records at most one Run, and earlier Runs must be
-  cleaned first.
+  `Unknown` keeps its phase. Each workload step records at most one attempt, and earlier attempts
+  must be settled first.
 - The terminal result and its event commit in one transaction and must match the original input,
-  resource and path. Success requires zero exits for every workload step; a signal termination backs
-  only `interrupted`.
+  resource and path. Success requires zero exits for every workload step; a signal termination or a
+  stop without an exit status backs only `interrupted`.
 - Schema v10 adds `workspace_branch_heads`, the last value of each own Workspace branch a checkout is
   known to have on the Git Server, which [ora-git](ora-git.md#pushing) declares when it pushes. Clone,
   session and delivery records written before the snapshot input are not migrated: their inputs no
