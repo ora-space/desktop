@@ -235,6 +235,86 @@ fn command_deadline_settles_clone_as_interrupted() {
     });
 }
 
+/// While the attempt lock is still held the old Git may still write, so nothing is concluded;
+/// once that Git has ended, the same attempt settles as interrupted.
+#[test]
+fn clone_stays_unknown_while_its_git_outlives_the_node() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
+        let command = request(&server, "lost", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-lost");
+        until(|| gate.ready.exists());
+        fixture.lose_termination_means(&child);
+        child.kill();
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        node.recover_clones().unwrap();
+        assert_eq!(
+            node.submit_clone(command.clone()).unwrap().state,
+            ExecutionState::Unknown
+        );
+        assert!(record.target.path.is_dir());
+
+        gate.release();
+        let mut state = ExecutionState::Unknown;
+        until(|| {
+            node.recover_clones().unwrap();
+            state = node.submit_clone(command.clone()).unwrap().state;
+            state != ExecutionState::Unknown
+        });
+        assert_interrupted(&state, &record, &command);
+        drop(node);
+        assert_retained_attempts(&fixture, &record, &command, 2);
+    });
+}
+
+/// A finished clone leaves nothing running: the Node's only child is its reaper, and no attempt
+/// lock is left behind.
+#[test]
+fn completed_clone_leaves_no_process_but_the_reaper() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "resident", "main");
+        seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-resident");
+        until(|| {
+            fixture
+                .log("clone-resident")
+                .contains("Node recovery pass completed")
+        });
+        assert_eq!(
+            (
+                crate::support::descendants(child.0.id()),
+                fs::read_dir(fixture.locks()).unwrap().count(),
+            ),
+            (vec![crate::support::reaper_program()], 0)
+        );
+        child.terminate();
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert!(
+            matches!(
+                clone_result(&state),
+                Some(CloneExecutionResult::CloneReady(_))
+            ),
+            "clone did not complete: {state:?}"
+        );
+    });
+}
+
 /// The seeded target, which an interrupted attempt must keep rather than delete or reuse.
 fn retained(record: &CloneExecution) -> CloneResidual {
     CloneResidual::Retained {

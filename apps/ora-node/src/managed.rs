@@ -51,6 +51,9 @@ pub struct ProcessConfig {
     /// Accepted so configurations written for the process host still load; no longer used.
     #[serde(default)]
     pub expected_uid: Option<u32>,
+    /// The `ora-reaper` executable; when absent, the one installed next to this program.
+    #[serde(default)]
+    pub reaper_program: Option<PathBuf>,
     pub git_program: PathBuf,
     pub environment: BTreeMap<String, String>,
     pub command_timeout_ms: u64,
@@ -88,6 +91,14 @@ impl ProcessConfig {
             (RunAs::Workload, None) | (RunAs::Node, _) => Ok(ProcessIdentity::Inherit),
         }
     }
+
+    /// Where the reaper is installed for this deployment.
+    pub fn reaper(&self) -> std::io::Result<PathBuf> {
+        match &self.reaper_program {
+            Some(program) => Ok(program.clone()),
+            None => Ok(std::env::current_exe()?.with_file_name("ora-reaper")),
+        }
+    }
 }
 
 /// Keeps network commands bounded when reading a pre-existing deployment configuration.
@@ -97,29 +108,44 @@ fn default_network_timeout_ms() -> u64 {
 
 /// Shutdown stops admission immediately while allowing the current command a bounded grace period.
 #[derive(Clone, Default)]
-pub struct Shutdown(Arc<Mutex<Option<Instant>>>);
+pub struct Shutdown(Arc<Mutex<Stop>>);
+
+#[derive(Default)]
+struct Stop {
+    requested: Option<Instant>,
+    failure: Option<String>,
+}
 
 impl Shutdown {
     /// May be called by a signal task without borrowing or interrupting the Node's SQLite transaction.
     pub fn request(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get_or_insert_with(Instant::now);
+        self.stop().requested.get_or_insert_with(Instant::now);
+    }
+    /// Stops the Node because it lost something it cannot run safely without. The first reason
+    /// is kept, and the process reports it instead of a clean exit.
+    pub fn fail(&self, reason: &str) {
+        let mut stop = self.stop();
+        stop.requested.get_or_insert_with(Instant::now);
+        stop.failure.get_or_insert_with(|| reason.to_owned());
+    }
+    /// The reason of a stop the Node forced on itself, if there was one.
+    pub fn failure(&self) -> Option<String> {
+        self.stop().failure.clone()
     }
     /// Reports admission closure; this is not evidence that a process has stopped.
     pub fn requested(&self) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
+        self.stop().requested.is_some()
     }
     /// Bounds graceful completion from the first request; repeated signals never extend the deadline.
     fn expired(&self, grace: Duration) -> bool {
+        self.stop()
+            .requested
+            .is_some_and(|at| at.elapsed() >= grace)
+    }
+    fn stop(&self) -> std::sync::MutexGuard<'_, Stop> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() >= grace)
     }
 }
 
@@ -142,6 +168,10 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         home: &Path,
     ) -> std::io::Result<Self> {
         if !config.git_program.is_absolute()
+            || config
+                .reaper_program
+                .as_ref()
+                .is_some_and(|p| !p.is_absolute())
             || config
                 .host_directory
                 .as_ref()

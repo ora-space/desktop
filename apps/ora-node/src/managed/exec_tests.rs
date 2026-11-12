@@ -27,6 +27,7 @@ impl Fixture {
             workload_uid: None,
             host_directory: None,
             expected_uid: None,
+            reaper_program: None,
             git_program: "/usr/bin/git".into(),
             environment: BTreeMap::new(),
             command_timeout_ms: 60_000,

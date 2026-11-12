@@ -65,6 +65,23 @@ fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
     });
 }
 
+/// The Node's death alone makes the reaper end the Git it registered, even when no replacement
+/// Node starts.
+#[test]
+fn reaper_stops_git_without_node_restart() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        fixture.seed();
+        fixture.install_hook();
+        let mut node = fixture.launch("owner");
+        until(|| fixture.path().join("hook-ready").exists());
+        let hook = fixture.pin("hook-pid");
+        node.kill();
+        until(|| hook.has_exited().unwrap());
+        assert!(!fixture.path().join("late-write").exists());
+    });
+}
+
 /// Graceful shutdown waits for the configured bound, then ends the original command before exiting.
 #[test]
 fn shutdown_bounds_a_blocked_git_hook() {
@@ -183,5 +200,20 @@ fn escaped_descendant_keeps_conflicting_recovery_unknown_but_allows_other_work()
             ))
         ));
         node.shutdown().unwrap();
+    });
+}
+
+/// A Node that cannot start its reaper does not start: nothing would end its Git if it died.
+#[test]
+fn node_does_not_start_without_its_reaper() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let mut process = fixture.process();
+        process.reaper_program = Some(fixture.path().join("missing-reaper"));
+        let mut node = fixture.launch_with("no-reaper", process);
+        until(|| node.0.try_wait().unwrap().is_some());
+        assert_eq!(node.0.wait().unwrap().code(), Some(1));
+        assert!(!fixture.log("no-reaper").contains("Ready"));
+        assert!(!fixture.config().home_directory.exists());
     });
 }

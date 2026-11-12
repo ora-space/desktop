@@ -1,8 +1,9 @@
 //! Runs one Git command as a direct child of the Node and settles how it ended.
 //!
-//! Git leads its own process group, so a deadline or a Node stop ends the whole group. A command
-//! with side effects also inherits its attempt lock; its result is only reported once that lock
-//! could be taken again, because only then is nothing of its process tree left to write.
+//! Git leads its own process group and is registered with the Node's reaper, so a deadline, a
+//! Node stop or the Node's death ends the whole group. A command with side effects also inherits
+//! its attempt lock; its result is only reported once that lock could be taken again, because
+//! only then is nothing of its process tree left to write.
 use super::{
     AttemptSettlement, ProcessConfig, RunAs, Shutdown,
     attempt_lock::{AttemptLocks, StopEvidence, kill_group},
@@ -76,7 +77,7 @@ pub(super) async fn run(
 ) -> Finished {
     let started = Instant::now();
     let cleanup = Duration::from_millis(config.cleanup_timeout_ms);
-    let launched = launch(config, locks, &invocation);
+    let launched = launch(config, locks, shutdown, &invocation);
     let mut process = match launched {
         Ok(process) => process,
         Err(error) => {
@@ -187,8 +188,15 @@ pub(super) async fn run(
 fn launch(
     config: &ProcessConfig,
     locks: &AttemptLocks,
+    shutdown: &Shutdown,
     invocation: &Invocation<'_>,
 ) -> io::Result<ora_process::TokioManagedProcess> {
+    if ora_process::reaper_has_exited() {
+        // Without the reaper nothing ends Git if this Node dies next, so the Node stops instead
+        // of running on with a guarantee it no longer has.
+        shutdown.fail("the process reaper exited");
+        return Err(io::Error::other("the process reaper exited"));
+    }
     let (stdout, stderr) = match invocation.capture {
         Capture::Discard => (ProcessStdio::Null, ProcessStdio::Null),
         Capture::Bounded { .. } => (ProcessStdio::Piped, ProcessStdio::Piped),

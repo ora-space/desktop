@@ -157,6 +157,7 @@ impl Fixture {
             workload_uid: self.workload_uid,
             host_directory: None,
             expected_uid: None,
+            reaper_program: None,
             git_program: self.path().join("git"),
             environment: if self.workload_uid.is_some() {
                 Default::default()
@@ -234,7 +235,10 @@ impl Fixture {
     }
     /// Starts the production executable with no command channel or Backend composition.
     pub fn launch(&self, label: &str) -> ChildGuard {
-        let process = self.process();
+        self.launch_with(label, self.process())
+    }
+    /// Starts the production executable under a deployment that differs from the fixture's own.
+    pub fn launch_with(&self, label: &str, process: ProcessConfig) -> ChildGuard {
         let config = self.path().join(format!("{label}.json"));
         fs::write(&config, serde_json::to_vec(&serde_json::json!({ "node": self.config(), "process": process, "timezone": "Asia/Shanghai", "recovery_interval_ms": 100 })).unwrap()).unwrap();
         let output = fs::File::create(self.path().join(format!("{label}.log"))).unwrap();
@@ -261,6 +265,38 @@ impl Fixture {
             .parse()
             .unwrap();
         LinuxPidFd::from_observation(&linux_process(pid).unwrap()).unwrap()
+    }
+    /// The attempt-lock directory of this fixture's Node.
+    pub fn locks(&self) -> PathBuf {
+        self.config().home_directory.join("git-attempts")
+    }
+    /// Leaves a killed Node's Git with nothing that can end it: the reaper dies first, and the
+    /// clues naming the process groups are lost. Only the attempt locks still tell the truth.
+    pub fn lose_termination_means(&self, node: &ChildGuard) {
+        let reaper = reaper_program();
+        for stat in linux_process_snapshot().unwrap().flatten() {
+            if parent(stat.pid) == Some(node.0.id()) && executable(stat.pid) == Some(reaper.clone())
+            {
+                let handle = LinuxPidFd::from_observation(&stat).unwrap();
+                handle.signal(ProcessSignal::Kill).unwrap();
+                until(|| handle.has_exited().unwrap());
+            }
+        }
+        let clues = || -> Vec<PathBuf> {
+            fs::read_dir(self.locks())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "clue")
+                })
+                .collect()
+        };
+        // The clue is written right after the spawn; wait for it so that it cannot appear later.
+        until(|| !clues().is_empty());
+        for clue in clues() {
+            fs::remove_file(clue).unwrap();
+        }
     }
     /// Executes fixture setup/inspection outside the production mutation path.
     pub fn git(&self, args: &[&str]) -> String {
@@ -293,6 +329,50 @@ impl Drop for Fixture {
             }
         }
     }
+}
+
+/// The reaper the Node under test starts: the one built next to it.
+pub fn reaper_program() -> PathBuf {
+    Path::new(env!("CARGO_BIN_EXE_ora-node")).with_file_name("ora-reaper")
+}
+
+/// The parent of a live process, read from the field after the parenthesized command name.
+fn parent(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(Path::new("/proc").join(pid.to_string()).join("stat")).ok()?;
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+/// The program a live process runs.
+fn executable(pid: u32) -> Option<PathBuf> {
+    fs::read_link(Path::new("/proc").join(pid.to_string()).join("exe")).ok()
+}
+
+/// The programs of every live descendant of `root`, sorted; what a Node keeps running.
+pub fn descendants(root: u32) -> Vec<PathBuf> {
+    let processes: Vec<_> = linux_process_snapshot()
+        .unwrap()
+        .flatten()
+        .filter_map(|stat| Some((stat.pid, parent(stat.pid)?)))
+        .collect();
+    let mut family = vec![root];
+    let mut programs = Vec::new();
+    let mut next = 0;
+    while let Some(&ancestor) = family.get(next) {
+        next += 1;
+        for (pid, parent) in &processes {
+            if *parent == ancestor {
+                family.push(*pid);
+                programs.extend(executable(*pid));
+            }
+        }
+    }
+    programs.sort();
+    programs
 }
 
 /// Polls actual externally visible evidence under a failure deadline, never assumes elapsed time proves it.

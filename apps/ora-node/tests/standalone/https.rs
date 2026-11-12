@@ -148,4 +148,8 @@ impl WorkloadGate {
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         gate
     }
+    /// Lets the held Git go on to run its real command.
+    pub fn release(&self) {
+        fs::write(&self.release, "continue").unwrap();
+    }
 }

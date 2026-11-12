@@ -17,9 +17,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --locked --release \
-      -p ora-node -p ora-git -p ora-process-host -p ora-process-guardian -p ora-controller && \
+      -p ora-node -p ora-reaper -p ora-git -p ora-process-host -p ora-process-guardian \
+      -p ora-controller && \
     mkdir -p /out && \
-    cp target/release/ora-node target/release/ora-process-host \
+    cp target/release/ora-node target/release/ora-reaper target/release/ora-process-host \
        target/release/ora-process-guardian target/release/ora-controller target/release/ora-git /out/
 
 # Deno runs every plugin on the Node. The version is .deno-version and the archive and executable
@@ -64,7 +65,8 @@ RUN apt-get update && \
 # Root-owned and not group/other-writable: the host refuses a guardian under a writable ancestor and
 # the Node refuses a writable clone Git configuration in release builds. The parent directories exist
 # before these COPYs because `--chmod` would otherwise also apply to the directories it creates.
-COPY --from=build --chmod=0755 /out/ora-node /out/ora-process-host /out/ora-process-guardian /opt/ora/bin/
+# `ora-reaper` sits next to `ora-node`, which starts it from its own directory.
+COPY --from=build --chmod=0755 /out/ora-node /out/ora-reaper /out/ora-process-host /out/ora-process-guardian /opt/ora/bin/
 COPY --from=build --chmod=0755 /out/ora-git /usr/local/bin/ora-git
 COPY --from=deno --chmod=0755 /out/deno /opt/ora/bin/deno
 COPY --chmod=0644 docker/clone.gitconfig /etc/ora/clone.gitconfig
