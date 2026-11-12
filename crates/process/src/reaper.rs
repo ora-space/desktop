@@ -67,6 +67,20 @@ pub fn shutdown_reaper() -> io::Result<()> {
     }
 }
 
+/// Reports whether a reaper this process started has exited on its own.
+///
+/// A host whose safety depends on the reaper checks this before starting work the reaper is
+/// meant to clean up. A reaper that was never started, or was shut down on request, is not one
+/// that exited.
+pub fn reaper_has_exited() -> bool {
+    let mut reaper = REAPER.lock().unwrap_or_else(PoisonError::into_inner);
+    match &mut *reaper {
+        // An unreadable status is treated like an exit: the host cannot rely on the sidecar.
+        ReaperState::Running(client) => !matches!(client.child.try_wait(), Ok(None)),
+        ReaperState::Uninitialized | ReaperState::Stopped => false,
+    }
+}
+
 /// Runs the reaper protocol on standard input and output until its Ora parent shuts down.
 ///
 /// This is the complete entry point for the version-locked `ora-reaper` sidecar. EOF is treated
