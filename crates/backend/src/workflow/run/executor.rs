@@ -18,7 +18,7 @@ use agent_client_protocol_schema::v1::{
     ContentBlock, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
     SessionConfigSelectOption, SessionConfigSelectOptions, TextContent,
 };
-use ora_agent_runtime::RuntimeError;
+use ora_agent_runtime::{RuntimeError, WorkflowHostCapabilities};
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
     Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
@@ -459,6 +459,15 @@ async fn drive_agent_node(
     // Start the session without publishing it to the node yet. The owning prompt must win
     // admission before workflow UI loads can discover the session; failures in the preparation
     // block below stop this session so cancellation cannot leave an unbound actor behind.
+    // Only an interactive agent-policy attempt may report completion; an automatic or legacy
+    // `end_turn` node must not even see the host tool (ADR D1).
+    let host_capabilities = if config.interactive
+        && config.completion_signal == ora_application::AgentCompletionSignal::Agent
+    {
+        WorkflowHostCapabilities::CompletionSignal
+    } else {
+        WorkflowHostCapabilities::None
+    };
     let started = agent_runtime
         .start_workflow_node_session(
             StartSessionRequest {
@@ -474,6 +483,7 @@ async fn drive_agent_node(
                     .map(|mcp| mcp.mcp_id.clone())
                     .collect(),
             ),
+            host_capabilities,
         )
         .await?;
     let session_id = SessionId::new(started.session.id);

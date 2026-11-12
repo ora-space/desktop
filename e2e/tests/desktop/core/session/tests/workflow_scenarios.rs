@@ -1729,7 +1729,7 @@ fn mcp_plugins_bound_to_agent_nodes_reach_only_the_frozen_allowlist() -> TestRes
             );
             for call in &session_news {
                 assert_eq!(
-                    call["servers"], json!(["official/tools", "ora-workflow-completion"]),
+                    call["servers"], json!(["official/tools"]),
                     "the frozen allowlist must deliver only the enabled MCP; calls: {calls:?}"
                 );
             }

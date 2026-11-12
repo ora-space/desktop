@@ -23,8 +23,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const AGENT_CLI: &str = "official/ora-space.opencode";
 const SKIP_COMPLETION: &str = "[fake-agent-skip-completion]";
 
-/// Builds an interactive agent node with the agent completion policy and one output step.
-fn completion_graph(prompt: &str, auto_accept: bool) -> Value {
+/// Builds an interactive agent node with the requested completion policy and one output step.
+fn completion_graph(prompt: &str, completion_signal: &str, auto_accept: bool) -> Value {
     json!({
         "nodes": [
             {"id": "start", "data": {"kind": "start"}},
@@ -33,7 +33,7 @@ fn completion_graph(prompt: &str, auto_accept: bool) -> Value {
                 "executor": {"agentCli": AGENT_CLI, "modelId": "anthropic/claude-sonnet-4"},
                 "prompt": prompt,
                 "interactive": true,
-                "completionSignal": "agent",
+                "completionSignal": completion_signal,
                 "autoAcceptAgentCompletion": auto_accept
             }}},
             {"id": "output", "data": {"kind": "output", "title": "Deliver"}}
@@ -50,13 +50,14 @@ fn start_run(
     backend: &Backend,
     workspace_id: &str,
     prompt: &str,
+    completion_signal: &str,
     auto_accept: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let workflow = backend
         .workflows()
         .create(CreateWorkflowRequest {
             name: "Agent completion".to_string(),
-            graph: Some(completion_graph(prompt, auto_accept).to_string()),
+            graph: Some(completion_graph(prompt, completion_signal, auto_accept).to_string()),
         })?
         .workflow;
     backend.workflows().publish(PublishWorkflowRequest {
@@ -109,6 +110,15 @@ fn blocker_kinds(payload: &Value) -> Vec<&str> {
 /// Reads the host completion tool calls the fake agent journaled.
 fn completion_calls(package_root: &Path) -> Result<Vec<Value>, serde_json::Error> {
     std::fs::read_to_string(package_root.join("mcp_completion_calls.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(serde_json::from_str)
+        .collect()
+}
+
+/// Reads every ACP session boundary the fake agent served with its delivered server list.
+fn mcp_calls(package_root: &Path) -> Result<Vec<Value>, serde_json::Error> {
+    std::fs::read_to_string(package_root.join("mcp_calls.jsonl"))
         .unwrap_or_default()
         .lines()
         .map(serde_json::from_str)
@@ -187,7 +197,7 @@ fn the_agent_signal_binds_to_the_turn_and_the_human_confirmation_completes_it() 
         let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seeded_workspace(&setup, &backend)?;
-        let run_id = start_run(&backend, &workspace_id, "review the plan", false)?;
+        let run_id = start_run(&backend, &workspace_id, "review the plan", "agent", false)?;
 
         let parked = wait_for_node(&backend, &run_id, "agent", |node| {
             node.status == WorkflowNodeStatus::Pending && node.session_id.is_some()
@@ -316,6 +326,7 @@ fn the_missing_signal_first_turn_uses_the_documented_force_exception() -> TestRe
             &backend,
             &workspace_id,
             &format!("review the plan {SKIP_COMPLETION}"),
+            "agent",
             false,
         )?;
 
@@ -399,6 +410,7 @@ fn auto_accept_completes_a_settled_human_turn_without_the_card() -> TestResult {
             &backend,
             &workspace_id,
             &format!("review the plan {SKIP_COMPLETION}"),
+            "agent",
             true,
         )?;
 
@@ -444,6 +456,50 @@ fn auto_accept_completes_a_settled_human_turn_without_the_card() -> TestResult {
         let calls = completion_calls(&package_root)?;
         assert_eq!(calls.len(), 1, "only the human turn signaled: {calls:?}");
         assert_eq!(calls[0]["accepted"], json!(true));
+        Ok(())
+    })
+}
+
+/// A legacy `end_turn` node must not receive the host completion tool at all.
+#[test]
+fn a_legacy_end_turn_node_never_receives_the_completion_tool() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seeded_workspace(&setup, &backend)?;
+        let run_id = start_run(
+            &backend,
+            &workspace_id,
+            "review the plan",
+            "end_turn",
+            false,
+        )?;
+
+        let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending && node.session_id.is_some()
+        })
+        .await?;
+
+        let session_news: Vec<_> = mcp_calls(&package_root)?
+            .into_iter()
+            .filter(|call| call["method"] == "session/new")
+            .collect();
+        assert_eq!(
+            session_news.len(),
+            1,
+            "one node session opens: {session_news:?}"
+        );
+        assert_eq!(
+            session_news[0]["servers"],
+            json!([]),
+            "a legacy node must not see the host completion capability"
+        );
+        assert!(
+            completion_calls(&package_root)?.is_empty(),
+            "no attempt token is issued, so the fake agent cannot signal"
+        );
+        assert_eq!(blocker_kinds(&payload(&parked)), vec!["turn_unconfirmed"]);
         Ok(())
     })
 }

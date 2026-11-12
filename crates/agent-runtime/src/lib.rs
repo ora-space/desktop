@@ -75,6 +75,20 @@ pub use session_setup::{
 pub use start::record_session_mcp_boundary;
 pub use stream::SessionEventStream;
 
+/// Host-only capabilities a workflow-owned session may carry beside its plugin servers.
+///
+/// A workflow session is not automatically entitled to host tools: the frozen node decides. The
+/// completion capability is injected only for an interactive agent-policy attempt, so an
+/// `end_turn` or automatic node can never reach the completion tool even though it runs in a
+/// workflow-owned session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowHostCapabilities {
+    /// A workflow session without any host-only tool (non-interactive or `end_turn` node).
+    None,
+    /// An interactive agent-policy attempt that may report completion through the host tool.
+    CompletionSignal,
+}
+
 use attach::RebuiltBinding;
 use clock::SystemClock;
 use command::RuntimeCommand;
@@ -274,16 +288,27 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     }
 
     /// Starts a workflow-owned session while keeping it out of ordinary list snapshots.
+    ///
+    /// `host_capabilities` decides whether the session may carry host-only tools; the caller
+    /// derives it from the frozen node so a node without the completion policy cannot acquire
+    /// the capability through a session-level default.
     pub async fn start_workflow_node_session(
         &self,
         request: StartSessionRequest,
         selection: SessionMcpSelection,
+        host_capabilities: WorkflowHostCapabilities,
     ) -> Result<StartSessionResponse, RuntimeError> {
+        let session_mcp = match host_capabilities {
+            WorkflowHostCapabilities::None => self.inner.session_mcp.with_selection(selection),
+            WorkflowHostCapabilities::CompletionSignal => {
+                self.inner.session_mcp.workflow_view(selection)
+            }
+        };
         self.start_session_with_visibility(
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
-            self.inner.session_mcp.workflow_view(selection),
+            session_mcp,
         )
         .await
     }
