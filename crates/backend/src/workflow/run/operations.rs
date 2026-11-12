@@ -3,7 +3,8 @@
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
 use super::interactive::{
-    CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns, signal_fingerprint,
+    AgentSignalStore, CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns,
+    signal_fingerprint,
 };
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::OwnerStreamDropControl;
@@ -38,6 +39,8 @@ pub(crate) struct WorkflowRunSetup {
     /// E2E-only owner-stream drop control shared with the node executor.
     #[cfg(feature = "test-support")]
     pub owner_stream_drop: Arc<OwnerStreamDropControl>,
+    /// Per-attempt tokens and accepted agent completion signals shared with the MCP server.
+    pub agent_signals: Arc<AgentSignalStore>,
 }
 
 /// Executes complete workflow-run use cases against one shared scheduling/runtime instance.
@@ -58,6 +61,9 @@ pub struct WorkflowRuns {
     /// E2E-only owner-stream drop control shared with the node executor.
     #[cfg(feature = "test-support")]
     owner_stream_drop: Arc<OwnerStreamDropControl>,
+    /// Consumed by session prompt/cleanup in the next step of #1070.
+    #[allow(dead_code)]
+    agent_signals: Arc<AgentSignalStore>,
 }
 
 impl WorkflowRuns {
@@ -81,6 +87,7 @@ impl WorkflowRuns {
             transitions: setup.transitions,
             #[cfg(feature = "test-support")]
             owner_stream_drop: setup.owner_stream_drop,
+            agent_signals: setup.agent_signals,
         }
     }
 
@@ -100,6 +107,12 @@ impl WorkflowRuns {
     #[cfg(feature = "test-support")]
     pub fn confirm_test_owner_stream_prompt(&self, session_id: &str) -> Result<(), String> {
         self.owner_stream_drop.confirm_prompt_received(session_id)
+    }
+
+    /// Shares the per-attempt completion signal store with session coordination.
+    #[allow(dead_code)]
+    pub(crate) fn agent_signals(&self) -> Arc<AgentSignalStore> {
+        self.agent_signals.clone()
     }
 
     /// Grants Sessions only the admission/cleanup capability sharing this run's coordination.

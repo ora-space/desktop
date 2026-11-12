@@ -181,7 +181,7 @@ impl Backend {
             crate::workflow::run::interactive::AgentSignalStore::new(),
         );
         let completion_server = Arc::new(
-            crate::workflow::run::interactive::CompletionMcpServer::start(agent_signals)
+            crate::workflow::run::interactive::CompletionMcpServer::start(agent_signals.clone())
                 .map_err(BackendBootstrapError::CompletionServer)?,
         );
         let host_mcp_servers = vec![agent_client_protocol_schema::v1::McpServer::Http(
@@ -270,6 +270,7 @@ impl Backend {
             clock,
             #[cfg(feature = "test-support")]
             owner_stream_drop,
+            agent_signals: agent_signals.clone(),
         }));
 
         let session = Arc::new(Sessions::new(
