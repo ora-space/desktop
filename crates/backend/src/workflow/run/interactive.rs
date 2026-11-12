@@ -1,8 +1,8 @@
 //! Coordination for human interaction with workflow node sessions.
 
+mod agent_signal;
 #[cfg(test)]
 mod cleanup_tests;
-mod agent_signal;
 mod completion;
 mod completion_server;
 #[cfg(test)]
@@ -24,7 +24,8 @@ pub(crate) use completion::{
     validate_first_turn_force_confirmation,
 };
 pub(crate) use completion_server::CompletionMcpServer;
-#[allow(unused_imports)] // `end_human_turn` is the test-facing wrapper; production uses the signal variant.
+#[allow(unused_imports)]
+// `end_human_turn` is the test-facing wrapper; production uses the signal variant.
 pub(crate) use session::{begin_human_turn, end_human_turn, end_human_turn_with_signal};
 pub(crate) use turns::WorkflowSessionTurns;
 

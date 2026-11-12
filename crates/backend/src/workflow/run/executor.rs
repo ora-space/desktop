@@ -371,6 +371,7 @@ async fn park_first_interactive_turn(
     completion_signal: ora_application::AgentCompletionSignal,
     agent_signals: Arc<AgentSignalStore>,
     attempt_id: Option<String>,
+    auto_accept: bool,
     stop_cause: Option<StopCause>,
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
@@ -408,6 +409,7 @@ async fn park_first_interactive_turn(
             policy,
             agent_signal,
             confirmation: None,
+            auto_accept,
         };
         transitions
             .park_node_run(
@@ -675,8 +677,7 @@ async fn drive_agent_node(
                 config.completion_signal,
                 agent_signals.clone(),
                 completion_attempt,
-                // A first turn the user stopped must still park as awaiting them, so the cause
-                // travels with the park instead of being read back from the stop reason.
+                config.auto_accept_agent_completion,
                 StopCause::of_prompt_end(stream.end_cause()),
             )
             .await?;

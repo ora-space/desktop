@@ -485,6 +485,8 @@ export interface WorkflowNodeCompletion {
   confirmation?: WorkflowNodeCompletionConfirmation;
   /** Server-derived attribution for the committed completion. */
   requester?: "human" | "agent";
+  /** Accept an agent signal after the turn settles without waiting for the user. */
+  autoAcceptAgentCompletion?: boolean;
   /** No blockers and not provisional; the node can advance without an explicit force. */
   ready: boolean;
   /**

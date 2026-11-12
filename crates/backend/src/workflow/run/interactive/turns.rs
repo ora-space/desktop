@@ -72,21 +72,24 @@ impl WorkflowSessionTurns {
             &session_id,
         )
         .await?;
-        let (prompt_inactivity, step_boundary, completion_policy) = match &admission {
+        let (prompt_inactivity, step_boundary, completion_policy, auto_accept) = match &admission {
             HumanTurnAdmission::Ordinary => (
                 PromptInactivityPolicy::Timeout,
                 None,
                 CompletionPolicy::EndTurn,
+                false,
             ),
             HumanTurnAdmission::Workflow {
                 prompt_inactivity,
                 step_boundary,
                 completion_policy,
+                auto_accept,
                 ..
             } => (
                 *prompt_inactivity,
                 Some(step_boundary.clone()),
                 *completion_policy,
+                *auto_accept,
             ),
         };
         // The agent policy needs one token per prompt attempt. It rides on the step boundary so
@@ -94,7 +97,9 @@ impl WorkflowSessionTurns {
         let (step_boundary, attempt_id) = match (&admission, completion_policy) {
             (HumanTurnAdmission::Workflow { node_run_id, .. }, CompletionPolicy::Agent) => {
                 let attempt = uuid::Uuid::new_v4().to_string();
-                let token = self.agent_signals.issue(&format!("{node_run_id}"), &attempt);
+                let token = self
+                    .agent_signals
+                    .issue(&format!("{node_run_id}"), &attempt);
                 let boundary = step_boundary.unwrap_or_default();
                 (
                     Some(format!(
@@ -145,6 +150,7 @@ impl WorkflowSessionTurns {
                 &node_run_id,
                 end_report,
                 completion_policy,
+                auto_accept,
                 Some(agent_signals),
                 attempt_id,
             )
@@ -166,6 +172,7 @@ pub(super) async fn park_ended_turn(
     node_run_id: &WorkflowNodeRunId,
     end_report: Option<PromptEndReport>,
     completion_policy: CompletionPolicy,
+    auto_accept: bool,
     agent_signals: Option<Arc<AgentSignalStore>>,
     attempt_id: Option<String>,
 ) -> Result<(), BackendError> {
@@ -177,6 +184,7 @@ pub(super) async fn park_ended_turn(
         node_run_id,
         stop_cause,
         completion_policy,
+        auto_accept,
         agent_signals,
         attempt_id,
     )

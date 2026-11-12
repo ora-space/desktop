@@ -10,8 +10,8 @@ use super::agent_signal::AgentSignalStore;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// MCP protocol version this server answers with, matching Ora's own probe client.
@@ -287,10 +287,7 @@ mod tests {
             &json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }),
         );
         assert_eq!(status, 200);
-        assert_eq!(
-            tools["result"]["tools"][0]["name"],
-            json!(COMPLETION_TOOL)
-        );
+        assert_eq!(tools["result"]["tools"][0]["name"], json!(COMPLETION_TOOL));
     }
 
     #[test]
@@ -355,4 +352,3 @@ mod tests {
         assert_eq!(status, 401);
     }
 }
-

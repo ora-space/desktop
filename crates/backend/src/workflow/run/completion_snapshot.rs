@@ -207,6 +207,8 @@ pub(crate) struct CompletionMeta {
     pub policy: CompletionPolicy,
     pub agent_signal: Option<AgentSignal>,
     pub confirmation: Option<CompletionConfirmation>,
+    /// Whether a settled human turn accepts an agent signal without waiting for the user.
+    pub auto_accept: bool,
 }
 
 impl CompletionMeta {
@@ -229,10 +231,15 @@ impl CompletionMeta {
             .get("confirmation")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok());
+        let auto_accept = payload
+            .get("autoAcceptAgentCompletion")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Self {
             policy,
             agent_signal,
             confirmation,
+            auto_accept,
         }
     }
 }
@@ -249,6 +256,9 @@ pub(crate) fn completion_payload_with_meta(
     }
     if let Some(confirmation) = &meta.confirmation {
         payload["confirmation"] = serde_json::to_value(confirmation).unwrap_or(Value::Null);
+    }
+    if meta.auto_accept {
+        payload["autoAcceptAgentCompletion"] = Value::Bool(true);
     }
     payload
 }
@@ -1272,10 +1282,12 @@ mod tests {
                 by: ConfirmationBy::Human,
                 at: 43,
             }),
+            auto_accept: true,
         };
         let payload = completion_payload_with_meta(&snapshot, &meta);
         assert_eq!(payload["agentSignal"]["signalId"], json!("signal-1"));
         assert_eq!(payload["confirmation"]["by"], json!("human"));
+        assert_eq!(payload["autoAcceptAgentCompletion"], json!(true));
         assert_eq!(
             CompletionMeta::from_payload(Some(&payload.to_string())),
             meta

@@ -471,8 +471,28 @@ pub(crate) fn prepare_completion(
 
     // Confirmation is a normal completion fact, so it is committed beside the snapshot; only a
     // forced completion uses the audit instead (ADR D5).
+    // Auto-accept is only valid for a settled human turn: the opening turn and every abnormal stop
+    // still require the user (ADR D6).
+    let auto_confirmed = agent_confirmed
+        && meta.auto_accept
+        && snapshot.turn_origin != Some(TurnOrigin::Workflow)
+        && !snapshot.blockers.iter().any(|blocker| {
+            matches!(
+                blocker.kind,
+                CompletionBlockerKind::TurnStopped
+                    | CompletionBlockerKind::TurnTruncated
+                    | CompletionBlockerKind::TurnRefused
+                    | CompletionBlockerKind::TurnUnknown
+                    | CompletionBlockerKind::StructuredInvalid
+                    | CompletionBlockerKind::OutputMissing
+            )
+        });
     let confirmation = agent_confirmed.then(|| CompletionConfirmation {
-        by: ConfirmationBy::Human,
+        by: if auto_confirmed {
+            ConfirmationBy::Auto
+        } else {
+            ConfirmationBy::Human
+        },
         // Wall-clock millis: the acceptance time is a durable fact and must not depend on the
         // logging clock's initialization.
         at: std::time::SystemTime::now()

@@ -71,16 +71,13 @@ impl AgentSignalStore {
         }
         let signal_id = Uuid::new_v4().to_string();
         record.signal_id = Some(signal_id.clone());
-        self.pending
-            .lock()
-            .expect("agent signal pending")
-            .insert(
-                (record.node_run_id.clone(), record.attempt_id.clone()),
-                PendingSignal {
-                    signal_id: signal_id.clone(),
-                    requested_at,
-                },
-            );
+        self.pending.lock().expect("agent signal pending").insert(
+            (record.node_run_id.clone(), record.attempt_id.clone()),
+            PendingSignal {
+                signal_id: signal_id.clone(),
+                requested_at,
+            },
+        );
         Ok(signal_id)
     }
 
@@ -166,10 +163,7 @@ mod tests {
     #[test]
     fn unknown_and_revoked_tokens_are_rejected() {
         let store = AgentSignalStore::new();
-        assert_eq!(
-            store.accept("missing", 1),
-            Err(SignalError::UnknownToken)
-        );
+        assert_eq!(store.accept("missing", 1), Err(SignalError::UnknownToken));
         let token = store.issue("node-1", "attempt-1");
         store.revoke_attempt("node-1", "attempt-1");
         assert_eq!(store.accept(&token, 1), Err(SignalError::UnknownToken));

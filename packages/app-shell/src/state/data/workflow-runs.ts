@@ -871,6 +871,7 @@ function parseNodePayload(payload: string): {
   agent_signal?: unknown;
   confirmation?: unknown;
   requester?: unknown;
+  auto_accept?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -891,6 +892,7 @@ function parseNodePayload(payload: string): {
       agent_signal?: unknown;
       confirmation?: unknown;
       requester?: unknown;
+      auto_accept?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -944,6 +946,9 @@ function parseNodePayload(payload: string): {
         ? { confirmation: value.confirmation }
         : {}),
       ...(value.requester !== undefined ? { requester: value.requester } : {}),
+      ...(value.auto_accept !== undefined
+        ? { auto_accept: value.auto_accept }
+        : {}),
     };
   } catch {
     return null;
@@ -964,6 +969,7 @@ function parseCompletion(
         agent_signal?: unknown;
         confirmation?: unknown;
         requester?: unknown;
+        auto_accept?: unknown;
       }
     | null
     | undefined,
@@ -1016,6 +1022,7 @@ function parseCompletion(
     payload?.completion_policy === "agent" ? "agent" : "end_turn";
   const agentSignal = parseAgentSignal(payload?.agent_signal);
   const confirmation = parseCompletionConfirmation(payload?.confirmation);
+  const autoAcceptAgentCompletion = payload?.auto_accept === true;
   const requester: WorkflowNodeCompletion["requester"] =
     payload?.requester === "agent"
       ? "agent"
@@ -1057,6 +1064,7 @@ function parseCompletion(
     ...(agentSignal !== undefined ? { agentSignal } : {}),
     ...(confirmation !== undefined ? { confirmation } : {}),
     ...(requester !== undefined ? { requester } : {}),
+    ...(autoAcceptAgentCompletion ? { autoAcceptAgentCompletion } : {}),
     ready: blockers.length === 0 && !provisional && !agentBlocked,
     needsConfirmation:
       !provisional &&

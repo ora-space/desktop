@@ -4,7 +4,13 @@ import {
   IconCheck,
   IconPlayerSkipForward,
 } from "@tabler/icons-react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -317,7 +323,7 @@ export function RunNodeSessionChat({
   };
 
   /** Confirms the accepted agent signal the user is looking at; stale ids are rejected. */
-  const handleCompleteAgent = () => {
+  const handleCompleteAgent = useCallback(() => {
     if (interaction === undefined) {
       return;
     }
@@ -339,7 +345,30 @@ export function RunNodeSessionChat({
         },
       },
     );
-  };
+  }, [interaction, complete, onNodeCompleted, showContractError]);
+
+  /**
+   * Accepts a settled agent signal automatically when the node opts in.
+   *
+   * The backend still validates the same gate and records `confirmation.by = "auto"`; this effect
+   * only saves the user the click while the step card is open.
+   */
+  const autoConfirmAttempted = useRef(false);
+  useEffect(() => {
+    if (
+      !completionAgentConfirmation ||
+      interaction?.completion?.autoAcceptAgentCompletion !== true ||
+      autoConfirmAttempted.current
+    ) {
+      return;
+    }
+    autoConfirmAttempted.current = true;
+    handleCompleteAgent();
+  }, [
+    completionAgentConfirmation,
+    interaction?.completion?.autoAcceptAgentCompletion,
+    handleCompleteAgent,
+  ]);
 
   const stepCard = (() => {
     if (!interactive || status !== "awaiting_input") {

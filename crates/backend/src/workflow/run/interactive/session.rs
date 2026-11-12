@@ -64,6 +64,8 @@ pub(crate) enum HumanTurnAdmission {
         /// How this node decides the turn is complete; carried so the human prompt can issue the
         /// agent completion token and the park can persist the same policy.
         completion_policy: CompletionPolicy,
+        /// Whether a settled human turn accepts an agent signal without waiting for the user.
+        auto_accept: bool,
     },
 }
 
@@ -141,6 +143,7 @@ pub(crate) async fn begin_human_turn(
             ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
             ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
         };
+        let auto_accept = config.auto_accept_agent_completion;
         // Render the boundary while the frozen graph is at hand: the prompt path must not re-read
         // scheduling state, and the turn must always carry the step it was admitted for.
         let step_boundary = super::super::prompt::render_step_boundary(
@@ -165,6 +168,7 @@ pub(crate) async fn begin_human_turn(
                 prompt_inactivity,
                 step_boundary,
                 completion_policy,
+                auto_accept,
             }),
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {
                 Err(node_not_awaiting(&node_run.node_id))
@@ -200,6 +204,7 @@ pub(crate) async fn end_human_turn(
         node_run_id,
         stop_cause,
         CompletionPolicy::EndTurn,
+        false,
         None,
         None,
     )
@@ -215,6 +220,7 @@ pub(crate) async fn end_human_turn_with_signal(
     node_run_id: &WorkflowNodeRunId,
     stop_cause: Option<StopCause>,
     completion_policy: CompletionPolicy,
+    auto_accept: bool,
     agent_signals: Option<Arc<AgentSignalStore>>,
     attempt_id: Option<String>,
 ) -> Result<(), BackendError> {
@@ -262,6 +268,7 @@ pub(crate) async fn end_human_turn_with_signal(
             policy: completion_policy,
             agent_signal,
             confirmation: None,
+            auto_accept,
         },
     );
     let transitions = transitions.clone();
@@ -587,6 +594,7 @@ mod tests {
                 prompt_inactivity,
                 step_boundary,
                 completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
@@ -673,6 +681,7 @@ mod tests {
                 prompt_inactivity,
                 step_boundary,
                 completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");

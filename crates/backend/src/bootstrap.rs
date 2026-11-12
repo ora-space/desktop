@@ -177,9 +177,7 @@ impl Backend {
         // Side files holding the worktree baseline an interactive node diffs at completion.
         let baselines_root = sessions_root.join("node-baselines");
         let relative_path_base = paths.relative_path_base;
-        let agent_signals = Arc::new(
-            crate::workflow::run::interactive::AgentSignalStore::new(),
-        );
+        let agent_signals = Arc::new(crate::workflow::run::interactive::AgentSignalStore::new());
         let completion_server = Arc::new(
             crate::workflow::run::interactive::CompletionMcpServer::start(agent_signals.clone())
                 .map_err(BackendBootstrapError::CompletionServer)?,

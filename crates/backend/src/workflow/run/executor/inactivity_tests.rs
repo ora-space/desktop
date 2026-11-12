@@ -126,9 +126,7 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
                 &temp.path().join("sessions"),
                 &temp.path().join("baselines"),
                 &transitions,
-                &std::sync::Arc::new(
-                    crate::workflow::run::interactive::AgentSignalStore::new(),
-                ),
+                &std::sync::Arc::new(crate::workflow::run::interactive::AgentSignalStore::new()),
                 &node_run.id,
                 node,
                 &graph,

@@ -1005,6 +1005,7 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
                 policy: CompletionPolicy::Agent,
                 agent_signal: Some(signal),
                 confirmation: None,
+                auto_accept: false,
             },
         );
 
