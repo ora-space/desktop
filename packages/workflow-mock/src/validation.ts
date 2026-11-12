@@ -129,7 +129,15 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
   }
   const config = value as Partial<WorkflowAgentConfig>;
   return (
-    config.schemaVersion === 3 &&
+    (config.schemaVersion === 3 || config.schemaVersion === 4) &&
+    // Version 3 forbids the completion policy; only a graph that writes it must bump to 4.
+    !(config.schemaVersion === 3 && config.completionSignal != null) &&
+    (config.completionSignal === undefined ||
+      config.completionSignal === null ||
+      config.completionSignal === "agent" ||
+      config.completionSignal === "end_turn") &&
+    (config.autoAcceptAgentCompletion === undefined ||
+      typeof config.autoAcceptAgentCompletion === "boolean") &&
     typeof config.executor === "object" &&
     config.executor !== null &&
     typeof config.executor.agentCli === "string" &&

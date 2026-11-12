@@ -571,8 +571,7 @@ mod tests {
         WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
         WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
         WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
-        WorkflowRunInputInvalidParams,
-        WorkflowSnapshotIncompatibleWithResumeParams,
+        WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;

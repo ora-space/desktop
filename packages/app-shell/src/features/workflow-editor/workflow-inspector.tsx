@@ -1,6 +1,7 @@
 import { WorkflowMcpFields } from "./workflow-mcp-fields";
 import { WorkflowAgentRetryFields } from "./workflow-agent-retry-fields";
 import { WorkflowAgentInactivityField } from "./workflow-agent-inactivity-field";
+import { WorkflowAgentCompletionField } from "./workflow-agent-completion-field";
 import type { WorkflowMcpCatalogStatus } from "./mcp-catalog";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -975,6 +976,9 @@ function AgentConfigurationFields({
         </div>
       </InspectorField>
       <WorkflowAgentInactivityField config={config} onChange={onChange} />
+      {config.interactive === true && (
+        <WorkflowAgentCompletionField config={config} onChange={onChange} />
+      )}
       <div className="min-w-0 space-y-1.5">
         <div className="flex items-center justify-between gap-3">
           <Label

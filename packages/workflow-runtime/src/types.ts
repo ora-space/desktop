@@ -207,7 +207,8 @@ export interface WorkflowAgentRetryPolicy {
 
 /** Transport-neutral execution contract for an Agent node. */
 export interface WorkflowAgentConfig {
-  schemaVersion: 3;
+  /** 4 is required once a `completionSignal` is written; earlier graphs stay on 3. */
+  schemaVersion: 3 | 4;
   executor: {
     agentCli: string;
     modelId: string;
@@ -219,6 +220,10 @@ export interface WorkflowAgentConfig {
   prompt: string;
   /** Opt the node into a persistent interactive session that pauses for human input. */
   interactive?: boolean;
+  /** How an interactive node decides its settled turn is complete; absent is `end_turn`. */
+  completionSignal?: "agent" | "end_turn" | null;
+  /** Accept an agent signal after the turn settles without waiting for the user. */
+  autoAcceptAgentCompletion?: boolean;
   /** Silence handling for this node's prompts; absent or null keeps the default timeout. */
   promptInactivity?: "timeout" | "wait" | null;
   /**
