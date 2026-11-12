@@ -506,13 +506,17 @@ pub(crate) fn completion_file_changes(
 ) -> Vec<FileChange> {
     match load_worktree_baseline(baselines_root, node_run_id) {
         Some(baseline) => {
-            // Capture declared files on the current side too; otherwise an ignored deliverable
-            // that the baseline recorded through `capture_completion_baseline` would look
-            // deleted to the display diff. A current snapshot that exceeded its budget still
+            // New baselines recorded declared ignored files, so the current side must add them
+            // too or an unchanged deliverable would look deleted. A legacy text-only baseline
+            // never observed ignored files at all; adding them now would instead turn a
+            // pre-existing ignored file into a fabricated addition. Keep the old Git-visible
+            // current set for legacy baselines. A current snapshot that exceeded its budget still
             // yields no display diff rather than reporting the whole baseline as deleted.
             let current = crate::workflow::run::worktree::capture_worktree_snapshot(worktree_root)
                 .map(|mut snapshot| {
-                    if let Some(completion) = completion {
+                    if !baseline.legacy
+                        && let Some(completion) = completion
+                    {
                         snapshot.extend(
                             crate::workflow::run::worktree::capture_declared_worktree_files(
                                 worktree_root,
@@ -522,7 +526,7 @@ pub(crate) fn completion_file_changes(
                     }
                     snapshot
                 });
-            compute_file_changes(Some(&baseline.files), current.as_ref())
+            compute_file_changes(Some(&baseline), current.as_ref())
         }
         None => {
             ora_warn!(

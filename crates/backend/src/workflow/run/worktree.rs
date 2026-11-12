@@ -60,6 +60,18 @@ impl WorktreeFile {
 pub(crate) struct WorktreeBaseline {
     pub files: BTreeMap<String, Option<WorktreeFile>>,
     pub legacy: bool,
+    /// What the captured file set covers; declared-only baselines must not drive a full diff.
+    pub scope: BaselineScope,
+}
+
+/// How much of the workspace a persisted baseline actually observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BaselineScope {
+    /// The normal Git-visible snapshot plus any declared files; a full diff is meaningful.
+    Full,
+    /// Only the files named by `completion.files`; usable for their gates, never for a full diff.
+    Declared,
 }
 
 /// Persisted wire shape; the untagged legacy arm keeps pre-digest baselines readable.
@@ -69,6 +81,8 @@ enum StoredWorktreeBaseline {
     Legacy(BTreeMap<String, Option<String>>),
     Versioned {
         version: u32,
+        #[serde(default)]
+        scope: Option<BaselineScope>,
         files: BTreeMap<String, Option<WorktreeFile>>,
     },
 }
@@ -77,6 +91,7 @@ enum StoredWorktreeBaseline {
 #[derive(Serialize)]
 struct PersistedWorktreeBaseline<'a> {
     version: u32,
+    scope: BaselineScope,
     files: &'a BTreeMap<String, Option<WorktreeFile>>,
 }
 
@@ -133,19 +148,33 @@ pub(crate) fn capture_worktree_snapshot(
 pub(crate) fn capture_completion_baseline(
     worktree_root: &Path,
     completion: Option<&AgentCompletion>,
-) -> Option<BTreeMap<String, Option<WorktreeFile>>> {
+) -> Option<WorktreeBaseline> {
     let snapshot = capture_worktree_snapshot(worktree_root);
     let Some(completion) = completion else {
-        return snapshot;
+        return snapshot.map(full_baseline);
     };
     let declared = capture_declared_worktree_files(worktree_root, completion);
     match snapshot {
-        Some(mut snapshot) => {
-            snapshot.extend(declared);
-            Some(snapshot)
+        Some(mut files) => {
+            files.extend(declared);
+            Some(full_baseline(files))
         }
         // An empty declared map is still a fact: none of the declared files existed at start.
-        None => Some(declared),
+        // The scope prevents this partial baseline from ever driving a full display diff.
+        None => Some(WorktreeBaseline {
+            files: declared,
+            legacy: false,
+            scope: BaselineScope::Declared,
+        }),
+    }
+}
+
+/// Wraps a complete snapshot as a baseline that may safely drive both gates and display diffs.
+fn full_baseline(files: BTreeMap<String, Option<WorktreeFile>>) -> WorktreeBaseline {
+    WorktreeBaseline {
+        files,
+        legacy: false,
+        scope: BaselineScope::Full,
     }
 }
 
@@ -271,23 +300,40 @@ fn capture_entry(
 /// only this node's incremental changes are reported. A missing baseline or current snapshot
 /// yields an empty diff — it is never treated as an empty worktree that makes every file new.
 pub(crate) fn compute_file_changes(
-    baseline: Option<&BTreeMap<String, Option<WorktreeFile>>>,
+    baseline: Option<&WorktreeBaseline>,
     current: Option<&BTreeMap<String, Option<WorktreeFile>>>,
 ) -> Vec<FileChange> {
     let (Some(baseline), Some(current)) = (baseline, current) else {
         return Vec::new();
     };
-    let paths: BTreeSet<&String> = baseline.keys().chain(current.keys()).collect();
+    // A declared-only baseline never observed unrelated files; diffing it against a full current
+    // tree would report every captured-but-not-baselined file as new.
+    if baseline.scope != BaselineScope::Full {
+        return Vec::new();
+    }
+    let paths: BTreeSet<&String> = baseline.files.keys().chain(current.keys()).collect();
     let mut changes = Vec::new();
     for path in paths {
-        let before = baseline.get(path).and_then(Clone::clone);
-        let after = current.get(path).and_then(Clone::clone);
+        let before = baseline.files.get(path);
+        let after = current.get(path);
         let (additions, deletions) = match (before, after) {
-            (None, Some(after)) => (after.line_count(), 0),
-            (Some(before), None) => (0, before.line_count()),
-            (Some(before), Some(after)) if before == after => (0, 0),
-            (Some(before), Some(after)) => line_diff_counts(&before, &after),
-            (None, None) => continue,
+            // Neither side knows the path: nothing to report.
+            (None, None) | (Some(None), None) | (Some(None), Some(None)) | (None, Some(None)) => {
+                continue;
+            }
+            // A legacy `null` may hide an unreadable binary file. Without a digest, claiming an
+            // addition would turn an unchanged file into a change the author never made.
+            (None, Some(Some(after))) | (Some(None), Some(Some(after)))
+                if baseline.legacy && matches!(after, WorktreeFile::Binary { .. }) =>
+            {
+                continue;
+            }
+            (None, Some(Some(after))) => (after.line_count(), 0),
+            (Some(None), Some(Some(after))) => (after.line_count(), 0),
+            (Some(Some(before)), None) => (0, before.line_count()),
+            (Some(Some(before)), Some(None)) => (0, before.line_count()),
+            (Some(Some(before)), Some(Some(after))) if before == after => (0, 0),
+            (Some(Some(before)), Some(Some(after))) => line_diff_counts(before, after),
         };
         if additions > 0 || deletions > 0 {
             changes.push(FileChange {
@@ -345,12 +391,31 @@ pub(crate) fn load_worktree_baseline(
                 .map(|(path, content)| (path, content.map(WorktreeFile::Text)))
                 .collect(),
             legacy: true,
+            // Legacy captures covered every Git-visible file, so a full diff is meaningful.
+            scope: BaselineScope::Full,
         }),
-        StoredWorktreeBaseline::Versioned { version: 1, files } => Some(WorktreeBaseline {
+        StoredWorktreeBaseline::Versioned {
+            version: 1,
+            scope: None,
+            files,
+        } => Some(WorktreeBaseline {
             files,
             legacy: false,
+            // Version 1 wrote no scope, so an earlier candidate could have persisted a
+            // declared-only capture under this shape. Keep the files for completion gates, but
+            // never treat the unknown coverage as a full display diff.
+            scope: BaselineScope::Declared,
         }),
-        // A future version is not guessed at; callers treat it as unavailable.
+        StoredWorktreeBaseline::Versioned {
+            version: 2,
+            scope: Some(scope),
+            files,
+        } => Some(WorktreeBaseline {
+            files,
+            legacy: false,
+            scope,
+        }),
+        // A future or ambiguous version is not guessed at; callers treat it as unavailable.
         StoredWorktreeBaseline::Versioned { .. } => None,
     }
 }
@@ -373,7 +438,7 @@ pub(crate) fn worktree_baseline_available(
 pub(super) fn persist_worktree_baseline(
     baselines_root: &Path,
     node_run_id: &WorkflowNodeRunId,
-    baseline: &BTreeMap<String, Option<WorktreeFile>>,
+    baseline: &WorktreeBaseline,
 ) -> Result<(), NodeExecutionError> {
     std::fs::create_dir_all(baselines_root).map_err(|source| {
         NodeExecutionError::BaselinePersist {
@@ -383,8 +448,9 @@ pub(super) fn persist_worktree_baseline(
     })?;
     let path = worktree_baseline_path(baselines_root, node_run_id);
     let json = serde_json::to_vec(&PersistedWorktreeBaseline {
-        version: 1,
-        files: baseline,
+        version: 2,
+        scope: baseline.scope,
+        files: &baseline.files,
     })
     .map_err(|error| NodeExecutionError::BaselinePersist {
         node_id: node_run_id.to_string(),
@@ -408,13 +474,30 @@ mod tests {
         Some(WorktreeFile::Text(value.to_string()))
     }
 
+    /// Wraps a complete fixture map as a baseline that permits a display diff.
+    fn full(files: BTreeMap<String, Option<WorktreeFile>>) -> WorktreeBaseline {
+        full_baseline(files)
+    }
+
+    /// Builds a legacy baseline whose `null` entries may hide unreadable binary content.
+    fn legacy(files: BTreeMap<String, Option<WorktreeFile>>) -> WorktreeBaseline {
+        WorktreeBaseline {
+            files,
+            legacy: true,
+            scope: BaselineScope::Full,
+        }
+    }
+
     /// A missing baseline or current snapshot yields an empty diff, never "the whole tree is new".
     #[test]
     fn compute_file_changes_reports_empty_diff_when_a_side_is_missing() {
         let mut baseline = BTreeMap::new();
         baseline.insert("src/a.ts".to_string(), text("one\n"));
         assert_eq!(compute_file_changes(None, Some(&baseline)), Vec::new());
-        assert_eq!(compute_file_changes(Some(&baseline), None), Vec::new());
+        assert_eq!(
+            compute_file_changes(Some(&full(baseline)), None),
+            Vec::new()
+        );
     }
 
     /// Text content keeps the existing incremental line-diff presentation.
@@ -431,7 +514,7 @@ mod tests {
 
         // a.ts gained a line, b.ts was deleted, new.ts was added; keep unchanged is excluded.
         assert_eq!(
-            compute_file_changes(Some(&baseline), Some(&current)),
+            compute_file_changes(Some(&full(baseline.clone())), Some(&current)),
             vec![
                 FileChange {
                     path: "src/a.ts".to_string(),
@@ -466,7 +549,7 @@ mod tests {
         let mut current = BTreeMap::new();
         current.insert("asset.bin".to_string(), Some(second));
         assert_eq!(
-            compute_file_changes(Some(&baseline), Some(&current)),
+            compute_file_changes(Some(&full(baseline.clone())), Some(&current)),
             vec![FileChange {
                 path: "asset.bin".to_string(),
                 additions: 1,
@@ -476,7 +559,7 @@ mod tests {
         // Identical binary content is not a change.
         current.insert("asset.bin".to_string(), Some(first));
         assert_eq!(
-            compute_file_changes(Some(&baseline), Some(&current)),
+            compute_file_changes(Some(&full(baseline)), Some(&current)),
             Vec::new()
         );
     }
@@ -494,12 +577,12 @@ mod tests {
             }),
         );
         baseline.insert("src/deleted.ts".to_string(), None);
+        let baseline = full(baseline);
         persist_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"), &baseline)
             .unwrap();
         let loaded = load_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"))
             .expect("baseline loads");
-        assert_eq!(loaded.files, baseline);
-        assert!(!loaded.legacy);
+        assert_eq!(loaded, baseline);
     }
 
     /// Old baselines stored text as a bare string and a deletion as null; both remain readable.
@@ -514,8 +597,33 @@ mod tests {
         let loaded = load_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"))
             .expect("old baseline parses");
         assert!(loaded.legacy);
+        assert_eq!(loaded.scope, BaselineScope::Full);
         assert_eq!(loaded.files.get("src/a.ts"), Some(&text("one\n")));
         assert_eq!(loaded.files.get("src/gone.ts"), Some(&None));
+    }
+
+    /// A version-1 baseline without a scope may be declared-only; it must not drive a full diff.
+    #[test]
+    fn unscoped_version_1_baseline_keeps_no_full_diff() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("node-1.json"),
+            r#"{"version":1,"files":{"reports/keep.md":"same\n"}}"#,
+        )
+        .unwrap();
+        let loaded = load_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"))
+            .expect("unscoped version 1 baseline parses");
+        assert_eq!(loaded.scope, BaselineScope::Declared);
+        assert_eq!(loaded.files.get("reports/keep.md"), Some(&text("same\n")));
+
+        let mut current = BTreeMap::new();
+        current.insert("reports/keep.md".to_string(), text("same\n"));
+        current.insert("unobserved.md".to_string(), text("new\n"));
+        assert_eq!(
+            compute_file_changes(Some(&loaded), Some(&current)),
+            Vec::new(),
+            "unknown version-1 coverage must not report an unobserved file as an addition"
+        );
     }
 
     /// A corrupt baseline is unavailable even though its side file exists.
@@ -536,18 +644,22 @@ mod tests {
     #[test]
     fn compute_file_changes_against_a_loaded_baseline() {
         let temp = tempfile::TempDir::new().unwrap();
-        let mut baseline = BTreeMap::new();
-        baseline.insert("src/a.ts".to_string(), text("one\n"));
-        persist_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"), &baseline)
-            .unwrap();
+        let mut files = BTreeMap::new();
+        files.insert("src/a.ts".to_string(), text("one\n"));
+        persist_worktree_baseline(
+            temp.path(),
+            &WorkflowNodeRunId::new("node-1"),
+            &full(files.clone()),
+        )
+        .unwrap();
         let loaded = load_worktree_baseline(temp.path(), &WorkflowNodeRunId::new("node-1"))
             .expect("baseline loads");
 
-        let mut current = baseline;
+        let mut current = files;
         current.insert("src/a.ts".to_string(), text("one\ntwo\n"));
         current.insert("src/new.ts".to_string(), text("fresh\n"));
         assert_eq!(
-            compute_file_changes(Some(&loaded.files), Some(&current)),
+            compute_file_changes(Some(&loaded), Some(&current)),
             vec![
                 FileChange {
                     path: "src/a.ts".to_string(),
@@ -587,7 +699,10 @@ mod tests {
         std::fs::write(root.join("openspec/changes/demo/proposal.md"), "fresh\n").unwrap();
 
         assert_eq!(
-            compute_file_changes(Some(&baseline), capture_worktree_snapshot(root).as_ref()),
+            compute_file_changes(
+                Some(&full(baseline)),
+                capture_worktree_snapshot(root).as_ref()
+            ),
             vec![
                 FileChange {
                     path: "openspec/changes/demo/proposal.md".to_string(),
@@ -600,6 +715,60 @@ mod tests {
                     deletions: 0
                 },
             ]
+        );
+    }
+
+    /// A declared-only baseline never drives a full display diff after the budget changes.
+    #[test]
+    fn declared_only_baseline_produces_no_full_diff() {
+        let mut files = BTreeMap::new();
+        files.insert("reports/keep.md".to_string(), text("same\n"));
+        let baseline = WorktreeBaseline {
+            files,
+            legacy: false,
+            scope: BaselineScope::Declared,
+        };
+        let mut current = BTreeMap::new();
+        current.insert("reports/keep.md".to_string(), text("same\n"));
+        current.insert("unrelated.md".to_string(), text("new\n"));
+        assert_eq!(
+            compute_file_changes(Some(&baseline), Some(&current)),
+            Vec::new()
+        );
+    }
+
+    /// A legacy null cannot turn an unchanged binary into a displayed addition.
+    #[test]
+    fn legacy_null_binary_is_omitted_from_the_display_diff() {
+        let binary = WorktreeFile::Binary {
+            sha256: sha256_hex(b"\x00\x01"),
+        };
+        let mut files = BTreeMap::new();
+        files.insert("asset.bin".to_string(), None);
+        let baseline = legacy(files);
+        let mut current = BTreeMap::new();
+        current.insert("asset.bin".to_string(), Some(binary));
+        assert_eq!(
+            compute_file_changes(Some(&baseline), Some(&current)),
+            Vec::new()
+        );
+    }
+
+    /// A legacy null plus known text still displays a normal text addition.
+    #[test]
+    fn legacy_null_text_still_displays_an_addition() {
+        let mut files = BTreeMap::new();
+        files.insert("report.md".to_string(), None);
+        let baseline = legacy(files);
+        let mut current = BTreeMap::new();
+        current.insert("report.md".to_string(), text("fresh\n"));
+        assert_eq!(
+            compute_file_changes(Some(&baseline), Some(&current)),
+            vec![FileChange {
+                path: "report.md".to_string(),
+                additions: 1,
+                deletions: 0
+            }]
         );
     }
 

@@ -5,7 +5,7 @@ use crate::workflow::run::test_fixture::{
     started_run, started_run_with, write_open_turn, write_settled_turn,
 };
 use crate::workflow::run::worktree::{
-    capture_completion_baseline, capture_worktree_snapshot, persist_worktree_baseline,
+    WorktreeFile, capture_completion_baseline, capture_worktree_snapshot, persist_worktree_baseline,
 };
 use crate::{Backend, test_backend::backend_paths};
 use ora_application::{
@@ -1379,6 +1379,156 @@ fn a_legacy_binary_baseline_degrades_with_a_visible_warning() {
         assert_eq!(
             node_payload(&node)["completion"]["warnings"],
             serde_json::json!(["file_check_unavailable"])
+        );
+    });
+}
+
+/// A budget-recovered workspace must not display every unbaselined ordinary file as newly added.
+#[test]
+fn partial_baseline_does_not_report_files_as_added_after_the_budget_recovers() {
+    run_test(async {
+        let graph =
+            COMPLETION_MUST_CHANGE_GRAPH.replace("\"mustChange\":true", "\"mustChange\":false");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "unchanged\n").expect("deliverable");
+            fs::write(workspace.join("notes.md"), "known at start\n").expect("ordinary file");
+        });
+        // The oversized sibling makes the full baseline partial; only reports/keep.md is captured.
+        fs::File::create(fixture.workspace.join("oversized-unrelated.bin"))
+            .expect("oversized sibling")
+            .set_len(65 * 1024 * 1024)
+            .expect("exceed the snapshot budget");
+        // The fixture captured its baseline before this point, so re-persist one taken while the
+        // oversized file is present to reproduce the budget failure at node start.
+        let parsed = WorkflowGraph::parse(&graph).expect("parse graph");
+        let completion = parsed
+            .execution_node("agent")
+            .and_then(|node| node.agent_config.as_ref())
+            .and_then(|config| config.completion.as_ref());
+        let baseline = capture_completion_baseline(&fixture.workspace, completion)
+            .expect("partial baseline captures the declared file");
+        persist_worktree_baseline(
+            &fixture.runs.baselines_root,
+            &WorkflowNodeRunId::new(&fixture.node_run_id),
+            &baseline,
+        )
+        .expect("persist partial baseline");
+
+        // Removing the oversized file restores the full current snapshot.
+        fs::remove_file(fixture.workspace.join("oversized-unrelated.bin"))
+            .expect("remove oversized sibling");
+        fixture.settle_turn();
+        fixture
+            .complete(false)
+            .await
+            .expect("the declared file is still comparable and unchanged");
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("completed node");
+        let changes = node_payload(&node).get("file_changes").cloned();
+        assert!(
+            changes.is_none() || changes == Some(serde_json::json!([])),
+            "a declared-only baseline must not turn unrelated files into additions: {changes:?}"
+        );
+    });
+}
+
+/// A legacy null binary entry is unknown content, not a displayed addition.
+#[test]
+fn legacy_binary_null_is_not_reported_as_an_addition() {
+    run_test(async {
+        let graph = COMPLETION_MUST_CHANGE_GRAPH.replace("reports/keep.md", "artifact.bin");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::write(workspace.join("artifact.bin"), [0xff, 0x00, 0x80])
+                .expect("binary deliverable");
+        });
+        fs::write(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+            serde_json::to_vec(&serde_json::json!({
+                "README.md": "seed\n",
+                "artifact.bin": null,
+            }))
+            .expect("legacy baseline JSON"),
+        )
+        .expect("replace the baseline with the legacy text-only shape");
+        fixture.settle_turn();
+        fixture
+            .complete(false)
+            .await
+            .expect("an unknowable legacy binary change degrades to a warning");
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("completed node");
+        let changes = node_payload(&node).get("file_changes").cloned();
+        assert!(
+            changes.is_none() || changes == Some(serde_json::json!([])),
+            "a legacy null must not display an unchanged binary as newly added: {changes:?}"
+        );
+    });
+}
+
+/// A legacy baseline never observed ignored files, so it must not display them as new additions.
+#[test]
+fn legacy_baseline_does_not_display_preexisting_ignored_text_as_added() {
+    run_test(async {
+        let graph =
+            COMPLETION_MUST_CHANGE_GRAPH.replace("\"mustChange\":true", "\"mustChange\":false");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join(".gitignore"), "reports/\n").expect("ignore outputs");
+            fs::write(workspace.join("reports/keep.md"), "unchanged\n").expect("deliverable");
+        });
+
+        // Build a real legacy text-only baseline from the Git-visible snapshot: text as strings,
+        // unreadable/binary as null. The ignored deliverable is deliberately absent, exactly as an
+        // older capture would have omitted it.
+        let legacy = serde_json::Value::Object(
+            capture_worktree_snapshot(&fixture.workspace)
+                .expect("capture the Git-visible legacy tree")
+                .into_iter()
+                .map(|(path, content)| {
+                    let value = match content {
+                        Some(WorktreeFile::Text(text)) => serde_json::Value::String(text),
+                        Some(WorktreeFile::Binary { .. }) | None => serde_json::Value::Null,
+                    };
+                    (path, value)
+                })
+                .collect(),
+        );
+        fs::write(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+            serde_json::to_vec(&legacy).expect("legacy baseline JSON"),
+        )
+        .expect("persist the legacy Git-visible baseline");
+        fixture.settle_turn();
+
+        fixture
+            .complete(false)
+            .await
+            .expect("existence is checked against the actual ignored file");
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("completed node");
+        let changes = node_payload(&node).get("file_changes").cloned();
+        assert!(
+            changes.is_none() || changes == Some(serde_json::json!([])),
+            "a legacy baseline must not display a pre-existing ignored file as added: {changes:?}"
         );
     });
 }
