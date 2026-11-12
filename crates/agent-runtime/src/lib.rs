@@ -57,7 +57,7 @@ pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
-    SessionStore, WorkspaceDirectory,
+    SessionStore, WorkflowHostCapabilities, WorkspaceDirectory,
 };
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
 pub use operations::AgentRuntime;
@@ -74,20 +74,6 @@ pub use session_setup::{
 };
 pub use start::record_session_mcp_boundary;
 pub use stream::SessionEventStream;
-
-/// Host-only capabilities a workflow-owned session may carry beside its plugin servers.
-///
-/// A workflow session is not automatically entitled to host tools: the frozen node decides. The
-/// completion capability is injected only for an interactive agent-policy attempt, so an
-/// `end_turn` or automatic node can never reach the completion tool even though it runs in a
-/// workflow-owned session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkflowHostCapabilities {
-    /// A workflow session without any host-only tool (non-interactive or `end_turn` node).
-    None,
-    /// An interactive agent-policy attempt that may report completion through the host tool.
-    CompletionSignal,
-}
 
 use attach::RebuiltBinding;
 use clock::SystemClock;
