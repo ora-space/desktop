@@ -1,4 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { RemoteContractError } from "@ora/contracts";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -27,9 +28,11 @@ import {
 import type {
   GraphWorkflowNodeStatus,
   WorkflowNodeCompletion,
+  WorkflowNodeCompletionBlocker,
   WorkflowNodeCompletionBlockerKind,
   WorkflowNodeStopCause,
 } from "@ora/workflow-runtime";
+import type { WorkflowNodeIncompleteParams } from "@ora/contracts";
 import { useChatStore } from "../../chat-store-context";
 import { useContractsClient } from "../../contracts-client-context";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
@@ -110,6 +113,16 @@ export function RunNodeSessionChat({
   const interactive = interaction !== undefined;
   /** Force completion stays behind an explicit confirmation because it can advance half a turn. */
   const [forceOpen, setForceOpen] = useState(false);
+  /**
+   * Blockers from the latest rejected completion, tagged with the turn they describe. File checks
+   * run only when completion is clicked, so these cannot live in the park snapshot; showing them
+   * here reuses the same blocker reasons the card already renders while keeping a ready snapshot.
+   * Tagging the turn lets a later poll clear the rejection by derivation instead of an effect.
+   */
+  const [rejection, setRejection] = useState<{
+    identity: string;
+    blockers: WorkflowNodeCompletionBlocker[];
+  }>({ identity: "", blockers: [] });
   const completion = interaction?.completion ?? UNKNOWN_COMPLETION;
   // A node parked before completion snapshots existed has no preview to gate on. It keeps the
   // ordinary completion entry: the backend materializes the snapshot from the session history and
@@ -158,6 +171,12 @@ export function RunNodeSessionChat({
     completionUserStopped;
   /** Only a ready snapshot (or the legacy snapshot-less entry) offers a normal completion. */
   const completionActionable = completionReady || !hasCompletionSnapshot;
+
+  // A new turn or another node makes the previous rejection stale; keep it while the same turn
+  // is polled again so a ready snapshot still explains why the last click was refused.
+  const completionTurnIdentity = `${interaction?.nodeId ?? ""}:${completion.turnKey?.userSeq ?? ""}:${completion.turnKey?.endedSeq ?? ""}`;
+  const rejectionBlockers =
+    rejection.identity === completionTurnIdentity ? rejection.blockers : [];
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
@@ -298,10 +317,32 @@ export function RunNodeSessionChat({
         ...(confirmInitialTurn ? { confirmInitialTurn: true } : {}),
       },
       {
-        onSuccess: () => onNodeCompleted?.(interaction.nodeId),
+        onSuccess: () => {
+          setRejection({
+            identity: completionTurnIdentity,
+            blockers: [],
+          });
+          onNodeCompleted?.(interaction.nodeId);
+        },
         // A rejected completion is a user-visible outcome, not a refresh: a stale turn or a
         // changed output must say so instead of silently leaving the card unchanged.
         onError: (error) => {
+          if (
+            error instanceof RemoteContractError &&
+            error.code === "workflow_node_incomplete"
+          ) {
+            const params = error.payload.params as WorkflowNodeIncompleteParams;
+            setRejection({
+              identity: completionTurnIdentity,
+              blockers: params.blockers.map((blocker) => ({
+                kind: blocker.kind,
+                params:
+                  blocker.params?.path === undefined
+                    ? {}
+                    : { path: blocker.params.path },
+              })),
+            });
+          }
           showContractError(error);
         },
       },
@@ -474,6 +515,34 @@ export function RunNodeSessionChat({
               </li>
             ))}
           </ul>
+        )}
+        {rejectionBlockers.length > 0 && (
+          <div className="mt-1.5">
+            <p className="text-xs font-medium">
+              {t("workflowRun.stepCard.completionRejectedTitle")}
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {rejectionBlockers.map((blocker, index) => (
+                <li
+                  key={`${blocker.kind}:${index}`}
+                  className="flex items-start gap-1.5 text-xs text-muted-foreground"
+                >
+                  <IconAlertTriangle
+                    className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    {t(completionBlockerReasonKey(blocker.kind), {
+                      path:
+                        typeof blocker.params?.path === "string"
+                          ? blocker.params.path
+                          : "",
+                    })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           {completionReady ? (
@@ -811,6 +880,9 @@ function completionWarningText(
   if (warning === "history_unavailable") {
     return translate("workflowRun.stepCard.warning.history_unavailable");
   }
+  if (warning === "file_check_unavailable") {
+    return translate("workflowRun.stepCard.warning.file_check_unavailable");
+  }
   if (warning === "turn_not_settled") {
     return translate("workflowRun.stepCard.warning.turn_not_settled");
   }
@@ -857,6 +929,8 @@ const ABNORMAL_BLOCKER_REASON_KEYS: Record<
   turn_unconfirmed: "workflowRun.stepCard.abnormalReason.turn_unconfirmed",
   structured_invalid: "workflowRun.stepCard.abnormalReason.structured_invalid",
   output_missing: "workflowRun.stepCard.abnormalReason.output_missing",
+  file_missing: "workflowRun.stepCard.abnormalReason.file_missing",
+  file_unchanged: "workflowRun.stepCard.abnormalReason.file_unchanged",
 };
 
 /**

@@ -1,4 +1,5 @@
 import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
+import { normalizeWorkflowAgentCompletion } from "./agent-completion";
 
 /**
  * Builds an editable/displayable projection of untrusted Agent JSON without
@@ -7,6 +8,14 @@ import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
 export function normalizeWorkflowAgentConfig(
   config: WorkflowAgentConfig,
 ): WorkflowAgentConfig {
+  // Completion is removed from the spread and normalized explicitly: an edit must write the
+  // declaration (and its version-4 requirement) deliberately instead of inheriting a stale shape.
+  const { completion: rawCompletion, ...rest } = config;
+  const completion = normalizeWorkflowAgentCompletion(rawCompletion);
+  const schemaVersion =
+    typeof config.schemaVersion === "number"
+      ? config.schemaVersion
+      : (3 as const);
   const skills = Array.isArray(config?.skills)
     ? config.skills.filter(
         (skill) =>
@@ -33,7 +42,8 @@ export function normalizeWorkflowAgentConfig(
   // Optional execution policies pass through untouched: absence already means the default,
   // and filling them in here would rewrite every saved graph the first time it is opened.
   return {
-    ...config,
+    ...rest,
+    schemaVersion,
     executor: {
       ...config?.executor,
       agentCli:
@@ -52,6 +62,7 @@ export function normalizeWorkflowAgentConfig(
     // Missing `interactive` defaults to false so existing graphs stay fully automatic.
     interactive: config?.interactive === true,
     outputContract,
+    ...(completion === undefined ? {} : { completion }),
   };
 }
 

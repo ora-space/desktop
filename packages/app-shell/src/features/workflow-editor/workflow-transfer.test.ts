@@ -174,6 +174,84 @@ describe("workflow inactivity setting transfer", () => {
   );
 });
 
+describe("completion declaration transfer", () => {
+  it("exports and imports the version and every declared file", () => {
+    const workflow = createMockWorkflow("en-US");
+    const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+    agent.data.agentConfig = {
+      ...agent.data.agentConfig!,
+      schemaVersion: 4,
+      completion: {
+        files: [
+          { path: "reports/*.md" },
+          { path: "reports/final.md", mustChange: true },
+        ],
+      },
+    };
+    const snapshot = parseWorkflowGraph(
+      serializeWorkflowGraph({
+        ...workflow,
+        edges: workflow.edges.map(({ id, source, target }) => ({
+          id,
+          source,
+          target,
+        })),
+      }),
+    );
+    const exported = workflowExportDocument(workflow, snapshot);
+    const imported = parseWorkflowImportFile(JSON.stringify(exported));
+
+    expect(imported).toEqual({ ok: true, workflow: exported });
+    const importedAgent = (
+      imported.ok ? imported.workflow : undefined
+    )?.nodes.find((node) => node.id === agent.id);
+    expect(importedAgent?.data.agentConfig).toMatchObject({
+      schemaVersion: 4,
+      completion: {
+        files: [
+          { path: "reports/*.md" },
+          { path: "reports/final.md", mustChange: true },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: "version 3 with completion",
+      config: { schemaVersion: 3, completion: { files: [{ path: "a.md" }] } },
+      detail: "requires agentConfig.schemaVersion 4",
+    },
+    {
+      name: "an unsupported version",
+      config: { schemaVersion: 5 },
+      detail: "unsupported agentConfig.schemaVersion 5",
+    },
+    {
+      name: "an unsupported completion field",
+      config: {
+        schemaVersion: 4,
+        completion: { files: [{ path: "a.md" }], criteria: [] },
+      },
+      detail: "only files is defined",
+    },
+  ])("refuses $name instead of dropping it", ({ config, detail }) => {
+    const workflow = createMockWorkflow("en-US");
+    const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+    agent.data.agentConfig = {
+      ...agent.data.agentConfig!,
+      ...config,
+    } as typeof agent.data.agentConfig;
+    const result = parseWorkflowImportFile(JSON.stringify(workflow));
+    expect(result.ok).toBe(false);
+    if (result.ok || result.failure.reason !== "invalidAgentConfig") {
+      throw new Error("expected an invalid Agent configuration failure");
+    }
+    expect(result.failure.nodeTitle).toBe(agent.data.title);
+    expect(result.failure.detail).toContain(detail);
+  });
+});
+
 describe("collectWorkflowDependencies", () => {
   it("merges repeated bindings and sorts actionable rows first", () => {
     const nodes = [

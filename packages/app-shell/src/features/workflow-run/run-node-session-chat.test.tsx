@@ -776,6 +776,58 @@ describe("RunNodeSessionChat", () => {
     errorToast.mockRestore();
   });
 
+  it("renders file blockers from a rejected completion in the step card", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "id");
+    const { handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      readyCompletion(),
+    );
+    handlers.completeWorkflowNode = async () => {
+      throw new RemoteContractError(
+        {
+          code: "workflow_node_incomplete",
+          params: {
+            nodeId,
+            blockers: [
+              {
+                kind: "file_missing",
+                params: { path: "reports/plan.md" },
+              },
+            ],
+          },
+          requestId: "550e8400-e29b-41d4-a716-446655440001",
+        },
+        null,
+      );
+    };
+
+    await userEvent.click(screen.getByTestId("complete-ready-node"));
+
+    expect(await screen.findByText("上次完成被拒绝")).toBeInTheDocument();
+    expect(
+      screen.getByText("缺少文件：reports/plan.md 不存在。"),
+    ).toBeInTheDocument();
+    errorToast.mockRestore();
+  });
+
+  it("localizes the file baseline warning in the step card", () => {
+    renderDock("awaiting_input", false, [], undefined, undefined, undefined, {
+      ...readyCompletion(),
+      warnings: ["file_check_unavailable"],
+    });
+
+    expect(
+      screen.getByText(
+        "没有找到节点启动时的文件基线，无法判断“必须变更”的文件；只检查了文件是否存在。",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     ["turn_stopped", "已停止：本轮生成被中断。"],
     ["turn_truncated", "被截断：本轮达到输出上限。"],

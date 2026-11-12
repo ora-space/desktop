@@ -339,7 +339,11 @@ function FailureStage({
           line: location.line,
           column: location.column,
         })
-      : t(`settings.workflow.transfer.failure.${failure.reason}Detail`);
+      : failure.reason === "invalidAgentConfig"
+        ? t("settings.workflow.transfer.failure.invalidAgentConfigDetail", {
+            detail: failure.detail,
+          })
+        : t(`settings.workflow.transfer.failure.${failure.reason}Detail`);
   return (
     <>
       <Header
@@ -352,6 +356,10 @@ function FailureStage({
           <b className="font-semibold">
             {t(`settings.workflow.transfer.failure.${failure.reason}`, {
               kind: failure.reason === "unknownNodeKind" ? failure.kind : "",
+              node:
+                failure.reason === "invalidAgentConfig"
+                  ? failure.nodeTitle
+                  : "",
             })}
           </b>
           {detail}
