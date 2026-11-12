@@ -186,7 +186,9 @@ impl WireAgentConfig {
             .transpose()?
             .unwrap_or_default();
         let completion_signal = match self.completion_signal.as_deref() {
-            None | Some("endTurn") => AgentCompletionSignal::EndTurn,
+            // The graph vocabulary is `end_turn` (see the editor and TS graph types); a missing
+            // field is the legacy default, never a new policy.
+            None | Some("end_turn") => AgentCompletionSignal::EndTurn,
             Some("agent") => AgentCompletionSignal::Agent,
             Some(other) => {
                 return Err(GraphError::InvalidNode {
@@ -347,9 +349,9 @@ mod tests {
         }
     }
 
-    /// Missing completion policy keeps legacy end-turn semantics; the agent policy is explicit.
+    /// Missing completion policy keeps legacy end-turn semantics; both explicit values parse.
     #[test]
-    fn completion_signal_defaults_to_end_turn_and_parses_agent() {
+    fn completion_signal_defaults_to_end_turn_and_parses_both_policies() {
         let legacy = parse_config(json!({})).unwrap();
         let config = legacy.node("agent").unwrap().agent_config.as_ref().unwrap();
         assert_eq!(
@@ -357,6 +359,18 @@ mod tests {
             super::AgentCompletionSignal::EndTurn
         );
         assert!(!config.auto_accept_agent_completion);
+
+        let explicit_end_turn = parse_config(json!({"completionSignal": "end_turn"})).unwrap();
+        let config = explicit_end_turn
+            .node("agent")
+            .unwrap()
+            .agent_config
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::EndTurn
+        );
 
         let graph =
             parse_config(json!({"completionSignal": "agent", "autoAcceptAgentCompletion": true}))
