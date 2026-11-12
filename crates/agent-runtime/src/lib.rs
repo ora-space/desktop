@@ -39,6 +39,9 @@ mod suspend;
 mod title_acquisition;
 mod tool_timing;
 
+#[cfg(feature = "test-support")]
+mod test_support;
+
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
@@ -107,6 +110,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+#[cfg(feature = "test-support")]
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
@@ -137,6 +142,9 @@ struct ManagerInner<H: AgentRuntimeHost> {
     clock: SystemClock,
     scheduler: Scheduler,
     events: H::Events,
+    /// E2E-only inactivity windows; `None` keeps the production constant schedule.
+    #[cfg(feature = "test-support")]
+    prompt_inactivity_windows: RwLock<Option<&'static [Duration]>>,
 }
 
 #[derive(Clone)]
@@ -179,6 +187,9 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     session_mcp: H::Setup,
     barriers: Arc<AgentSessionBarriers>,
     live_mcp: LiveMcpState,
+    /// E2E-only schedule copied from the manager; production uses the shared constant.
+    #[cfg(feature = "test-support")]
+    test_prompt_inactivity_windows: Option<&'static [Duration]>,
     #[cfg(test)]
     exit_probe: Option<oneshot::Sender<()>>,
 }
@@ -239,6 +250,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 clock,
                 scheduler,
                 events,
+                #[cfg(feature = "test-support")]
+                prompt_inactivity_windows: RwLock::new(None),
             }),
         })
     }
@@ -735,6 +748,12 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             commands: commands.clone(),
         };
         actors.insert(session.id.clone(), handle.clone());
+        #[cfg(feature = "test-support")]
+        let test_prompt_inactivity_windows = *self
+            .inner
+            .prompt_inactivity_windows
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         tokio::spawn(
             RuntimeActor {
                 cleanup_outcomes: HashMap::new(),
@@ -758,6 +777,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 session_mcp: setup.session_mcp,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
+                #[cfg(feature = "test-support")]
+                test_prompt_inactivity_windows,
                 #[cfg(test)]
                 exit_probe: None,
             }

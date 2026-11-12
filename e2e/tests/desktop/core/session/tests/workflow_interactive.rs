@@ -55,7 +55,7 @@ fn interactive_graph(prompt: &str) -> Value {
 }
 
 /// Publishes the interactive graph and starts one run against it.
-fn start_interactive_run(
+pub(super) fn start_interactive_run(
     backend: &Backend,
     workspace_id: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -121,7 +121,7 @@ fn node_of(backend: &Backend, run_id: &str, node_id: &str) -> Option<WorkflowNod
 }
 
 /// Polls the projection until the node row satisfies `ready`, yielding to the backend's tasks.
-async fn wait_for_node(
+pub(super) async fn wait_for_node(
     backend: &Backend,
     run_id: &str,
     node_id: &str,
@@ -174,21 +174,21 @@ async fn wait_for_run_end(
 }
 
 /// Parses the parked node's completion blockers through their public contract type.
-fn completion_blockers(node: &WorkflowNodeRun) -> Vec<WorkflowNodeCompletionBlocker> {
+pub(super) fn completion_blockers(node: &WorkflowNodeRun) -> Vec<WorkflowNodeCompletionBlocker> {
     let payload: Value =
         serde_json::from_str(node.payload.as_deref().unwrap_or("{}")).unwrap_or(Value::Null);
     serde_json::from_value(payload["completion"]["blockers"].clone()).unwrap_or_default()
 }
 
 /// Reads the parked node's `payload.completion` snapshot as the raw JSON the projection parses.
-fn completion_snapshot(node: &WorkflowNodeRun) -> Value {
+pub(super) fn completion_snapshot(node: &WorkflowNodeRun) -> Value {
     let payload: Value =
         serde_json::from_str(node.payload.as_deref().unwrap_or("{}")).unwrap_or(Value::Null);
     payload["completion"].clone()
 }
 
 /// Sends one human turn on a session and drains it to its stop.
-async fn say(backend: &Backend, session_id: &str, text: &str) -> TestResult {
+pub(super) async fn say(backend: &Backend, session_id: &str, text: &str) -> TestResult {
     drain_prompt(backend.sessions().prompt(PromptSessionRequest {
         session_id: session_id.to_string(),
         prompt: vec![ContentBlock::Text(TextContent::new(text.to_string()))],
@@ -219,7 +219,7 @@ async fn complete_with(
 }
 
 /// Requests the plain manual completion of the interactive node.
-async fn complete(backend: &Backend, run_id: &str) -> Result<(), BackendError> {
+pub(super) async fn complete(backend: &Backend, run_id: &str) -> Result<(), BackendError> {
     complete_with(backend, run_id, None, false).await
 }
 

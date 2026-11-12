@@ -10,6 +10,11 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+# Exposes per-runtime fault injection used by Desktop E2E tests. Production builds do not
+# enable it, so the default inactivity windows and prompt lifecycle stay untouched.
+test-support = []
+
 [dependencies]
 agent-client-protocol-schema = { workspace = true }
 ora-acp = { workspace = true }

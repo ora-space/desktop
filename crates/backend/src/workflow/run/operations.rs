@@ -3,6 +3,8 @@
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
 use super::interactive::{CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns};
+#[cfg(feature = "test-support")]
+use super::owner_stream_drop::OwnerStreamDropControl;
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
@@ -31,6 +33,9 @@ pub(crate) struct WorkflowRunSetup {
     pub transitions: Arc<WorkflowRunTransitions>,
     pub plugin_api: Arc<crate::plugin::PluginApi>,
     pub clock: SystemClock,
+    /// E2E-only owner-stream drop control shared with the node executor.
+    #[cfg(feature = "test-support")]
+    pub owner_stream_drop: Arc<OwnerStreamDropControl>,
 }
 
 /// Executes complete workflow-run use cases against one shared scheduling/runtime instance.
@@ -48,6 +53,9 @@ pub struct WorkflowRuns {
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
+    /// E2E-only owner-stream drop control shared with the node executor.
+    #[cfg(feature = "test-support")]
+    owner_stream_drop: Arc<OwnerStreamDropControl>,
 }
 
 impl WorkflowRuns {
@@ -69,7 +77,27 @@ impl WorkflowRuns {
             run_locks: setup.run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             transitions: setup.transitions,
+            #[cfg(feature = "test-support")]
+            owner_stream_drop: setup.owner_stream_drop,
         }
+    }
+
+    /// Arms one node whose real owning prompt stream an E2E test will abandon.
+    #[cfg(feature = "test-support")]
+    pub fn arm_test_owner_stream_drop(&self, node_id: &str) {
+        self.owner_stream_drop.arm(node_id);
+    }
+
+    /// Waits for the executor to claim the armed node and returns its real session id.
+    #[cfg(feature = "test-support")]
+    pub async fn wait_for_test_owner_stream_session(&self) -> Option<String> {
+        self.owner_stream_drop.wait_for_claimed_session().await
+    }
+
+    /// Confirms prompt receipt for the claimed session and requests the owner drop.
+    #[cfg(feature = "test-support")]
+    pub fn confirm_test_owner_stream_prompt(&self, session_id: &str) -> Result<(), String> {
+        self.owner_stream_drop.confirm_prompt_received(session_id)
     }
 
     /// Grants Sessions only the admission/cleanup capability sharing this run's coordination.

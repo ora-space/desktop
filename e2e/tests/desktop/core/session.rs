@@ -1,6 +1,9 @@
 //! Integration coverage for lazy session creation and plugin-owned model discovery.
 
 mod tests {
+    mod abnormal_first_turn;
+    mod abnormal_human_turn;
+    mod abnormal_support;
     mod iteration;
     mod lifecycle;
     mod workflow_interactive;
@@ -541,9 +544,17 @@ mod tests {
 
     /// Opens a Backend whose only agent is the E2E fake, and waits for it to report Ready.
     fn open_ready_backend(setup: &DesktopTestSetup) -> Result<Backend, Box<dyn std::error::Error>> {
+        open_ready_backend_with(setup, |paths| Backend::open(paths).map_err(Into::into))
+    }
+
+    /// Opens a ready Backend through a case-specific constructor, such as the E2E inactivity seam.
+    fn open_ready_backend_with(
+        setup: &DesktopTestSetup,
+        open: impl FnOnce(ora_backend::BackendPaths) -> Result<Backend, Box<dyn std::error::Error>>,
+    ) -> Result<Backend, Box<dyn std::error::Error>> {
         let mut backend_paths = setup.backend_paths().clone();
         backend_paths.deno_path = env!("CARGO_BIN_EXE_fake-agent").into();
-        let backend = Backend::open(backend_paths)?;
+        let backend = open(backend_paths)?;
         let expected = agent_ref();
         wait_until("fake OpenCode agent did not become ready", || {
             backend
