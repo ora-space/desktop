@@ -15,11 +15,11 @@ use agent_client_protocol_schema::v1::{
 use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
-    AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
-    Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
-    RepositoryError, StructuredOutputError, VariableTemplateError, WorkflowGraphNode,
-    WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload, extract_json_object,
-    render_variable_template, validate_against_schema,
+    AgentConfig, AgentDefinitionRepository, AgentOutputContract, AgentSkill,
+    BindWorkflowNodeSessionResult, Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure,
+    NodeFailureKind, RepositoryError, StructuredOutputError, VariableTemplateError,
+    WorkflowGraphNode, WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload,
+    extract_json_object, render_variable_template, validate_against_schema,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -31,7 +31,7 @@ use ora_logging::ora_warn;
 
 use super::transitions::WorkflowRunTransitions;
 use super::worktree::{
-    capture_completion_baseline, capture_worktree_snapshot, compute_file_changes,
+    WorktreeBaseline, capture_completion_baseline, capture_worktree_snapshot, compute_file_changes,
     persist_worktree_baseline,
 };
 use std::collections::HashSet;
@@ -40,6 +40,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 
+#[cfg(test)]
+mod completion_baseline_tests;
 mod first_turn_park;
 #[cfg(test)]
 mod inactivity_tests;
@@ -327,6 +329,20 @@ impl NodeExecutionError {
     }
 }
 
+/// Captures the baseline for one Agent node.
+///
+/// Completion declarations are a gate only for interactive nodes. An automatic node that keeps a
+/// stale `completion.files` declaration after `interactive` is turned off must keep the ordinary
+/// Git-visible baseline, or declared ignored/large files would appear in its automatic diff even
+/// though no completion file check runs.
+fn capture_agent_baseline(worktree_root: &Path, config: &AgentConfig) -> Option<WorktreeBaseline> {
+    let completion = config
+        .interactive
+        .then_some(config.completion.as_ref())
+        .flatten();
+    capture_completion_baseline(worktree_root, completion)
+}
+
 /// Runs the start → prompt → stop session chain for one agent node.
 #[allow(clippy::too_many_arguments)]
 async fn drive_agent_node(
@@ -474,8 +490,7 @@ async fn drive_agent_node(
             context.run.snapshot_id.as_ref(),
             clock.now_timestamp_millis(),
         )?;
-        let baseline =
-            capture_completion_baseline(&workspace_root, config.completion.as_ref());
+        let baseline = capture_agent_baseline(&workspace_root, config);
 
         let mut stream = agent_runtime
             .prompt_session_with_inactivity_policy(PromptSessionRequest {
