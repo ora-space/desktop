@@ -100,6 +100,27 @@ impl Backend {
     /// Agent providers come from installed plugins discovered under `paths.home_directory`, which
     /// also owns their processes and default worktrees.
     pub fn open(paths: BackendPaths) -> Result<Self, BackendBootstrapError> {
+        Self::open_with_prompt_inactivity_windows(paths, /*prompt_inactivity_windows*/ None)
+    }
+
+    /// Opens one E2E Backend whose prompt inactivity schedule is compressed for this instance.
+    ///
+    /// The shared runtime still owns retries, cancellation, and attribution; only the window
+    /// lengths change so a test can observe the production schedule without waiting 45-120
+    /// seconds. Production callers use [`Backend::open`] and keep the fixed windows.
+    #[cfg(feature = "test-support")]
+    pub fn open_with_test_prompt_inactivity_windows(
+        paths: BackendPaths,
+        prompt_inactivity_windows: &'static [std::time::Duration],
+    ) -> Result<Self, BackendBootstrapError> {
+        Self::open_with_prompt_inactivity_windows(paths, Some(prompt_inactivity_windows))
+    }
+
+    /// Runs the production composition with an optional instance-local inactivity schedule.
+    fn open_with_prompt_inactivity_windows(
+        paths: BackendPaths,
+        prompt_inactivity_windows: Option<&'static [std::time::Duration]>,
+    ) -> Result<Self, BackendBootstrapError> {
         let database_path = paths.app_data_directory.join("ora.sqlite3");
         let skills_root = paths.app_data_directory.join("atoms").join("skills");
         let sessions_root = paths.app_data_directory.join("sessions");
@@ -164,6 +185,12 @@ impl Backend {
             })
             .map_err(BackendBootstrapError::AgentRuntime)?,
         );
+        #[cfg(feature = "test-support")]
+        if let Some(prompt_inactivity_windows) = prompt_inactivity_windows {
+            agent_runtime.set_test_prompt_inactivity_windows(prompt_inactivity_windows);
+        }
+        #[cfg(not(feature = "test-support"))]
+        let _ = prompt_inactivity_windows;
         plugin.set_mcp_wakeup({
             let runtime = agent_runtime.clone();
             Arc::new(move || runtime.notify_mcp_desired_changed())
@@ -181,6 +208,8 @@ impl Backend {
         let run_locks = workflow_run_assembly.run_locks;
         let workflow_engine = workflow_run_assembly.engine;
         let workflow_transitions = workflow_run_assembly.transitions;
+        #[cfg(feature = "test-support")]
+        let owner_stream_drop = workflow_run_assembly.owner_stream_drop;
 
         // Crash recovery: fail orphaned node runs, then reconcile stalled Running runs left by a
         // previous process before serving new commands (best-effort; a failure must not block
@@ -221,6 +250,8 @@ impl Backend {
             transitions: workflow_transitions,
             plugin_api: plugin.clone(),
             clock,
+            #[cfg(feature = "test-support")]
+            owner_stream_drop,
         }));
 
         let session = Arc::new(Sessions::new(
