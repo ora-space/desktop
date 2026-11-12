@@ -4,6 +4,26 @@ import {
   validateWorkflowDefinition,
 } from "./definition";
 import { parseWorkflowGraph, serializeWorkflowGraph } from "./graph-codec";
+import type { WorkflowAgentConfig } from "./types";
+
+/** Builds a complete interactive agent config; the case varies only the completion policy. */
+function agentConfig(
+  overrides: Partial<WorkflowAgentConfig> = {},
+): WorkflowAgentConfig {
+  return {
+    schemaVersion: 3,
+    executor: {
+      agentCli: "official/ora-space.opencode",
+      modelId: "anthropic/claude-sonnet-4",
+    },
+    roleId: "",
+    skills: [],
+    mcps: [],
+    prompt: "review",
+    interactive: true,
+    ...overrides,
+  };
+}
 
 describe("authoring document normalization", () => {
   it("preserves spare cycles through persistence while executable validation remains strict", () => {
@@ -52,7 +72,7 @@ describe("authoring document normalization", () => {
             kind: "agent",
             title: "Review",
             description: "",
-            agentConfig: { interactive: true, prompt: "review" },
+            agentConfig: agentConfig(),
           },
         },
         {
@@ -62,11 +82,7 @@ describe("authoring document normalization", () => {
             kind: "agent",
             title: "Legacy",
             description: "",
-            agentConfig: {
-              interactive: true,
-              prompt: "review",
-              completionSignal: "end_turn",
-            },
+            agentConfig: agentConfig({ completionSignal: "end_turn" }),
           },
         },
       ],
