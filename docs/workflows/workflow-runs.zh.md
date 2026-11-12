@@ -6,27 +6,27 @@
 
 ## 模型
 
-| 领域类型 | 数据表 | 记录 |
-|---|---|---|
-| `WorkflowRun` | `workflow_runs` | 固定的 `snapshot_id`、显示名称、`workspace_id`、启动 `input`、状态和运行载荷（变量池和调度器状态） |
-| `WorkflowNodeRun` | `workflow_node_runs` | 一次已执行的节点尝试，带作用域、迭代轮次、会话、输出和载荷 |
-| `WorkflowExecutionScope` | `workflow_execution_scopes` | 根执行和 Loop 轮次，见[循环与迭代](loops-and-iterations.zh.md#执行作用域) |
+| 领域类型                 | 数据表                      | 记录                                                                                               |
+| ------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------- |
+| `WorkflowRun`            | `workflow_runs`             | 固定的 `snapshot_id`、显示名称、`workspace_id`、启动 `input`、状态和运行载荷（变量池和调度器状态） |
+| `WorkflowNodeRun`        | `workflow_node_runs`        | 一次已执行的节点尝试，带作用域、迭代轮次、会话、输出和载荷                                         |
+| `WorkflowExecutionScope` | `workflow_execution_scopes` | 根执行和 Loop 轮次，见[循环与迭代](loops-and-iterations.zh.md#执行作用域)                          |
 
 运行和节点共用 `Pending | Running | Succeeded | Failed | Cancelled`。从未开始的节点没有行；前端通过比较图节点和已记录的行推出"未开始"。等待后续输入的交互节点持久化为 `Pending`，契约把带有这种节点的运行中的运行报告为 `AwaitingInput`，让侧边栏能提示需要人来处理。
 
 ## 生命周期
 
-| 操作 | 效果 |
-|---|---|
-| `createWorkflowRun` | 校验并持久化一个 `Pending` 运行 |
-| `startWorkflowRun` | 校验可执行性并开始调度 |
-| `updateWorkflowRunInput` | 在运行开始之前填写 Start 输入 |
-| `cancelWorkflowRun`、`restartWorkflowRun` | 取消；以新的根执行从头重新开始 |
-| `previewWorkflowRunResume`、`resumeWorkflowRunFromFailure` | 预览并执行恢复，见[恢复失败的运行](#恢复失败的运行) |
-| `completeWorkflowNode` | 手动完成一个交互节点 |
-| `diagnoseWorkflowNodeFailure` | 按需对失败节点做 AI 诊断 |
-| `getWorkflowRun`、`listWorkflowRuns`、`listWorkflowRunsByWorkflow`、`listWorkflowNodeRuns` | 读取运行、按项目的摘要和节点历史 |
-| `renameWorkflowRun`、`deleteWorkflowRun` | 改名；删除不在活跃状态的运行 |
+| 操作                                                                                       | 效果                                                |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| `createWorkflowRun`                                                                        | 校验并持久化一个 `Pending` 运行                     |
+| `startWorkflowRun`                                                                         | 校验可执行性并开始调度                              |
+| `updateWorkflowRunInput`                                                                   | 在运行开始之前填写 Start 输入                       |
+| `cancelWorkflowRun`、`restartWorkflowRun`                                                  | 取消；以新的根执行从头重新开始                      |
+| `previewWorkflowRunResume`、`resumeWorkflowRunFromFailure`                                 | 预览并执行恢复，见[恢复失败的运行](#恢复失败的运行) |
+| `completeWorkflowNode`                                                                     | 手动完成一个交互节点                                |
+| `diagnoseWorkflowNodeFailure`                                                              | 按需对失败节点做 AI 诊断                            |
+| `getWorkflowRun`、`listWorkflowRuns`、`listWorkflowRunsByWorkflow`、`listWorkflowNodeRuns` | 读取运行、按项目的摘要和节点历史                    |
+| `renameWorkflowRun`、`deleteWorkflowRun`                                                   | 改名；删除不在活跃状态的运行                        |
 
 ### 创建
 
@@ -64,6 +64,10 @@
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。只有 `EndTurn` 且没有 blocker 的回合才能正常完成；停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。
 
+节点可以在 `agentConfig.completion.files` 声明 1–32 个 workspace 相对的产出物路径或受限 glob：支持 `*`（不跨 `/`）、`**`（跨目录）和 `?`，不支持字符类、花括号、转义与取反；匹配大小写敏感、不做 Unicode 归一化，目录、gitlink 和逃出 workspace 的符号链接都不算匹配。声明 `completion` 的图必须写 `agentConfig.schemaVersion: 4`；版本 3 携带 `completion`、版本大于 4、或出现 `criteria`、`checklist` 等未定义字段时，图校验直接拒绝，而不是静默丢弃。编辑器在首次添加文件时写入版本 4，移除最后一个文件时清空声明并回到版本 3。
+
+文件检查在每次点击完成时按现场 workspace 执行，不写入 `payload.completion`：每个声明至少要有一个匹配的普通文件存在，`mustChange: true` 还要求至少一个匹配文件相对节点启动时持久化的 worktree 基线发生变化。缺失或未变更分别返回 `file_missing` / `file_unchanged`，blocker 的 `params.path` 是原始声明；补齐或修改文件后可以直接重试，不需要重新停靠；`force` 可以覆盖这些 blocker 并写入 `completion_forced` 审计。基线缺失或损坏时，存在性仍然检查，`mustChange` 无法判定而降级为 `file_check_unavailable` warning，随完成快照投影可见并在完成后保留。Git 忽略的文件或内容快照超出预算时，存在性仍按 workspace 内的实际普通文件判定；旧基线用 `null` 记录、无法证明二进制文件是否变更时，同样只产生这个 warning。
+
 workflow 自己发起的首轮回合本身从不读作 ready：它的 `EndTurn` 只表示 agent 结束了这次回复，而这次回复可能在向用户提问。快照因此带 `turn_unconfirmed` blocker。步骤卡片提供「确认并完成」（发送 `confirmInitialTurn` 的普通完成，不写强制审计）与「继续当前步骤」，右下角推进按钮在该回合 ready 之前不可用。由用户回复开启的回合仍按上面的规则：`EndTurn` 且没有 blocker 时正常完成，卡片重新给出「完成并进入下一步」。`force` 不能代替确认，两个字段同时为 true 的请求返回 `invalid_request`。
 
 每次停靠都在写入处分类：`parkKind` 为 `awaiting_user` 的只有首轮未确认、用户主动停止和 provisional 快照，超时、截断、拒答、未知终态、会话崩溃、流断开与输出契约失败都是 `abnormal`；`stopCause` 记录 owning prompt 的结束原因（`user_stopped`、`prompt_timed_out`、`stream_dropped`、`session_crashed`、`unknown`）。异常停靠的卡片显示原因，只提供继续或二次确认后的强制完成；右下角按钮只对 ready 的回合启用。缺这些字段的旧快照沿用原来的「已暂停／状态未知」展示，provisional 快照被修复时保留它停靠时的 origin 与 stop cause。
@@ -91,13 +95,13 @@ Start 输入把表单控件与变量池类型分开：文本、段落和下拉�
 
 节点失败时，运行立即失败，正在进行的兄弟节点继续运行到结束；之后调度器不再派发任何东西。失败的节点运行记录 `payload.error_detail`：`kind`（机械的分类，从不由模型推断）、`message`、`source_chain`、`attempt`、`resumable`、`injects_previous_failure`、`auto_retryable` 和 `recorded_at`。
 
-| 类型 | 可恢复 | 自动重试 |
-|---|---|---|
-| `session`、`session_ended_without_stop_reason`、`session_binding_rejected` | 是 | 是 |
-| `workflow_model_not_found`、`missing_agent_config`、`interrupted_by_restart`、`repository`、`baseline_persist` | 是 | 否 |
-| `structured_output`、`agent_refusal`、`unknown_stop_reason` | 否 | 是 |
-| `multiple_outputs` | 否 | 否 |
-| `prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`condition_evaluation`、`aggregator_no_match` | 否 | 否 |
+| 类型                                                                                                                                          | 可恢复 | 自动重试 |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
+| `session`、`session_ended_without_stop_reason`、`session_binding_rejected`                                                                    | 是     | 是       |
+| `workflow_model_not_found`、`missing_agent_config`、`interrupted_by_restart`、`repository`、`baseline_persist`                                | 是     | 否       |
+| `structured_output`、`agent_refusal`、`unknown_stop_reason`                                                                                   | 否     | 是       |
+| `multiple_outputs`                                                                                                                            | 否     | 否       |
+| `prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`condition_evaluation`、`aggregator_no_match` | 否     | 否       |
 
 `resumable` 预测用同一快照重跑是否是合理的第一步；对失败或已取消的空闲运行，恢复总是可用的。只有 Agent 行为类的失败（`structured_output`、`agent_refusal`、`unknown_stop_reason`、`multiple_outputs`）会注入到下一次尝试的 prompt 中，并且只在运行级开关 `inject_last_failure` 开启时（默认开启）；渲染出的内容保存为 `payload.injected_failure_context`。
 
@@ -119,10 +123,10 @@ Start 输入把表单控件与变量池类型分开：文本、段落和下拉�
 
 每个节点在运行之前在 `refs/ora/checkpoints/<node_run_id>` 下记录一个 Git 检查点（见 [Gitlancer](../workspaces/gitlancer.zh.md)），在载荷中记录 `checkpoint`、`checkpoint_error` 和 `file_changes`。恢复提供三种回滚方式；回滚之前，Workspace 会被快照为 `pre-rollback-<run>-<ts>`，以便撤销。
 
-| 方式 | 效果 | 不可用的情况 |
-|---|---|---|
-| `keep` | 保持 Workspace 不变 | 从不 |
-| `node_files` | 只恢复失败节点改动的路径 | `no_file_changes`；恢复单位是容器时为 `composite_region` |
+| 方式         | 效果                                    | 不可用的情况                                                      |
+| ------------ | --------------------------------------- | ----------------------------------------------------------------- |
+| `keep`       | 保持 Workspace 不变                     | 从不                                                              |
+| `node_files` | 只恢复失败节点改动的路径                | `no_file_changes`；恢复单位是容器时为 `composite_region`          |
 | `checkpoint` | 把整个 Workspace 恢复到恢复单位的检查点 | `no_checkpoint`、`siblings_ran_after_checkpoint`、`not_resumable` |
 
 被自动重试替代的节点与它重试链上的每次尝试（`payload.retry_chain`）作为一个单位回滚。按需的 AI 诊断写入 `payload.ai_diagnosis`，标注为推测，调度、恢复、回滚和快照切换从不读取它。
