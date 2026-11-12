@@ -182,6 +182,7 @@ pub(crate) fn build_workflow_run_engine(
     baselines_root: PathBuf,
     clock: SystemClock,
     app_events: AppEventPublisher,
+    agent_signals: Arc<super::interactive::AgentSignalStore>,
 ) -> WorkflowRunEngineAssembly {
     let run_locks = KeyedResourceLocks::new();
     let callback = Arc::new(WorkflowRunEngineCallback::new(run_locks.clone()));
@@ -206,6 +207,7 @@ pub(crate) fn build_workflow_run_engine(
         sessions_root,
         baselines_root,
         transitions.clone(),
+        agent_signals,
     );
     #[cfg(feature = "test-support")]
     let executor = executor.with_test_owner_stream_drop(owner_stream_drop.clone());

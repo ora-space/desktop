@@ -221,6 +221,7 @@ impl Backend {
             baselines_root.clone(),
             clock,
             app_events.publisher(),
+            agent_signals.clone(),
         );
         let workflow_run_engine = workflow_run_assembly.control;
         let run_locks = workflow_run_assembly.run_locks;

@@ -3,6 +3,7 @@ use super::completion_snapshot::{
     CompletionMeta, CompletionPolicy, StopCause, TurnOrigin, completion_payload_with_meta,
     derive_completion_snapshot, unknown_completion_snapshot,
 };
+use super::interactive::AgentSignalStore;
 use super::last_failure::previous_failure_for_injection;
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::{OwnerStreamDropControl, OwnerStreamDropWaiter};
@@ -14,8 +15,8 @@ use crate::clock::SystemClock;
 use crate::error::BackendError;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionConfigSelectOptions,
+    ContentBlock, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionConfigSelectOptions, TextContent,
 };
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
@@ -67,6 +68,8 @@ pub struct WorkflowRunNodeExecutor {
     baselines_root: PathBuf,
     /// Commits the interactive park transition with the shared publish-after-commit discipline.
     transitions: Arc<WorkflowRunTransitions>,
+    /// Per-attempt tokens and accepted completion signals shared with the MCP server.
+    agent_signals: Arc<AgentSignalStore>,
     loop_exit_tasks: Arc<loop_exit::LoopExitTasks>,
     /// One-shot E2E control for abandoning a node's real owning prompt stream.
     #[cfg(feature = "test-support")]
@@ -86,6 +89,7 @@ impl WorkflowRunNodeExecutor {
         sessions_root: PathBuf,
         baselines_root: PathBuf,
         transitions: Arc<WorkflowRunTransitions>,
+        agent_signals: Arc<AgentSignalStore>,
     ) -> Self {
         Self {
             agent_runtime,
@@ -96,6 +100,7 @@ impl WorkflowRunNodeExecutor {
             sessions_root,
             baselines_root,
             transitions,
+            agent_signals,
             loop_exit_tasks: Arc::default(),
             #[cfg(feature = "test-support")]
             owner_stream_drop: Arc::default(),
@@ -133,6 +138,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let transitions = self.transitions.clone();
         #[cfg(feature = "test-support")]
         let owner_stream_drop = self.owner_stream_drop.clone();
+        let agent_signals = self.agent_signals.clone();
         let node_run_id = node_run_id.clone();
         let node = node.clone();
         let graph = graph.clone();
@@ -150,6 +156,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &sessions_root,
                 &baselines_root,
                 &transitions,
+                &agent_signals,
                 &node_run_id,
                 &node,
                 &graph,
@@ -362,17 +369,14 @@ async fn park_first_interactive_turn(
     session_id: SessionId,
     output_contract: Option<AgentOutputContract>,
     completion_signal: ora_application::AgentCompletionSignal,
+    agent_signals: Arc<AgentSignalStore>,
+    attempt_id: Option<String>,
     stop_cause: Option<StopCause>,
 ) -> Result<(), NodeExecutionError> {
     tokio::task::spawn_blocking(move || {
         let policy = match completion_signal {
             ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
             ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
-        };
-        let meta = CompletionMeta {
-            policy,
-            agent_signal: None,
-            confirmation: None,
         };
         let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
             Ok(history) => derive_completion_snapshot(
@@ -390,6 +394,20 @@ async fn park_first_interactive_turn(
                 );
                 unknown_completion_snapshot(false, TurnOrigin::Workflow, Some(StopCause::Unknown))
             }
+        };
+        // Bind only the settlement this attempt produced; a late tool call after the turn changed
+        // cannot attach its signal to a newer turn.
+        let agent_signal = attempt_id.as_deref().and_then(|attempt| {
+            let turn_key = snapshot.turn_key?;
+            agent_signals.bind(&format!("{node_run_id}"), attempt, turn_key)
+        });
+        if let Some(attempt) = attempt_id.as_deref() {
+            agent_signals.revoke_attempt(&format!("{node_run_id}"), attempt);
+        }
+        let meta = CompletionMeta {
+            policy,
+            agent_signal,
+            confirmation: None,
         };
         transitions
             .park_node_run(
@@ -418,6 +436,7 @@ async fn drive_agent_node(
     sessions_root: &Path,
     baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
+    agent_signals: &Arc<AgentSignalStore>,
     node_run_id: &WorkflowNodeRunId,
     node: &WorkflowGraphNode,
     graph: &ora_application::WorkflowGraph,
@@ -526,7 +545,7 @@ async fn drive_agent_node(
             &config.skills,
             &workspace_root,
         )?;
-        let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
+        let mut prompt = assemble_workflow_prompt(WorkflowPromptRequest {
             node: &rendered_node,
             graph: Some(graph),
             worktree_root: &workspace_root,
@@ -538,6 +557,21 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
+        // Issue one completion token for this attempt. It travels in the prompt (not the recorded
+        // transcript) and is the only value the host MCP tool accepts for this turn.
+        let completion_attempt =
+            if config.completion_signal == ora_application::AgentCompletionSignal::Agent {
+                let attempt_id = uuid::Uuid::new_v4().to_string();
+                let token = agent_signals.issue(&format!("{node_run_id}"), &attempt_id);
+                prompt.push(ContentBlock::Text(TextContent::new(format!(
+                    "<workflow_completion>\nWhen this step is complete, call the tool \
+                     ora_complete_workflow_step and pass this attemptToken unchanged: \
+                     {token}\n</workflow_completion>"
+                ))));
+                Some(attempt_id)
+            } else {
+                None
+            };
         if let Some(previous) = previous_failure.as_ref() {
             repository.record_node_injected_failure(
                 node_run_id,
@@ -639,6 +673,8 @@ async fn drive_agent_node(
                 session_id.clone(),
                 config.output_contract.clone(),
                 config.completion_signal,
+                agent_signals.clone(),
+                completion_attempt,
                 // A first turn the user stopped must still park as awaiting them, so the cause
                 // travels with the park instead of being read back from the stop reason.
                 StopCause::of_prompt_end(stream.end_cause()),
