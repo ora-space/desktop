@@ -63,9 +63,16 @@ fn cleanup_polls_until_the_turn_ended_is_durable() {
             tokio::time::sleep(Duration::from_millis(200)).await;
             end_fixture_turn(&late_root, &late_session, StopReason::EndTurn);
         });
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
-            .await
-            .unwrap();
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &temp.path().join("baselines"),
+            &transitions,
+            &node_run_id,
+            None,
+        )
+        .await
+        .unwrap();
         late_boundary.await.unwrap();
 
         let parked = parked_node(&pool, &run_id, "agent");
@@ -125,9 +132,16 @@ fn cleanup_parks_provisionally_when_the_turn_never_ends() {
         .await
         .unwrap();
 
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
-            .await
-            .unwrap();
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &temp.path().join("baselines"),
+            &transitions,
+            &node_run_id,
+            None,
+        )
+        .await
+        .unwrap();
 
         let parked = parked_node(&pool, &run_id, "agent");
         assert_eq!(parked.status, WorkflowNodeStatus::Pending);
@@ -188,9 +202,16 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         .unwrap();
         write_open_turn(&sessions_root, session_id.as_ref(), "go", "partial");
         end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::Cancelled);
-        end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
-            .await
-            .unwrap();
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &temp.path().join("baselines"),
+            &transitions,
+            &node_run_id,
+            None,
+        )
+        .await
+        .unwrap();
         let stopped =
             parse_completion_snapshot(parked_node(&pool, &run_id, "agent").payload.as_deref())
                 .expect("the stopped turn parked a snapshot");
@@ -221,6 +242,8 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -266,6 +289,7 @@ fn a_user_stop_parks_as_awaiting_participation() {
         end_human_turn(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
             &transitions,
             &node_run_id,
             Some(StopCause::UserStopped),
@@ -327,6 +351,7 @@ fn silent_timeout_stream_drop_and_session_crash_park_as_abnormal_with_their_caus
             end_human_turn(
                 &pool,
                 &sessions_root,
+                &temp.path().join("baselines"),
                 &transitions,
                 &node_run_id,
                 Some(cause),
@@ -360,5 +385,113 @@ fn silent_timeout_stream_drop_and_session_crash_park_as_abnormal_with_their_caus
                 "a turn ended by {cause:?} must park with that cause and as abnormal"
             );
         }
+    });
+}
+
+/// An interactive graph whose completion requires a changed file, so a missing baseline is visible.
+const INTERACTIVE_MUST_CHANGE_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"reports/keep.md","mustChange":true}]}}}}
+],"edges":[{"source":"start","target":"agent"}]}"#;
+
+/// The park snapshot carries `file_check_unavailable` when the `mustChange` baseline is absent.
+#[test]
+fn a_missing_baseline_warns_in_the_park_snapshot() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs) = started_run(&temp, &pool, INTERACTIVE_MUST_CHANGE_GRAPH);
+        let agent = node_runs
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .unwrap();
+        let (session_id, node_run_id) = bind_and_park(&pool, agent);
+        let sessions_root = temp.path().join("sessions");
+        let baselines_root = temp.path().join("baselines");
+        let (run_locks, completing) = locks();
+        let (transitions, _recording) = recording_transitions(&pool);
+        begin_human_turn(
+            &pool,
+            &run_locks,
+            &completing,
+            &transitions,
+            session_id.as_ref(),
+        )
+        .await
+        .unwrap();
+        write_open_turn(&sessions_root, session_id.as_ref(), "go", "done");
+        end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::EndTurn);
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &baselines_root,
+            &transitions,
+            &node_run_id,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let snapshot =
+            parse_completion_snapshot(parked_node(&pool, &run_id, "agent").payload.as_deref())
+                .expect("the park wrote a completion snapshot");
+        assert_eq!(
+            snapshot.warnings,
+            vec!["file_check_unavailable".to_string()]
+        );
+        assert_eq!(snapshot.blockers, Vec::new());
+    });
+}
+
+/// A baseline file that exists but cannot be parsed is unavailable, not silently usable.
+#[test]
+fn a_corrupt_baseline_warns_in_the_park_snapshot() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs) = started_run(&temp, &pool, INTERACTIVE_MUST_CHANGE_GRAPH);
+        let agent = node_runs
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .unwrap();
+        let (session_id, node_run_id) = bind_and_park(&pool, agent);
+        let sessions_root = temp.path().join("sessions");
+        let baselines_root = temp.path().join("baselines");
+        std::fs::create_dir_all(&baselines_root).unwrap();
+        std::fs::write(
+            baselines_root.join(format!("{}.json", node_run_id)),
+            "{not json",
+        )
+        .unwrap();
+        let (run_locks, completing) = locks();
+        let (transitions, _recording) = recording_transitions(&pool);
+        begin_human_turn(
+            &pool,
+            &run_locks,
+            &completing,
+            &transitions,
+            session_id.as_ref(),
+        )
+        .await
+        .unwrap();
+        write_open_turn(&sessions_root, session_id.as_ref(), "go", "done");
+        end_fixture_turn(&sessions_root, session_id.as_ref(), StopReason::EndTurn);
+        end_human_turn(
+            &pool,
+            &sessions_root,
+            &baselines_root,
+            &transitions,
+            &node_run_id,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let snapshot =
+            parse_completion_snapshot(parked_node(&pool, &run_id, "agent").payload.as_deref())
+                .expect("the park wrote a completion snapshot");
+        assert_eq!(
+            snapshot.warnings,
+            vec!["file_check_unavailable".to_string()]
+        );
+        assert_eq!(snapshot.blockers, Vec::new());
     });
 }

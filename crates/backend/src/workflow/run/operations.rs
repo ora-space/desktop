@@ -80,6 +80,7 @@ impl WorkflowRuns {
             self.completing_node_runs.clone(),
             self.transitions.clone(),
             self.sessions_root.clone(),
+            self.baselines_root.clone(),
         )
     }
 
@@ -222,18 +223,36 @@ impl WorkflowRuns {
             let run_id = run_id.clone();
             let node_id = node_id.clone();
             match spawn_repository_work(move || {
+                // Resolve the run workspace before preparing: the file gate reads the same
+                // workspace the node ran in, and both reads happen outside the per-run gate.
+                let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+                let workspace_id = repository
+                    .find_execution_context(&run_id)
+                    .map_err(|source| {
+                        BackendError::from(ApplicationError::WorkflowRunRepository { source })
+                    })?
+                    .ok_or_else(|| {
+                        BackendError::from(ApplicationError::WorkflowRunNotFound {
+                            run_id: run_id.to_string(),
+                        })
+                    })?
+                    .workspace
+                    .id;
+                let worktree_root = agent_runtime.workspace_cwd(&workspace_id)?;
                 let prepared = crate::workflow::run::interactive::prepare_completion(
                     &pool,
                     &sessions_root,
+                    &baselines_root,
+                    &worktree_root,
                     &run_id,
                     &node_id,
                     approval,
                 )?;
-                let worktree_root = agent_runtime.workspace_cwd(&prepared.workspace_id)?;
                 let file_changes = crate::workflow::run::interactive::completion_file_changes(
                     &baselines_root,
                     &prepared.node_run_id,
                     &worktree_root,
+                    prepared.completion.as_ref(),
                 );
                 Ok((prepared, file_changes))
             })

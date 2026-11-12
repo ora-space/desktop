@@ -1,12 +1,15 @@
 use super::WorkflowRuns;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::workflow::run::test_fixture::{
-    AGENT_GRAPH, RecordingExecutor, bind_and_park, bootstrap, run_test, started_run,
-    started_run_with, write_open_turn, write_settled_turn,
+    AGENT_GRAPH, RecordingExecutor, bind_and_park, bootstrap, init_git_workspace, run_test,
+    started_run, started_run_with, write_open_turn, write_settled_turn,
+};
+use crate::workflow::run::worktree::{
+    capture_completion_baseline, capture_worktree_snapshot, persist_worktree_baseline,
 };
 use crate::{Backend, test_backend::backend_paths};
 use ora_application::{
-    NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, SessionRepository,
+    NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, SessionRepository, WorkflowGraph,
     WorkflowRunEngineRepository, WorkflowRunRepository,
 };
 use ora_contracts::*;
@@ -17,6 +20,8 @@ use ora_domain::{SessionId, WorkflowNodeRunId};
 use ora_history::history_path;
 use pretty_assertions::assert_eq;
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -25,6 +30,8 @@ struct Fixture {
     backend: Backend,
     runs: Arc<WorkflowRuns>,
     node_run_id: String,
+    /// The Git workspace the run executes in, so completion file checks read real files.
+    workspace: PathBuf,
 }
 
 impl Fixture {
@@ -46,6 +53,42 @@ impl Fixture {
             .expect("agent node");
         let (_, node_run_id) = bind_and_park(&runs.pool, node);
         Self {
+            workspace: temporary.path().join("fixture-project"),
+            temporary,
+            backend,
+            runs,
+            node_run_id: node_run_id.to_string(),
+        }
+    }
+
+    /// Seeds an awaiting interactive node on a caller-supplied graph in a real Git workspace.
+    ///
+    /// `seed` runs after the Git repository exists and before the node starts, so the baseline the
+    /// caller persists describes the same tree the completion check later inspects.
+    fn awaiting_on_git_graph(graph: &str, seed: impl FnOnce(&std::path::Path)) -> Self {
+        let temporary = TempDir::new().expect("run fixture");
+        let workspace = init_git_workspace(&temporary);
+        seed(&workspace);
+        let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
+            .expect("backend composition");
+        let runs = backend.workflow_runs();
+        let (_, nodes) = started_run(&temporary, &runs.pool, graph);
+        let node = nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let (_, node_run_id) = bind_and_park(&runs.pool, node);
+        let parsed = WorkflowGraph::parse(graph).expect("parse fixture graph");
+        let completion = parsed
+            .execution_node("agent")
+            .and_then(|node| node.agent_config.as_ref())
+            .and_then(|config| config.completion.as_ref());
+        let baseline =
+            capture_completion_baseline(&workspace, completion).expect("capture fixture baseline");
+        persist_worktree_baseline(&runs.baselines_root, &node_run_id, &baseline)
+            .expect("persist fixture baseline");
+        Self {
+            workspace,
             temporary,
             backend,
             runs,
@@ -66,6 +109,572 @@ impl Fixture {
     fn settle_turn(&self) {
         write_settled_turn(&self.runs.sessions_root, "session-1", "go", "Final answer");
     }
+
+    /// Completes the node through the production use case, optionally forcing past blockers.
+    async fn complete(
+        &self,
+        force: bool,
+    ) -> Result<CompleteWorkflowNodeResponse, crate::BackendError> {
+        self.runs
+            .complete_node(CompleteWorkflowNodeRequest {
+                run_id: "run-1".to_string(),
+                node_id: "agent".to_string(),
+                force,
+                confirm_initial_turn: None,
+                requester: Some(NodeCompletionRequester::Human),
+            })
+            .await
+    }
+}
+
+/// Runs one Git command in a fixture workspace and returns trimmed stdout.
+fn run_git(cwd: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args([
+            "-c",
+            "user.name=ora-test",
+            "-c",
+            "user.email=ora-test@example.com",
+        ])
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// An interactive agent that declares two deliverables: one existence check and one change check.
+const COMPLETION_AGENT_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"reports/new.md"},{"path":"reports/keep.md","mustChange":true}]}}}}
+],"edges":[{"source":"start","target":"agent"}]}"#;
+
+/// The same graph with only a `mustChange` declaration, used for baseline degradation.
+const COMPLETION_MUST_CHANGE_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"reports/keep.md","mustChange":true}]}}}}
+],"edges":[{"source":"start","target":"agent"}]}"#;
+
+/// Parses one node run's payload JSON, which is where the read projection finds `completion`.
+fn node_payload(node: &WorkflowNodeRun) -> serde_json::Value {
+    serde_json::from_str(node.payload.as_deref().expect("node payload")).expect("node payload JSON")
+}
+
+/// Maps one completion rejection onto its blockers, failing on any other public error.
+fn incomplete_blockers(error: crate::BackendError) -> Vec<WorkflowNodeCompletionBlocker> {
+    match error.public_error() {
+        PublicError::WorkflowNodeIncomplete(params) => params.blockers.clone(),
+        other => panic!("expected workflow_node_incomplete, got {other:?}"),
+    }
+}
+
+/// A missing path blocks first; after it is created, an unchanged path blocks; then it completes.
+#[test]
+fn completion_files_block_missing_and_unchanged_then_allow_a_retry() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_AGENT_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fixture.settle_turn();
+
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("missing and unchanged deliverables block completion"),
+        );
+        assert_eq!(
+            blockers,
+            vec![
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("reports/new.md".to_string()),
+                    }),
+                },
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("reports/keep.md".to_string()),
+                    }),
+                },
+            ]
+        );
+        // The rejected completion left the node awaiting input and wrote no file blockers into the
+        // snapshot the projection reads.
+        let detail = fixture.detail();
+        assert_eq!(detail.run.status, WorkflowRunStatus::AwaitingInput);
+        let node = detail
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload = node_payload(node);
+        assert_eq!(
+            payload["completion"]["blockers"],
+            serde_json::json!([]),
+            "file blockers are computed at completion and never written into the park snapshot"
+        );
+        assert!(
+            !payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == "file_check_unavailable"),
+            "a present baseline must not warn"
+        );
+
+        fs::write(fixture.workspace.join("reports/new.md"), "fresh\n").expect("add deliverable");
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("the unchanged deliverable still blocks"),
+        );
+        assert_eq!(
+            blockers,
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("reports/keep.md".to_string()),
+                }),
+            }]
+        );
+
+        fs::write(
+            fixture.workspace.join("reports/keep.md"),
+            "original\nupdated\n",
+        )
+        .expect("change deliverable");
+        let response = fixture
+            .complete(false)
+            .await
+            .expect("both deliverables now satisfy the declaration");
+        assert_eq!(response.run.status, WorkflowRunStatus::Succeeded);
+        // A fresh turn is not needed: the retry after user edits completes through the same entry.
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        assert_eq!(node.status, WorkflowNodeStatus::Succeeded);
+    });
+}
+
+/// File blockers join the forced audit while staying out of the persisted completion snapshot.
+#[test]
+fn forcing_a_completion_records_file_blockers_in_its_audit() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_AGENT_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fixture.settle_turn();
+
+        let response = fixture
+            .complete(true)
+            .await
+            .expect("force overrides file blockers");
+        assert_eq!(response.run.status, WorkflowRunStatus::Succeeded);
+
+        let node = SqliteWorkflowRunRepository::new(fixture.runs.pool.clone())
+            .list_node_runs(&ora_domain::WorkflowRunId::new("run-1"))
+            .expect("node runs")
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload: serde_json::Value =
+            serde_json::from_str(node.payload.as_deref().expect("payload")).expect("payload JSON");
+        assert_eq!(
+            payload["completion_forced"]["blockers"],
+            serde_json::json!([
+                { "kind": "file_missing", "params": { "path": "reports/new.md" } },
+                { "kind": "file_unchanged", "params": { "path": "reports/keep.md" } }
+            ])
+        );
+        assert_eq!(
+            payload["completion"]["blockers"],
+            serde_json::json!([]),
+            "file blockers are computed at completion and never written into the park snapshot"
+        );
+    });
+}
+
+/// A missing baseline warns at completion, skips `mustChange`, and the warning survives success.
+#[test]
+fn a_missing_baseline_degrades_must_change_to_a_visible_warning() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        // Simulate a pre-upgrade node whose baseline was never persisted.
+        fs::remove_file(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+        )
+        .expect("remove baseline");
+        fixture.settle_turn();
+
+        let response = fixture
+            .complete(false)
+            .await
+            .expect("mustChange cannot be judged without a baseline, so it does not block");
+        assert_eq!(response.run.status, WorkflowRunStatus::Succeeded);
+
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload = node_payload(&node);
+        assert!(
+            payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == "file_check_unavailable"),
+            "the warning must be visible in the read projection, not only an error response"
+        );
+    });
+}
+
+/// Existence still blocks without a baseline; only the undecidable change requirement degrades.
+#[test]
+fn a_missing_baseline_still_checks_declared_file_existence() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_AGENT_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fs::remove_file(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+        )
+        .expect("remove baseline");
+        fixture.settle_turn();
+
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("the missing path still blocks without a baseline"),
+        );
+        assert_eq!(
+            blockers,
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("reports/new.md".to_string()),
+                }),
+            }]
+        );
+
+        fs::write(fixture.workspace.join("reports/new.md"), "fresh\n").expect("add deliverable");
+        fixture
+            .complete(false)
+            .await
+            .expect("the existing path and undecidable change requirement allow completion");
+    });
+}
+
+/// A baseline that becomes corrupt after the park still gets the warning added on completion.
+#[test]
+fn a_baseline_corrupted_after_park_warns_before_completing() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fixture.settle_turn();
+        let ready = serde_json::json!({
+            "completion": {
+                "userSeq": 0,
+                "turnKey": { "userSeq": 0, "endedSeq": 2 },
+                "stopReason": "end_turn",
+                "turnOrigin": "human",
+                "blockers": [],
+                "warnings": [],
+                "outputDigest": format!(
+                    "sha256:{}",
+                    ora_utils::hash::sha256_hex(b"Final answer")
+                ),
+                "provisional": false,
+            }
+        });
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+                .repair_node_payload(&WorkflowNodeRunId::new(&fixture.node_run_id), &ready, 60)
+                .expect("seed the ready completion snapshot")
+        );
+        fs::write(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+            "{not json",
+        )
+        .expect("corrupt baseline after park");
+        fixture
+            .complete(false)
+            .await
+            .expect("undecidable mustChange does not block completion");
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload = node_payload(&node);
+        assert!(
+            payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == "file_check_unavailable"),
+            "completion must repair the parked snapshot with the warning it observed"
+        );
+    });
+}
+
+/// `*`, `**`, and `?` match their documented segments against a real workspace snapshot.
+#[test]
+fn completion_globs_match_files_in_the_run_workspace() {
+    run_test(async {
+        const GLOB_GRAPH: &str = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start"}},
+            {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"docs/*.md"},{"path":"docs/**/b.md"},{"path":"docs/?.md"}]}}}}
+        ],"edges":[{"source":"start","target":"agent"}]}"#;
+        let fixture = Fixture::awaiting_on_git_graph(GLOB_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("docs/nested")).expect("docs directory");
+            fs::write(workspace.join("docs/a.md"), "a\n").expect("a fixture");
+            fs::write(workspace.join("docs/nested/b.md"), "b\n").expect("b fixture");
+        });
+        fixture.settle_turn();
+        fixture
+            .complete(false)
+            .await
+            .expect("every supported wildcard finds its matching file");
+    });
+}
+
+/// Glob matching is case-sensitive, so a differently-cased directory does not satisfy a path.
+#[test]
+fn completion_globs_are_case_sensitive() {
+    run_test(async {
+        const CASE_GRAPH: &str = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start"}},
+            {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"DOCS/report.md"}]}}}}
+        ],"edges":[{"source":"start","target":"agent"}]}"#;
+        let fixture = Fixture::awaiting_on_git_graph(CASE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("docs")).expect("docs directory");
+            fs::write(workspace.join("docs/report.md"), "report\n").expect("report fixture");
+        });
+        fixture.settle_turn();
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("a case-different path does not match"),
+        );
+        assert_eq!(
+            blockers,
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("DOCS/report.md".to_string()),
+                }),
+            }]
+        );
+    });
+}
+
+/// A symbolic link whose target escapes the workspace is not a declared deliverable.
+#[cfg(unix)]
+#[test]
+fn completion_files_do_not_follow_a_symlink_out_of_the_workspace() {
+    run_test(async {
+        const SYMLINK_GRAPH: &str = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start"}},
+            {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"reports/escape.md"}]}}}}
+        ],"edges":[{"source":"start","target":"agent"}]}"#;
+        let outside = TempDir::new().expect("outside fixture");
+        fs::write(outside.path().join("secret.md"), "outside\n").expect("outside file");
+        let outside_file = outside.path().join("secret.md");
+        let fixture = Fixture::awaiting_on_git_graph(SYMLINK_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            std::os::unix::fs::symlink(&outside_file, workspace.join("reports/escape.md"))
+                .expect("escape symlink");
+        });
+        fixture.settle_turn();
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("an escaping symlink does not count as existence"),
+        );
+        assert_eq!(
+            blockers,
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("reports/escape.md".to_string()),
+                }),
+            }]
+        );
+    });
+}
+
+/// A binary deliverable is unchanged until its bytes differ, even though neither side is text.
+#[test]
+fn completion_must_change_detects_binary_content_changes() {
+    run_test(async {
+        const BINARY_GRAPH: &str = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start"}},
+            {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"assets/report.bin","mustChange":true}]}}}}
+        ],"edges":[{"source":"start","target":"agent"}]}"#;
+        let fixture = Fixture::awaiting_on_git_graph(BINARY_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("assets")).expect("assets directory");
+            fs::write(workspace.join("assets/report.bin"), [0, 1, 2, 3]).expect("binary fixture");
+        });
+        fixture.settle_turn();
+
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("identical binary content is unchanged"),
+        );
+        assert_eq!(
+            blockers,
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("assets/report.bin".to_string()),
+                }),
+            }]
+        );
+
+        // Same length, different bytes: a text-only snapshot would compare None == None here.
+        fs::write(fixture.workspace.join("assets/report.bin"), [0, 1, 2, 4])
+            .expect("change binary content");
+        fixture
+            .complete(false)
+            .await
+            .expect("binary content change satisfies mustChange");
+    });
+}
+
+/// A gitlink or directory is not a file deliverable even though git lists the former.
+#[test]
+fn completion_files_do_not_accept_a_gitlink_or_directory() {
+    run_test(async {
+        const DIRECTORY_GRAPH: &str = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start"}},
+            {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"vendor/module"},{"path":"reports"}]}}}}
+        ],"edges":[{"source":"start","target":"agent"}]}"#;
+        let fixture = Fixture::awaiting_on_git_graph(DIRECTORY_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "keep\n").expect("reports fixture");
+            fs::create_dir_all(workspace.join("vendor/module")).expect("gitlink directory");
+            let head = run_git(workspace, &["rev-parse", "HEAD"]);
+            run_git(
+                workspace,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("160000,{head},vendor/module"),
+                ],
+            );
+        });
+        fixture.settle_turn();
+
+        let blockers = incomplete_blockers(
+            fixture
+                .complete(false)
+                .await
+                .expect_err("a gitlink and a directory are not deliverable files"),
+        );
+        assert_eq!(
+            blockers,
+            vec![
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("vendor/module".to_string()),
+                    }),
+                },
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("reports".to_string()),
+                    }),
+                },
+            ]
+        );
+    });
+}
+
+/// A corrupt baseline is unavailable: it warns and skips only the undecidable mustChange check.
+#[test]
+fn a_corrupt_baseline_warns_and_degrades_must_change() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fs::write(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+            "{not json",
+        )
+        .expect("corrupt baseline");
+        fixture.settle_turn();
+
+        fixture
+            .complete(false)
+            .await
+            .expect("a corrupt baseline cannot decide mustChange, so it does not block");
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload = node_payload(&node);
+        assert!(
+            payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == "file_check_unavailable"),
+            "a corrupt baseline must be visible as unavailable, not silently treated as present"
+        );
+    });
 }
 
 /// Concurrent public completions commit once, retain the final assistant output, and clean up
@@ -198,6 +807,7 @@ fn an_unsettled_completion_is_rejected_with_its_blockers() {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnUnknown,
                     message: None,
+                    params: None,
                 }],
             })
         );
@@ -690,5 +1300,165 @@ fn loop_exit_recovery_finishes_bound_session_cleanup() {
         })
         .await
         .expect("exit acknowledgement resumes the outer graph");
+    });
+}
+
+/// A snapshot budget failure cannot turn an existing deliverable into a missing file.
+#[test]
+fn an_unrelated_oversized_file_does_not_hide_an_existing_deliverable() {
+    run_test(async {
+        let graph =
+            COMPLETION_MUST_CHANGE_GRAPH.replace("\"mustChange\":true", "\"mustChange\":false");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "deliverable\n").expect("deliverable");
+        });
+        fs::File::create(fixture.workspace.join("oversized-unrelated.bin"))
+            .expect("unrelated file")
+            .set_len(65 * 1024 * 1024)
+            .expect("exceed the documented snapshot budget without allocating contents");
+        assert!(capture_worktree_snapshot(&fixture.workspace).is_none());
+        fixture.settle_turn();
+        let completed = fixture.complete(false).await.expect(
+            "existence remains checkable when unrelated contents exceed the snapshot budget",
+        );
+        assert_eq!(completed.run.status, WorkflowRunStatus::Succeeded);
+    });
+}
+
+/// Declaring a real artifact is an existence check even when Git ignores the output directory.
+#[test]
+fn an_existing_gitignored_deliverable_satisfies_its_existence_declaration() {
+    run_test(async {
+        let graph =
+            COMPLETION_MUST_CHANGE_GRAPH.replace("\"mustChange\":true", "\"mustChange\":false");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join(".gitignore"), "reports/\n").expect("ignored outputs");
+            fs::write(workspace.join("reports/keep.md"), "deliverable\n").expect("deliverable");
+        });
+        fixture.settle_turn();
+        let completed = fixture
+            .complete(false)
+            .await
+            .expect("a declared file that exists must not be hidden by Git ignore rules");
+        assert_eq!(completed.run.status, WorkflowRunStatus::Succeeded);
+    });
+}
+
+/// A legacy null binary entry contains no digest and cannot prove a change after upgrade.
+#[test]
+fn a_legacy_binary_baseline_degrades_with_a_visible_warning() {
+    run_test(async {
+        let graph = COMPLETION_MUST_CHANGE_GRAPH.replace("reports/keep.md", "artifact.bin");
+        let fixture = Fixture::awaiting_on_git_graph(&graph, |workspace| {
+            fs::write(workspace.join("artifact.bin"), [0xff, 0x00, 0x80])
+                .expect("pre-existing binary deliverable");
+        });
+        fs::write(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+            serde_json::to_vec(&serde_json::json!({ "artifact.bin": null }))
+                .expect("legacy text-only snapshot"),
+        )
+        .expect("restore a legacy baseline that never recorded binary content");
+        fixture.settle_turn();
+        let completed = fixture
+            .complete(false)
+            .await
+            .expect("an unknowable legacy change check degrades instead of inventing a comparison");
+        assert_eq!(completed.run.status, WorkflowRunStatus::Succeeded);
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("completed node");
+        assert_eq!(
+            node_payload(&node)["completion"]["warnings"],
+            serde_json::json!(["file_check_unavailable"])
+        );
+    });
+}
+
+/// Unrelated oversized contents must not disable a usable mustChange baseline for a small file.
+#[test]
+fn must_change_stays_enforced_when_an_unrelated_file_exceeds_the_snapshot_budget() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "unchanged\n").expect("deliverable");
+        });
+        fs::File::create(fixture.workspace.join("oversized-unrelated.bin"))
+            .expect("unrelated file")
+            .set_len(65 * 1024 * 1024)
+            .expect("oversized sibling");
+        fixture.settle_turn();
+        assert_eq!(
+            incomplete_blockers(
+                fixture
+                    .complete(false)
+                    .await
+                    .expect_err("unrelated content cannot waive a usable file change requirement")
+            ),
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("reports/keep.md".to_string()),
+                }),
+            }]
+        );
+        fs::write(fixture.workspace.join("reports/keep.md"), "changed\n")
+            .expect("change deliverable");
+        assert_eq!(
+            fixture
+                .complete(false)
+                .await
+                .expect("changed file completes")
+                .run
+                .status,
+            WorkflowRunStatus::Succeeded
+        );
+    });
+}
+
+/// An ignored output that existed at node start still has a meaningful mustChange requirement.
+#[test]
+fn must_change_stays_enforced_for_a_declared_gitignored_file() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join(".gitignore"), "reports/\n").expect("ignore outputs");
+            fs::write(workspace.join("reports/keep.md"), "unchanged\n").expect("deliverable");
+        });
+        fixture.settle_turn();
+        assert_eq!(
+            incomplete_blockers(
+                fixture.complete(false).await.expect_err(
+                    "a declared existing artifact must change even when Git ignores it"
+                )
+            ),
+            vec![WorkflowNodeCompletionBlocker {
+                kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                message: None,
+                params: Some(WorkflowNodeCompletionBlockerParams {
+                    path: Some("reports/keep.md".to_string()),
+                }),
+            }]
+        );
+        fs::write(fixture.workspace.join("reports/keep.md"), "changed\n")
+            .expect("change deliverable");
+        assert_eq!(
+            fixture
+                .complete(false)
+                .await
+                .expect("changed ignored file completes")
+                .run
+                .status,
+            WorkflowRunStatus::Succeeded
+        );
     });
 }

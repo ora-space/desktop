@@ -745,6 +745,7 @@ mod tests {
                 prompt: "produce the decision".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
+                completion: None,
                 interactive: false,
                 output_contract: None,
             }),
@@ -844,6 +845,7 @@ mod tests {
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
+                completion: None,
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -943,6 +945,7 @@ mod tests {
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
+                completion: None,
                 interactive: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
@@ -1023,6 +1026,7 @@ mod tests {
                 prompt: "Review the proposal.".to_string(),
                 retry: ora_application::AgentRetryPolicy::default(),
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
+                completion: None,
                 interactive: false,
                 output_contract: None,
             }),

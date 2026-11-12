@@ -7,7 +7,7 @@
 
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason};
 use ora_agent_runtime::PromptEndCause;
-use ora_application::AgentOutputContract;
+use ora_application::{AgentCompletion, AgentOutputContract};
 use ora_history::{HistoryIntegrity, HistoryRecord, SessionHistory};
 use ora_utils::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
@@ -100,6 +100,10 @@ pub(crate) enum CompletionBlockerKind {
     TurnUnconfirmed,
     StructuredInvalid,
     OutputMissing,
+    /// No existing workspace file matched a declared `completion.files` entry.
+    FileMissing,
+    /// A `mustChange` declaration has existing matches but none differ from the node baseline.
+    FileUnchanged,
 }
 
 /// One blocker, with params carrying implementation detail the UI can localize.
@@ -127,6 +131,33 @@ impl CompletionBlocker {
             params: json!({ "message": message.into() }),
         }
     }
+}
+
+/// Warning written when a declared `mustChange` cannot be judged because its baseline is missing.
+pub(crate) const FILE_CHECK_UNAVAILABLE: &str = "file_check_unavailable";
+
+/// Adds the baseline-missing warning to a park-derived snapshot.
+///
+/// The baseline's presence is a fact known where the node parks, so the warning travels with the
+/// snapshot instead of being invented later from a rejected completion (ADR D4). A declaration
+/// with no `mustChange` file has nothing unavailable, so it adds no noise.
+pub(crate) fn with_file_check_warning(
+    mut snapshot: CompletionSnapshot,
+    completion: Option<&AgentCompletion>,
+    baseline_available: bool,
+) -> CompletionSnapshot {
+    let needs_baseline =
+        completion.is_some_and(|completion| completion.files.iter().any(|file| file.must_change));
+    if needs_baseline
+        && !baseline_available
+        && !snapshot
+            .warnings
+            .iter()
+            .any(|warning| warning == FILE_CHECK_UNAVAILABLE)
+    {
+        snapshot.warnings.push(FILE_CHECK_UNAVAILABLE.to_string());
+    }
+    snapshot
 }
 
 /// The persisted readiness record for one parked interactive turn.

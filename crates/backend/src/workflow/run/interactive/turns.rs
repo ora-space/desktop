@@ -22,19 +22,22 @@ pub(crate) struct WorkflowSessionTurns {
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
     sessions_root: PathBuf,
+    baselines_root: PathBuf,
 }
 
 impl WorkflowSessionTurns {
     /// Shares the completion and callback gates owned by the run module.
     ///
     /// `sessions_root` lets the drop cleanup derive the settled turn's snapshot from the same
-    /// durable history the completion path reads.
+    /// durable history the completion path reads; `baselines_root` lets that snapshot record a
+    /// missing `mustChange` baseline while the turn parks.
     pub(in crate::workflow::run) fn new(
         pool: RepositoryPool,
         run_locks: Arc<KeyedResourceLocks>,
         completing_node_runs: Arc<CompletingNodeRuns>,
         transitions: Arc<WorkflowRunTransitions>,
         sessions_root: PathBuf,
+        baselines_root: PathBuf,
     ) -> Self {
         Self {
             pool,
@@ -42,6 +45,7 @@ impl WorkflowSessionTurns {
             completing_node_runs,
             transitions,
             sessions_root,
+            baselines_root,
         }
     }
 
@@ -96,6 +100,7 @@ impl WorkflowSessionTurns {
         let end_report = stream.end_report();
         let pool = self.pool.clone();
         let sessions_root = self.sessions_root.clone();
+        let baselines_root = self.baselines_root.clone();
         let transitions = self.transitions.clone();
         Ok(stream.attach_cleanup(move || async move {
             // The runtime attributes this turn's end while it settles: an explicit stop, the
@@ -104,6 +109,7 @@ impl WorkflowSessionTurns {
             park_ended_turn(
                 &pool,
                 &sessions_root,
+                &baselines_root,
                 &transitions,
                 &node_run_id,
                 end_report,
@@ -121,6 +127,7 @@ impl WorkflowSessionTurns {
 pub(super) async fn park_ended_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,
+    baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
     end_report: Option<PromptEndReport>,
@@ -129,6 +136,7 @@ pub(super) async fn park_ended_turn(
     crate::workflow::run::interactive::end_human_turn(
         pool,
         sessions_root,
+        baselines_root,
         transitions,
         node_run_id,
         stop_cause,

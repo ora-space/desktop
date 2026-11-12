@@ -1,8 +1,5 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
-use super::completion_snapshot::{
-    StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
-    unknown_completion_snapshot,
-};
+use super::completion_snapshot::StopCause;
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{
     RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt, render_previous_failure,
@@ -15,6 +12,7 @@ use agent_client_protocol_schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
     SessionConfigSelectOptions,
 };
+use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
@@ -28,18 +26,21 @@ use ora_contracts::{
     StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
-use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowRunId};
-use ora_history::read_session_history;
+use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId};
 use ora_logging::ora_warn;
 
 use super::transitions::WorkflowRunTransitions;
-use super::worktree::{capture_worktree_snapshot, compute_file_changes, persist_worktree_baseline};
+use super::worktree::{
+    capture_completion_baseline, capture_worktree_snapshot, compute_file_changes,
+    persist_worktree_baseline,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 use thiserror::Error;
 
+mod first_turn_park;
 #[cfg(test)]
 mod inactivity_tests;
 mod loop_exit;
@@ -326,57 +327,6 @@ impl NodeExecutionError {
     }
 }
 
-/// Drives one interactive node's first-turn park off the async runtime.
-///
-/// Both halves of the park are blocking work: reading the whole session history is file I/O, and
-/// the transition sink takes the per-run gate, which is a blocking lock. Running them on a
-/// blocking worker keeps a long conversation from occupying a tokio worker and matches how the
-/// human-turn cleanup performs the same park. The snapshot is derived before the gate is taken,
-/// so no lock is held across the history read (ADR D3 steps 1 and 4).
-async fn park_first_interactive_turn(
-    transitions: Arc<WorkflowRunTransitions>,
-    sessions_root: PathBuf,
-    run_id: WorkflowRunId,
-    node_run_id: WorkflowNodeRunId,
-    session_id: SessionId,
-    output_contract: Option<AgentOutputContract>,
-    stop_cause: Option<StopCause>,
-) -> Result<(), NodeExecutionError> {
-    tokio::task::spawn_blocking(move || {
-        let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
-            Ok(history) => derive_completion_snapshot(
-                &history,
-                output_contract.as_ref(),
-                false,
-                TurnOrigin::Workflow,
-                stop_cause,
-            ),
-            Err(error) => {
-                ora_warn!(
-                    node_run_id = %node_run_id,
-                    error = %error,
-                    "failed to read session history while parking; recording an unknown completion snapshot"
-                );
-                unknown_completion_snapshot(false, TurnOrigin::Workflow, Some(StopCause::Unknown))
-            }
-        };
-        transitions
-            .park_node_run(
-                &run_id,
-                &node_run_id,
-                &completion_payload(&snapshot),
-            )
-            .map_err(NodeExecutionError::from)
-    })
-    .await
-    .map_err(|source| {
-        NodeExecutionError::Repository(RepositoryError::from_message(format!(
-            "interactive park did not complete: {source}"
-        )))
-    })?
-    .map(|_advanced| ())
-}
-
 /// Runs the start → prompt → stop session chain for one agent node.
 #[allow(clippy::too_many_arguments)]
 async fn drive_agent_node(
@@ -524,7 +474,8 @@ async fn drive_agent_node(
             context.run.snapshot_id.as_ref(),
             clock.now_timestamp_millis(),
         )?;
-        let baseline = capture_worktree_snapshot(&workspace_root);
+        let baseline =
+            capture_completion_baseline(&workspace_root, config.completion.as_ref());
 
         let mut stream = agent_runtime
             .prompt_session_with_inactivity_policy(PromptSessionRequest {
@@ -583,23 +534,31 @@ async fn drive_agent_node(
         // (oversized/unavailable) baseline or a failed write still parks the node; its completion
         // later reports no file changes rather than failing the run.
         if config.interactive {
-            if let Some(baseline) = baseline.as_ref()
-                && let Err(error) = persist_worktree_baseline(baselines_root, node_run_id, baseline)
-            {
-                ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes");
+            let mut baseline_available = false;
+            if let Some(baseline) = baseline.as_ref() {
+                match persist_worktree_baseline(baselines_root, node_run_id, baseline) {
+                    Ok(()) => baseline_available = true,
+                    Err(error) => {
+                        ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes")
+                    }
+                }
             }
             // The snapshot and the guarded status flip commit together so a `Pending` row always
             // has the completion facts the read projection parses.
             park_first_interactive_turn(
                 transitions.clone(),
-                sessions_root.to_path_buf(),
-                context.run.id.clone(),
-                node_run_id.clone(),
-                session_id.clone(),
-                config.output_contract.clone(),
-                // A first turn the user stopped must still park as awaiting them, so the cause
-                // travels with the park instead of being read back from the stop reason.
-                StopCause::of_prompt_end(stream.end_cause()),
+                FirstTurnPark {
+                    sessions_root: sessions_root.to_path_buf(),
+                    run_id: context.run.id.clone(),
+                    node_run_id: node_run_id.clone(),
+                    session_id: session_id.clone(),
+                    output_contract: config.output_contract.clone(),
+                    completion: config.completion.clone(),
+                    baseline_available,
+                    // A first turn the user stopped must still park as awaiting them, so the cause
+                    // travels with the park instead of being read back from the stop reason.
+                    stop_cause: StopCause::of_prompt_end(stream.end_cause()),
+                },
             )
             .await?;
             return Ok(AgentNodeOutcome::AwaitingInput);

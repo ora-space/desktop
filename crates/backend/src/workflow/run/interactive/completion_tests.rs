@@ -113,6 +113,8 @@ fn a_changed_turn_wins_over_the_blockers_gate() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -150,6 +152,8 @@ fn changed_output_text_reports_the_two_digests() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -186,6 +190,8 @@ fn blocked_turn_returns_every_blocker_with_its_detail() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -200,10 +206,12 @@ fn blocked_turn_returns_every_blocker_with_its_detail() {
                     WorkflowNodeCompletionBlocker {
                         kind: WorkflowNodeCompletionBlockerKind::TurnStopped,
                         message: None,
+                        params: None,
                     },
                     WorkflowNodeCompletionBlocker {
                         kind: WorkflowNodeCompletionBlockerKind::StructuredInvalid,
                         message: Some("invalid response".to_string()),
+                        params: None,
                     },
                 ],
             })
@@ -232,6 +240,8 @@ fn a_node_that_left_the_awaiting_state_is_rejected_before_its_snapshot() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -257,6 +267,8 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -269,6 +281,7 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnUnknown,
                     message: None,
+                    params: None,
                 }],
             })
         );
@@ -310,6 +323,8 @@ fn a_legacy_node_with_a_settled_turn_completes_on_its_turn_window() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -363,6 +378,8 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -442,6 +459,8 @@ fn legacy_snapshot_without_turn_origin_defaults_to_human() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -499,6 +518,8 @@ fn a_provisional_snapshot_of_another_turn_is_left_alone() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -527,6 +548,8 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -560,6 +583,8 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -594,6 +619,8 @@ fn forcing_a_changed_turn_still_reports_the_conflict() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -631,6 +658,8 @@ fn forcing_a_rewritten_output_still_reports_the_conflict() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -663,6 +692,8 @@ fn forcing_a_structured_failure_keeps_raw_output_without_structured_output() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -715,6 +746,8 @@ fn an_existing_ready_snapshot_is_not_rewritten() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -737,6 +770,8 @@ fn a_missing_history_file_is_read_as_an_empty_turn() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::PLAIN,
@@ -785,6 +820,8 @@ fn confirming_the_opening_turn_completes_without_a_forced_audit() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::CONFIRM,
@@ -818,6 +855,8 @@ fn confirmation_cannot_lift_other_blockers() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::CONFIRM,
@@ -831,6 +870,7 @@ fn confirmation_cannot_lift_other_blockers() {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::OutputMissing,
                     message: None,
+                    params: None,
                 }],
             }),
             "the already-confirmed marker is not listed again"
@@ -851,6 +891,8 @@ fn force_cannot_stand_in_for_confirmation() {
         let error = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::FORCE,
@@ -864,6 +906,7 @@ fn force_cannot_stand_in_for_confirmation() {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
                     message: None,
+                    params: None,
                 }],
             })
         );
@@ -898,6 +941,8 @@ fn confirmation_is_a_noop_on_a_ready_snapshot() {
         let prepared = prepare_completion(
             &pool,
             &sessions_root,
+            &temp.path().join("baselines"),
+            &temp.path().join("fixture-project"),
             &run_id,
             "agent",
             CompletionApproval::CONFIRM,
