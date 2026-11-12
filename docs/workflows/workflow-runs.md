@@ -115,13 +115,23 @@ claim prevents a follow-up racing against manual completion. Region members of a
 to non-interactive and the runtime rejects interactive members.
 
 Each parked turn persists a completion snapshot: its turn key, stop reason, blockers and the final
-assistant-text digest. Only an `EndTurn` turn without blockers completes normally. A stopped,
-truncated, refused or unknown turn keeps the node awaiting input, and `completeWorkflowNode` rejects
-it with `workflow_node_incomplete` (carrying every blocker) unless `force` is requested; a changed
-turn or output digest returns `workflow_node_turn_changed` or `workflow_node_output_changed`, naming
-the expected and actual identity. The step card at the end of the conversation and the bottom-right
-action are the two explicit ways to advance: continue, a confirmed forced completion, or
-complete-and-advance when the card is ready.
+assistant-text digest. A new or re-saved interactive Agent node defaults to
+`completionSignal: agent`; the host injects a loopback completion tool into that node's session, and
+the node completes only after the agent calls the tool for the settled attempt and the user confirms
+(or the node sets `autoAcceptAgentCompletion`). A turn without a signal carries
+`agent_signal_pending`; an accepted signal without a confirmation carries
+`agent_confirmation_pending`; both are written into the parked snapshot beside the other blockers.
+`completionSignal: end_turn` legacy graphs keep the old rule: only an `EndTurn` turn without
+blockers completes normally. A stopped, truncated, refused or unknown turn keeps the node awaiting
+input, and `completeWorkflowNode` rejects it with `workflow_node_incomplete` (carrying every blocker)
+unless `force` is requested; a changed turn or output digest returns
+`workflow_node_turn_changed` or `workflow_node_output_changed`, naming the expected and actual
+identity. The step card at the end of the conversation and the bottom-right action are the two
+explicit ways to advance: continue, a confirmed forced completion, or complete-and-advance when the
+card is ready. A confirmation names the `signalId` the user saw; a stale id returns
+`workflow_node_signal_changed` instead of confirming a newer turn. A failed attempt, a completed node
+and a cancelled run all revoke their attempt tokens, and a restarted Desktop restores the completion
+tool with the persisted session.
 
 The opening, workflow-owned turn never reads as ready on its own. Its `EndTurn` only means the
 agent finished that reply, which may be a question for the user, so the snapshot carries a
@@ -129,11 +139,15 @@ agent finished that reply, which may be a question for the user, so the snapshot
 with `confirmInitialTurn`, never audited as forced — beside "continue this step", and the
 bottom-right action stays disabled until the turn is ready. A turn opened by the user's reply keeps
 the rule above: an `EndTurn` without blockers completes normally and the card names the next step.
-`force` cannot stand in for confirmation, and a request that sets both is rejected as
-`invalid_request`.
+For an `agent`-policy opening turn with a signal, the confirmation must carry both
+`confirmInitialTurn` and `confirmAgentCompletion`; one field cannot lift the other gate. Without a
+signal, the user can still advance through the second-confirm path, which sends
+`confirmInitialTurn` and `force` together and writes a forced audit; `force` alone is rejected with
+`turn_unconfirmed`. Any other request that sets both fields is rejected as `invalid_request`.
 
 Every park is classified where it is written. `parkKind` is `awaiting_user` for an unconfirmed
-opening turn, the user's own stop, or a provisional snapshot, and `abnormal` for a timeout,
+opening turn, a turn waiting for the agent signal or the user's confirmation, the user's own stop,
+or a provisional snapshot, and `abnormal` for a timeout,
 truncation, refusal, unknown end, session crash, stream drop, or output-contract failure; `stopCause`
 names why the owning prompt ended (`user_stopped`, `prompt_timed_out`, `stream_dropped`,
 `session_crashed`, `unknown`). The card shows an abnormal stop with its reason and offers only
@@ -153,10 +167,10 @@ the current step and its direct successors, and states that only this step is in
 promise about the runtime stopping later nodes, and the prompt recorded for the user stays exactly
 what the user typed.
 
-A `force` completion is audited in the node payload under `completion_forced`, with the effective
-blockers it covered, the stop cause that explains them, whether the node had a settled turn, and
-where the accepted output came from (`turn_window` or `last_assistant_message`). The audit is
-written in the same transaction as the completion, so a completed node never lacks its record.
+A `force` completion is audited in the node payload under `completion_forced`, with `by: "human"`,
+the effective blockers it covered, the stop cause that explains them, whether the node had a settled
+turn, and where the accepted output came from (`turn_window` or `last_assistant_message`). The audit
+is written in the same transaction as the completion, so a completed node never lacks its record.
 
 ## Variables and types
 
