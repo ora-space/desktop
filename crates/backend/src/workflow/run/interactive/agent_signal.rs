@@ -7,7 +7,6 @@
 //! The store is intentionally in memory: a token lives for one attempt, and an Ora restart ends
 //! the prompt it belonged to. Nothing here is durable; only the bound `AgentSignal` is persisted in
 //! the node payload.
-#![allow(dead_code)] // Wired into the session/MCP path in the next step of #1070.
 
 use crate::workflow::run::completion_snapshot::{AgentSignal, TurnKey};
 use std::collections::HashMap;

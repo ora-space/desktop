@@ -184,6 +184,8 @@ impl WorkflowRuns {
             }
         };
         for node_run in node_runs {
+            // The run is cancelled, so no token from any of its nodes may stay callable.
+            self.agent_signals.revoke_node(node_run.id.as_ref());
             let Some(session_id) = node_run.session_id else {
                 continue;
             };
@@ -424,6 +426,10 @@ impl WorkflowRuns {
         {
             ora_warn!(session_id = %session_id, error = %error, "complete: failed to stop completed node session");
         }
+
+        // The node is terminal: no attempt token may remain callable for it.
+        self.agent_signals
+            .revoke_node(prepared.node_run_id.as_ref());
 
         Ok(response)
     }

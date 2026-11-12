@@ -4,7 +4,6 @@
 //! server token in its path; the tool argument carries the per-attempt token issued by
 //! [`super::agent_signal::AgentSignalStore`]. A call only records a pending signal; the park site
 //! later binds it to the turn that attempt settled.
-#![allow(dead_code)] // Wired into the session MCP path in the next step of #1070.
 
 use super::agent_signal::AgentSignalStore;
 use serde_json::{Value, json};

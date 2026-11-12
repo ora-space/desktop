@@ -489,6 +489,8 @@ async fn drive_agent_node(
         .await?;
     let session_id = SessionId::new(started.session.id);
 
+    // Kept outside the attempt block so a failed or abandoned attempt still revokes its token.
+    let mut attempt_to_revoke: Option<String> = None;
     let outcome: Result<AgentNodeOutcome, NodeExecutionError> = async {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
 
@@ -585,6 +587,7 @@ async fn drive_agent_node(
             } else {
                 None
             };
+        attempt_to_revoke = completion_attempt.clone();
         if let Some(previous) = previous_failure.as_ref() {
             repository.record_node_injected_failure(
                 node_run_id,
@@ -687,7 +690,7 @@ async fn drive_agent_node(
                 config.output_contract.clone(),
                 config.completion_signal,
                 agent_signals.clone(),
-                completion_attempt,
+                completion_attempt.clone(),
                 config.auto_accept_agent_completion,
                 StopCause::of_prompt_end(stream.end_cause()),
             )
@@ -744,6 +747,10 @@ async fn drive_agent_node(
         // A failed pre-binding Session must remain hidden in memory if cleanup cannot remove its
         // row. Keeping the original node error preserves the actionable failure for the engine.
         ora_warn!(session_id = %session_id, error = %error, "failed to discard unpublished workflow session after node setup failed");
+    }
+    // The attempt is over whether it parked, completed, or failed: no token may survive it.
+    if let Some(attempt) = attempt_to_revoke.as_deref() {
+        agent_signals.revoke_attempt(&format!("{node_run_id}"), attempt);
     }
     outcome
 }
