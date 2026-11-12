@@ -297,8 +297,8 @@ impl WorkflowRuns {
         // Commit the node completion under the gate and release the claim in the same critical
         // section, so a prompt cannot slip in between the commit and the release. Revalidate first:
         // a cancel that won during prepare must abort this completion rather than report success.
-        // A forced completion merges its audit in that same transaction, so a committed node always
-        // carries the record of how it was completed (ADR D5).
+        // The payload patch carries a forced audit and/or a warning snapshot in that same
+        // transaction, so a committed node always carries the record of how it completed.
         let pool = self.pool.clone();
         let engine = self.engine.clone();
         let run_locks = self.run_locks.clone();
@@ -307,7 +307,7 @@ impl WorkflowRuns {
         let output = prepared.output.clone();
         let structured_output = prepared.structured_output.clone();
         let stop_reason = prepared.stop_reason.clone();
-        let audit = prepared.audit.clone();
+        let payload_patch = prepared.payload_patch.clone();
         let response = spawn_repository_work(move || {
             let _gate = run_locks.acquire_exclusive(run_id.as_ref());
             let result = crate::workflow::run::interactive::revalidate_completion(
@@ -324,7 +324,7 @@ impl WorkflowRuns {
                         structured_output,
                         stop_reason,
                         file_changes,
-                        audit,
+                        payload_patch,
                     )
                     .map_err(BackendError::from)
             });

@@ -332,7 +332,7 @@ fn a_legacy_node_with_a_settled_turn_completes_on_its_turn_window() {
         .expect("ready");
 
         assert_eq!(prepared.output, Some("here is the plan".to_string()));
-        assert_eq!(prepared.audit, None);
+        assert_eq!(prepared.payload_patch, None);
         assert_eq!(
             stored_snapshot(&pool, &run_id).and_then(|snapshot| snapshot.turn_key),
             Some(TurnKey {
@@ -558,7 +558,7 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
 
         assert_eq!(prepared.output, Some("draft only".to_string()));
         assert_eq!(
-            prepared.audit,
+            prepared.payload_patch,
             Some(serde_json::json!({
                 "completion_forced": {
                     "blockers": [{ "kind": "turn_unknown" }],
@@ -593,7 +593,7 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
 
         assert_eq!(prepared.output, Some("partial".to_string()));
         assert_eq!(
-            prepared.audit,
+            prepared.payload_patch,
             Some(serde_json::json!({
                 "completion_forced": {
                     "blockers": [{ "kind": "turn_stopped" }],
@@ -703,7 +703,9 @@ fn forcing_a_structured_failure_keeps_raw_output_without_structured_output() {
         assert_eq!(prepared.output.as_deref(), Some("not json"));
         assert_eq!(prepared.structured_output, None);
 
-        let audit = prepared.audit.expect("a forced completion is audited");
+        let audit = prepared
+            .payload_patch
+            .expect("a forced completion is audited");
         let forced = &audit["completion_forced"];
         assert_eq!(forced["without_turn"], serde_json::json!(false));
         assert_eq!(forced["output_source"], serde_json::json!("turn_window"));
@@ -830,7 +832,7 @@ fn confirming_the_opening_turn_completes_without_a_forced_audit() {
 
         assert_eq!(prepared.output, Some("done".to_string()));
         assert_eq!(
-            prepared.audit, None,
+            prepared.payload_patch, None,
             "confirmation is not a forced completion"
         );
         // The snapshot stays as the record of the park the user answered.
@@ -950,7 +952,7 @@ fn confirmation_is_a_noop_on_a_ready_snapshot() {
         .expect("confirmation does not block a ready turn");
 
         assert_eq!(prepared.output, Some("done".to_string()));
-        assert_eq!(prepared.audit, None);
+        assert_eq!(prepared.payload_patch, None);
         assert_eq!(stored_snapshot(&pool, &run_id), Some(ready));
     });
 }

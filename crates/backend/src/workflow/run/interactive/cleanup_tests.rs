@@ -251,7 +251,7 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
         .expect("the restored stopped turn is still forceable");
         assert_eq!(prepared.output.as_deref(), Some("partial"));
         assert!(
-            prepared.audit.is_some(),
+            prepared.payload_patch.is_some(),
             "the forced completion records why it overrode the blocker"
         );
     });

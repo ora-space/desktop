@@ -5,10 +5,10 @@
 //! engine commit are done by the caller around [`prepare_completion`].
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, TurnOrigin,
-    completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
-    output_contract_blocker, parse_completion_snapshot, trailing_assistant_text,
-    unknown_completion_snapshot, with_file_check_warning,
+    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, FILE_CHECK_UNAVAILABLE,
+    TurnOrigin, completion_final_text, completion_payload, derive_completion_snapshot,
+    forced_completion_audit, output_contract_blocker, parse_completion_snapshot,
+    trailing_assistant_text, unknown_completion_snapshot, with_file_check_warning,
 };
 use super::super::executor::apply_output_contract;
 use super::super::worktree::{
@@ -43,8 +43,11 @@ pub(crate) struct PreparedCompletion {
     pub structured_output: Option<serde_json::Value>,
     pub stop_reason: Option<String>,
     pub session_id: Option<SessionId>,
-    /// The payload keys a forced completion must commit with the completion itself.
-    pub audit: Option<serde_json::Value>,
+    /// Payload keys committed atomically with the completion itself.
+    ///
+    /// Covers a forced audit and the file-warning completion snapshot when either must survive
+    /// even if a prepare-time repair write was lost.
+    pub payload_patch: Option<serde_json::Value>,
     /// Frozen declaration reused to capture declared ignored files in the display diff.
     pub completion: Option<ora_application::AgentCompletion>,
 }
@@ -363,9 +366,38 @@ pub(crate) fn prepare_completion(
         structured_output,
         stop_reason,
         session_id: node_run.session_id,
-        audit: forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
+        payload_patch: completion_payload_patch(
+            &snapshot,
+            forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
+        ),
         completion: completion.cloned(),
     })
+}
+
+/// Builds the payload patch that must commit with a successful completion.
+///
+/// A prepare-time warning write is a best-effort early projection; the final completion transaction
+/// is the authority. When the snapshot carries a file warning, include that snapshot in the patch
+/// so a lost early write cannot leave a completed node without the warning. The forced audit, when
+/// present, is merged into the same patch and committed in one transaction. File blockers are not
+/// part of the snapshot, so this patch never persists them.
+fn completion_payload_patch(
+    snapshot: &CompletionSnapshot,
+    forced_audit: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let mut patch = serde_json::Map::new();
+    if snapshot
+        .warnings
+        .iter()
+        .any(|warning| warning == FILE_CHECK_UNAVAILABLE)
+        && let serde_json::Value::Object(completion) = completion_payload(snapshot)
+    {
+        patch.extend(completion);
+    }
+    if let Some(serde_json::Value::Object(audit)) = forced_audit {
+        patch.extend(audit);
+    }
+    (!patch.is_empty()).then_some(serde_json::Value::Object(patch))
 }
 
 /// Returns the snapshot the gate must apply, repairing or materializing it first when needed.

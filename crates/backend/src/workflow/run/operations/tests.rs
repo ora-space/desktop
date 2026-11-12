@@ -1,5 +1,7 @@
 use super::WorkflowRuns;
 use crate::git_cleanup::KeyedResourceLocks;
+use crate::workflow::run::completion_snapshot::FILE_CHECK_UNAVAILABLE;
+use crate::workflow::run::interactive::{CompletionApproval, prepare_completion};
 use crate::workflow::run::test_fixture::{
     AGENT_GRAPH, RecordingExecutor, bind_and_park, bootstrap, init_git_workspace, run_test,
     started_run, started_run_with, write_open_turn, write_settled_turn,
@@ -16,7 +18,7 @@ use ora_contracts::*;
 use ora_db::{
     SqliteSessionRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
 };
-use ora_domain::{SessionId, WorkflowNodeRunId};
+use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowRunId};
 use ora_history::history_path;
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -1650,6 +1652,183 @@ fn legacy_baseline_does_not_display_preexisting_ignored_text_as_added() {
         assert!(
             changes.is_none() || changes == Some(serde_json::json!([])),
             "a legacy baseline must not display a pre-existing ignored file as added: {changes:?}"
+        );
+    });
+}
+
+/// A lost prepare-time warning repair is restored by the final completion transaction.
+#[test]
+fn completion_commit_restores_a_file_warning_lost_after_prepare() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fs::remove_file(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+        )
+        .expect("remove baseline");
+        fixture.settle_turn();
+        let run_id = WorkflowRunId::new("run-1");
+        let prepared = prepare_completion(
+            &fixture.runs.pool,
+            &fixture.runs.sessions_root,
+            &fixture.runs.baselines_root,
+            &fixture.workspace,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect("prepare a completion with a file warning");
+        assert!(
+            prepared.payload_patch.is_some(),
+            "a file warning must be committed with the completion"
+        );
+
+        // Simulate the early prepare repair being lost: the still-Pending row keeps its old
+        // snapshot with no file warning before the final commit.
+        let mut payload = node_payload(
+            &fixture
+                .detail()
+                .nodes
+                .into_iter()
+                .find(|node| node.node_id == "agent")
+                .expect("agent node"),
+        );
+        payload["completion"]["warnings"] = serde_json::json!([]);
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+                .repair_node_payload(&prepared.node_run_id, &payload, 60)
+                .expect("rewrite the parked snapshot")
+        );
+
+        let _gate = fixture.runs.run_locks.acquire_exclusive(run_id.as_ref());
+        fixture
+            .runs
+            .engine
+            .complete_node_with_payload_patch(
+                &run_id,
+                &prepared.node_run_id,
+                prepared.output.clone(),
+                prepared.structured_output.clone(),
+                prepared.stop_reason.clone(),
+                Vec::new(),
+                prepared.payload_patch.clone(),
+            )
+            .expect("the final completion transaction commits the warning");
+        drop(_gate);
+
+        let payload = node_payload(
+            &fixture
+                .detail()
+                .nodes
+                .into_iter()
+                .find(|node| node.node_id == "agent")
+                .expect("completed agent node"),
+        );
+        assert!(
+            payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == FILE_CHECK_UNAVAILABLE),
+            "the committed completion must still expose the file warning"
+        );
+        assert_eq!(payload.get("completion_forced"), None);
+        assert_eq!(
+            payload["completion"]["blockers"],
+            serde_json::json!([]),
+            "file blockers are never written into the completion snapshot"
+        );
+    });
+}
+
+/// Forced completion and a file warning are committed together in one transaction.
+#[test]
+fn completion_commit_keeps_forced_audit_and_file_warning_together() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_MUST_CHANGE_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fs::remove_file(
+            fixture
+                .runs
+                .baselines_root
+                .join(format!("{}.json", fixture.node_run_id)),
+        )
+        .expect("remove baseline");
+        write_open_turn(&fixture.runs.sessions_root, "session-1", "go", "draft only");
+        let run_id = WorkflowRunId::new("run-1");
+        let prepared = prepare_completion(
+            &fixture.runs.pool,
+            &fixture.runs.sessions_root,
+            &fixture.runs.baselines_root,
+            &fixture.workspace,
+            &run_id,
+            "agent",
+            CompletionApproval::FORCE,
+        )
+        .expect("prepare a forced completion with a file warning");
+        let patch = prepared
+            .payload_patch
+            .as_ref()
+            .expect("forced completion commits a payload patch");
+        assert!(patch.get("completion").is_some());
+        assert!(patch.get("completion_forced").is_some());
+
+        let mut payload = node_payload(
+            &fixture
+                .detail()
+                .nodes
+                .into_iter()
+                .find(|node| node.node_id == "agent")
+                .expect("agent node"),
+        );
+        payload["completion"]["warnings"] = serde_json::json!([]);
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+                .repair_node_payload(&prepared.node_run_id, &payload, 60)
+                .expect("rewrite the parked snapshot")
+        );
+
+        let _gate = fixture.runs.run_locks.acquire_exclusive(run_id.as_ref());
+        fixture
+            .runs
+            .engine
+            .complete_node_with_payload_patch(
+                &run_id,
+                &prepared.node_run_id,
+                prepared.output.clone(),
+                prepared.structured_output.clone(),
+                prepared.stop_reason.clone(),
+                Vec::new(),
+                prepared.payload_patch.clone(),
+            )
+            .expect("the final completion transaction commits both payload keys");
+        drop(_gate);
+
+        let payload = node_payload(
+            &fixture
+                .detail()
+                .nodes
+                .into_iter()
+                .find(|node| node.node_id == "agent")
+                .expect("completed agent node"),
+        );
+        assert!(
+            payload["completion"]["warnings"]
+                .as_array()
+                .expect("warnings array")
+                .iter()
+                .any(|warning| warning == FILE_CHECK_UNAVAILABLE)
+        );
+        assert_eq!(
+            payload["completion_forced"]["blockers"],
+            serde_json::json!([{ "kind": "turn_unknown" }])
         );
     });
 }
