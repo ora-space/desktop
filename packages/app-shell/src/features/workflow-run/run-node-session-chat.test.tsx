@@ -1017,6 +1017,44 @@ describe("RunNodeSessionChat", () => {
     await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
   });
 
+  it("offers continue and the documented force exit for a first turn without a signal", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        awaitsAgentSignal: true,
+        requiresAgentConfirmation: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    expect(screen.queryByTestId("confirm-initial-turn")).toBeNull();
+    expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
+    await userEvent.click(screen.getByTestId("force-complete-node"));
+    await userEvent.click(screen.getByTestId("confirm-force-complete"));
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: true,
+        confirmInitialTurn: true,
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
   it("confirms the opening turn together with an accepted agent signal", async () => {
     const onNodeCompleted = vi.fn();
     const { client, handlers } = renderDock(

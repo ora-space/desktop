@@ -601,7 +601,9 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.continueChat")}
               </Button>
             </>
-          ) : completionNeedsConfirmation && !completionAgentConfirmation ? (
+          ) : completionNeedsConfirmation &&
+            !completionAgentConfirmation &&
+            !completionAwaitingAgentSignal ? (
             <>
               <Button
                 type="button"
@@ -931,7 +933,9 @@ export function RunNodeSessionChat({
                 disabled={complete.isPending}
                 onClick={() => {
                   setForceOpen(false);
-                  handleComplete(true);
+                  // The opening turn's own confirmation remains required even on the force
+                  // path; only `turn_unconfirmed` needs it (ADR D5).
+                  handleComplete(true, completionNeedsConfirmation);
                 }}
               >
                 {t("workflowRun.stepCard.forceConfirm")}
