@@ -4,7 +4,7 @@ use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
 use super::interactive::{
     AgentSignalStore, CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns,
-    signal_fingerprint,
+    merge_completion_patch, signal_fingerprint,
 };
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::OwnerStreamDropControl;
@@ -307,7 +307,10 @@ impl WorkflowRuns {
         let output = prepared.output.clone();
         let structured_output = prepared.structured_output.clone();
         let stop_reason = prepared.stop_reason.clone();
-        let audit = prepared.audit.clone();
+        let payload_patch = merge_completion_patch(
+            prepared.audit.clone(),
+            prepared.confirmation.clone(),
+        );
         let response = spawn_repository_work(move || {
             let _gate = run_locks.acquire_exclusive(run_id.as_ref());
             let result = crate::workflow::run::interactive::revalidate_completion(
@@ -324,7 +327,7 @@ impl WorkflowRuns {
                         structured_output,
                         stop_reason,
                         file_changes,
-                        audit,
+                        payload_patch,
                     )
                     .map_err(BackendError::from)
             });

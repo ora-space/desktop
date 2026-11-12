@@ -4,10 +4,11 @@
 //! assertions describe the contract a client observes rather than a helper's return value.
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, ParkKind, StopCause, TurnKey,
-    TurnOrigin, completion_payload, parse_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionSnapshot,
+    ConfirmationBy, ParkKind, StopCause, TurnKey, TurnOrigin, completion_payload,
+    parse_completion_snapshot,
 };
-use super::completion::{CompletionApproval, prepare_completion};
+use super::completion::{CompletionApproval, merge_completion_patch, prepare_completion};
 use crate::workflow::run::test_fixture::{
     INTERACTIVE_AGENT_GRAPH, bind_and_park, bootstrap, end_fixture_turn, run_test, started_run,
     write_open_turn, write_settled_turn,
@@ -908,4 +909,29 @@ fn confirmation_is_a_noop_on_a_ready_snapshot() {
         assert_eq!(prepared.audit, None);
         assert_eq!(stored_snapshot(&pool, &run_id), Some(ready));
     });
+}
+
+/// A confirmed agent completion commits its approval beside any forced audit in one patch.
+#[test]
+fn confirmation_and_forced_audit_share_one_payload_patch() {
+    let confirmation = CompletionConfirmation {
+        by: ConfirmationBy::Human,
+        at: 7,
+    };
+    assert_eq!(
+        merge_completion_patch(None, Some(confirmation.clone())),
+        Some(serde_json::json!({
+            "confirmation": { "by": "human", "at": 7 }
+        }))
+    );
+    assert_eq!(
+        merge_completion_patch(
+            Some(serde_json::json!({ "completion_forced": { "blockers": [] } })),
+            Some(confirmation),
+        ),
+        Some(serde_json::json!({
+            "completion_forced": { "blockers": [] },
+            "confirmation": { "by": "human", "at": 7 }
+        }))
+    );
 }

@@ -185,6 +185,7 @@ pub(crate) async fn begin_human_turn(
 /// The park itself takes the per-run gate (ADR D3 step 4) and both the history read and that lock
 /// are blocking work, so it runs on the blocking pool. Everything before it — resolving the node's
 /// session and output contract — is one short read that holds no lock.
+#[allow(dead_code)] // Test-facing wrapper; production uses the signal variant below.
 pub(crate) async fn end_human_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,

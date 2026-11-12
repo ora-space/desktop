@@ -5,10 +5,11 @@
 //! engine commit are done by the caller around [`prepare_completion`].
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionMeta, CompletionPolicy,
-    CompletionSnapshot, TurnOrigin, completion_final_text, completion_payload,
-    derive_completion_snapshot, forced_completion_audit, output_contract_blocker,
-    parse_completion_snapshot, trailing_assistant_text, unknown_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
+    CompletionPolicy, CompletionSnapshot, ConfirmationBy, TurnOrigin, completion_final_text,
+    completion_payload, derive_completion_snapshot, forced_completion_audit,
+    output_contract_blocker, parse_completion_snapshot, trailing_assistant_text,
+    unknown_completion_snapshot,
 };
 use super::super::executor::apply_output_contract;
 use super::super::worktree::{capture_worktree_snapshot, compute_file_changes};
@@ -46,6 +47,26 @@ pub(crate) struct PreparedCompletion {
     pub workspace_id: WorkspaceId,
     /// The payload keys a forced completion must commit with the completion itself.
     pub audit: Option<serde_json::Value>,
+    /// The human approval of an accepted agent signal, committed with the completion.
+    pub confirmation: Option<CompletionConfirmation>,
+}
+
+/// Merges the forced audit and the confirmation into the one payload patch the commit applies.
+pub(crate) fn merge_completion_patch(
+    audit: Option<serde_json::Value>,
+    confirmation: Option<CompletionConfirmation>,
+) -> Option<serde_json::Value> {
+    match (audit, confirmation) {
+        (None, None) => None,
+        (Some(patch), None) => Some(patch),
+        (None, Some(confirmation)) => Some(serde_json::json!({
+            "confirmation": confirmation,
+        })),
+        (Some(mut patch), Some(confirmation)) => {
+            patch["confirmation"] = serde_json::to_value(confirmation).ok()?;
+            Some(patch)
+        }
+    }
 }
 
 /// What the user explicitly approved on this completion request.
@@ -81,12 +102,14 @@ impl CompletionApproval {
         confirm_agent_completion: None,
     };
     /// Adopts the workflow's opening turn as a normal completion.
+    #[cfg(test)]
     pub(crate) const CONFIRM: Self = Self {
         confirm_initial_turn: true,
         force: false,
         confirm_agent_completion: None,
     };
     /// Completes despite a non-confirmation blocker, recording the forced audit.
+    #[cfg(test)]
     pub(crate) const FORCE: Self = Self {
         confirm_initial_turn: false,
         force: true,
@@ -440,6 +463,13 @@ pub(crate) fn prepare_completion(
             Err(_) => return Err(incomplete(&node_run.node_id, &unfulfilled)),
         };
 
+    // Confirmation is a normal completion fact, so it is committed beside the snapshot; only a
+    // forced completion uses the audit instead (ADR D5).
+    let confirmation = agent_confirmed.then(|| CompletionConfirmation {
+        by: ConfirmationBy::Human,
+        at: (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64,
+    });
+
     Ok(PreparedCompletion {
         node_run_id: node_run.id,
         output,
@@ -448,6 +478,7 @@ pub(crate) fn prepare_completion(
         session_id: node_run.session_id,
         workspace_id: context.workspace.id,
         audit: forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
+        confirmation,
     })
 }
 
