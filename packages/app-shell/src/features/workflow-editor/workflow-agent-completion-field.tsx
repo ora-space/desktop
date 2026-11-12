@@ -19,7 +19,9 @@ export function WorkflowAgentCompletionField({
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
   const { t } = useTranslation();
-  const value = config.completionSignal === "agent" ? "agent" : "end_turn";
+  // An interactive node without an explicit policy reads as the new default, matching what the
+  // save normalizer writes; legacy frozen graphs are untouched until the editor saves them.
+  const value = config.completionSignal === "end_turn" ? "end_turn" : "agent";
 
   return (
     <>

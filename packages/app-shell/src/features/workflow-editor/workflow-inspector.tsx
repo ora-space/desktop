@@ -952,7 +952,15 @@ function AgentConfigurationFields({
               checked={config.interactive ?? false}
               disabled={iterationMember}
               onCheckedChange={(interactive) =>
-                onChange({ ...config, interactive })
+                onChange({
+                  ...config,
+                  interactive,
+                  // New interactive nodes start on the explicit signal; an explicit `end_turn`
+                  // choice already on the config stays as the user saved it.
+                  ...(interactive && config.completionSignal == null
+                    ? { schemaVersion: 4, completionSignal: "agent" as const }
+                    : {}),
+                })
               }
             />
           </div>

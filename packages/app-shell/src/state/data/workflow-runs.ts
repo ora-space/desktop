@@ -1036,9 +1036,6 @@ function parseCompletion(
     confirmation === undefined;
   const awaitsAgentSignal =
     !provisional && completionPolicy === "agent" && agentSignal === undefined;
-  const agentBlocked =
-    completionPolicy === "agent" &&
-    (agentSignal === undefined || confirmation === undefined);
   return {
     ...(typeof snapshot.userSeq === "number"
       ? { userSeq: snapshot.userSeq }
@@ -1065,7 +1062,7 @@ function parseCompletion(
     ...(confirmation !== undefined ? { confirmation } : {}),
     ...(requester !== undefined ? { requester } : {}),
     ...(autoAcceptAgentCompletion ? { autoAcceptAgentCompletion } : {}),
-    ready: blockers.length === 0 && !provisional && !agentBlocked,
+    ready: blockers.length === 0 && !provisional,
     needsConfirmation:
       !provisional &&
       blockers.length === 1 &&

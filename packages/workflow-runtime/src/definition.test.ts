@@ -36,4 +36,51 @@ describe("authoring document normalization", () => {
       "graph must be acyclic",
     );
   });
+
+  it("saves an interactive agent on the explicit completion signal by default", () => {
+    const definition = normalizeWorkflowDocument({
+      id: "workflow",
+      name: "Defaults",
+      description: "",
+      updatedAt: "2026-09-20T12:00:00+08:00",
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: "agent",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "Review",
+            description: "",
+            agentConfig: { interactive: true, prompt: "review" },
+          },
+        },
+        {
+          id: "legacy",
+          position: { x: 20, y: 0 },
+          data: {
+            kind: "agent",
+            title: "Legacy",
+            description: "",
+            agentConfig: {
+              interactive: true,
+              prompt: "review",
+              completionSignal: "end_turn",
+            },
+          },
+        },
+      ],
+      edges: [],
+    });
+    const [agent, legacy] = definition.nodes;
+    expect(agent?.data.agentConfig).toMatchObject({
+      interactive: true,
+      completionSignal: "agent",
+      schemaVersion: 4,
+    });
+    expect(legacy?.data.agentConfig).toMatchObject({
+      interactive: true,
+      completionSignal: "end_turn",
+    });
+  });
 });

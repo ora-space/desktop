@@ -140,6 +140,10 @@ export function RunNodeSessionChat({
     interaction?.completion?.requiresAgentConfirmation === true;
   const completionAwaitingAgentSignal =
     interaction?.completion?.awaitsAgentSignal === true;
+  // The opening turn's own confirmation, read from the materialized blockers rather than from the
+  // single-blocker shortcut: an agent-policy first turn also carries the signal blocker.
+  const openingTurnUnconfirmed =
+    completion.blockers.some((blocker) => blocker.kind === "turn_unconfirmed");
   const completionParkKind = hasCompletionSnapshot
     ? completion.parkKind
     : undefined;
@@ -148,6 +152,7 @@ export function RunNodeSessionChat({
     hasCompletionSnapshot &&
     !completionProvisional &&
     !completionNeedsConfirmation &&
+    !completionAwaitingAgentSignal &&
     completionParkKind === "awaiting_user";
   // Timeout, truncation, refusal, unknown end, session crash, or an output-contract failure.
   const completionAbnormal =
@@ -168,6 +173,7 @@ export function RunNodeSessionChat({
     completionProvisional ||
     completionNeedsConfirmation ||
     completionAgentConfirmation ||
+    completionAwaitingAgentSignal ||
     completionUserStopped;
   /** A ready snapshot, an accepted agent signal, or the legacy snapshot-less entry is actionable. */
   const completionActionable =
@@ -333,10 +339,6 @@ export function RunNodeSessionChat({
     }
     // A first-turn signal still needs the opening turn's own explicit confirmation; the backend
     // rejects the signal alone so one click cannot stand in for both gates.
-    const openingTurnUnconfirmed =
-      interaction.completion?.blockers.some(
-        (blocker) => blocker.kind === "turn_unconfirmed",
-      ) ?? false;
     complete.mutate(
       {
         runId: interaction.runId,
@@ -916,7 +918,7 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceTitle")}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {completionNeedsConfirmation
+                {openingTurnUnconfirmed
                   ? t("workflowRun.stepCard.forceDescriptionUnconfirmed")
                   : completionUserStopped
                     ? t("workflowRun.stepCard.forceDescriptionUserStopped")
@@ -935,7 +937,7 @@ export function RunNodeSessionChat({
                   setForceOpen(false);
                   // The opening turn's own confirmation remains required even on the force
                   // path; only `turn_unconfirmed` needs it (ADR D5).
-                  handleComplete(true, completionNeedsConfirmation);
+                  handleComplete(true, openingTurnUnconfirmed);
                 }}
               >
                 {t("workflowRun.stepCard.forceConfirm")}

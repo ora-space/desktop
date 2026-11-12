@@ -95,7 +95,13 @@ describe("Agent prompt inactivity settings", () => {
         }),
       );
 
-      expect(savedConfig()).toEqual({ ...before, interactive: true });
+      expect(savedConfig()).toEqual({
+        ...before,
+        interactive: true,
+        // Turning interactivity on selects the new explicit completion default (ADR D7).
+        schemaVersion: 4,
+        completionSignal: "agent",
+      });
       if (promptInactivity === undefined) {
         expect(savedConfig()).not.toHaveProperty("promptInactivity");
       }
