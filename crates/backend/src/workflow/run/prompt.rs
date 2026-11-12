@@ -500,7 +500,10 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
 }
 
 /// Renders executable slash commands followed by a localized mandatory-skill contract.
-fn render_required_skills(skills: &[RequiredWorkflowSkill], locale: WorkflowRunLocale) -> String {
+pub(super) fn render_required_skills(
+    skills: &[RequiredWorkflowSkill],
+    locale: WorkflowRunLocale,
+) -> String {
     if skills.is_empty() {
         return String::new();
     }
@@ -565,7 +568,7 @@ Rules:\n\
 }
 
 /// Renders a filesystem path with portable separators for Agent-facing prompt text.
-fn render_prompt_path(path: &Path) -> String {
+pub(super) fn render_prompt_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
@@ -1070,7 +1073,7 @@ mod tests {
                             .join("run-1")
                             .join(".agents")
                             .join("skills")
-                            .join("openspec-explore")
+                            .join("openspec_explore")
                     ],
                 }],
                 WorkflowRunLocale::ZhCn,
@@ -1082,7 +1085,7 @@ mod tests {
                         .join("run-1")
                         .join(".agents")
                         .join("skills")
-                        .join("openspec-explore")
+                        .join("openspec_explore")
                 )
             )
         );
