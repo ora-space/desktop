@@ -1017,6 +1017,88 @@ describe("RunNodeSessionChat", () => {
     await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
   });
 
+  it("confirms the opening turn together with an accepted agent signal", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-1",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: true,
+        awaitsAgentSignal: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const button = screen.getByTestId("confirm-agent-completion");
+    expect(button).toHaveTextContent("确认并完成");
+    await userEvent.click(button);
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmInitialTurn: true,
+        confirmAgentCompletion: { signalId: "signal-1" },
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("auto-accepts a settled human turn when the node opts in", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("agent_confirmation_pending", false, {
+        turnOrigin: "human",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-auto",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: true,
+        awaitsAgentSignal: false,
+        autoAcceptAgentCompletion: true,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmAgentCompletion: { signalId: "signal-auto" },
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
   it("keeps a user-stopped turn awaiting input instead of reading as an abnormal stop", () => {
     renderDock(
       "awaiting_input",

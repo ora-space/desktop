@@ -435,14 +435,10 @@ pub(crate) fn prepare_completion(
         .filter(|blocker| {
             let lifted_by_initial_confirmation = approval.confirm_initial_turn
                 && blocker.kind == CompletionBlockerKind::TurnUnconfirmed;
-            // Confirming the agent's signal subsumes the opening-turn confirmation: the agent
-            // explicitly reported completion, so the user is approving that same turn.
-            let lifted_by_agent_confirmation = agent_confirmed
-                && matches!(
-                    blocker.kind,
-                    CompletionBlockerKind::TurnUnconfirmed
-                        | CompletionBlockerKind::AgentConfirmationPending
-                );
+            // Confirming the agent's signal resolves the signal's own gate. The opening turn still
+            // needs its explicit `confirmInitialTurn`; one confirmation cannot stand in for both.
+            let lifted_by_agent_confirmation =
+                agent_confirmed && blocker.kind == CompletionBlockerKind::AgentConfirmationPending;
             !lifted_by_initial_confirmation && !lifted_by_agent_confirmation
         })
         .cloned()

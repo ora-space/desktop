@@ -331,11 +331,18 @@ export function RunNodeSessionChat({
     if (signalId === undefined) {
       return;
     }
+    // A first-turn signal still needs the opening turn's own explicit confirmation; the backend
+    // rejects the signal alone so one click cannot stand in for both gates.
+    const openingTurnUnconfirmed =
+      interaction.completion?.blockers.some(
+        (blocker) => blocker.kind === "turn_unconfirmed",
+      ) ?? false;
     complete.mutate(
       {
         runId: interaction.runId,
         nodeId: interaction.nodeId,
         force: false,
+        ...(openingTurnUnconfirmed ? { confirmInitialTurn: true } : {}),
         confirmAgentCompletion: { signalId },
       },
       {
@@ -358,6 +365,9 @@ export function RunNodeSessionChat({
     if (
       !completionAgentConfirmation ||
       interaction?.completion?.autoAcceptAgentCompletion !== true ||
+      // The opening turn is the one turn the user did not start; it always needs the explicit
+      // click even when the node opts into auto-accept (ADR D4).
+      interaction.completion.turnOrigin !== "human" ||
       autoConfirmAttempted.current
     ) {
       return;
@@ -367,6 +377,7 @@ export function RunNodeSessionChat({
   }, [
     completionAgentConfirmation,
     interaction?.completion?.autoAcceptAgentCompletion,
+    interaction?.completion?.turnOrigin,
     handleCompleteAgent,
   ]);
 
@@ -444,7 +455,7 @@ export function RunNodeSessionChat({
           <p className="mt-1.5 text-xs text-muted-foreground">
             {t("workflowRun.stepCard.provisional")}
           </p>
-        ) : completionNeedsConfirmation ? (
+        ) : completionNeedsConfirmation && !completionAgentConfirmation ? (
           <>
             <p className="mt-1.5 text-xs font-medium">
               {t("workflowRun.stepCard.unconfirmedTitle")}
@@ -590,7 +601,7 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.continueChat")}
               </Button>
             </>
-          ) : completionNeedsConfirmation ? (
+          ) : completionNeedsConfirmation && !completionAgentConfirmation ? (
             <>
               <Button
                 type="button"

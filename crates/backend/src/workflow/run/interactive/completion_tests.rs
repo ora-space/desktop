@@ -964,7 +964,7 @@ fn confirmation_and_forced_audit_share_one_payload_patch() {
         }))
     );
 }
-/// Confirming the accepted agent signal also adopts the workflow's opening turn.
+/// Confirming the accepted agent signal and the opening turn completes the first turn.
 #[test]
 fn confirming_an_agent_signal_completes_the_opening_turn() {
     run_test(async {
@@ -1015,13 +1015,13 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
             &run_id,
             "agent",
             CompletionApproval {
-                confirm_initial_turn: false,
+                confirm_initial_turn: true,
                 force: false,
                 confirm_agent_completion: Some(signal_fingerprint("signal-1")),
                 auto_confirm: false,
             },
         )
-        .expect("confirming the accepted signal completes the opening turn");
+        .expect("confirming both the opening turn and the accepted signal completes it");
 
         assert_eq!(prepared.output, Some("done".to_string()));
         assert_eq!(
@@ -1029,6 +1029,78 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
             Some(ConfirmationBy::Human)
         );
         assert_eq!(prepared.requester, NodeCompletionRequester::Agent);
+    });
+}
+
+/// The agent signal confirmation cannot stand in for the opening turn's own confirmation.
+#[test]
+fn confirming_an_agent_signal_does_not_confirm_the_opening_turn() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: Some(TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Workflow),
+            stop_cause: None,
+            park_kind: None,
+            blockers: vec![CompletionBlocker {
+                kind: CompletionBlockerKind::TurnUnconfirmed,
+                params: serde_json::Value::Null,
+            }],
+            warnings: Vec::new(),
+            output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+            provisional: false,
+        };
+        let signal = AgentSignal {
+            signal_id: "signal-1".to_string(),
+            requested_at: 1,
+            turn_key: TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            },
+        };
+        store_snapshot_with_meta(
+            &pool,
+            &node_run_id,
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(signal),
+                confirmation: None,
+                auto_accept: false,
+            },
+        );
+
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval {
+                confirm_initial_turn: false,
+                force: false,
+                confirm_agent_completion: Some(signal_fingerprint("signal-1")),
+                auto_confirm: false,
+            },
+        )
+        .expect_err("the signal confirmation must not adopt the opening turn");
+
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowNodeIncomplete(ora_contracts::WorkflowNodeIncompleteParams {
+                node_id: "agent".to_string(),
+                blockers: vec![WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
+                    message: None,
+                }],
+            })
+        );
     });
 }
 
