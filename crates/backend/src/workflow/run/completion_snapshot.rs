@@ -1288,6 +1288,7 @@ mod tests {
         assert_eq!(
             forced_completion_audit(&settled, &settled.blockers)["completion_forced"],
             json!({
+                "by": "human",
                 "blockers": [{ "kind": "turn_stopped" }],
                 "stop_cause": null,
                 "without_turn": false,
@@ -1300,6 +1301,7 @@ mod tests {
         assert_eq!(
             forced_completion_audit(&unsettled, &unsettled.blockers)["completion_forced"],
             json!({
+                "by": "human",
                 "blockers": [{ "kind": "turn_unknown" }],
                 "stop_cause": "unknown",
                 "without_turn": true,

@@ -142,8 +142,9 @@ export function RunNodeSessionChat({
     interaction?.completion?.awaitsAgentSignal === true;
   // The opening turn's own confirmation, read from the materialized blockers rather than from the
   // single-blocker shortcut: an agent-policy first turn also carries the signal blocker.
-  const openingTurnUnconfirmed =
-    completion.blockers.some((blocker) => blocker.kind === "turn_unconfirmed");
+  const openingTurnUnconfirmed = completion.blockers.some(
+    (blocker) => blocker.kind === "turn_unconfirmed",
+  );
   const completionParkKind = hasCompletionSnapshot
     ? completion.parkKind
     : undefined;
@@ -354,7 +355,13 @@ export function RunNodeSessionChat({
         },
       },
     );
-  }, [interaction, complete, onNodeCompleted, showContractError]);
+  }, [
+    interaction,
+    complete,
+    onNodeCompleted,
+    showContractError,
+    openingTurnUnconfirmed,
+  ]);
 
   /**
    * Accepts a settled agent signal automatically when the node opts in.
