@@ -23,7 +23,8 @@ pub(crate) use completion::{
     revalidate_completion, signal_fingerprint,
 };
 pub(crate) use completion_server::CompletionMcpServer;
-pub(crate) use session::{begin_human_turn, end_human_turn};
+#[allow(unused_imports)] // `end_human_turn` is the test-facing wrapper; production uses the signal variant.
+pub(crate) use session::{begin_human_turn, end_human_turn, end_human_turn_with_signal};
 pub(crate) use turns::WorkflowSessionTurns;
 
 /// Tracks node runs currently claimed by an in-process manual completion.

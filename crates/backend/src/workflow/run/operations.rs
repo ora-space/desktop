@@ -123,6 +123,7 @@ impl WorkflowRuns {
             self.completing_node_runs.clone(),
             self.transitions.clone(),
             self.sessions_root.clone(),
+            self.agent_signals.clone(),
         )
     }
 

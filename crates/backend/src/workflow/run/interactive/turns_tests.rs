@@ -77,6 +77,9 @@ fn a_workflow_turn_records_the_reported_end_cause_in_its_parked_snapshot() {
                 &transitions,
                 &node_run_id,
                 Some(report),
+                crate::workflow::run::completion_snapshot::CompletionPolicy::EndTurn,
+                None,
+                None,
             )
             .await
             .unwrap();
