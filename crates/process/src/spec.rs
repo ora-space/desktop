@@ -42,8 +42,9 @@ pub struct ProcessSpec {
 }
 
 /// Records whether a spawned process participates in process-global crash cleanup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum ReaperRegistration {
+    #[default]
     Register,
     Skip,
 }

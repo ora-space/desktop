@@ -16,6 +16,7 @@ use crate::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 pub struct TokioProcessSpawner {
     identity: ProcessIdentity,
     environment: ProcessEnvironment,
+    reaper_registration: ReaperRegistration,
 }
 
 /// Whether host environment authority is inherited by every child of this spawner.
@@ -37,12 +38,23 @@ impl TokioProcessSpawner {
         Self {
             identity,
             environment: ProcessEnvironment::Inherit,
+            reaper_registration: ReaperRegistration::Register,
         }
     }
 
     /// Configures inheritance once for a scoped owner; explicit ProcessSpec envs still apply.
     pub fn with_environment(mut self, environment: ProcessEnvironment) -> Self {
         self.environment = environment;
+        self
+    }
+
+    /// Keeps every child of this spawner out of the process-global reaper, whatever its spec
+    /// asks for.
+    ///
+    /// A host that starts the reaper for one class of its children uses this for the spawners of
+    /// the other classes, whose lifetime after an abnormal host exit is decided elsewhere.
+    pub fn without_reaper_registration(mut self) -> Self {
+        self.reaper_registration = ReaperRegistration::Skip;
         self
     }
 }
@@ -108,7 +120,10 @@ impl ProcessSpawner for TokioProcessSpawner {
                 "TokioProcessSpawner requires an active Tokio runtime: {error}"
             ))
         })?;
-        let reaper_registration = spec.reaper_registration();
+        let reaper_registration = match self.reaper_registration {
+            ReaperRegistration::Register => spec.reaper_registration(),
+            ReaperRegistration::Skip => ReaperRegistration::Skip,
+        };
         let mut command = Command::new(spec.program());
         if let ProcessEnvironment::Empty = self.environment {
             command.env_clear();

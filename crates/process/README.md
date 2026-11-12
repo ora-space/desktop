@@ -7,6 +7,8 @@
 - `ProcessSpec` describes the executable, arguments, working directory, environment overrides, stdio policies, and drop behavior.
 - Reaper registration is the default; bounded one-shot commands can explicitly opt out with
   `ProcessSpec::skip_reaper_registration` while retaining local wait and tree-wide kill behavior.
+  `TokioProcessSpawner::without_reaper_registration` opts out every child of one spawner, for a
+  host that scopes the reaper to one class of its processes.
 - On Unix, `ProcessSpec::inherit_descriptor` hands one extra descriptor to that child alone. Every
   other descriptor above the standard streams stays close-on-exec, also under a dropped identity.
 - `ProcessStdio` makes piped, inherited, and null streams explicit.
