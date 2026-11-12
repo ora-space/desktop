@@ -17,11 +17,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --locked --release \
-      -p ora-node -p ora-reaper -p ora-git -p ora-process-host -p ora-process-guardian \
-      -p ora-controller && \
+      -p ora-node -p ora-reaper -p ora-git -p ora-controller && \
     mkdir -p /out && \
-    cp target/release/ora-node target/release/ora-reaper target/release/ora-process-host \
-       target/release/ora-process-guardian target/release/ora-controller target/release/ora-git /out/
+    cp target/release/ora-node target/release/ora-reaper target/release/ora-controller \
+       target/release/ora-git /out/
 
 # Deno runs every plugin on the Node. The version is .deno-version and the archive and executable
 # digests come from scripts/sidecar-checksums.json, the same reviewed pins the desktop sidecars use;
@@ -53,27 +52,27 @@ RUN apt-get update && \
 
 # Sandbox image started by the Sandbox Server, one container per Workspace. The Sandbox Server passes
 # the Node service configuration in ORA_NODE_CONFIG and mounts the Workspace volume on /var/lib/ora;
-# the entrypoint runs the process host and the Node as root, and Git workloads and agent plugins run
-# as the unprivileged `node` user (UID 1000).
+# the entrypoint runs the Node as root, and Git workloads and agent plugins run as the unprivileged
+# `node` user (UID 1000).
 FROM runtime AS node
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git jq tini util-linux && \
+    apt-get install -y --no-install-recommends git jq tini && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --uid 1000 --create-home --home-dir /home/node --shell /usr/sbin/nologin node && \
     install -d -o root -g root -m 0700 /var/lib/ora /run/ora && \
     install -d -m 0755 /etc/ora /opt/ora/bin
-# Root-owned and not group/other-writable: the host refuses a guardian under a writable ancestor and
-# the Node refuses a writable clone Git configuration in release builds. The parent directories exist
-# before these COPYs because `--chmod` would otherwise also apply to the directories it creates.
+# Root-owned and not group/other-writable: the Node runs these as root, and it refuses a writable
+# clone Git configuration in release builds. The parent directories exist before these COPYs because
+# `--chmod` would otherwise also apply to the directories it creates.
 # `ora-reaper` sits next to `ora-node`, which starts it from its own directory.
-COPY --from=build --chmod=0755 /out/ora-node /out/ora-reaper /out/ora-process-host /out/ora-process-guardian /opt/ora/bin/
+COPY --from=build --chmod=0755 /out/ora-node /out/ora-reaper /opt/ora/bin/
 COPY --from=build --chmod=0755 /out/ora-git /usr/local/bin/ora-git
 COPY --from=deno --chmod=0755 /out/deno /opt/ora/bin/deno
 COPY --chmod=0644 docker/clone.gitconfig /etc/ora/clone.gitconfig
 COPY --chmod=0755 docker/node-entrypoint.sh /opt/ora/bin/node-entrypoint.sh
 VOLUME /var/lib/ora
-# tini reaps processes reparented to PID 1 (guardians and their descendants) and forwards the stop
-# signal to the entrypoint, which orders the shutdown.
+# tini reaps processes reparented to PID 1 (what outlived a killed Node) and forwards the stop
+# signal to the entrypoint, which passes it to the Node.
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/ora/bin/node-entrypoint.sh"]
 
 # Controller in cloud persistence mode; the deployment mounts its JSON configuration and passes the

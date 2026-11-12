@@ -212,7 +212,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
     }
 }
 
-/// Maps process-runtime call failures onto the transport-neutral lifecycle error.
+/// Maps plugin-runtime call failures onto the transport-neutral lifecycle error.
 fn map_call_error(error: PluginRuntimeError) -> PluginCallError {
     match error {
         PluginRuntimeError::Unavailable(_) => PluginCallError::Unavailable,

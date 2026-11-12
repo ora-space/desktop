@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
-//! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
+//! boundary so readiness, stop and crash behavior can be shaped without Git.
 #[path = "support/local_clone.rs"]
 mod local_clone;
 use ora_controller::{CoordinationStore, SqliteStore};
@@ -320,7 +320,7 @@ fn normal_stop_orders_phases_and_retires_node() {
     assert_eq!(fs::read(&deployment.node_config).unwrap(), node_config);
 }
 
-/// A Node that ignores SIGTERM is left to host/guardian containment after a warning, never killed.
+/// A Node that ignores SIGTERM is left running after a warning, never killed.
 #[test]
 fn stop_timeout_warns_without_sigkill() {
     let deployment = deployment(FakeNode::Stubborn, 5000, 300);
