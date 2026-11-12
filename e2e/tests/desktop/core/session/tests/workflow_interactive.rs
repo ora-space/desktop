@@ -149,7 +149,7 @@ pub(super) async fn wait_for_node(
 }
 
 /// Polls the projection until the run reaches a terminal status.
-async fn wait_for_run_end(
+pub(super) async fn wait_for_run_end(
     backend: &Backend,
     run_id: &str,
 ) -> Result<GetWorkflowRunResponse, Box<dyn std::error::Error>> {
