@@ -11,7 +11,7 @@ use super::owner_stream_drop::OwnerStreamDropControl;
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
-use crate::error::{BackendError, ErrorClassification};
+use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::repository_work::spawn_repository_work;
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
@@ -215,17 +215,19 @@ impl WorkflowRuns {
         request: CompleteWorkflowNodeRequest,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
         let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
-        // TODO(#1070): allow the first-turn no-signal combination once the pre-claim snapshot
-        // check can prove a `turn_unconfirmed` and a force-coverable signal blocker are present.
+        // The first-turn exception is the only valid combination of these two flags. Prove it
+        // from the parked snapshot before claiming, so a contradictory request changes no state.
         if request.force && confirm_initial_turn {
-            return Err(BackendError::new(
-                ErrorClassification::InvalidRequest,
-                PublicError::InvalidRequest(EmptyErrorParams {}),
-                "force and confirmInitialTurn cannot be combined",
-            ));
+            let pool = self.pool.clone();
+            let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
+            let node_id = request.node_id.clone();
+            spawn_repository_work(move || {
+                crate::workflow::run::interactive::validate_first_turn_force_confirmation(
+                    &pool, &run_id, &node_id,
+                )
+            })
+            .await?;
         }
-        // The combined first-turn exception is tracked in #1070; until the pre-claim snapshot
-        // check exists, keep the original contradiction rule and validate the remaining flags.
         let mut approval = CompletionApproval::PLAIN;
         approval.force = request.force;
         approval.confirm_initial_turn = confirm_initial_turn;

@@ -149,6 +149,42 @@ pub(crate) fn claim_node_for_completion(
     Ok(node_run.id)
 }
 
+/// Rejects a combined first-turn confirmation and force before the node is claimed.
+///
+/// The combination is only meaningful for an `agent` policy node whose opening turn is still
+/// unconfirmed and whose settlement carries no signal: confirmation lifts `turn_unconfirmed` and
+/// force covers the resulting `agent_signal_pending`. Anything else has no coherent meaning and
+/// must fail without changing durable state (ADR D2 row 1).
+pub(crate) fn validate_first_turn_force_confirmation(
+    pool: &RepositoryPool,
+    run_id: &WorkflowRunId,
+    node_id: &str,
+) -> Result<(), BackendError> {
+    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let node_run = repository
+        .list_node_runs(run_id)
+        .map_err(repository_error)?
+        .into_iter()
+        .find(|node_run| node_run.node_id == node_id)
+        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
+            node_id: node_id.to_string(),
+        })?;
+    let meta = CompletionMeta::from_payload(node_run.payload.as_deref());
+    let snapshot = parse_completion_snapshot(node_run.payload.as_deref());
+    let has_unconfirmed = snapshot.as_ref().is_some_and(|snapshot| {
+        snapshot
+            .blockers
+            .iter()
+            .any(|blocker| blocker.kind == CompletionBlockerKind::TurnUnconfirmed)
+    });
+    if meta.policy != CompletionPolicy::Agent || !has_unconfirmed || meta.agent_signal.is_some() {
+        return Err(completion_rejected(PublicError::InvalidRequest(
+            EmptyErrorParams {},
+        )));
+    }
+    Ok(())
+}
+
 /// Re-validates under the per-run gate that the run is still `Running` and the node still
 /// `Pending` before the completion commits, so a completion that raced a cancel (or a concurrent
 /// complete) aborts instead of reporting false success.
