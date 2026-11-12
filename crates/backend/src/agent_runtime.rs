@@ -279,6 +279,10 @@ impl SessionSetup for SessionMcpHost {
         SessionMcpHost::with_selection(self, selection)
     }
 
+    fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        SessionMcpHost::workflow_view(self, selection)
+    }
+
     fn selection(&self) -> &SessionMcpSelection {
         &self.selection
     }

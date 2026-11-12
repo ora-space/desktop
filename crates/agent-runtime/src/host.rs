@@ -6,9 +6,9 @@
 //! host through these traits. Desktop implements them over SQLite and its plugin API; a sandbox
 //! Node implements them over its own ledger and plugin lifecycle.
 
-use agent_client_protocol_schema::v1::McpServer;
 use crate::error::RuntimeError;
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
+use agent_client_protocol_schema::v1::McpServer;
 use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
     SessionTitle, WorkspaceId,
@@ -153,6 +153,14 @@ pub trait AgentAttach: Send + Sync + 'static {
 pub trait SessionSetup: Clone + Send + Sync + 'static {
     /// Creates a session-local view without mutating the shared source.
     fn with_selection(&self, selection: SessionMcpSelection) -> Self;
+
+    /// Creates a workflow-owned view that also carries host-only capabilities.
+    ///
+    /// Ordinary sessions must use [`Self::with_selection`], which excludes those capabilities even
+    /// when the same host implements them.
+    fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        self.with_selection(selection)
+    }
 
     /// The selection this view resolves.
     fn selection(&self) -> &SessionMcpSelection;

@@ -212,6 +212,7 @@ async fn complete_with(
             node_id: "agent".to_string(),
             force,
             confirm_initial_turn,
+            confirm_agent_completion: None,
             requester: Some(NodeCompletionRequester::Human),
         })
         .await

@@ -265,7 +265,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::Published,
-            self.inner.session_mcp.clone(),
+            // Ordinary sessions never receive workflow-only host capabilities.
+            self.inner
+                .session_mcp
+                .with_selection(SessionMcpSelection::Automatic),
         )
         .await
     }
@@ -280,7 +283,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
-            self.inner.session_mcp.with_selection(selection),
+            self.inner.session_mcp.workflow_view(selection),
         )
         .await
     }

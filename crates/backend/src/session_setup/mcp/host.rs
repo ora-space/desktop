@@ -82,6 +82,16 @@ impl SessionMcpHost {
         Self {
             plugin_host: self.plugin_host.clone(),
             selection,
+            // Ordinary sessions never receive the workflow completion capability.
+            host_servers: Vec::new(),
+        }
+    }
+
+    /// Creates a workflow-owned session view that carries the host completion capability.
+    pub(crate) fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        Self {
+            plugin_host: self.plugin_host.clone(),
+            selection,
             host_servers: self.host_servers.clone(),
         }
     }
