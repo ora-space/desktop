@@ -37,6 +37,8 @@ pub struct ProcessSpec {
     stderr: ProcessStdio,
     kill_on_drop: bool,
     reaper_registration: ReaperRegistration,
+    #[cfg(unix)]
+    inherited_descriptor: Option<InheritedDescriptor>,
 }
 
 /// Records whether a spawned process participates in process-global crash cleanup.
@@ -45,6 +47,25 @@ pub(crate) enum ReaperRegistration {
     Register,
     Skip,
 }
+
+/// The one descriptor a child keeps besides its standard streams.
+///
+/// The spec shares ownership so the descriptor number cannot be closed and reused for something
+/// else between building the spec and the fork that reads it.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct InheritedDescriptor(std::sync::Arc<std::os::fd::OwnedFd>);
+
+#[cfg(unix)]
+impl PartialEq for InheritedDescriptor {
+    /// Two specs hand over the same descriptor only when they share the same open handle.
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(unix)]
+impl Eq for InheritedDescriptor {}
 
 impl ProcessSpec {
     pub fn new(program: impl Into<OsString>) -> Self {
@@ -59,6 +80,8 @@ impl ProcessSpec {
             stderr: ProcessStdio::Piped,
             kill_on_drop: true,
             reaper_registration: ReaperRegistration::Register,
+            #[cfg(unix)]
+            inherited_descriptor: None,
         }
     }
 
@@ -145,6 +168,18 @@ impl ProcessSpec {
         self
     }
 
+    /// Lets this child, and only this child, inherit `descriptor` under the same number.
+    ///
+    /// Every other descriptor above the standard streams stays close-on-exec, including under a
+    /// dropped identity. The descriptor must be close-on-exec in the parent (the default for
+    /// descriptors Rust opens), so children spawned concurrently by other threads never receive
+    /// it. A second call replaces the first: a child inherits at most one extra descriptor.
+    #[cfg(unix)]
+    pub fn inherit_descriptor(mut self, descriptor: std::sync::Arc<std::os::fd::OwnedFd>) -> Self {
+        self.inherited_descriptor = Some(InheritedDescriptor(descriptor));
+        self
+    }
+
     /// Returns the executable path or name that will be passed to the OS.
     pub fn program(&self) -> &OsStr {
         &self.program
@@ -190,6 +225,15 @@ impl ProcessSpec {
     /// Returns the typed reaper policy used by the production lifecycle implementation.
     pub(crate) fn reaper_registration(&self) -> ReaperRegistration {
         self.reaper_registration
+    }
+
+    /// Returns the number of the descriptor the child keeps; valid while this spec is alive.
+    #[cfg(unix)]
+    pub(crate) fn inherited_descriptor(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        self.inherited_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.0.as_raw_fd())
     }
 }
 

@@ -79,6 +79,26 @@ fn configure_identity(
     }
 }
 
+/// Clears close-on-exec on `descriptor` in the forked child, after any identity drop marked every
+/// descriptor above the standard streams close-on-exec.
+///
+/// `pre_exec` closures run in registration order, so this must be registered after
+/// [`configure_identity`]. A failure aborts the exec and surfaces as the spawn's error.
+#[cfg(unix)]
+fn keep_descriptor(command: &mut Command, descriptor: std::os::fd::RawFd) {
+    // SAFETY: the closure runs in the forked child before exec and calls only `fcntl`, which is
+    // async-signal-safe. The spec owns the descriptor until spawn returns, so the number still
+    // names the caller's open file in the child.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(descriptor, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 impl ProcessSpawner for TokioProcessSpawner {
     type Process = TokioManagedProcess;
 
@@ -114,6 +134,10 @@ impl ProcessSpawner for TokioProcessSpawner {
         command.kill_on_drop(spec.should_kill_on_drop());
         ProcessTree::configure_command(&mut command);
         configure_identity(&mut command, self.identity);
+        #[cfg(unix)]
+        if let Some(descriptor) = spec.inherited_descriptor() {
+            keep_descriptor(&mut command, descriptor);
+        }
 
         let mut child = command.spawn()?;
         let Some(process_id) = child.id() else {
