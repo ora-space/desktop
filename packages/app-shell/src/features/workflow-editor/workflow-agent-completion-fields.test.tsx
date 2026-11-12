@@ -153,4 +153,26 @@ describe("Agent completion files", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("0 / 32 files")).toBeInTheDocument();
   });
+  it("keeps a malformed file row visible and lets the author correct it", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(
+      <Harness
+        node={agentNode({
+          schemaVersion: 4,
+          completion: JSON.parse('{"files":[null]}'),
+        })}
+      />,
+    );
+
+    const input = screen.getByLabelText("File 1 path");
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(persistedConfig()).toMatchObject({ completion: { files: [null] } });
+    await user.type(input, "reports/fixed.md");
+    expect(input).toHaveAttribute("aria-invalid", "false");
+    expect(persistedConfig()).toMatchObject({
+      completion: { files: [{ path: "reports/fixed.md" }] },
+    });
+  });
 });

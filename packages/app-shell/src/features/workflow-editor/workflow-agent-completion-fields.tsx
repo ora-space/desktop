@@ -10,6 +10,11 @@ import {
   type WorkflowAgentConfig,
 } from "@ora/workflow-mock";
 
+/** Narrows one stored completion row without trusting malformed imported data. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Edits an Agent node's completion file declarations.
  *
@@ -27,9 +32,9 @@ export function WorkflowAgentCompletionFields({
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
   const { t } = useTranslation();
-  const files: WorkflowAgentCompletionFile[] = Array.isArray(
-    config.completion?.files,
-  )
+  // Imported graphs can carry null or primitive rows. Keep them in place for validation and
+  // display them as empty rows; only an explicit edit turns one into a file object.
+  const files: unknown[] = Array.isArray(config.completion?.files)
     ? config.completion.files
     : [];
   // An empty row is valid while the author is typing; show its error after the first blur, while
@@ -37,11 +42,14 @@ export function WorkflowAgentCompletionFields({
   const [touched, setTouched] = useState<ReadonlySet<number>>(new Set());
 
   /** Writes the whole declaration, including the version its presence requires. */
-  function commit(next: WorkflowAgentCompletionFile[]): void {
+  function commit(next: unknown[]): void {
     onChange({
       ...config,
       schemaVersion: next.length > 0 ? 4 : 3,
-      completion: next.length > 0 ? { files: next } : undefined,
+      completion:
+        next.length > 0
+          ? { files: next as WorkflowAgentCompletionFile[] }
+          : undefined,
     });
   }
 
@@ -50,14 +58,21 @@ export function WorkflowAgentCompletionFields({
     setTouched(new Set());
   }
 
-  /** Replaces one file while keeping the declaration's order. */
+  /**
+   * Replaces one file while keeping the declaration's order.
+   *
+   * A malformed row is replaced with a fresh object for this explicit edit; spreading a string or
+   * number would create numeric pseudo-properties instead of correcting the declaration.
+   */
   function updateFile(
     index: number,
     patch: Partial<WorkflowAgentCompletionFile>,
   ): void {
     commit(
       files.map((file, current) =>
-        current === index ? { ...file, ...patch } : file,
+        current === index
+          ? { ...(isRecord(file) ? file : {}), ...patch }
+          : file,
       ),
     );
   }
@@ -75,9 +90,12 @@ export function WorkflowAgentCompletionFields({
       </p>
       <div className="min-w-0 divide-y overflow-hidden rounded-md border border-border">
         {files.map((file, index) => {
-          const issue = workflowAgentCompletionPathIssue(file.path);
+          const malformed = !isRecord(file) || typeof file.path !== "string";
+          const path =
+            isRecord(file) && typeof file.path === "string" ? file.path : "";
+          const issue = workflowAgentCompletionPathIssue(path);
           const showIssue =
-            issue !== null && (file.path !== "" || touched.has(index));
+            issue !== null && (malformed || path !== "" || touched.has(index));
           const errorId = `workflow-agent-completion-error-${index}`;
           return (
             <div
@@ -87,7 +105,7 @@ export function WorkflowAgentCompletionFields({
               <div className="min-w-0 space-y-1">
                 <Input
                   className="h-8 min-w-0 text-xs"
-                  value={file.path}
+                  value={path}
                   aria-label={t("settings.workflow.completion.path", {
                     index: index + 1,
                   })}
@@ -123,7 +141,7 @@ export function WorkflowAgentCompletionFields({
                 <Switch
                   size="sm"
                   className="shrink-0 data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
-                  checked={file.mustChange === true}
+                  checked={isRecord(file) && file.mustChange === true}
                   aria-label={t("settings.workflow.completion.mustChange", {
                     index: index + 1,
                   })}
