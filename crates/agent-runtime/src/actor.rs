@@ -450,6 +450,8 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            #[cfg(feature = "test-support")]
+            test_prompt_inactivity_windows: None,
             exit_probe: Some(exit_sender),
         };
         let actor_task = tokio::spawn(actor.run());
@@ -528,6 +530,8 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            #[cfg(feature = "test-support")]
+            test_prompt_inactivity_windows: None,
             exit_probe: None,
         };
         let user_title = SessionTitle::parse("User title").expect("valid user title");

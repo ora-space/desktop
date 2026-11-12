@@ -23,7 +23,7 @@ workspace = true
 
 [dev-dependencies]
 chrono-tz = { workspace = true }
-ora-backend = { workspace = true }
+ora-backend = { workspace = true, features = ["test-support"] }
 ora-contracts = { workspace = true }
 ora-db = { workspace = true }
 ora-domain = { workspace = true }

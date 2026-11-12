@@ -21,6 +21,8 @@ mod loop_resume_tests;
 #[cfg(test)]
 mod mixed_scope_tests;
 mod operations;
+#[cfg(feature = "test-support")]
+mod owner_stream_drop;
 mod prerequisites;
 mod prompt;
 mod recovery;

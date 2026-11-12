@@ -43,6 +43,13 @@ const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
 /// node outputs stay production-realistic final answers.
 const PROMPT_JOURNAL: &str = "acp_prompts.jsonl";
 
+/// Prompt marker that keeps the fake agent alive and silent after it receives the prompt.
+const SILENT_MARKER: &str = "[fake-agent-silent]";
+/// Prompt marker that makes the fake agent process exit after recording prompt receipt.
+const CRASH_MARKER: &str = "[fake-agent-crash]";
+/// Prompt marker that keeps the process alive and silent until the owning stream is dropped.
+const DROP_MARKER: &str = "[fake-agent-drop]";
+
 /// Prefix a workflow task's deterministic answer carries so tests can tell the fake's replies
 /// from user-authored template text.
 const REPLY_PREFIX: &str = "Fake agent received: ";
@@ -103,6 +110,17 @@ impl AcpError {
     }
 }
 
+/// Deterministic abnormal prompt behaviors the E2E suite can request through prompt markers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptMode {
+    /// The prompt was received, but no update or terminal response will be produced.
+    Silent,
+    /// The prompt was received, then the whole plugin process exits abruptly.
+    Crash,
+    /// The process stays alive and silent until the prompt owner drops its stream.
+    Drop,
+}
+
 /// Stateful ACP peer that implements the capabilities advertised during initialization.
 #[derive(Default)]
 pub(super) struct FakeAcpAgent {
@@ -126,24 +144,33 @@ impl FakeAcpAgent {
             return self.handle_notification(method, params);
         };
 
-        // This explicit fixture prompt emits its first update but settles only after ACP cancel.
-        // No timer or process-wide flag controls the race, so tests can synchronize on the update.
-        let held_session =
-            if method == AGENT_METHOD_NAMES.session_prompt {
-                serde_json::from_value::<PromptRequest>(params.clone())
-                    .ok()
-                    .and_then(|request| {
-                        request.prompt.iter().any(|block| matches!(block,
-                    ContentBlock::Text(text) if text.text.contains("[hold-for-cancel]")
-                )).then(|| request.session_id.to_string())
-                    })
-            } else {
-                None
-            };
+        // Held fixtures keep the request open until ACP cancel. The legacy hold still emits its
+        // first update so lifecycle tests can observe an in-flight turn; abnormal modes stay
+        // silent and only journal prompt receipt, which is the test's synchronization point.
+        let held_prompt = if method == AGENT_METHOD_NAMES.session_prompt {
+            serde_json::from_value::<PromptRequest>(params.clone())
+                .ok()
+                .and_then(|request| {
+                    let session_id = request.session_id.to_string();
+                    let prompt = prompt_text(&request.prompt);
+                    if prompt.contains("[hold-for-cancel]") {
+                        Some((session_id, None))
+                    } else {
+                        prompt_mode(&prompt).map(|mode| (session_id, Some(mode)))
+                    }
+                })
+        } else {
+            None
+        };
 
         match self.handle_request(method, params) {
             Ok(mut call) => {
-                if let Some(session_id) = held_session {
+                if let Some((session_id, mode)) = held_prompt {
+                    // Abnormal modes are deliberately silent: dropping the generated notification
+                    // is what makes "received the prompt but produced nothing" literal.
+                    if mode.is_some() {
+                        call.notifications.clear();
+                    }
                     self.pending_prompts.insert(session_id, id);
                     return call.notifications;
                 }
@@ -329,19 +356,18 @@ impl FakeAcpAgent {
             return Err(AcpError::invalid_params(method, "session is closed"));
         }
 
-        let prompt = request
-            .prompt
-            .iter()
-            .filter_map(|block| {
-                if let ContentBlock::Text(text) = block {
-                    Some(text.text.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
+        if let Some(mode) = prompt_mode(&prompt) {
+            if mode == PromptMode::Crash {
+                // An abrupt exit of the whole plugin process is a session crash, not a prompt
+                // stream the test dropped; the journal write above is already flushed.
+                std::process::exit(17);
+            }
+            // Silent and drop modes return a normal result to this frame handler, which discards
+            // its notifications and holds the request until ACP cancel. This keeps the process
+            // alive for drop mode and produces no update or terminal end for silent mode.
+        }
         if let Some(error) = planned_prompt_failure(&prompt) {
             return Err(error);
         }
@@ -445,6 +471,34 @@ fn planned_prompt_failure(prompt: &str) -> Option<AcpError> {
             failed + 1
         ),
     })
+}
+
+/// Joins the text blocks of one ACP prompt for mode detection and deterministic replies.
+fn prompt_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::Text(text) = block {
+                Some(text.text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Reads the abnormal mode a test requested through one of the explicit prompt markers.
+fn prompt_mode(prompt: &str) -> Option<PromptMode> {
+    if prompt.contains(SILENT_MARKER) {
+        Some(PromptMode::Silent)
+    } else if prompt.contains(CRASH_MARKER) {
+        Some(PromptMode::Crash)
+    } else if prompt.contains(DROP_MARKER) {
+        Some(PromptMode::Drop)
+    } else {
+        None
+    }
 }
 
 /// Records one served prompt so tests can assert prompt-level content that never belongs in a

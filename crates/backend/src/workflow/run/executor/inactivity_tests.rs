@@ -131,6 +131,8 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
                 &context,
                 &node_run.scope_id,
                 &payload.variable_pool,
+                #[cfg(feature = "test-support")]
+                &super::OwnerStreamDropControl::default(),
             )
             .await;
             let error = match outcome {

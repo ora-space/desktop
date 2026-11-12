@@ -1,6 +1,8 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::StopCause;
 use super::last_failure::previous_failure_for_injection;
+#[cfg(feature = "test-support")]
+use super::owner_stream_drop::{OwnerStreamDropControl, OwnerStreamDropWaiter};
 use super::prompt::{
     RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt, render_previous_failure,
 };
@@ -19,7 +21,7 @@ use ora_application::{
     BindWorkflowNodeSessionResult, Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure,
     NodeFailureKind, RepositoryError, StructuredOutputError, VariableTemplateError,
     WorkflowGraphNode, WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload,
-    extract_json_object, render_variable_template, validate_against_schema,
+    render_variable_template,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -49,6 +51,7 @@ mod loop_exit;
 mod output;
 mod payload;
 pub(super) use output::AssistantOutputAccumulator;
+pub(crate) use output::apply_output_contract;
 use payload::{parse_workflow_run_payload, report_outcome};
 
 /// Executes one agent node through a real Ora session, reporting completion to the run engine.
@@ -69,6 +72,9 @@ pub struct WorkflowRunNodeExecutor {
     /// Commits the interactive park transition with the shared publish-after-commit discipline.
     transitions: Arc<WorkflowRunTransitions>,
     loop_exit_tasks: Arc<loop_exit::LoopExitTasks>,
+    /// One-shot E2E control for abandoning a node's real owning prompt stream.
+    #[cfg(feature = "test-support")]
+    owner_stream_drop: Arc<OwnerStreamDropControl>,
 }
 
 impl WorkflowRunNodeExecutor {
@@ -95,7 +101,19 @@ impl WorkflowRunNodeExecutor {
             baselines_root,
             transitions,
             loop_exit_tasks: Arc::default(),
+            #[cfg(feature = "test-support")]
+            owner_stream_drop: Arc::default(),
         }
+    }
+
+    /// Injects the Backend instance's owner-stream drop control for E2E tests.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn with_test_owner_stream_drop(
+        mut self,
+        control: Arc<OwnerStreamDropControl>,
+    ) -> Self {
+        self.owner_stream_drop = control;
+        self
     }
 }
 
@@ -117,6 +135,8 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let sessions_root = self.sessions_root.clone();
         let baselines_root = self.baselines_root.clone();
         let transitions = self.transitions.clone();
+        #[cfg(feature = "test-support")]
+        let owner_stream_drop = self.owner_stream_drop.clone();
         let node_run_id = node_run_id.clone();
         let node = node.clone();
         let graph = graph.clone();
@@ -140,6 +160,8 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &context,
                 &scope_id,
                 &variable_pool,
+                #[cfg(feature = "test-support")]
+                &owner_stream_drop,
             )
             .await
             {
@@ -359,6 +381,7 @@ async fn drive_agent_node(
     context: &ExecutionContext,
     scope_id: &ora_domain::WorkflowScopeId,
     variable_pool: &ora_application::WorkflowVariablePool,
+    #[cfg(feature = "test-support")] owner_stream_drop: &OwnerStreamDropControl,
 ) -> Result<AgentNodeOutcome, NodeExecutionError> {
     let config =
         node.agent_config
@@ -518,10 +541,19 @@ async fn drive_agent_node(
         }
 
         // Consume the owning prompt stream while `load_session` followers receive the same live
-        // turn.
+        // turn. In E2E, an armed node may ask the executor to abandon this real stream; that path
+        // runs `cancel_and_wait` and then lets the ordinary `recv` return `None`.
+        #[cfg(feature = "test-support")]
+        let owner_drop = owner_stream_drop.claim(&node.id, session_id.as_ref());
         let mut accumulator = AssistantOutputAccumulator::default();
         let mut stop_reason = None;
-        while let Some(event) = stream.recv().await {
+        while let Some(event) = next_prompt_event(
+            &mut stream,
+            #[cfg(feature = "test-support")]
+            owner_drop.as_ref(),
+        )
+        .await?
+        {
             match event? {
                 PromptSessionEvent::SessionUpdate { update, .. } => {
                     accumulator.consume(&update);
@@ -632,49 +664,27 @@ async fn drive_agent_node(
     outcome
 }
 
-/// Resolves a completed node's final response into the output variables to commit.
+/// Waits for the next prompt event, or abandons the real owning stream when the E2E seam asks.
 ///
-/// A structured contract parses the response as a JSON object and validates it against the schema.
-/// The raw result remains the node's stable `output`; absent and legacy text contracts perform no
-/// additional parsing.
-pub(crate) fn apply_output_contract(
-    contract: Option<&AgentOutputContract>,
-    final_text: Option<String>,
-    node_id: &str,
-) -> Result<(Option<String>, Option<serde_json::Value>), NodeExecutionError> {
-    match contract {
-        None => Ok((final_text, None)),
-        Some(AgentOutputContract::None) => Ok((final_text, None)),
-        Some(AgentOutputContract::Text) => Ok((final_text, None)),
-        Some(AgentOutputContract::Structured {
-            schema,
-            text_exposure: _,
-        }) => {
-            let Some(text) = final_text else {
-                return Err(NodeExecutionError::StructuredOutput {
-                    node_id: node_id.to_string(),
-                    source: StructuredOutputError::NotJsonObject {
-                        reason: "the agent produced no final response".to_string(),
-                    },
-                    output: None,
-                });
-            };
-            let structured = match extract_json_object(&text).and_then(|value| {
-                validate_against_schema(&value, schema)?;
-                Ok(value)
-            }) {
-                Ok(structured) => structured,
-                Err(source) => {
-                    return Err(NodeExecutionError::StructuredOutput {
-                        node_id: node_id.to_string(),
-                        source,
-                        output: Some(text),
-                    });
-                }
-            };
-            Ok((Some(text), Some(structured)))
-        }
+/// On a test drop request the executor calls `cancel_and_wait` on the same stream it owns. The
+/// following `recv` returns `None`, so the existing missing-`Completed` error path runs naturally.
+async fn next_prompt_event(
+    stream: &mut ora_agent_runtime::SessionEventStream<PromptSessionEvent>,
+    #[cfg(feature = "test-support")] owner_drop: Option<&OwnerStreamDropWaiter>,
+) -> Result<Option<Result<PromptSessionEvent, RuntimeError>>, NodeExecutionError> {
+    #[cfg(feature = "test-support")]
+    if let Some(owner_drop) = owner_drop {
+        return tokio::select! {
+            event = stream.recv() => Ok(event),
+            () = owner_drop.wait_for_drop() => {
+                // Abandon the same owning stream the executor is consuming. Its state moves to
+                // completed, so the following recv observes EOF without a `Completed` event.
+                stream.cancel_and_wait().await?;
+                Ok(stream.recv().await)
+            }
+        };
     }
+    Ok(stream.recv().await)
 }
 
 /// Reads the agent identity a graph node declares.

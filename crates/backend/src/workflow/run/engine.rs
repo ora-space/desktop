@@ -1,4 +1,6 @@
 use super::executor::WorkflowRunNodeExecutor;
+#[cfg(feature = "test-support")]
+use super::owner_stream_drop::OwnerStreamDropControl;
 use super::retry_timer::WorkflowRetryTimers;
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
@@ -141,6 +143,9 @@ pub(crate) struct WorkflowRunEngineAssembly {
     /// The commit-and-publish sink for node-run transitions committed outside the engine (the
     /// interactive chain), sharing the engine's invalidation mechanism.
     pub transitions: Arc<WorkflowRunTransitions>,
+    /// E2E-only control for abandoning one node's real owning prompt stream.
+    #[cfg(feature = "test-support")]
+    pub owner_stream_drop: Arc<OwnerStreamDropControl>,
 }
 
 /// Projects engine run invalidations onto the shared application event stream.
@@ -190,6 +195,8 @@ pub(crate) fn build_workflow_run_engine(
         invalidations.clone(),
         run_locks.clone(),
     ));
+    #[cfg(feature = "test-support")]
+    let owner_stream_drop = Arc::new(OwnerStreamDropControl::default());
     let executor = WorkflowRunNodeExecutor::new(
         agent_runtime,
         pool.clone(),
@@ -200,6 +207,8 @@ pub(crate) fn build_workflow_run_engine(
         baselines_root,
         transitions.clone(),
     );
+    #[cfg(feature = "test-support")]
+    let executor = executor.with_test_owner_stream_drop(owner_stream_drop.clone());
     let retry_timers = Arc::new(WorkflowRetryTimers::new(run_locks.clone(), clock));
     let engine = Arc::new(
         WorkflowRunEngine::with_run_events(
@@ -222,6 +231,8 @@ pub(crate) fn build_workflow_run_engine(
         run_locks,
         engine,
         transitions,
+        #[cfg(feature = "test-support")]
+        owner_stream_drop,
     }
 }
 

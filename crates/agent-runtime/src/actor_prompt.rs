@@ -143,7 +143,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let mut permissions = HashMap::new();
         let mut followers = SessionFollowers::new();
         let mut input_state = ActiveInputState::default();
-        let mut liveness = PromptLiveness::new(&PROMPT_INACTIVITY_WINDOWS);
+        #[cfg(feature = "test-support")]
+        let windows = self
+            .test_prompt_inactivity_windows
+            .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
+        #[cfg(not(feature = "test-support"))]
+        let windows = &PROMPT_INACTIVITY_WINDOWS;
+        let mut liveness = PromptLiveness::new(windows);
         let mut tool_timings = ToolTimings::default();
         loop {
             let input = tokio::select! {
