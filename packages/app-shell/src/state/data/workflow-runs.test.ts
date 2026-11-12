@@ -381,6 +381,56 @@ describe("buildDisplayRun", () => {
     });
   });
 
+  it("projects an accepted agent signal from the payload's completion metadata", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+                stopReason: "end_turn",
+                turnOrigin: "workflow",
+                parkKind: "awaiting_user",
+                blockers: [{ kind: "turn_unconfirmed", params: {} }],
+                warnings: [],
+                provisional: false,
+              },
+              completionPolicy: "agent",
+              agentSignal: {
+                signalId: "signal-1",
+                requestedAt: 1,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+              },
+              autoAcceptAgentCompletion: true,
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+
+    expect(display.nodeStates.explore.completion).toMatchObject({
+      completionPolicy: "agent",
+      agentSignal: {
+        signalId: "signal-1",
+        turnKey: { userSeq: 7, endedSeq: 8 },
+      },
+      autoAcceptAgentCompletion: true,
+      requiresAgentConfirmation: true,
+      awaitsAgentSignal: false,
+      ready: false,
+    });
+  });
+
   it("keeps blockers blocking and normalizes an unknown future blocker", () => {
     const display = buildDisplayRun(
       {

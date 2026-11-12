@@ -867,11 +867,11 @@ function parseNodePayload(payload: string): {
   retry_wait?: unknown;
   auto_retry?: unknown;
   completion?: unknown;
-  completion_policy?: unknown;
-  agent_signal?: unknown;
+  completionPolicy?: unknown;
+  agentSignal?: unknown;
   confirmation?: unknown;
   requester?: unknown;
-  auto_accept?: unknown;
+  autoAcceptAgentCompletion?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -888,11 +888,11 @@ function parseNodePayload(payload: string): {
       retry_wait?: unknown;
       auto_retry?: unknown;
       completion?: unknown;
-      completion_policy?: unknown;
-      agent_signal?: unknown;
+      completionPolicy?: unknown;
+      agentSignal?: unknown;
       confirmation?: unknown;
       requester?: unknown;
-      auto_accept?: unknown;
+      autoAcceptAgentCompletion?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -936,18 +936,18 @@ function parseNodePayload(payload: string): {
       ...(value.completion !== undefined
         ? { completion: value.completion }
         : {}),
-      ...(value.completion_policy !== undefined
-        ? { completion_policy: value.completion_policy }
+      ...(value.completionPolicy !== undefined
+        ? { completionPolicy: value.completionPolicy }
         : {}),
-      ...(value.agent_signal !== undefined
-        ? { agent_signal: value.agent_signal }
+      ...(value.agentSignal !== undefined
+        ? { agentSignal: value.agentSignal }
         : {}),
       ...(value.confirmation !== undefined
         ? { confirmation: value.confirmation }
         : {}),
       ...(value.requester !== undefined ? { requester: value.requester } : {}),
-      ...(value.auto_accept !== undefined
-        ? { auto_accept: value.auto_accept }
+      ...(value.autoAcceptAgentCompletion !== undefined
+        ? { autoAcceptAgentCompletion: value.autoAcceptAgentCompletion }
         : {}),
     };
   } catch {
@@ -965,11 +965,11 @@ function parseCompletion(
   value: unknown,
   payload:
     | {
-        completion_policy?: unknown;
-        agent_signal?: unknown;
+        completionPolicy?: unknown;
+        agentSignal?: unknown;
         confirmation?: unknown;
         requester?: unknown;
-        auto_accept?: unknown;
+        autoAcceptAgentCompletion?: unknown;
       }
     | null
     | undefined,
@@ -1019,10 +1019,10 @@ function parseCompletion(
   const stopCause = parseStopCause(snapshot.stopCause);
   const parkKind = parseParkKind(snapshot.parkKind);
   const completionPolicy: WorkflowNodeCompletion["completionPolicy"] =
-    payload?.completion_policy === "agent" ? "agent" : "end_turn";
-  const agentSignal = parseAgentSignal(payload?.agent_signal);
+    payload?.completionPolicy === "agent" ? "agent" : "end_turn";
+  const agentSignal = parseAgentSignal(payload?.agentSignal);
   const confirmation = parseCompletionConfirmation(payload?.confirmation);
-  const autoAcceptAgentCompletion = payload?.auto_accept === true;
+  const autoAcceptAgentCompletion = payload?.autoAcceptAgentCompletion === true;
   const requester: WorkflowNodeCompletion["requester"] =
     payload?.requester === "agent"
       ? "agent"
