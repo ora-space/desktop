@@ -235,33 +235,61 @@ mod tests {
     use crate::workflow::run::completion_snapshot::TurnKey;
     use crate::workflow::run::interactive::agent_signal::AgentSignalStore;
     use serde_json::{Value, json};
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::net::TcpStream;
     use std::sync::Arc;
+    use std::time::Duration;
 
     /// Sends one JSON-RPC POST to the endpoint and returns the status and decoded body.
+    ///
+    /// The server bounds how long it waits for a request; a heavily loaded CI runner can delay the
+    /// test client past that window and make the loopback round trip fail transiently, so retry.
     fn post(endpoint: &str, body: &Value) -> (u16, Value) {
-        let rest = endpoint.strip_prefix("http://").expect("http endpoint");
-        let (addr, path) = rest.split_once('/').expect("path");
-        let mut stream = TcpStream::connect(addr).expect("connect");
+        let mut last = None;
+        for _ in 0..3 {
+            match post_once(endpoint, body) {
+                Ok(result) => return result,
+                Err(error) => {
+                    last = Some(error);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+        panic!(
+            "loopback MCP request failed after retries: {}",
+            last.expect("at least one attempt")
+        );
+    }
+
+    /// Performs one loopback request, surfacing transport and response-shape failures.
+    fn post_once(endpoint: &str, body: &Value) -> io::Result<(u16, Value)> {
+        let rest = endpoint
+            .strip_prefix("http://")
+            .ok_or_else(|| io::Error::other("endpoint is not http"))?;
+        let (addr, path) = rest
+            .split_once('/')
+            .ok_or_else(|| io::Error::other("endpoint has no path"))?;
+        let mut stream = TcpStream::connect(addr)?;
         let payload = body.to_string();
         write!(
             stream,
             "POST /{path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
             payload.len()
-        )
-        .expect("write request");
+        )?;
         let mut response = String::new();
-        stream.read_to_string(&mut response).expect("read response");
-        let (head, body) = response.split_once("\r\n\r\n").expect("response body");
+        stream.read_to_string(&mut response)?;
+        let (head, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or_else(|| io::Error::other("response has no body"))?;
         let status = head
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().nth(1))
             .and_then(|status| status.parse().ok())
-            .expect("status");
+            .ok_or_else(|| io::Error::other("response has no status"))?;
+        // Error responses carry no JSON body; the caller asserts the status in that case.
         let body = serde_json::from_str(body).unwrap_or(Value::Null);
-        (status, body)
+        Ok((status, body))
     }
 
     #[test]
