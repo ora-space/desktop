@@ -20,6 +20,10 @@ filesystem-facing crate.
   requested paths are canonicalized before containment checks, including static symlink escape
   protection. These path-based checks do not protect against a concurrently replaced symlink
   between validation and use.
+- `RelativeGlob` validates and matches the minimal workspace-relative glob set: `*` within one
+  segment, `**` as a complete segment spanning zero or more directories, and `?` for one
+  character. It rejects character classes, alternation, escaping, backslashes and path escapes
+  instead of reinterpreting them, and matches case-sensitively without Unicode normalization.
 - The lexical helpers (`normalize_absolute`, `normalize_relative`,
   `canonicalize_longest_existing_prefix`) support comparisons of paths that may not exist yet
   without touching the filesystem beyond the existing prefix.
