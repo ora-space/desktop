@@ -128,6 +128,12 @@ export function RunNodeSessionChat({
   const completionNeedsConfirmation = isAwaitingConfirmation(
     interaction?.completion,
   );
+  // An agent-policy turn whose accepted signal waits for the user's approval, or one that has not
+  // signaled yet. The backend derives both from the parked policy and signal, not from blockers.
+  const completionAgentConfirmation =
+    interaction?.completion?.requiresAgentConfirmation === true;
+  const completionAwaitingAgentSignal =
+    interaction?.completion?.awaitsAgentSignal === true;
   const completionParkKind = hasCompletionSnapshot
     ? completion.parkKind
     : undefined;
@@ -155,9 +161,11 @@ export function RunNodeSessionChat({
     completionReady ||
     completionProvisional ||
     completionNeedsConfirmation ||
+    completionAgentConfirmation ||
     completionUserStopped;
-  /** Only a ready snapshot (or the legacy snapshot-less entry) offers a normal completion. */
-  const completionActionable = completionReady || !hasCompletionSnapshot;
+  /** A ready snapshot, an accepted agent signal, or the legacy snapshot-less entry is actionable. */
+  const completionActionable =
+    completionReady || completionAgentConfirmation || !hasCompletionSnapshot;
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
@@ -308,6 +316,31 @@ export function RunNodeSessionChat({
     );
   };
 
+  /** Confirms the accepted agent signal the user is looking at; stale ids are rejected. */
+  const handleCompleteAgent = () => {
+    if (interaction === undefined) {
+      return;
+    }
+    const signalId = interaction.completion?.agentSignal?.signalId;
+    if (signalId === undefined) {
+      return;
+    }
+    complete.mutate(
+      {
+        runId: interaction.runId,
+        nodeId: interaction.nodeId,
+        force: false,
+        confirmAgentCompletion: { signalId },
+      },
+      {
+        onSuccess: () => onNodeCompleted?.(interaction.nodeId),
+        onError: (error) => {
+          showContractError(error);
+        },
+      },
+    );
+  };
+
   const stepCard = (() => {
     if (!interactive || status !== "awaiting_input") {
       return undefined;
@@ -392,6 +425,30 @@ export function RunNodeSessionChat({
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground/80">
               {t("workflowRun.stepCard.unconfirmedHint")}
+            </p>
+          </>
+        ) : completionAgentConfirmation ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentConfirmationTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentConfirmationReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentConfirmationHint")}
+            </p>
+          </>
+        ) : completionAwaitingAgentSignal ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentSignalTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentSignalReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentSignalHint")}
             </p>
           </>
         ) : completionUserStopped ? (
@@ -530,6 +587,56 @@ export function RunNodeSessionChat({
                 onClick={() => void handleContinue(false)}
               >
                 {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAgentConfirmation ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="confirm-agent-completion"
+                disabled={actionDisabled}
+                aria-busy={complete.isPending}
+                onClick={handleCompleteAgent}
+              >
+                {complete.isPending ? (
+                  <Spinner className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <IconCheck className="size-3.5" aria-hidden="true" />
+                )}
+                {t("workflowRun.stepCard.confirmAgentAction")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAwaitingAgentSignal ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="force-complete-node"
+                disabled={actionDisabled}
+                onClick={() => setForceOpen(true)}
+              >
+                {t("workflowRun.stepCard.forceAction")}
               </Button>
             </>
           ) : completionProvisional ? (
@@ -718,7 +825,11 @@ export function RunNodeSessionChat({
                       title={t("workflowRun.completeNode.action")}
                       aria-busy={complete.isPending}
                       disabled={!completeEnabled}
-                      onClick={() => handleComplete(false)}
+                      onClick={() =>
+                        completionAgentConfirmation
+                          ? handleCompleteAgent()
+                          : handleComplete(false)
+                      }
                     >
                       {complete.isPending ? (
                         <Spinner className="size-4" aria-hidden="true" />
@@ -855,6 +966,10 @@ const ABNORMAL_BLOCKER_REASON_KEYS: Record<
   turn_refused: "workflowRun.stepCard.abnormalReason.turn_refused",
   turn_unknown: "workflowRun.stepCard.abnormalReason.turn_unknown",
   turn_unconfirmed: "workflowRun.stepCard.abnormalReason.turn_unconfirmed",
+  agent_signal_pending:
+    "workflowRun.stepCard.abnormalReason.agent_signal_pending",
+  agent_confirmation_pending:
+    "workflowRun.stepCard.abnormalReason.agent_confirmation_pending",
   structured_invalid: "workflowRun.stepCard.abnormalReason.structured_invalid",
   output_missing: "workflowRun.stepCard.abnormalReason.output_missing",
 };

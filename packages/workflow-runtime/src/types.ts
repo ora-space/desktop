@@ -376,6 +376,8 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_refused"
   | "turn_unknown"
   | "turn_unconfirmed"
+  | "agent_signal_pending"
+  | "agent_confirmation_pending"
   | "structured_invalid"
   | "output_missing";
 
@@ -423,6 +425,24 @@ export interface WorkflowNodeTurnKey {
   endedSeq: number;
 }
 
+/** How an interactive node decides its settled turn is complete. */
+export type WorkflowNodeCompletionPolicy = "agent" | "end_turn";
+
+/** One accepted agent completion signal bound to the turn it settled. */
+export interface WorkflowNodeAgentSignal {
+  signalId: string;
+  /** Epoch milliseconds when the completion tool accepted the request. */
+  requestedAt: number;
+  turnKey: WorkflowNodeTurnKey;
+}
+
+/** Who approved an accepted agent completion signal. */
+export interface WorkflowNodeCompletionConfirmation {
+  by: "human" | "auto";
+  /** Epoch milliseconds when the approval was committed. */
+  at: number;
+}
+
 /**
  * Read-only completion preview persisted as `payload.completion` on a parked interactive node.
  *
@@ -452,6 +472,14 @@ export interface WorkflowNodeCompletion {
   outputDigest?: string;
   /** Cleanup timed out before the actor settled; `prepare` may still repair this snapshot. */
   provisional: boolean;
+  /** Policy frozen at park; absent means the legacy `end_turn` policy. */
+  completionPolicy?: WorkflowNodeCompletionPolicy;
+  /** The accepted completion request for this turn, if the agent signaled. */
+  agentSignal?: WorkflowNodeAgentSignal;
+  /** The human or auto approval of `agentSignal`. */
+  confirmation?: WorkflowNodeCompletionConfirmation;
+  /** Server-derived attribution for the committed completion. */
+  requester?: "human" | "agent";
   /** No blockers and not provisional; the node can advance without an explicit force. */
   ready: boolean;
   /**
@@ -461,6 +489,15 @@ export interface WorkflowNodeCompletion {
    * a plain completion would still be rejected, and only `confirmInitialTurn` lifts this gate.
    */
   needsConfirmation: boolean;
+  /**
+   * The agent signaled this turn and its approval is still missing.
+   *
+   * Consumers confirm with `confirmAgentCompletion: { signalId }`; the signal is visible so a stale
+   * id can be detected and re-read instead of being applied to a newer turn.
+   */
+  requiresAgentConfirmation?: boolean;
+  /** The `agent` policy turn has no accepted signal yet, so only force can complete it. */
+  awaitsAgentSignal?: boolean;
 }
 
 /** Structured failure persisted on a node run as `payload.error_detail`. */

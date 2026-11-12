@@ -648,6 +648,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     UpdateWorkflowRunInputRequest::export(config)?;
     UpdateWorkflowRunInputResponse::export(config)?;
     NodeCompletionRequester::export(config)?;
+    ConfirmAgentCompletion::export(config)?;
     CompleteWorkflowNodeRequest::export(config)?;
     CompleteWorkflowNodeResponse::export(config)?;
     DiagnoseWorkflowNodeFailureRequest::export(config)?;
@@ -660,10 +661,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 mod tests {
     use super::{
         CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, ConfirmAgentCompletion,
-        CreateWorkflowRunRequest,
-        CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse,
-        DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest, GetWorkflowRunResponse,
-        ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
+        CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest,
+        DeleteWorkflowRunResponse, DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest,
+        GetWorkflowRunResponse, ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
         ListWorkflowRunsByWorkflowRequest, ListWorkflowRunsByWorkflowResponse,
         ListWorkflowRunsRequest, ListWorkflowRunsResponse, NodeCompletionRequester,
         ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowExecutionScope,

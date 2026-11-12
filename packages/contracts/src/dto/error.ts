@@ -201,6 +201,10 @@ export type ContractError =
       "code": "workflow_node_output_changed";
       "params": WorkflowNodeOutputChangedParams;
     }
+    | {
+      "code": "workflow_node_signal_changed";
+      "params": WorkflowNodeSignalChangedParams;
+    }
   );
 
 /**
@@ -435,6 +439,10 @@ export type PublicError =
   | {
     "code": "workflow_node_output_changed";
     "params": WorkflowNodeOutputChangedParams;
+  }
+  | {
+    "code": "workflow_node_signal_changed";
+    "params": WorkflowNodeSignalChangedParams;
   };
 
 /**
@@ -485,6 +493,8 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_refused"
   | "turn_unknown"
   | "turn_unconfirmed"
+  | "agent_signal_pending"
+  | "agent_confirmation_pending"
   | "structured_invalid"
   | "output_missing";
 
@@ -503,6 +513,17 @@ export type WorkflowNodeIncompleteParams = {
  * compare them without reading the session history.
  */
 export type WorkflowNodeOutputChangedParams = {
+  nodeId: string;
+  expected: string | null;
+  actual: string | null;
+};
+
+/**
+ * Reports that a confirmation referenced a signal other than the stored current one.
+ *
+ * A stale confirmation must be re-read and retried instead of being applied to a newer signal.
+ */
+export type WorkflowNodeSignalChangedParams = {
   nodeId: string;
   expected: string | null;
   actual: string | null;

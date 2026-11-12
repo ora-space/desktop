@@ -48,6 +48,12 @@ export const workflowNodeOutputChangedParamsSchema = z.object({
     actual: z.string().nullable()
 });
 
+export const workflowNodeSignalChangedParamsSchema = z.object({
+    nodeId: z.string(),
+    expected: z.string().nullable(),
+    actual: z.string().nullable()
+});
+
 export const openLocationTargetSchema = z.union([z.literal("explorer"), z.literal("terminal"), z.literal("vscode")]);
 
 export const pluginConfigurationFieldErrorSchema = z.object({
@@ -63,7 +69,7 @@ export const openLocationFailedParamsSchema = z.object({
     target: openLocationTargetSchema
 });
 
-export const workflowNodeCompletionBlockerKindSchema = z.union([z.literal("turn_stopped"), z.literal("turn_truncated"), z.literal("turn_refused"), z.literal("turn_unknown"), z.literal("turn_unconfirmed"), z.literal("structured_invalid"), z.literal("output_missing")]);
+export const workflowNodeCompletionBlockerKindSchema = z.union([z.literal("turn_stopped"), z.literal("turn_truncated"), z.literal("turn_refused"), z.literal("turn_unknown"), z.literal("turn_unconfirmed"), z.literal("agent_signal_pending"), z.literal("agent_confirmation_pending"), z.literal("structured_invalid"), z.literal("output_missing")]);
 
 export const workflowNodeCompletionBlockerSchema = z.object({
     kind: workflowNodeCompletionBlockerKindSchema,
@@ -473,6 +479,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_node_output_changed"),
         "params": workflowNodeOutputChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_node_signal_changed"),
+        "params": workflowNodeSignalChangedParamsSchema
     })]);
 
 export const contractErrorSchema = z.object({
@@ -864,4 +873,7 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_node_output_changed"),
         "params": workflowNodeOutputChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_node_signal_changed"),
+        "params": workflowNodeSignalChangedParamsSchema
     })]));
