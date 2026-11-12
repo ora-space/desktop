@@ -223,11 +223,17 @@ export function isWorkflowAgentCompletion(
   );
 }
 
-/** Preserves an editable declaration without silently dropping fields or entries. */
+/**
+ * Preserves a declared completion value for validation and explicit editing.
+ *
+ * Arrays, strings and booleans are invalid declarations, but normalizing them to `undefined`
+ * would erase the only evidence the later graph validator has to reject them. Only an absent or
+ * null value means "no declaration"; every other value rides through unchanged.
+ */
 export function normalizeWorkflowAgentCompletion(
   value: unknown,
 ): WorkflowAgentCompletion | undefined {
-  if (!isRecord(value)) {
+  if (value === undefined || value === null) {
     return undefined;
   }
   return value as unknown as WorkflowAgentCompletion;

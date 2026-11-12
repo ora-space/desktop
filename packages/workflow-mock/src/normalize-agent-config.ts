@@ -12,10 +12,12 @@ export function normalizeWorkflowAgentConfig(
   // declaration (and its version-4 requirement) deliberately instead of inheriting a stale shape.
   const { completion: rawCompletion, ...rest } = config;
   const completion = normalizeWorkflowAgentCompletion(rawCompletion);
+  // Missing/null keeps the legacy default. Any other value is preserved verbatim so a string,
+  // unsupported number, or malformed import still reaches the validator instead of being downgraded.
   const schemaVersion =
-    typeof config.schemaVersion === "number"
-      ? config.schemaVersion
-      : (3 as const);
+    config.schemaVersion == null
+      ? (3 as const)
+      : (config.schemaVersion as WorkflowAgentConfig["schemaVersion"]);
   const skills = Array.isArray(config?.skills)
     ? config.skills.filter(
         (skill) =>
