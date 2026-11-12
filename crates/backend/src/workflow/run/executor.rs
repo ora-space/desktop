@@ -17,11 +17,10 @@ use agent_client_protocol_schema::v1::{
 use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
-    AgentConfig, AgentDefinitionRepository, AgentOutputContract, AgentSkill,
-    BindWorkflowNodeSessionResult, Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure,
-    NodeFailureKind, RepositoryError, StructuredOutputError, VariableTemplateError,
-    WorkflowGraphNode, WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload,
-    render_variable_template,
+    AgentConfig, AgentDefinitionRepository, AgentSkill, BindWorkflowNodeSessionResult, Clock,
+    ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind, RepositoryError,
+    StructuredOutputError, VariableTemplateError, WorkflowGraphNode, WorkflowRunCallback,
+    WorkflowRunEngineRepository, WorkflowRunPayload, render_variable_template,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -807,6 +806,7 @@ mod tests {
     use agent_client_protocol_schema::v1::{
         SessionConfigId, SessionConfigSelect, SessionConfigValueId,
     };
+    use ora_application::AgentOutputContract;
     use ora_application::StructuredTextExposure;
     use ora_contracts::WorkflowRunLocale;
     use ora_utils::path::StrictRelativePath;
