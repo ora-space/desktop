@@ -161,15 +161,13 @@ impl WorkflowSessionTurns {
                 attempt_id,
             )
             .await?;
-            if auto_accept {
-                if let Some(runs) = auto_completer.and_then(|weak| weak.upgrade()) {
-                    // Run outside the cleanup future: completing the node stops its session, and
-                    // waiting for that stop from inside the stream's own cleanup could deadlock.
-                    let node_run_id = node_run_id.clone();
-                    tokio::spawn(async move {
-                        let _ = runs.auto_complete_node(&node_run_id).await;
-                    });
-                }
+            if auto_accept && let Some(runs) = auto_completer.and_then(|weak| weak.upgrade()) {
+                // Run outside the cleanup future: completing the node stops its session, and
+                // waiting for that stop from inside the stream's own cleanup could deadlock.
+                let node_run_id = node_run_id.clone();
+                tokio::spawn(async move {
+                    let _ = runs.auto_complete_node(&node_run_id).await;
+                });
             }
             Ok(())
         }))

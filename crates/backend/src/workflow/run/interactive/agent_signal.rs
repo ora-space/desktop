@@ -51,33 +51,42 @@ impl AgentSignalStore {
     /// Issues one token for a prompt attempt. The token is the only capability the MCP tool needs.
     pub(crate) fn issue(&self, node_run_id: &str, attempt_id: &str) -> String {
         let token = Uuid::new_v4().to_string();
-        self.tokens.lock().expect("agent signal tokens").insert(
-            token.clone(),
-            TokenRecord {
-                node_run_id: node_run_id.to_string(),
-                attempt_id: attempt_id.to_string(),
-                signal_id: None,
-            },
-        );
+        self.tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                token.clone(),
+                TokenRecord {
+                    node_run_id: node_run_id.to_string(),
+                    attempt_id: attempt_id.to_string(),
+                    signal_id: None,
+                },
+            );
         token
     }
 
     /// Accepts the tool call for an attempt token, idempotently returning the same signal id.
     pub(crate) fn accept(&self, token: &str, requested_at: i64) -> Result<String, SignalError> {
-        let mut tokens = self.tokens.lock().expect("agent signal tokens");
+        let mut tokens = self
+            .tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = tokens.get_mut(token).ok_or(SignalError::UnknownToken)?;
         if let Some(signal_id) = &record.signal_id {
             return Ok(signal_id.clone());
         }
         let signal_id = Uuid::new_v4().to_string();
         record.signal_id = Some(signal_id.clone());
-        self.pending.lock().expect("agent signal pending").insert(
-            (record.node_run_id.clone(), record.attempt_id.clone()),
-            PendingSignal {
-                signal_id: signal_id.clone(),
-                requested_at,
-            },
-        );
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                (record.node_run_id.clone(), record.attempt_id.clone()),
+                PendingSignal {
+                    signal_id: signal_id.clone(),
+                    requested_at,
+                },
+            );
         Ok(signal_id)
     }
 
@@ -94,7 +103,7 @@ impl AgentSignalStore {
         let pending = self
             .pending
             .lock()
-            .expect("agent signal pending")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&(node_run_id.to_string(), attempt_id.to_string()))?;
         Some(AgentSignal {
             signal_id: pending.signal_id,
@@ -107,13 +116,13 @@ impl AgentSignalStore {
     pub(crate) fn revoke_attempt(&self, node_run_id: &str, attempt_id: &str) {
         self.tokens
             .lock()
-            .expect("agent signal tokens")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, record| {
                 !(record.node_run_id == node_run_id && record.attempt_id == attempt_id)
             });
         self.pending
             .lock()
-            .expect("agent signal pending")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&(node_run_id.to_string(), attempt_id.to_string()));
     }
 
@@ -121,11 +130,11 @@ impl AgentSignalStore {
     pub(crate) fn revoke_node(&self, node_run_id: &str) {
         self.tokens
             .lock()
-            .expect("agent signal tokens")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|_, record| record.node_run_id != node_run_id);
         self.pending
             .lock()
-            .expect("agent signal pending")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|(node, _), _| node != node_run_id);
     }
 }

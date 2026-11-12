@@ -361,6 +361,7 @@ impl NodeExecutionError {
 /// blocking worker keeps a long conversation from occupying a tokio worker and matches how the
 /// human-turn cleanup performs the same park. The snapshot is derived before the gate is taken,
 /// so no lock is held across the history read (ADR D3 steps 1 and 4).
+#[allow(clippy::too_many_arguments)]
 async fn park_first_interactive_turn(
     transitions: Arc<WorkflowRunTransitions>,
     sessions_root: PathBuf,

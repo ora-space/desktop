@@ -269,7 +269,7 @@ impl Backend {
             clock,
             #[cfg(feature = "test-support")]
             owner_stream_drop,
-            agent_signals: agent_signals.clone(),
+            agent_signals,
         }));
 
         let session = Arc::new(Sessions::new(
