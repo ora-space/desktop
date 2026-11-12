@@ -15,8 +15,8 @@ use crate::workflow::run::test_fixture::{
 };
 use ora_application::{WorkflowRunEngineRepository, WorkflowRunRepository};
 use ora_contracts::{
-    PublicError, WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
-    WorkflowNodeTurnKey,
+    NodeCompletionRequester, PublicError, WorkflowNodeCompletionBlocker,
+    WorkflowNodeCompletionBlockerKind, WorkflowNodeTurnKey,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository};
 use ora_domain::{WorkflowNodeRunId, WorkflowRunId};
@@ -919,19 +919,26 @@ fn confirmation_and_forced_audit_share_one_payload_patch() {
         at: 7,
     };
     assert_eq!(
-        merge_completion_patch(None, Some(confirmation.clone())),
+        merge_completion_patch(
+            None,
+            Some(confirmation.clone()),
+            NodeCompletionRequester::Human,
+        ),
         Some(serde_json::json!({
-            "confirmation": { "by": "human", "at": 7 }
+            "confirmation": { "by": "human", "at": 7 },
+            "requester": "human"
         }))
     );
     assert_eq!(
         merge_completion_patch(
             Some(serde_json::json!({ "completion_forced": { "blockers": [] } })),
             Some(confirmation),
+            NodeCompletionRequester::Agent,
         ),
         Some(serde_json::json!({
             "completion_forced": { "blockers": [] },
-            "confirmation": { "by": "human", "at": 7 }
+            "confirmation": { "by": "human", "at": 7 },
+            "requester": "agent"
         }))
     );
 }

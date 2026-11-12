@@ -310,6 +310,7 @@ impl WorkflowRuns {
         let payload_patch = merge_completion_patch(
             prepared.audit.clone(),
             prepared.confirmation.clone(),
+            prepared.requester,
         );
         let response = spawn_repository_work(move || {
             let _gate = run_locks.acquire_exclusive(run_id.as_ref());

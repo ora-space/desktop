@@ -20,7 +20,7 @@ use ora_application::{
     ApplicationError, Clock, FileChange, WorkflowGraph, WorkflowRunEngineRepository,
 };
 use ora_contracts::{
-    EmptyErrorParams, PublicError, WorkflowNodeCompletionBlocker,
+    EmptyErrorParams, NodeCompletionRequester, PublicError, WorkflowNodeCompletionBlocker,
     WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
     WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams,
     WorkflowNodeTurnKey,
@@ -49,24 +49,22 @@ pub(crate) struct PreparedCompletion {
     pub audit: Option<serde_json::Value>,
     /// The human approval of an accepted agent signal, committed with the completion.
     pub confirmation: Option<CompletionConfirmation>,
+    /// Who the server attributes this completion to, derived from the signal path.
+    pub requester: NodeCompletionRequester,
 }
 
-/// Merges the forced audit and the confirmation into the one payload patch the commit applies.
+/// Merges the forced audit, confirmation and server-derived requester into one payload patch.
 pub(crate) fn merge_completion_patch(
     audit: Option<serde_json::Value>,
     confirmation: Option<CompletionConfirmation>,
+    requester: NodeCompletionRequester,
 ) -> Option<serde_json::Value> {
-    match (audit, confirmation) {
-        (None, None) => None,
-        (Some(patch), None) => Some(patch),
-        (None, Some(confirmation)) => Some(serde_json::json!({
-            "confirmation": confirmation,
-        })),
-        (Some(mut patch), Some(confirmation)) => {
-            patch["confirmation"] = serde_json::to_value(confirmation).ok()?;
-            Some(patch)
-        }
+    let mut patch = audit.unwrap_or_else(|| serde_json::json!({}));
+    if let Some(confirmation) = confirmation {
+        patch["confirmation"] = serde_json::to_value(confirmation).ok()?;
     }
+    patch["requester"] = serde_json::to_value(requester).ok()?;
+    Some(patch)
 }
 
 /// What the user explicitly approved on this completion request.
@@ -469,6 +467,13 @@ pub(crate) fn prepare_completion(
         by: ConfirmationBy::Human,
         at: (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64,
     });
+    // The requester is a server fact: only a settled agent signal attributes the completion to the
+    // agent; every other accepted path remains a human completion.
+    let requester = if meta.agent_signal.is_some() {
+        NodeCompletionRequester::Agent
+    } else {
+        NodeCompletionRequester::Human
+    };
 
     Ok(PreparedCompletion {
         node_run_id: node_run.id,
@@ -479,6 +484,7 @@ pub(crate) fn prepare_completion(
         workspace_id: context.workspace.id,
         audit: forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
         confirmation,
+        requester,
     })
 }
 
