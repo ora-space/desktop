@@ -217,3 +217,22 @@ fn node_does_not_start_without_its_reaper() {
         assert!(!fixture.config().home_directory.exists());
     });
 }
+
+/// The retired host's directory is deleted on startup, so one that holds the Node's own data is
+/// rejected before the Node creates a business database there.
+#[test]
+fn node_data_directory_cannot_live_in_the_retired_host_directory() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let host = fixture.path().join("host");
+        std::fs::create_dir(&host).unwrap();
+        let alias = fixture.path().join("alias");
+        std::os::unix::fs::symlink(&host, &alias).unwrap();
+        let mut config = fixture.config();
+        config.home_directory = alias;
+        let mut process = fixture.process();
+        process.host_directory = Some(host.clone());
+        assert!(Node::open(config, process, Shutdown::default()).is_err());
+        assert!(!host.join("ora-node.sqlite3").exists());
+    });
+}

@@ -315,6 +315,56 @@ fn completed_clone_leaves_no_process_but_the_reaper() {
     });
 }
 
+/// Upgrading from a Node that ran Git through the process host: the attempt the host never
+/// settled is ended as stopped, its clone fails as interrupted, and the host's directory is gone.
+#[test]
+fn upgrade_settles_the_retired_hosts_attempt_and_removes_its_directory() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
+        let command = request(&server, "upgrade", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-before-upgrade");
+        until(|| gate.ready.exists());
+        child.kill();
+        // The deployment precondition: the old process tree has ended before the new Node starts.
+        until(|| crate::support::descendants(child.0.id()).is_empty());
+        // What the host-era Node left: a dispatched attempt in the previous schema with no ending,
+        // no attempt lock, and the host's own state directory.
+        fs::remove_dir_all(fixture.locks()).unwrap();
+        let database = fixture.config().home_directory.join("ora-node.sqlite3");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "DROP TRIGGER stop_excludes_other_endings; DROP TRIGGER outcome_excludes_stop;
+                 DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;
+                 PRAGMA user_version=12;",
+            )
+            .unwrap();
+        let host = fixture.path().join("host");
+        fs::create_dir(&host).unwrap();
+        for name in ["host.sqlite", "host.lock"] {
+            fs::write(host.join(name), "").unwrap();
+        }
+        let mut process = fixture.process();
+        process.host_directory = Some(host.clone());
+        process.expected_uid = Some(1000);
+
+        let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        node.recover_clones().unwrap();
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert_interrupted(&state, &record, &command);
+        assert!(!host.exists());
+        drop(node);
+        assert_retained_attempts(&fixture, &record, &command, 2);
+    });
+}
+
 /// The seeded target, which an interrupted attempt must keep rather than delete or reuse.
 fn retained(record: &CloneExecution) -> CloneResidual {
     CloneResidual::Retained {

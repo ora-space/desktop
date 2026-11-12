@@ -44,8 +44,8 @@ pub struct ProcessConfig {
     /// Cloud's workload identity; management retains its protected OS identity.
     #[serde(default)]
     pub workload_uid: Option<u32>,
-    /// The state directory of the retired process host. Accepted so configurations written for
-    /// the process host still load; other configured directories must still stay clear of it.
+    /// The state directory of the retired process host. A deployment upgraded from a Node that
+    /// ran Git through the host keeps naming it, so this Node can delete what the host left.
     #[serde(default)]
     pub host_directory: Option<PathBuf>,
     /// Accepted so configurations written for the process host still load; no longer used.
@@ -202,6 +202,7 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             execution: RefCell::new(None),
         };
         runner.settle_leftovers()?;
+        runner.remove_host_directory();
         Ok(runner)
     }
 
@@ -237,6 +238,37 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             }
         }
         Ok(())
+    }
+
+    /// Deletes the retired process host's state once nothing of it can be running.
+    ///
+    /// The database upgrade already settled every attempt the host left, so the directory holds
+    /// nothing this Node reads. Only a directory that is recognizably the host's is removed, and
+    /// only while the host's own lock is free; a failure costs disk space, never correctness.
+    fn remove_host_directory(&self) {
+        let Some(directory) = &self.config.host_directory else {
+            return;
+        };
+        if !directory.join("host.sqlite").is_file() {
+            return;
+        }
+        let free = std::fs::File::open(directory.join("host.lock")).is_ok_and(|lock| {
+            use std::os::fd::AsRawFd;
+            // SAFETY: flock only operates on the descriptor opened above, closed on return.
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+        });
+        if !free {
+            ora_logging::ora_warn!(directory = %directory.display(), "the retired process host still holds its state directory; it is kept");
+            return;
+        }
+        match std::fs::remove_dir_all(directory) {
+            Ok(()) => {
+                ora_logging::ora_info!(directory = %directory.display(), "removed the retired process host's state directory");
+            }
+            Err(error) => {
+                ora_logging::ora_warn!(directory = %directory.display(), error = %error, "the retired process host's state directory could not be removed");
+            }
+        }
     }
 
     /// Obtains stop evidence for every old attempt before allowing Git to interpret the resource as a residual.

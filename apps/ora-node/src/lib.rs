@@ -155,6 +155,15 @@ impl Node {
                 "Node data directory must be absolute without parent traversal".into(),
             ));
         }
+        // The retired host's directory is deleted on startup, so it must not hold the Node's own.
+        if process.host_directory.as_deref().is_some_and(|host| {
+            ora_utils::path::canonicalize_longest_existing_prefix(&config.home_directory)
+                .starts_with(ora_utils::path::canonicalize_longest_existing_prefix(host))
+        }) {
+            return Err(Error::Configuration(
+                "the retired host directory must not contain the Node data directory".into(),
+            ));
+        }
         if config.home_directory.exists() {
             // SAFETY: geteuid only reads process identity; validation never modifies an existing directory.
             ora_utils::path::open_private_path(
