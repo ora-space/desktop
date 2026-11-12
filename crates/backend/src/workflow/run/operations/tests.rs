@@ -148,6 +148,18 @@ fn run_git(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Creates a file symbolic link with the host-specific API; the caller must not hide failure.
+#[cfg(unix)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+/// Creates a file symbolic link with the host-specific API; Windows may require symlink privilege.
+#[cfg(windows)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
 /// An interactive agent that declares two deliverables: one existence check and one change check.
 const COMPLETION_AGENT_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
@@ -507,7 +519,7 @@ fn completion_globs_are_case_sensitive() {
 }
 
 /// A symbolic link whose target escapes the workspace is not a declared deliverable.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn completion_files_do_not_follow_a_symlink_out_of_the_workspace() {
     run_test(async {
@@ -520,8 +532,8 @@ fn completion_files_do_not_follow_a_symlink_out_of_the_workspace() {
         let outside_file = outside.path().join("secret.md");
         let fixture = Fixture::awaiting_on_git_graph(SYMLINK_GRAPH, |workspace| {
             fs::create_dir_all(workspace.join("reports")).expect("reports directory");
-            std::os::unix::fs::symlink(&outside_file, workspace.join("reports/escape.md"))
-                .expect("escape symlink");
+            create_file_symlink(&outside_file, &workspace.join("reports/escape.md"))
+                .expect("create escaping symlink (Windows requires symlink privilege)");
         });
         fixture.settle_turn();
         let blockers = incomplete_blockers(
@@ -539,6 +551,115 @@ fn completion_files_do_not_follow_a_symlink_out_of_the_workspace() {
                     path: Some("reports/escape.md".to_string()),
                 }),
             }]
+        );
+    });
+}
+
+/// Confirmation lifts only the opening-turn blocker; declared files are still required.
+#[test]
+fn confirming_the_opening_turn_still_requires_declared_files() {
+    run_test(async {
+        let fixture = Fixture::awaiting_on_git_graph(COMPLETION_AGENT_GRAPH, |workspace| {
+            fs::create_dir_all(workspace.join("reports")).expect("reports directory");
+            fs::write(workspace.join("reports/keep.md"), "original\n").expect("keep fixture");
+        });
+        fixture.settle_turn();
+        let snapshot = serde_json::json!({
+            "completion": {
+                "userSeq": 0,
+                "turnKey": { "userSeq": 0, "endedSeq": 2 },
+                "stopReason": "end_turn",
+                "turnOrigin": "workflow",
+                "blockers": [{ "kind": "turn_unconfirmed" }],
+                "warnings": [],
+                "outputDigest": format!(
+                    "sha256:{}",
+                    ora_utils::hash::sha256_hex(b"Final answer")
+                ),
+                "provisional": false,
+            }
+        });
+        assert!(
+            SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+                .repair_node_payload(&WorkflowNodeRunId::new(&fixture.node_run_id), &snapshot, 60)
+                .expect("seed the opening-turn snapshot")
+        );
+
+        let confirm = || CompleteWorkflowNodeRequest {
+            run_id: "run-1".to_string(),
+            node_id: "agent".to_string(),
+            force: false,
+            confirm_initial_turn: Some(true),
+            requester: Some(NodeCompletionRequester::Human),
+        };
+        let blockers = incomplete_blockers(
+            fixture
+                .runs
+                .complete_node(confirm())
+                .await
+                .expect_err("confirming the turn must not bypass declared files"),
+        );
+        assert_eq!(
+            blockers,
+            vec![
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileMissing,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("reports/new.md".to_string()),
+                    }),
+                },
+                WorkflowNodeCompletionBlocker {
+                    kind: WorkflowNodeCompletionBlockerKind::FileUnchanged,
+                    message: None,
+                    params: Some(WorkflowNodeCompletionBlockerParams {
+                        path: Some("reports/keep.md".to_string()),
+                    }),
+                },
+            ]
+        );
+
+        // The rejection must not replace the authoritative park snapshot with file blockers.
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        assert_eq!(
+            node_payload(&node)["completion"]["blockers"],
+            serde_json::json!([{ "kind": "turn_unconfirmed" }]),
+            "file blockers stay live-only and must not be persisted into the snapshot"
+        );
+
+        fs::write(fixture.workspace.join("reports/new.md"), "fresh\n").expect("add deliverable");
+        fs::write(
+            fixture.workspace.join("reports/keep.md"),
+            "original\nupdated\n",
+        )
+        .expect("change deliverable");
+        let response = fixture
+            .runs
+            .complete_node(confirm())
+            .await
+            .expect("confirming after fixing the files completes normally");
+        assert_eq!(response.run.status, WorkflowRunStatus::Succeeded);
+        let node = fixture
+            .detail()
+            .nodes
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload = node_payload(&node);
+        assert_eq!(
+            payload.get("completion_forced"),
+            None,
+            "a normal confirmed completion never writes a forced audit"
+        );
+        assert_eq!(
+            payload["completion"]["blockers"],
+            serde_json::json!([{ "kind": "turn_unconfirmed" }]),
+            "the stored snapshot remains the record of the park it completed"
         );
     });
 }

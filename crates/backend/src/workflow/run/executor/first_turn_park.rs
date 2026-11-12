@@ -82,3 +82,105 @@ pub(super) async fn park_first_interactive_turn(
     })?
     .map(|_advanced| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::run::completion_snapshot::{
+        CompletionBlockerKind, FILE_CHECK_UNAVAILABLE, parse_completion_snapshot,
+    };
+    use crate::workflow::run::test_fixture::{
+        bootstrap, recording_transitions, run_test, started_run, write_settled_turn,
+    };
+    use ora_application::{GetWorkflowRunHandler, WorkflowGraph};
+    use ora_contracts::{GetWorkflowRunRequest, WorkflowNodeStatus as ContractNodeStatus};
+    use ora_db::SqliteWorkflowRunRepository;
+    use ora_domain::{SessionId, WorkflowNodeStatus};
+    use std::sync::Arc;
+
+    const FIRST_TURN_GRAPH: &str = r#"{"nodes":[
+        {"id":"start","data":{"kind":"start"}},
+        {"id":"agent","data":{"kind":"agent","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"open_code","modelId":"m"},"prompt":"do","interactive":true,"schemaVersion":4,"completion":{"files":[{"path":"reports/keep.md","mustChange":true}]}}}}
+    ],"edges":[{"source":"start","target":"agent"}]}"#;
+
+    /// The production first-turn park records the missing-baseline warning in the read projection.
+    #[test]
+    fn missing_baseline_warning_is_visible_after_the_first_turn_park() {
+        run_test(async {
+            let (temp, pool) = bootstrap();
+            let (run_id, node_runs) = started_run(&temp, &pool, FIRST_TURN_GRAPH);
+            let agent = node_runs
+                .iter()
+                .find(|node| node.node_id == "agent")
+                .expect("agent node");
+            assert_eq!(agent.status, WorkflowNodeStatus::Running);
+            let sessions_root = temp.path().join("sessions");
+            let baseline_path = temp
+                .path()
+                .join("baselines")
+                .join(format!("{}.json", agent.id));
+            assert!(
+                !baseline_path.exists(),
+                "the warning must describe a physically missing baseline"
+            );
+
+            write_settled_turn(&sessions_root, "session-1", "go", "done");
+            let graph = WorkflowGraph::parse(FIRST_TURN_GRAPH).expect("parse graph");
+            let completion = graph
+                .node("agent")
+                .and_then(|node| node.agent_config.as_ref())
+                .and_then(|config| config.completion.clone());
+            let (transitions, _recording) = recording_transitions(&pool);
+            park_first_interactive_turn(
+                transitions,
+                FirstTurnPark {
+                    sessions_root: sessions_root.clone(),
+                    run_id: run_id.clone(),
+                    node_run_id: agent.id.clone(),
+                    session_id: SessionId::new("session-1"),
+                    output_contract: None,
+                    completion,
+                    baseline_available: false,
+                    stop_cause: None,
+                },
+            )
+            .await
+            .expect("first turn parks through the production transition sink");
+
+            // Read through the same get projection Desktop uses, not just the persisted payload.
+            let projection = GetWorkflowRunHandler::new(Arc::new(
+                SqliteWorkflowRunRepository::new(pool.clone()),
+            ));
+            let detail = projection
+                .handle(GetWorkflowRunRequest {
+                    run_id: run_id.to_string(),
+                })
+                .expect("run detail");
+            let node = detail
+                .nodes
+                .iter()
+                .find(|node| node.node_id == "agent")
+                .expect("projected agent node");
+            assert_eq!(node.status, ContractNodeStatus::Pending);
+            let snapshot =
+                parse_completion_snapshot(node.payload.as_deref()).expect("park snapshot");
+            assert_eq!(snapshot.turn_origin, Some(TurnOrigin::Workflow));
+            assert!(
+                snapshot
+                    .blockers
+                    .iter()
+                    .any(|blocker| blocker.kind == CompletionBlockerKind::TurnUnconfirmed),
+                "an EndTurn opening turn still waits for explicit confirmation"
+            );
+            assert_eq!(
+                snapshot
+                    .warnings
+                    .iter()
+                    .filter(|warning| *warning == FILE_CHECK_UNAVAILABLE)
+                    .count(),
+                1,
+                "the missing mustChange baseline warns once in the projection snapshot"
+            );
+        });
+    }
+}
