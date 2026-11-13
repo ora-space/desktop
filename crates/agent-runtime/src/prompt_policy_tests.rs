@@ -1293,3 +1293,356 @@ fn inactivity_diagnostics_record_the_window_tools_and_cancellation_result() {
         ]
     );
 }
+
+mod review_771_drain_repro {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
+    struct ReviewDrainFixture {
+        _directory: TempDir,
+        manager: crate::AgentRuntimeManager<TestHost>,
+        supervisor: ConnectionSupervisor,
+        plugin: PluginRuntime,
+        frames: mpsc::UnboundedReceiver<Value>,
+        routed: tokio::task::JoinHandle<()>,
+        _state: watch::Sender<ConnectionState>,
+        scheduler: ora_scheduler::Scheduler,
+    }
+
+    impl ReviewDrainFixture {
+        /// Composes the production peer, generation router, and actors over controlled pipes.
+        async fn new() -> Self {
+            let directory = TempDir::new().unwrap();
+            let entrypoint = directory.path().join("agent.ts");
+            std::fs::write(&entrypoint, "").unwrap();
+            let (stdin, agent_reader) = tokio::io::duplex(/*max_buf_size*/ 65536);
+            let (agent_writer, stdout) = tokio::io::duplex(/*max_buf_size*/ 65536);
+            let (exited, _) = watch::channel(false);
+            let spawner = PipeSpawner(Mutex::new(Some(PipeProcess {
+                stdin: Some(stdin),
+                stdout: Some(stdout),
+                exited: exited.clone(),
+            })));
+            let (_agent, input) = mpsc::unbounded_channel();
+            let (sent, frames) = mpsc::unbounded_channel();
+            tokio::spawn(review_drain_agent(
+                agent_reader,
+                agent_writer,
+                input,
+                sent,
+                exited,
+            ));
+            let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+            let (plugin, mut notifications) = PluginRuntime::launch(
+                &spawner,
+                PluginRuntimeConfig {
+                    plugin_id: "official/test.agent".to_string(),
+                    deno_path: directory.path().join("unused-deno"),
+                    entrypoint,
+                    permissions: Vec::new(),
+                    cwd: None,
+                    environment: BTreeMap::new(),
+                    ready_timeout: Duration::from_secs(30),
+                    call_timeout: Duration::from_secs(30),
+                    shutdown_timeout: Duration::from_secs(1),
+                },
+                NoHostRequests,
+                PluginLogSetup {
+                    root: directory.path().join("logs"),
+                    directory: directory.path().join("logs").join("agent"),
+                    host_session_id: "test".to_string(),
+                    generation: 1,
+                    level,
+                },
+            )
+            .await
+            .unwrap();
+            let (messages, inbound) = mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                while let Some(notification) = notifications.recv().await {
+                    if messages.send(Ok(notification.params)).is_err() {
+                        break;
+                    }
+                }
+            });
+            let (client, inbound) =
+                AcpPeer::spawn(inbound, PluginAcpTransport::new(plugin.clone())).into_parts();
+            let connection = RuntimeConnection {
+                client: client.clone(),
+                runtime: plugin.clone(),
+                generation: 1,
+                load_session_supported: true,
+                http_mcp_supported: false,
+                list_session_supported: false,
+                close_session_supported: false,
+                delete_session_supported: false,
+            };
+            let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
+            let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
+            let routes = Arc::new(RouteRegistry::default());
+            let active_generation = Arc::new(AtomicU64::new(1));
+            let supervisor = ConnectionSupervisor {
+                label: Arc::from("test"),
+                state: receiver,
+                active_generation: active_generation.clone(),
+                routes: routes.clone(),
+                shutdown,
+            };
+            let scheduler = ora_scheduler::Scheduler::new(chrono_tz::Asia::Shanghai);
+            let runtime = test_runtime(
+                directory.path(),
+                Vec::new(),
+                MemorySessionStore::default(),
+                scheduler.clone(),
+            );
+            let host = runtime.manager.inner.connections.plugin_host.clone();
+            let plugin_id = PluginId::parse("official/test.agent").unwrap();
+            runtime
+                .manager
+                .inner
+                .connections
+                .supervisors
+                .write()
+                .unwrap()
+                .insert(AgentRef::for_plugin(&plugin_id), supervisor.clone());
+            let process_plugin = plugin.clone();
+            let routed = tokio::spawn(async move {
+                let mut process = startup::SharedProcess {
+                    process: AgentProcess {
+                        plugin_id,
+                        runtime: process_plugin,
+                        host,
+                    },
+                    client,
+                    inbound,
+                    load_session_supported: true,
+                    http_mcp_supported: false,
+                    list_session_supported: false,
+                    close_session_supported: false,
+                    delete_session_supported: false,
+                };
+                run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
+                active_generation.store(0, Ordering::Release);
+                routes
+                    .fail_generation(1, runtime_unavailable_because("fake provider disconnected"));
+            });
+            Self {
+                _directory: directory,
+                manager: runtime.manager,
+                supervisor,
+                plugin,
+                frames,
+                routed,
+                _state: state,
+                scheduler,
+            }
+        }
+
+        /// Seeds an already attached session so the test measures prompt policy rather than setup.
+        fn add_session(&self, id: &str) {
+            self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
+        }
+
+        /// Retains the title lifecycle established by setup so title admission can also be exercised.
+        fn add_session_with_title_acquisition(
+            &self,
+            id: &str,
+            title_acquisition: crate::TitleAcquisition,
+        ) {
+            let session = self
+                .manager
+                .inner
+                .store
+                .create_session(Session::new(
+                    SessionId::new(id),
+                    WorkspaceId::new("workspace"),
+                    AgentRef::parse("official/test.agent").unwrap(),
+                    id,
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    AuditFields::new(
+                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
+                    ),
+                ))
+                .unwrap();
+            let recorder = self.manager.open_recorder(&session).unwrap().recorder;
+            self.manager
+                .insert_actor(
+                    session,
+                    ActorSetup {
+                        session_mcp: NoSessionMcp::default(),
+                        cwd: self._directory.path().to_path_buf(),
+                        connection: self.supervisor.clone(),
+                        channel: None,
+                        recorder,
+                        handoff: crate::HandoffDebt::Settled,
+                        title_acquisition,
+                        live_mcp: LiveMcpState::Active(crate::SessionMcpRevision::default()),
+                        config_options: Vec::new(),
+                    },
+                )
+                .unwrap();
+        }
+
+        /// Observes a frame emitted by the actual plugin transport, without reading actor internals.
+        async fn next_frame(&mut self) -> Value {
+            self.frames.recv().await.expect("agent frame")
+        }
+
+        /// Ends every actor and the provider while retaining normal ownership cleanup.
+        async fn shutdown(self) {
+            for id in self
+                .manager
+                .inner
+                .store
+                .list_sessions()
+                .unwrap()
+                .into_iter()
+                .map(|session| session.id.to_string())
+            {
+                let _ = self
+                    .manager
+                    .stop_session(ora_contracts::StopSessionRequest { session_id: id })
+                    .await;
+            }
+            self.manager.inner.actors.write().unwrap().clear();
+            self.plugin.shutdown_and_wait().await;
+            self.routed.await.unwrap();
+            self.scheduler.shutdown().await;
+        }
+    }
+
+    /// A controllable protocol peer: successful load, output during cancellation settlement,
+    /// failed inactivity resend, and (only if erroneously requested) successful replacement.
+    async fn review_drain_agent(
+        mut reader: DuplexStream,
+        mut writer: DuplexStream,
+        _commands: mpsc::UnboundedReceiver<AgentInput>,
+        frames: mpsc::UnboundedSender<Value>,
+        exited: watch::Sender<bool>,
+    ) {
+        write_message(
+            &mut writer,
+            &json!({"jsonrpc":"2.0","method":"ora/register",
+        "params":{"methods":[],"emits":["agent/acp"]}}),
+        )
+        .await
+        .unwrap();
+        let mut prompt_count = 0;
+        let mut held = Value::Null;
+        while let Ok(Some(envelope)) = read_message(&mut reader).await {
+            if envelope["method"] == "ora/shutdown" {
+                break;
+            }
+            let frame = envelope["params"].clone();
+            frames.send(frame.clone()).unwrap();
+            let session = frame["params"]["sessionId"].as_str().unwrap_or("restored");
+            let response = match frame["method"].as_str() {
+                Some("session/load") => Some(json!({"jsonrpc":"2.0","id":frame["id"],"result":{}})),
+                Some("session/new") => Some(json!({"jsonrpc":"2.0","id":frame["id"],
+                "result":{"sessionId":"unwanted-replacement"}})),
+                Some("session/prompt") => {
+                    prompt_count += 1;
+                    if prompt_count == 1 {
+                        held = frame["id"].clone();
+                        None
+                    } else if prompt_count == 2 {
+                        Some(json!({"jsonrpc":"2.0","id":frame["id"],"error":{
+                        "code":-32000,"message":"request failed after cancellation output"}}))
+                    } else {
+                        Some(json!({"jsonrpc":"2.0","id":frame["id"],
+                        "result":PromptResponse::new(StopReason::EndTurn)}))
+                    }
+                }
+                Some("session/cancel") if !held.is_null() => {
+                    let update = SessionNotification::new(
+                        session.to_string(),
+                        SessionUpdate::AgentMessageChunk(
+                            agent_client_protocol_schema::v1::ContentChunk::new(
+                                ContentBlock::Text(TextContent::new(
+                                    "visible output before cancel fence",
+                                )),
+                            ),
+                        ),
+                    );
+                    write_message(
+                        &mut writer,
+                        &json!({"jsonrpc":"2.0","method":"agent/acp",
+                    "params":{"jsonrpc":"2.0","method":"session/update","params":update}}),
+                    )
+                    .await
+                    .unwrap();
+                    Some(json!({"jsonrpc":"2.0","id":std::mem::take(&mut held),
+                    "result":PromptResponse::new(StopReason::Cancelled)}))
+                }
+                _ => None,
+            };
+            if let Some(response) = response {
+                write_message(
+                    &mut writer,
+                    &json!({"jsonrpc":"2.0","method":"agent/acp",
+                "params":response}),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        exited.send_replace(true);
+    }
+
+    #[test]
+    fn review_771_cancel_drain_output_must_prevent_stale_load_rebuild() {
+        run_case(async {
+            let mut fixture = ReviewDrainFixture::new().await;
+            fixture.add_session("restored");
+            let mut stream = fixture
+                .manager
+                .prompt_session(prompt("restored"))
+                .await
+                .unwrap();
+            assert_eq!(fixture.next_frame().await["method"], "session/load");
+            assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+            tokio::time::advance(Duration::from_secs(45)).await;
+            let mut outputs = 0;
+            let mut errors = Vec::new();
+            let mut completed = 0;
+            while let Some(event) = stream.recv().await {
+                match event {
+                    Ok(PromptSessionEvent::SessionUpdate {
+                        update: SessionUpdate::AgentMessageChunk(_),
+                        ..
+                    }) => outputs += 1,
+                    Ok(PromptSessionEvent::Completed { .. }) => completed += 1,
+                    Err(error) => errors.push(format!("{error:?}")),
+                    _ => {}
+                }
+            }
+            drop(stream);
+            let mut calls = Vec::new();
+            while let Ok(frame) = fixture.frames.try_recv() {
+                calls.push(frame);
+            }
+            let new_count = calls
+                .iter()
+                .filter(|frame| frame["method"] == "session/new")
+                .count();
+            let resent_count = calls
+                .iter()
+                .filter(|frame| frame["method"] == "session/prompt")
+                .count();
+            eprintln!(
+                "review_771_drain_repro: outputs={outputs}; errors={errors:?}; completed={completed}; new={new_count}; resent={resent_count}; calls={calls:?}"
+            );
+            fixture.shutdown().await;
+            assert_eq!(
+                outputs, 1,
+                "the cancellation drain really delivered assistant output"
+            );
+            assert_eq!(
+                (new_count, resent_count, errors.len(), completed),
+                (0, 1, 1, 0),
+                "existing inactivity resend may run, but visible output must block the new stale-load rebuild; errors={errors:?}; calls={calls:?}"
+            );
+        });
+    }
+}

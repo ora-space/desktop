@@ -32,6 +32,7 @@ pub(super) enum StalledPrompt {
 /// flight can be mistaken for the retry's output. `session/close` is deliberately
 /// not part of a retry: it would drop the provider session and force the next send
 /// through load or handoff, which is the expensive path the retry exists to avoid.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     actor: &mut RuntimeActor<H>,
     channel: &mut SessionChannel,
@@ -40,6 +41,7 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     liveness: &mut PromptLiveness,
     permissions: &mut HashMap<String, (RequestId, Vec<String>)>,
     request: &PromptRequest,
+    saw_output: &mut bool,
 ) -> StalledPrompt {
     let snapshot = liveness.snapshot();
     ora_warn!(
@@ -56,7 +58,7 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     actor.cancel(&client, permissions).await;
     let settled = timeout(
         CANCELLATION_GRACE,
-        settle_cancelled_prompt(actor, channel, &client, pending, events),
+        settle_cancelled_prompt(actor, channel, &client, pending, events, saw_output),
     )
     .await;
     let (cancellation_result, stop_reason) = match &settled {
@@ -87,7 +89,7 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     };
     let Some(retry) = retry else {
         if !matches!(settled, Ok(Some(_))) {
-            drain_queued_prompt_events(actor, channel, &client, events).await;
+            drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
         }
         return StalledPrompt::Failed(agent_timed_out("agent prompt made no progress"));
     };
