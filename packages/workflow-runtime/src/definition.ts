@@ -112,6 +112,23 @@ function normalizeWorkflowNodeData(data: WorkflowNodeData): WorkflowNodeData {
     const { instruction, ...startData } = cloned;
     return { ...startData, input: instruction };
   }
+  // A saved interactive agent defaults to the explicit completion signal. Legacy frozen graphs are
+  // read as `end_turn` by the backend, but the editor writes the new policy on the first save so a
+  // re-opened workflow cannot keep the old "any EndTurn is complete" reading (ADR D7).
+  if (
+    cloned.kind === "agent" &&
+    cloned.agentConfig?.interactive === true &&
+    cloned.agentConfig.completionSignal == null
+  ) {
+    return {
+      ...cloned,
+      agentConfig: {
+        ...cloned.agentConfig,
+        schemaVersion: 4,
+        completionSignal: "agent",
+      },
+    };
+  }
   return cloned;
 }
 

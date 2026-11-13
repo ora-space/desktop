@@ -25,9 +25,20 @@ export type CompleteWorkflowNodeRequest = {
    *
    * This is a normal completion once accepted — it never writes the forced audit — and it only
    * lifts the `turn_unconfirmed` blocker; every other blocker and the output contract still
-   * apply. A request that also sets `force` is self-contradictory and rejected.
+   * apply. It can be combined with `force` only for the first-turn no-signal exception; the
+   * backend rejects the combination elsewhere.
    */
   confirmInitialTurn?: boolean;
+  /**
+   * Confirms the accepted agent completion signal identified by `signalId`.
+   *
+   * The confirmation binds to the turn the user saw; a stale or mismatched id is rejected.
+   */
+  confirmAgentCompletion?: ConfirmAgentCompletion;
+  /**
+   * Legacy client hint; the backend derives the requester from the accepted signal and never
+   * trusts this field.
+   */
   requester?: NodeCompletionRequester;
 };
 
@@ -35,6 +46,14 @@ export type CompleteWorkflowNodeRequest = {
  * Returns the run after the node completed.
  */
 export type CompleteWorkflowNodeResponse = { run: WorkflowRun };
+
+/**
+ * Identifies the agent completion signal a human is confirming.
+ *
+ * The id binds the confirmation to the turn the user actually saw; a stale id must be rejected
+ * instead of being applied to a newer signal.
+ */
+export type ConfirmAgentCompletion = { signalId: string };
 
 /**
  * Carries the fields required to create a workflow run against a published snapshot and workspace.
@@ -150,9 +169,10 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
 /**
  * Who requested the completion of one workflow node.
  *
- * Phase 1 carries only the human path; the agent/CLI path reuses the same command later.
+ * `Agent` is server-derived from an accepted completion signal and is never trusted from a
+ * client request; `Human` covers the legacy and explicit human path.
  */
-export type NodeCompletionRequester = "human";
+export type NodeCompletionRequester = "human" | "agent";
 
 /**
  * Identifies the failed or cancelled run whose resume preview should be loaded.

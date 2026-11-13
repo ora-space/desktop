@@ -517,12 +517,25 @@ pub struct UpdateWorkflowRunInputResponse {
 
 /// Who requested the completion of one workflow node.
 ///
-/// Phase 1 carries only the human path; the agent/CLI path reuses the same command later.
+/// `Agent` is server-derived from an accepted completion signal and is never trusted from a
+/// client request; `Human` covers the legacy and explicit human path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
 pub enum NodeCompletionRequester {
     Human,
+    Agent,
+}
+
+/// Identifies the agent completion signal a human is confirming.
+///
+/// The id binds the confirmation to the turn the user actually saw; a stale id must be rejected
+/// instead of being applied to a newer signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ConfirmAgentCompletion {
+    pub signal_id: String,
 }
 
 /// Identifies the awaiting interactive node to complete.
@@ -539,10 +552,19 @@ pub struct CompleteWorkflowNodeRequest {
     ///
     /// This is a normal completion once accepted — it never writes the forced audit — and it only
     /// lifts the `turn_unconfirmed` blocker; every other blocker and the output contract still
-    /// apply. A request that also sets `force` is self-contradictory and rejected.
+    /// apply. It can be combined with `force` only for the first-turn no-signal exception; the
+    /// backend rejects the combination elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub confirm_initial_turn: Option<bool>,
+    /// Confirms the accepted agent completion signal identified by `signalId`.
+    ///
+    /// The confirmation binds to the turn the user saw; a stale or mismatched id is rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub confirm_agent_completion: Option<ConfirmAgentCompletion>,
+    /// Legacy client hint; the backend derives the requester from the accepted signal and never
+    /// trusts this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub requester: Option<NodeCompletionRequester>,
@@ -626,6 +648,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     UpdateWorkflowRunInputRequest::export(config)?;
     UpdateWorkflowRunInputResponse::export(config)?;
     NodeCompletionRequester::export(config)?;
+    ConfirmAgentCompletion::export(config)?;
     CompleteWorkflowNodeRequest::export(config)?;
     CompleteWorkflowNodeResponse::export(config)?;
     DiagnoseWorkflowNodeFailureRequest::export(config)?;
@@ -637,10 +660,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, CreateWorkflowRunRequest,
-        CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse,
-        DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest, GetWorkflowRunResponse,
-        ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
+        CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, ConfirmAgentCompletion,
+        CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest,
+        DeleteWorkflowRunResponse, DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest,
+        GetWorkflowRunResponse, ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
         ListWorkflowRunsByWorkflowRequest, ListWorkflowRunsByWorkflowResponse,
         ListWorkflowRunsRequest, ListWorkflowRunsResponse, NodeCompletionRequester,
         ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowExecutionScope,
@@ -998,6 +1021,7 @@ mod tests {
                 node_id: "node-1".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: None,
             },
             json!({ "runId": "run-1", "nodeId": "node-1", "force": false }),
@@ -1008,6 +1032,25 @@ mod tests {
                 node_id: "node-1".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: Some(ConfirmAgentCompletion {
+                    signal_id: "signal-1".to_string(),
+                }),
+                requester: None,
+            },
+            json!({
+                "runId": "run-1",
+                "nodeId": "node-1",
+                "force": false,
+                "confirmAgentCompletion": { "signalId": "signal-1" },
+            }),
+        );
+        assert_serialized_json(
+            &CompleteWorkflowNodeRequest {
+                run_id: "run-1".to_string(),
+                node_id: "node-1".to_string(),
+                force: false,
+                confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             },
             json!({ "runId": "run-1", "nodeId": "node-1", "force": false, "requester": "human" }),

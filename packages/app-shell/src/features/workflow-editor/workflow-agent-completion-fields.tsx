@@ -5,6 +5,7 @@ import { Button, Input, Switch } from "@ora/ui";
 import {
   WORKFLOW_AGENT_COMPLETION_MAX_FILES,
   WORKFLOW_AGENT_COMPLETION_MAX_PATH_BYTES,
+  agentConfigNeedsSchemaVersion4,
   workflowAgentCompletionPathIssue,
   type WorkflowAgentCompletionFile,
   type WorkflowAgentConfig,
@@ -43,13 +44,17 @@ export function WorkflowAgentCompletionFields({
 
   /** Writes the whole declaration, including the version its presence requires. */
   function commit(next: unknown[]): void {
+    const completion =
+      next.length > 0
+        ? { files: next as WorkflowAgentCompletionFile[] }
+        : undefined;
     onChange({
       ...config,
-      schemaVersion: next.length > 0 ? 4 : 3,
-      completion:
-        next.length > 0
-          ? { files: next as WorkflowAgentCompletionFile[] }
-          : undefined,
+      // Removing the last file may not downgrade a node that still carries the completion policy.
+      schemaVersion: agentConfigNeedsSchemaVersion4({ ...config, completion })
+        ? 4
+        : 3,
+      completion,
     });
   }
 

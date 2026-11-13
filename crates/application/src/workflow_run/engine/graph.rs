@@ -1,7 +1,7 @@
 use super::agent_config::WireAgentConfig;
 pub use super::agent_config::{
-    AgentCompletion, AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, CompletionFile,
-    StructuredTextExposure,
+    AgentCompletion, AgentCompletionSignal, AgentConfig, AgentExecutor, AgentOutputContract,
+    AgentSkill, CompletionFile, StructuredTextExposure,
 };
 use super::aggregator::{AggregatorConfig, AggregatorError, WireAggregatorConfig};
 use super::condition::{ConditionConfig, WireConditionCase};

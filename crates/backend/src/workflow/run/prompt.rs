@@ -750,6 +750,8 @@ mod tests {
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 completion: None,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: None,
             }),
             condition_config: None,
@@ -850,6 +852,8 @@ mod tests {
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 completion: None,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
                         "type": "object",
@@ -950,6 +954,8 @@ mod tests {
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 completion: None,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: Some(AgentOutputContract::Structured {
                     schema: serde_json::json!({
                         "type": "object",
@@ -1031,6 +1037,8 @@ mod tests {
                 prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
                 completion: None,
                 interactive: false,
+                completion_signal: Default::default(),
+                auto_accept_agent_completion: false,
                 output_contract: None,
             }),
             condition_config: None,

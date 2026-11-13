@@ -123,6 +123,7 @@ impl Fixture {
                 node_id: "agent".to_string(),
                 force,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -592,6 +593,7 @@ fn confirming_the_opening_turn_still_requires_declared_files() {
             node_id: "agent".to_string(),
             force: false,
             confirm_initial_turn: Some(true),
+            confirm_agent_completion: None,
             requester: Some(NodeCompletionRequester::Human),
         };
         let blockers = incomplete_blockers(
@@ -818,6 +820,7 @@ fn concurrent_completions_commit_once_and_leave_the_session_read_only() {
             node_id: "agent".to_string(),
             force: false,
             confirm_initial_turn: None,
+            confirm_agent_completion: None,
             requester: Some(NodeCompletionRequester::Human),
         };
         let (first, second) = tokio::join!(
@@ -886,6 +889,7 @@ fn prepare_failure_releases_the_claim_for_retry() {
             node_id: "agent".to_string(),
             force: false,
             confirm_initial_turn: None,
+            confirm_agent_completion: None,
             requester: Some(NodeCompletionRequester::Human),
         };
         let error = fixture
@@ -919,6 +923,7 @@ fn an_unsettled_completion_is_rejected_with_its_blockers() {
                 node_id: "agent".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -955,6 +960,7 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
                 node_id: "agent".to_string(),
                 force: true,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -973,6 +979,7 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
         assert_eq!(
             payload["completion_forced"],
             serde_json::json!({
+                "by": "human",
                 "blockers": [{ "kind": "turn_unknown" }],
                 "stop_cause": null,
                 "without_turn": true,
@@ -1023,6 +1030,7 @@ fn ready_force_does_not_write_an_empty_audit() {
                 node_id: "agent".to_string(),
                 force: true,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -1050,7 +1058,7 @@ fn ready_force_does_not_write_an_empty_audit() {
     });
 }
 
-/// A request that both confirms the opening turn and forces has no consistent meaning.
+/// Confirm-and-force outside the first-turn no-signal exception is rejected before claiming.
 #[test]
 fn conflicting_completion_flags_are_rejected_before_claiming() {
     run_test(async {
@@ -1063,6 +1071,7 @@ fn conflicting_completion_flags_are_rejected_before_claiming() {
                 node_id: "agent".to_string(),
                 force: true,
                 confirm_initial_turn: Some(true),
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -1112,6 +1121,7 @@ fn failed_prompt_start_restores_the_awaiting_node_before_returning() {
                 node_id: "agent".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: None,
             })
             .await
@@ -1150,6 +1160,7 @@ fn cancellation_commits_even_when_session_cleanup_fails() {
                 node_id: "agent".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: Some(NodeCompletionRequester::Human),
             })
             .await
@@ -1221,6 +1232,7 @@ fn concurrent_cancel_and_complete_report_the_committed_outcome() {
                 node_id: "agent".to_string(),
                 force: false,
                 confirm_initial_turn: None,
+                confirm_agent_completion: None,
                 requester: None,
             }),
         );

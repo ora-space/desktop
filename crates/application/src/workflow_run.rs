@@ -8,8 +8,8 @@ mod ports;
 mod tests;
 
 pub use engine::{
-    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentConfig, AgentExecutor,
-    AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
+    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentCompletionSignal, AgentConfig,
+    AgentExecutor, AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
     AgentSkillDeliveryError, AgentSkillDeliveryProvider, AuthoringParticipation,
     BeginNodeRetryResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CompletionFile,
     CompositeRegion, EngineError, ExecutionContext, FailurePropagation, FileChange, GraphError,

@@ -62,21 +62,21 @@
 
 交互的 Agent 节点在第一个回合之后停下等待输入。后续消息作为人工回合在同一会话上运行，`completeWorkflowNode` 手动完成节点；一个完成认领防止后续回合与手动完成竞争。Iteration 区域的成员默认不是交互的，运行时拒绝交互成员。
 
-每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。只有 `EndTurn` 且没有 blocker 的回合才能正常完成；停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。
+每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。新建或重新保存的交互 Agent 节点默认 `completionSignal: agent`：host 向该节点会话注入 loopback 完成工具，只有 agent 为结算的 attempt 调用它、并且用户确认（或节点配置了 `autoAcceptAgentCompletion`）后节点才完成。本轮没有信号时快照带 `agent_signal_pending`，有信号但未确认时带 `agent_confirmation_pending`，两者与其他 blocker 一起物化进停靠快照。`completionSignal: end_turn` 的遗留图仍按旧规则：只有 `EndTurn` 且没有 blocker 的回合才能正常完成。停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。确认请求携带用户看到的 `signalId`；过期 id 返回 `workflow_node_signal_changed`，不会落到新的回合上。attempt 失败、节点完成和运行取消都会撤销对应的 token；Desktop 重启后完成工具随持久化会话一起恢复。
 
 节点可以在 `agentConfig.completion.files` 声明 1–32 个 workspace 相对的产出物路径或受限 glob：支持 `*`（不跨 `/`）、`**`（跨目录）和 `?`，不支持字符类、花括号、转义与取反；匹配大小写敏感、不做 Unicode 归一化，目录、gitlink 和逃出 workspace 的符号链接都不算匹配。声明 `completion` 的图必须写 `agentConfig.schemaVersion: 4`；版本 3 携带 `completion`、版本大于 4、或出现 `criteria`、`checklist` 等未定义字段时，图校验直接拒绝，而不是静默丢弃。编辑器在首次添加文件时写入版本 4，移除最后一个文件时清空声明并回到版本 3。
 
 文件检查在每次点击完成时按现场 workspace 执行，不写入 `payload.completion`：每个声明至少要有一个匹配的普通文件存在，`mustChange: true` 还要求至少一个匹配文件相对节点启动时持久化的 worktree 基线发生变化。缺失或未变更分别返回 `file_missing` / `file_unchanged`，blocker 的 `params.path` 是原始声明；补齐或修改文件后可以直接重试，不需要重新停靠；`force` 可以覆盖这些 blocker 并写入 `completion_forced` 审计。基线缺失或损坏时，存在性仍然检查，`mustChange` 无法判定而降级为 `file_check_unavailable` warning，随完成快照投影可见并在完成后保留。Git 忽略的文件或内容快照超出预算时，存在性仍按 workspace 内的实际普通文件判定；旧基线用 `null` 记录、无法证明二进制文件是否变更时，同样只产生这个 warning。
 
-workflow 自己发起的首轮回合本身从不读作 ready：它的 `EndTurn` 只表示 agent 结束了这次回复，而这次回复可能在向用户提问。快照因此带 `turn_unconfirmed` blocker。步骤卡片提供「确认并完成」（发送 `confirmInitialTurn` 的普通完成，不写强制审计）与「继续当前步骤」，右下角推进按钮在该回合 ready 之前不可用。由用户回复开启的回合仍按上面的规则：`EndTurn` 且没有 blocker 时正常完成，卡片重新给出「完成并进入下一步」。`force` 不能代替确认，两个字段同时为 true 的请求返回 `invalid_request`。
+workflow 自己发起的首轮回合本身从不读作 ready：它的 `EndTurn` 只表示 agent 结束了这次回复，而这次回复可能在向用户提问。快照因此带 `turn_unconfirmed` blocker。步骤卡片提供「确认并完成」（发送 `confirmInitialTurn` 的普通完成，不写强制审计）与「继续当前步骤」，右下角推进按钮在该回合 ready 之前不可用。由用户回复开启的回合仍按上面的规则：`EndTurn` 且没有 blocker 时正常完成，卡片重新给出「完成并进入下一步」。`agent` 策略的首轮有信号时，确认必须同时带 `confirmInitialTurn` 与 `confirmAgentCompletion`，一个字段不能解除另一个 gate；首轮没有信号时，用户仍可通过二次确认路径同时发送 `confirmInitialTurn` 与 `force` 推进并写入强制审计，单独 `force` 会被 `turn_unconfirmed` 拒绝；其余同时设置两个字段的请求返回 `invalid_request`。
 
-每次停靠都在写入处分类：`parkKind` 为 `awaiting_user` 的只有首轮未确认、用户主动停止和 provisional 快照，超时、截断、拒答、未知终态、会话崩溃、流断开与输出契约失败都是 `abnormal`；`stopCause` 记录 owning prompt 的结束原因（`user_stopped`、`prompt_timed_out`、`stream_dropped`、`session_crashed`、`unknown`）。异常停靠的卡片显示原因，只提供继续或二次确认后的强制完成；右下角按钮只对 ready 的回合启用。缺这些字段的旧快照沿用原来的「已暂停／状态未知」展示，provisional 快照被修复时保留它停靠时的 origin 与 stop cause。
+每次停靠都在写入处分类：`parkKind` 为 `awaiting_user` 的包括首轮未确认、等待 agent 信号或确认、用户主动停止和 provisional 快照，超时、截断、拒答、未知终态、会话崩溃、流断开与输出契约失败都是 `abnormal`；`stopCause` 记录 owning prompt 的结束原因（`user_stopped`、`prompt_timed_out`、`stream_dropped`、`session_crashed`、`unknown`）。异常停靠的卡片显示原因，只提供继续或二次确认后的强制完成；右下角按钮只对 ready 的回合启用。缺这些字段的旧快照沿用原来的「已暂停／状态未知」展示，provisional 快照被修复时保留它停靠时的 origin 与 stop cause。
 
 如果流在 stop reason 持久化前被 drop，节点按最后一次可读历史写 provisional 快照：保留它描述的 `userSeq`，并带 `turn_not_settled` warning；之后完成时，只要同一 user 消息的回合已经收敛就修复该快照。升级前停靠、完全没有快照的节点由第一次完成尝试在读取会话历史后物化快照，再走同一套 blocker 门禁，所以未完成的回合同样会被拒绝，不会静默推进。
 
 每个人工回合都带一个从冻结图渲染的 `<workflow_step_boundary>` 块：它写明当前步骤与直接后续节点，并声明只完成本步骤；它不承诺运行时会阻止后续节点，而记录给用户的 prompt 仍是用户原文。
 
-`force` 完成会在节点 payload 的 `completion_forced` 下留痕，记录它实际覆盖的有效 blockers、解释这些 blocker 的 `stop_cause`、本轮是否有终态，以及采用的输出从哪来（`turn_window` 或 `last_assistant_message`）。这条审计与完成在同一个事务里写入，所以已完成的节点不会缺这条记录。
+`force` 完成会在节点 payload 的 `completion_forced` 下留痕，记录 `by: "human"`、它实际覆盖的有效 blockers、解释这些 blocker 的 `stop_cause`、本轮是否有终态，以及采用的输出从哪来（`turn_window` 或 `last_assistant_message`）。这条审计与完成在同一个事务里写入，所以已完成的节点不会缺这条记录。
 
 ## 变量与类型
 

@@ -483,6 +483,14 @@ export const workflowEditorTranslations = {
       "持续等待时，不会因长时间未收到 Agent 进展而取消当前执行，可手动停止。实际执行错误仍按失败自动重试设置处理。",
     "settings.workflow.field.interactiveDescription":
       "开启后节点首轮结束会停在等待人工输入，可在节点内持续对话。",
+    "settings.workflow.field.completionSignal": "完成判定",
+    "settings.workflow.completionSignal.end_turn": "回合正常结束即可",
+    "settings.workflow.completionSignal.agent": "智能体显式上报完成",
+    "settings.workflow.completionSignal.hint":
+      "选择“智能体显式上报完成”时，回合正常结束后仍需要智能体调用完成工具或由你确认，才会推进工作流。",
+    "settings.workflow.field.autoAcceptAgentCompletion": "自动接受智能体完成",
+    "settings.workflow.autoAcceptAgentCompletion.hint":
+      "回合正常结算且智能体已上报完成时，无需人工确认直接推进；异常停靠和首轮不会自动接受。",
     "settings.workflow.field.structuredOutput": "结构化输出",
     "settings.workflow.field.completionFiles": "完成时检查的文件",
     "settings.workflow.completion.hint":
@@ -1124,6 +1132,16 @@ export const workflowEditorTranslations = {
       "Keep waiting prevents cancellation when the agent has not reported progress for a long time. You can stop it manually. Execution errors still follow the retry-on-failure setting.",
     "settings.workflow.field.interactiveDescription":
       "When enabled the node pauses for human input after its first turn, so you can keep conversing inside the node.",
+    "settings.workflow.field.completionSignal": "Completion rule",
+    "settings.workflow.completionSignal.end_turn": "A normally ended turn",
+    "settings.workflow.completionSignal.agent":
+      "The agent reports completion explicitly",
+    "settings.workflow.completionSignal.hint":
+      "With explicit reporting, a normally ended turn still needs the agent's completion tool call or your confirmation before the workflow advances.",
+    "settings.workflow.field.autoAcceptAgentCompletion":
+      "Accept the agent's completion automatically",
+    "settings.workflow.autoAcceptAgentCompletion.hint":
+      "Advance without human confirmation once the turn settled normally and the agent reported completion. Abnormal parks and the first turn are never auto-accepted.",
     "settings.workflow.field.structuredOutput": "Structured output",
     "settings.workflow.field.completionFiles": "Files checked on completion",
     "settings.workflow.completion.hint":

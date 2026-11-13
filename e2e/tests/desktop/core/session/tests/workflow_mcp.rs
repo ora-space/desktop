@@ -21,7 +21,7 @@ fn graph() -> String {
     let agent = |id, mcps| {
         json!({"id": id, "data": {"kind": "agent", "agentConfig": {
             "executor": {"agentCli": "official/ora-space.opencode", "modelId": "anthropic/claude-sonnet-4"},
-            "prompt": "hello", "interactive": true, "mcps": mcps
+            "prompt": "hello", "interactive": true, "schemaVersion": 4, "completionSignal": "agent", "mcps": mcps
         }}})
     };
     json!({"nodes": [
@@ -110,8 +110,8 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         let left = nodes.iter().find(|node| node.node_id == "left").and_then(|node| node.session_id.as_ref()).ok_or("left session missing")?;
         let calls = mcp_calls(&package_root)?;
         assert_eq!(calls.len(), 2);
-        let left_provider = calls.iter().find(|call| call["servers"] == json!(["official/first"])).ok_or("left MCP selection missing")?["sessionId"].clone();
-        let right_provider = calls.iter().find(|call| call["servers"] == json!([])).ok_or("right MCP selection not empty")?["sessionId"].clone();
+        let left_provider = calls.iter().find(|call| call["servers"] == json!(["official/first", "ora-workflow-completion"])).ok_or("left MCP selection missing")?["sessionId"].clone();
+        let right_provider = calls.iter().find(|call| call["servers"] == json!(["ora-workflow-completion"])).ok_or("right MCP selection not empty")?["sessionId"].clone();
 
         let ordinary = backend.sessions().start(StartSessionRequest { workspace_id, agent_ref: agent_ref(), model: None }).await?;
         assert_eq!(mcp_calls(&package_root)?.last().ok_or("MCP journal is empty")?["servers"], json!(["official/first", "official/second"]));
@@ -119,7 +119,7 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         backend.sessions().stop(StopSessionRequest { session_id: left.clone() }).await?;
         follow_up(&backend, left).await?;
         parked_nodes(&backend, &run.id).await?;
-        assert_eq!(mcp_calls(&package_root)?.last().ok_or("MCP journal is empty")?, &json!({"method": "session/load", "sessionId": left_provider, "servers": ["official/first"]}));
+        assert_eq!(mcp_calls(&package_root)?.last().ok_or("MCP journal is empty")?, &json!({"method": "session/load", "sessionId": left_provider, "servers": ["official/first", "ora-workflow-completion"]}));
 
         fs::write(package_root.join("refuse_session_load"), "refuse")?;
         backend.sessions().stop(StopSessionRequest { session_id: left.clone() }).await?;
@@ -128,7 +128,7 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         let calls = mcp_calls(&package_root)?;
         assert_eq!(calls[calls.len()-2]["method"], "session/load");
         assert_eq!(calls.last().ok_or("MCP journal is empty")?["method"], "session/new");
-        assert_eq!(calls.last().ok_or("MCP journal is empty")?["servers"], json!(["official/first"]));
+        assert_eq!(calls.last().ok_or("MCP journal is empty")?["servers"], json!(["official/first", "ora-workflow-completion"]));
         let rebuilt_provider = calls.last().ok_or("MCP journal is empty")?["sessionId"].clone();
         fs::remove_file(package_root.join("refuse_session_load"))?;
 
@@ -148,7 +148,7 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
                 calls.iter().any(|call| {
                     call["method"] == "session/load"
                         && call["sessionId"] == rebuilt_provider
-                        && call["servers"] == json!(["official/first"])
+                        && call["servers"] == json!(["official/first", "ora-workflow-completion"])
                 })
             }) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -173,8 +173,8 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         }
         parked_nodes(&backend, &run.id).await?;
         let left_provider = rebuilt_provider;
-        assert!(mcp_calls(&package_root)?.iter().any(|call| call["method"] == "session/load" && call["sessionId"] == left_provider && call["servers"] == json!(["official/first"])));
-        assert!(mcp_calls(&package_root)?.iter().filter(|call| call["sessionId"] == right_provider).all(|call| call["servers"] == json!([])));
+        assert!(mcp_calls(&package_root)?.iter().any(|call| call["method"] == "session/load" && call["sessionId"] == left_provider && call["servers"] == json!(["official/first", "ora-workflow-completion"])));
+        assert!(mcp_calls(&package_root)?.iter().filter(|call| call["sessionId"] == right_provider).all(|call| call["servers"] == json!(["ora-workflow-completion"])));
         backend.workflow_runs().cancel(CancelWorkflowRunRequest { run_id: run.id }).await?;
         backend.sessions().stop(StopSessionRequest { session_id: ordinary.session.id }).await?;
         Ok(())

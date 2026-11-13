@@ -1,5 +1,6 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::completion_snapshot::StopCause;
+use super::interactive::AgentSignalStore;
 use super::last_failure::previous_failure_for_injection;
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::{OwnerStreamDropControl, OwnerStreamDropWaiter};
@@ -10,10 +11,7 @@ use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
 use agent_client_protocol_schema::v1::StopReason;
-use agent_client_protocol_schema::v1::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionConfigSelectOptions,
-};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigKind, TextContent};
 use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
@@ -27,6 +25,7 @@ use ora_contracts::{
     StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
+use ora_domain::SessionHostCapabilities;
 use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId};
 use ora_logging::ora_warn;
 
@@ -49,9 +48,12 @@ mod inactivity_tests;
 mod loop_exit;
 mod output;
 mod payload;
+mod session;
 pub(super) use output::AssistantOutputAccumulator;
 pub(crate) use output::apply_output_contract;
 use payload::{parse_workflow_run_payload, report_outcome};
+use session::match_model_value;
+pub(crate) use session::stop_reason_label;
 
 /// Executes one agent node through a real Ora session, reporting completion to the run engine.
 ///
@@ -70,6 +72,8 @@ pub struct WorkflowRunNodeExecutor {
     baselines_root: PathBuf,
     /// Commits the interactive park transition with the shared publish-after-commit discipline.
     transitions: Arc<WorkflowRunTransitions>,
+    /// Per-attempt tokens and accepted completion signals shared with the MCP server.
+    agent_signals: Arc<AgentSignalStore>,
     loop_exit_tasks: Arc<loop_exit::LoopExitTasks>,
     /// One-shot E2E control for abandoning a node's real owning prompt stream.
     #[cfg(feature = "test-support")]
@@ -89,6 +93,7 @@ impl WorkflowRunNodeExecutor {
         sessions_root: PathBuf,
         baselines_root: PathBuf,
         transitions: Arc<WorkflowRunTransitions>,
+        agent_signals: Arc<AgentSignalStore>,
     ) -> Self {
         Self {
             agent_runtime,
@@ -99,6 +104,7 @@ impl WorkflowRunNodeExecutor {
             sessions_root,
             baselines_root,
             transitions,
+            agent_signals,
             loop_exit_tasks: Arc::default(),
             #[cfg(feature = "test-support")]
             owner_stream_drop: Arc::default(),
@@ -136,6 +142,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let transitions = self.transitions.clone();
         #[cfg(feature = "test-support")]
         let owner_stream_drop = self.owner_stream_drop.clone();
+        let agent_signals = self.agent_signals.clone();
         let node_run_id = node_run_id.clone();
         let node = node.clone();
         let graph = graph.clone();
@@ -153,6 +160,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &sessions_root,
                 &baselines_root,
                 &transitions,
+                &agent_signals,
                 &node_run_id,
                 &node,
                 &graph,
@@ -374,6 +382,7 @@ async fn drive_agent_node(
     sessions_root: &Path,
     baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
+    agent_signals: &Arc<AgentSignalStore>,
     node_run_id: &WorkflowNodeRunId,
     node: &WorkflowGraphNode,
     graph: &ora_application::WorkflowGraph,
@@ -394,6 +403,15 @@ async fn drive_agent_node(
     // Start the session without publishing it to the node yet. The owning prompt must win
     // admission before workflow UI loads can discover the session; failures in the preparation
     // block below stop this session so cancellation cannot leave an unbound actor behind.
+    // Only an interactive agent-policy attempt may report completion; an automatic or legacy
+    // `end_turn` node must not even see the host tool (ADR D1).
+    let host_capabilities = if config.interactive
+        && config.completion_signal == ora_application::AgentCompletionSignal::Agent
+    {
+        SessionHostCapabilities::WorkflowCompletion
+    } else {
+        SessionHostCapabilities::None
+    };
     let started = agent_runtime
         .start_workflow_node_session(
             StartSessionRequest {
@@ -409,10 +427,13 @@ async fn drive_agent_node(
                     .map(|mcp| mcp.mcp_id.clone())
                     .collect(),
             ),
+            host_capabilities,
         )
         .await?;
     let session_id = SessionId::new(started.session.id);
 
+    // Kept outside the attempt block so a failed or abandoned attempt still revokes its token.
+    let mut attempt_to_revoke: Option<String> = None;
     let outcome: Result<AgentNodeOutcome, NodeExecutionError> = async {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
 
@@ -482,7 +503,7 @@ async fn drive_agent_node(
             &config.skills,
             &workspace_root,
         )?;
-        let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
+        let mut prompt = assemble_workflow_prompt(WorkflowPromptRequest {
             node: &rendered_node,
             graph: Some(graph),
             worktree_root: &workspace_root,
@@ -494,6 +515,23 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
+        // Issue one completion token for this attempt. It travels in the prompt (not the recorded
+        // transcript) and is the only value the host MCP tool accepts for this turn.
+        let completion_attempt = if config.interactive
+            && config.completion_signal == ora_application::AgentCompletionSignal::Agent
+        {
+                let attempt_id = uuid::Uuid::new_v4().to_string();
+                let token = agent_signals.issue(&format!("{node_run_id}"), &attempt_id);
+                prompt.push(ContentBlock::Text(TextContent::new(format!(
+                    "<workflow_completion>\nWhen this step is complete, call the tool \
+                     ora_complete_workflow_step and pass this attemptToken unchanged: \
+                     {token}\n</workflow_completion>"
+                ))));
+                Some(attempt_id)
+            } else {
+                None
+            };
+        attempt_to_revoke = completion_attempt.clone();
         if let Some(previous) = previous_failure.as_ref() {
             repository.record_node_injected_failure(
                 node_run_id,
@@ -600,6 +638,10 @@ async fn drive_agent_node(
                     session_id: session_id.clone(),
                     output_contract: config.output_contract.clone(),
                     completion: config.completion.clone(),
+                    completion_signal: config.completion_signal,
+                    agent_signals: agent_signals.clone(),
+                    attempt_id: completion_attempt.clone(),
+                    auto_accept: config.auto_accept_agent_completion,
                     baseline_available,
                     // A first turn the user stopped must still park as awaiting them, so the cause
                     // travels with the park instead of being read back from the stop reason.
@@ -660,6 +702,10 @@ async fn drive_agent_node(
         // row. Keeping the original node error preserves the actionable failure for the engine.
         ora_warn!(session_id = %session_id, error = %error, "failed to discard unpublished workflow session after node setup failed");
     }
+    // The attempt is over whether it parked, completed, or failed: no token may survive it.
+    if let Some(attempt) = attempt_to_revoke.as_deref() {
+        agent_signals.revoke_attempt(&format!("{node_run_id}"), attempt);
+    }
     outcome
 }
 
@@ -699,63 +745,6 @@ pub(super) fn resolve_agent_ref(value: &str) -> Result<ContractAgentRef, NodeExe
     Ok(value.to_string())
 }
 
-/// Finds the model option and the value to select for the graph's `modelId`.
-///
-/// Matching follows the confirmed order: a `Model`-category select, falling back to the sole
-/// select option; then an exact value match, then a label-contains match. No match fails the
-/// node instead of silently using the CLI default.
-fn match_model_value(
-    config_options: &[SessionConfigOption],
-    agent_ref: &str,
-    model_id: &str,
-) -> Result<(String, String), NodeExecutionError> {
-    let model_option = config_options
-        .iter()
-        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
-        .or_else(|| {
-            let selects: Vec<&SessionConfigOption> = config_options
-                .iter()
-                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)))
-                .collect();
-            (selects.len() == 1).then_some(selects[0])
-        })
-        .ok_or_else(|| NodeExecutionError::WorkflowModelNotFound {
-            agent_ref: agent_ref.to_string(),
-            model_id: model_id.to_string(),
-        })?;
-    let SessionConfigKind::Select(select) = &model_option.kind else {
-        return Err(NodeExecutionError::WorkflowModelNotFound {
-            agent_ref: agent_ref.to_string(),
-            model_id: model_id.to_string(),
-        });
-    };
-    let options: Vec<&SessionConfigSelectOption> = match &select.options {
-        SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
-        SessionConfigSelectOptions::Grouped(groups) => groups
-            .iter()
-            .flat_map(|group| group.options.iter())
-            .collect(),
-        // New option container shapes require an explicit selection policy before
-        // workflow execution can choose a model from them.
-        _ => {
-            return Err(NodeExecutionError::WorkflowModelNotFound {
-                agent_ref: agent_ref.to_string(),
-                model_id: model_id.to_string(),
-            });
-        }
-    };
-    let matched = options
-        .iter()
-        .find(|option| option.value.0.as_ref() == model_id || option.name.contains(model_id));
-    match matched {
-        Some(option) => Ok((model_option.id.0.to_string(), option.value.0.to_string())),
-        None => Err(NodeExecutionError::WorkflowModelNotFound {
-            agent_ref: agent_ref.to_string(),
-            model_id: model_id.to_string(),
-        }),
-    }
-}
-
 /// Resolves the current node's enabled skills exclusively from the receipt frozen at deployment.
 fn resolve_required_skills(
     payload: &WorkflowRunPayload,
@@ -785,51 +774,14 @@ fn resolve_required_skills(
     Ok(required)
 }
 
-/// Renders an ACP stop reason as its snake-case label, matching the wire form persisted on the
-/// node's completion payload.
-pub(crate) fn stop_reason_label(reason: StopReason) -> String {
-    match reason {
-        StopReason::EndTurn => "end_turn".to_string(),
-        StopReason::MaxTokens => "max_tokens".to_string(),
-        StopReason::MaxTurnRequests => "max_turn_requests".to_string(),
-        StopReason::Refusal => "refusal".to_string(),
-        StopReason::Cancelled => "cancelled".to_string(),
-        // A newer ACP stop reason has no label Ora can persist faithfully; the caller decides
-        // whether to fall back to a failure.
-        _ => "unknown".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol_schema::v1::{
-        SessionConfigId, SessionConfigSelect, SessionConfigValueId,
-    };
     use ora_application::AgentOutputContract;
     use ora_application::StructuredTextExposure;
     use ora_contracts::WorkflowRunLocale;
     use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
-
-    fn select_option(value: &str, name: &str) -> SessionConfigSelectOption {
-        SessionConfigSelectOption::new(
-            SessionConfigValueId::new(value.to_string()),
-            name.to_string(),
-        )
-    }
-
-    fn model_option(options: Vec<SessionConfigSelectOption>) -> SessionConfigOption {
-        SessionConfigOption::new(
-            SessionConfigId::new("model".to_string()),
-            "Model",
-            SessionConfigKind::Select(SessionConfigSelect::new(
-                SessionConfigValueId::new("current".to_string()),
-                SessionConfigSelectOptions::Ungrouped(options),
-            )),
-        )
-        .category(SessionConfigOptionCategory::Model)
-    }
 
     /// Verifies a graph's agent identity is carried through instead of checked against a set.
     ///
@@ -845,49 +797,6 @@ mod tests {
             resolve_agent_ref("   "),
             Err(NodeExecutionError::MissingAgentRef)
         ));
-    }
-
-    #[test]
-    fn match_model_value_prefers_exact_value_then_label() {
-        let options = vec![
-            select_option("fast", "Fast model"),
-            select_option("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
-        ];
-        let config = vec![model_option(options)];
-        assert_eq!(
-            match_model_value(&config, "open_code", "deepseek/deepseek-v4-pro").unwrap(),
-            ("model".to_string(), "deepseek/deepseek-v4-pro".to_string())
-        );
-        // A label-contains match also works (case-sensitive, per the confirmed model rule).
-        assert_eq!(
-            match_model_value(&config, "open_code", "DeepSeek").unwrap(),
-            ("model".to_string(), "deepseek/deepseek-v4-pro".to_string())
-        );
-    }
-
-    #[test]
-    fn match_model_value_fails_when_no_option_matches() {
-        let config = vec![model_option(vec![select_option("fast", "Fast model")])];
-        assert!(matches!(
-            match_model_value(&config, "open_code", "missing-model"),
-            Err(NodeExecutionError::WorkflowModelNotFound { .. })
-        ));
-    }
-
-    #[test]
-    fn match_model_value_falls_back_to_the_lone_select() {
-        let option = SessionConfigOption::new(
-            SessionConfigId::new("model".to_string()),
-            "Model",
-            SessionConfigKind::Select(SessionConfigSelect::new(
-                SessionConfigValueId::new("smart".to_string()),
-                SessionConfigSelectOptions::Ungrouped(vec![select_option("smart", "Smart")]),
-            )),
-        );
-        assert_eq!(
-            match_model_value(&[option], "open_code", "smart").unwrap(),
-            ("model".to_string(), "smart".to_string())
-        );
     }
 
     /// The executor accepts only the typed locale and receipt persisted by run deployment.

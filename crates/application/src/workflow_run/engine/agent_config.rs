@@ -43,6 +43,16 @@ pub enum StructuredTextExposure {
     IncludeFinalText,
 }
 
+/// Whether an agent node requires an explicit completion signal from the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentCompletionSignal {
+    /// The node completes only after the agent calls the host completion tool.
+    Agent,
+    /// Legacy behavior: a normal `EndTurn` with no blockers is ready.
+    #[default]
+    EndTurn,
+}
+
 /// The executable contract of an `agent` node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -54,6 +64,10 @@ pub struct AgentConfig {
     /// When true the node is a persistent interactive session: its first turn pauses at
     /// `Pending` (awaiting input) instead of completing, and the user drives completion.
     pub interactive: bool,
+    /// Whether the node requires the agent's explicit completion signal.
+    pub completion_signal: AgentCompletionSignal,
+    /// Whether an accepted signal completes the node without a separate human confirmation.
+    pub auto_accept_agent_completion: bool,
     /// Optional structured parsing performed in addition to persisting the raw output.
     pub output_contract: Option<AgentOutputContract>,
     /// Automatic retry of failed attempts; graphs without `agentConfig.retry` get the default
@@ -159,6 +173,10 @@ pub(super) struct WireAgentConfig {
     prompt: Option<String>,
     #[serde(default)]
     interactive: Option<bool>,
+    #[serde(default)]
+    completion_signal: Option<String>,
+    #[serde(default)]
+    auto_accept_agent_completion: Option<bool>,
     output_contract: Option<WireOutputContract>,
     /// Kept as raw JSON so a malformed policy is rejected with a field-level reason instead of
     /// the generic "not valid JSON" a typed serde failure would produce.
@@ -226,10 +244,15 @@ impl WireAgentConfig {
             .as_ref()
             .map(|value| parse_completion(node_id, value))
             .transpose()?;
-        if completion.is_some() && schema_version != Some(4) {
+        // The version-4 shape spans completion files, the completion policy and its auto-accept
+        // flag; all three follow the same schema boundary as the editor and the TS validator.
+        let has_version_4_field = completion.is_some()
+            || self.completion_signal.is_some()
+            || self.auto_accept_agent_completion.is_some();
+        if has_version_4_field && schema_version != Some(4) {
             return Err(GraphError::InvalidNode {
                 reason: format!(
-                    "node {node_id} declares agentConfig.completion, which requires agentConfig.schemaVersion 4 (found {})",
+                    "node {node_id} declares a version-4 agent completion field, which requires agentConfig.schemaVersion 4 (found {})",
                     schema_version
                         .map_or_else(|| "no version".to_string(), |version| version.to_string())
                 ),
@@ -246,6 +269,17 @@ impl WireAgentConfig {
             })
             .transpose()?
             .unwrap_or_default();
+        let completion_signal = match self.completion_signal.as_deref() {
+            // The graph vocabulary is `end_turn` (see the editor and TS graph types); a missing
+            // field is the legacy default, never a new policy.
+            None | Some("end_turn") => AgentCompletionSignal::EndTurn,
+            Some("agent") => AgentCompletionSignal::Agent,
+            Some(other) => {
+                return Err(GraphError::InvalidNode {
+                    reason: format!("node {node_id} has invalid completionSignal: {other}"),
+                });
+            }
+        };
         Ok(AgentConfig {
             executor: AgentExecutor {
                 agent_cli: self
@@ -269,6 +303,8 @@ impl WireAgentConfig {
             prompt: self.prompt.unwrap_or_default(),
             // Missing `interactive` defaults to false so existing graphs stay fully automatic.
             interactive: self.interactive.unwrap_or(false),
+            completion_signal,
+            auto_accept_agent_completion: self.auto_accept_agent_completion.unwrap_or(false),
             output_contract: self
                 .output_contract
                 .and_then(WireOutputContract::into_model),
@@ -492,6 +528,53 @@ mod tests {
         }
     }
 
+    /// Missing completion policy keeps legacy end-turn semantics; both explicit values parse.
+    #[test]
+    fn completion_signal_defaults_to_end_turn_and_parses_both_policies() {
+        let legacy = parse_config(json!({})).unwrap();
+        let config = legacy.node("agent").unwrap().agent_config.as_ref().unwrap();
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::EndTurn
+        );
+        assert!(!config.auto_accept_agent_completion);
+
+        let explicit_end_turn =
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "end_turn"})).unwrap();
+        let config = explicit_end_turn
+            .node("agent")
+            .unwrap()
+            .agent_config
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::EndTurn
+        );
+
+        let graph =
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "agent", "autoAcceptAgentCompletion": true}))
+                .unwrap();
+        let config = graph.node("agent").unwrap().agent_config.as_ref().unwrap();
+        assert_eq!(
+            config.completion_signal,
+            super::AgentCompletionSignal::Agent
+        );
+        assert!(config.auto_accept_agent_completion);
+    }
+
+    /// An unknown completion policy is rejected with the node and field context.
+    #[test]
+    fn rejects_invalid_completion_signal_with_node_context() {
+        let error =
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "human"})).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("invalid node: node agent has invalid completionSignal: human")
+        );
+    }
+
     /// Invalid silence handling cannot be silently replaced by a different execution policy.
     #[test]
     fn rejects_invalid_prompt_inactivity_with_node_and_field_context() {
@@ -545,6 +628,23 @@ mod tests {
         );
         assert!(completion.files[0].matches("reports/plan.md"));
         assert!(!completion.files[0].matches("reports/nested/plan.md"));
+    }
+
+    /// The completion policy and its auto-accept flag share the version-4 boundary.
+    #[test]
+    fn rejects_completion_policy_without_schema_version_4() {
+        for config in [
+            json!({ "schemaVersion": 3, "completionSignal": "agent" }),
+            json!({ "schemaVersion": 3, "autoAcceptAgentCompletion": false }),
+        ] {
+            let error = parse_config(config).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("requires agentConfig.schemaVersion 4"),
+                "{error}"
+            );
+        }
     }
 
     /// Declaring `completion` without version 4 is illegal rather than silently downgraded.

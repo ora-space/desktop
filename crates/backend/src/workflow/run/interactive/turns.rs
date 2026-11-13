@@ -1,7 +1,9 @@
 //! Workflow-owned admission and cleanup around a session's human prompt stream.
 
-use super::super::completion_snapshot::StopCause;
+use super::super::completion_snapshot::{CompletionPolicy, StopCause};
+use super::super::operations::WorkflowRuns;
 use super::CompletingNodeRuns;
+use super::agent_signal::AgentSignalStore;
 use super::session::{HumanTurnAdmission, restore_human_turn};
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::error::BackendError;
@@ -22,6 +24,10 @@ pub(crate) struct WorkflowSessionTurns {
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
     sessions_root: PathBuf,
+    /// Per-attempt tokens shared with the host completion MCP server.
+    agent_signals: Arc<AgentSignalStore>,
+    /// Weak owner used to run the headless auto-accept after a settled human turn parks.
+    auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
     baselines_root: PathBuf,
 }
 
@@ -31,6 +37,7 @@ impl WorkflowSessionTurns {
     /// `sessions_root` lets the drop cleanup derive the settled turn's snapshot from the same
     /// durable history the completion path reads; `baselines_root` lets that snapshot record a
     /// missing `mustChange` baseline while the turn parks.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::workflow::run) fn new(
         pool: RepositoryPool,
         run_locks: Arc<KeyedResourceLocks>,
@@ -38,6 +45,8 @@ impl WorkflowSessionTurns {
         transitions: Arc<WorkflowRunTransitions>,
         sessions_root: PathBuf,
         baselines_root: PathBuf,
+        agent_signals: Arc<AgentSignalStore>,
+        auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
     ) -> Self {
         Self {
             pool,
@@ -46,6 +55,8 @@ impl WorkflowSessionTurns {
             transitions,
             sessions_root,
             baselines_root,
+            agent_signals,
+            auto_completer,
         }
     }
 
@@ -71,13 +82,45 @@ impl WorkflowSessionTurns {
             &session_id,
         )
         .await?;
-        let (prompt_inactivity, step_boundary) = match &admission {
-            HumanTurnAdmission::Ordinary => (PromptInactivityPolicy::Timeout, None),
+        let (prompt_inactivity, step_boundary, completion_policy, auto_accept) = match &admission {
+            HumanTurnAdmission::Ordinary => (
+                PromptInactivityPolicy::Timeout,
+                None,
+                CompletionPolicy::EndTurn,
+                false,
+            ),
             HumanTurnAdmission::Workflow {
                 prompt_inactivity,
                 step_boundary,
+                completion_policy,
+                auto_accept,
                 ..
-            } => (*prompt_inactivity, Some(step_boundary.clone())),
+            } => (
+                *prompt_inactivity,
+                Some(step_boundary.clone()),
+                *completion_policy,
+                *auto_accept,
+            ),
+        };
+        // The agent policy needs one token per prompt attempt. It rides on the step boundary so
+        // the recorded user message stays exactly what the user typed.
+        let (step_boundary, attempt_id) = match (&admission, completion_policy) {
+            (HumanTurnAdmission::Workflow { node_run_id, .. }, CompletionPolicy::Agent) => {
+                let attempt = uuid::Uuid::new_v4().to_string();
+                let token = self
+                    .agent_signals
+                    .issue(&format!("{node_run_id}"), &attempt);
+                let boundary = step_boundary.unwrap_or_default();
+                (
+                    Some(format!(
+                        "{boundary}\n<workflow_completion>\nWhen this step is complete, call the \
+                         tool ora_complete_workflow_step and pass this attemptToken unchanged: \
+                         {token}\n</workflow_completion>"
+                    )),
+                    Some(attempt),
+                )
+            }
+            _ => (step_boundary, None),
         };
         let request = with_step_boundary(request, step_boundary);
         let stream = match agent_runtime
@@ -89,6 +132,10 @@ impl WorkflowSessionTurns {
                 // The turn never started; put the awaiting node back where it was without
                 // overwriting the snapshot of the turn that previously settled.
                 if let HumanTurnAdmission::Workflow { node_run_id, .. } = &admission {
+                    if let Some(attempt) = attempt_id.as_deref() {
+                        self.agent_signals
+                            .revoke_attempt(&format!("{node_run_id}"), attempt);
+                    }
                     restore_human_turn(&self.transitions, node_run_id).await?;
                 }
                 return Err(error.into());
@@ -102,6 +149,8 @@ impl WorkflowSessionTurns {
         let sessions_root = self.sessions_root.clone();
         let baselines_root = self.baselines_root.clone();
         let transitions = self.transitions.clone();
+        let agent_signals = self.agent_signals.clone();
+        let auto_completer = self.auto_completer.clone();
         Ok(stream.attach_cleanup(move || async move {
             // The runtime attributes this turn's end while it settles: an explicit stop, the
             // inactivity policy, a dropped stream and a crashed session all end it as `Cancelled`
@@ -113,8 +162,21 @@ impl WorkflowSessionTurns {
                 &transitions,
                 &node_run_id,
                 end_report,
+                completion_policy,
+                auto_accept,
+                Some(agent_signals),
+                attempt_id,
             )
-            .await
+            .await?;
+            if auto_accept && let Some(runs) = auto_completer.and_then(|weak| weak.upgrade()) {
+                // Run outside the cleanup future: completing the node stops its session, and
+                // waiting for that stop from inside the stream's own cleanup could deadlock.
+                let node_run_id = node_run_id.clone();
+                tokio::spawn(async move {
+                    let _ = runs.auto_complete_node(&node_run_id).await;
+                });
+            }
+            Ok(())
         }))
     }
 }
@@ -124,6 +186,7 @@ impl WorkflowSessionTurns {
 /// Cleanup runs after the stream's owner settled, which is when the actor's report is final. The
 /// report is the only place the end is attributable: history records a user stop, an inactivity
 /// timeout, a dropped stream and a crash all as the same `Cancelled` stop reason.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn park_ended_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,
@@ -131,15 +194,23 @@ pub(super) async fn park_ended_turn(
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
     end_report: Option<PromptEndReport>,
+    completion_policy: CompletionPolicy,
+    auto_accept: bool,
+    agent_signals: Option<Arc<AgentSignalStore>>,
+    attempt_id: Option<String>,
 ) -> Result<(), BackendError> {
     let stop_cause = StopCause::of_prompt_end(end_report.and_then(|report| report.recorded()));
-    crate::workflow::run::interactive::end_human_turn(
+    crate::workflow::run::interactive::end_human_turn_with_signal(
         pool,
         sessions_root,
         baselines_root,
         transitions,
         node_run_id,
         stop_cause,
+        completion_policy,
+        auto_accept,
+        agent_signals,
+        attempt_id,
     )
     .await
 }

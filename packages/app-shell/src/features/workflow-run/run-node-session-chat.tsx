@@ -5,7 +5,7 @@ import {
   IconCheck,
   IconPlayerSkipForward,
 } from "@tabler/icons-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -141,6 +141,17 @@ export function RunNodeSessionChat({
   const completionNeedsConfirmation = isAwaitingConfirmation(
     interaction?.completion,
   );
+  // An agent-policy turn whose accepted signal waits for the user's approval, or one that has not
+  // signaled yet. The backend materializes both gates into blockers and the card reads those.
+  const completionAgentConfirmation =
+    interaction?.completion?.requiresAgentConfirmation === true;
+  const completionAwaitingAgentSignal =
+    interaction?.completion?.awaitsAgentSignal === true;
+  // The opening turn's own confirmation, read from the materialized blockers rather than from the
+  // single-blocker shortcut: an agent-policy first turn also carries the signal blocker.
+  const openingTurnUnconfirmed = completion.blockers.some(
+    (blocker) => blocker.kind === "turn_unconfirmed",
+  );
   const completionParkKind = hasCompletionSnapshot
     ? completion.parkKind
     : undefined;
@@ -149,6 +160,7 @@ export function RunNodeSessionChat({
     hasCompletionSnapshot &&
     !completionProvisional &&
     !completionNeedsConfirmation &&
+    !completionAwaitingAgentSignal &&
     completionParkKind === "awaiting_user";
   // Timeout, truncation, refusal, unknown end, session crash, or an output-contract failure.
   const completionAbnormal =
@@ -168,9 +180,12 @@ export function RunNodeSessionChat({
     completionReady ||
     completionProvisional ||
     completionNeedsConfirmation ||
+    completionAgentConfirmation ||
+    completionAwaitingAgentSignal ||
     completionUserStopped;
-  /** Only a ready snapshot (or the legacy snapshot-less entry) offers a normal completion. */
-  const completionActionable = completionReady || !hasCompletionSnapshot;
+  /** A ready snapshot, an accepted agent signal, or the legacy snapshot-less entry is actionable. */
+  const completionActionable =
+    completionReady || completionAgentConfirmation || !hasCompletionSnapshot;
 
   // A new turn or another node makes the previous rejection stale; keep it while the same turn
   // is polled again so a ready snapshot still explains why the last click was refused.
@@ -349,6 +364,40 @@ export function RunNodeSessionChat({
     );
   };
 
+  /** Confirms the accepted agent signal the user is looking at; stale ids are rejected. */
+  const handleCompleteAgent = useCallback(() => {
+    if (interaction === undefined) {
+      return;
+    }
+    const signalId = interaction.completion?.agentSignal?.signalId;
+    if (signalId === undefined) {
+      return;
+    }
+    // A first-turn signal still needs the opening turn's own explicit confirmation; the backend
+    // rejects the signal alone so one click cannot stand in for both gates.
+    complete.mutate(
+      {
+        runId: interaction.runId,
+        nodeId: interaction.nodeId,
+        force: false,
+        ...(openingTurnUnconfirmed ? { confirmInitialTurn: true } : {}),
+        confirmAgentCompletion: { signalId },
+      },
+      {
+        onSuccess: () => onNodeCompleted?.(interaction.nodeId),
+        onError: (error) => {
+          showContractError(error);
+        },
+      },
+    );
+  }, [
+    interaction,
+    complete,
+    onNodeCompleted,
+    showContractError,
+    openingTurnUnconfirmed,
+  ]);
+
   const stepCard = (() => {
     if (!interactive || status !== "awaiting_input") {
       return undefined;
@@ -423,7 +472,7 @@ export function RunNodeSessionChat({
           <p className="mt-1.5 text-xs text-muted-foreground">
             {t("workflowRun.stepCard.provisional")}
           </p>
-        ) : completionNeedsConfirmation ? (
+        ) : completionNeedsConfirmation && !completionAgentConfirmation ? (
           <>
             <p className="mt-1.5 text-xs font-medium">
               {t("workflowRun.stepCard.unconfirmedTitle")}
@@ -433,6 +482,30 @@ export function RunNodeSessionChat({
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground/80">
               {t("workflowRun.stepCard.unconfirmedHint")}
+            </p>
+          </>
+        ) : completionAgentConfirmation ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentConfirmationTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentConfirmationReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentConfirmationHint")}
+            </p>
+          </>
+        ) : completionAwaitingAgentSignal ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentSignalTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentSignalReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentSignalHint")}
             </p>
           </>
         ) : completionUserStopped ? (
@@ -573,7 +646,9 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.continueChat")}
               </Button>
             </>
-          ) : completionNeedsConfirmation ? (
+          ) : completionNeedsConfirmation &&
+            !completionAgentConfirmation &&
+            !completionAwaitingAgentSignal ? (
             <>
               <Button
                 type="button"
@@ -599,6 +674,56 @@ export function RunNodeSessionChat({
                 onClick={() => void handleContinue(false)}
               >
                 {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAgentConfirmation ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="confirm-agent-completion"
+                disabled={actionDisabled}
+                aria-busy={complete.isPending}
+                onClick={handleCompleteAgent}
+              >
+                {complete.isPending ? (
+                  <Spinner className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <IconCheck className="size-3.5" aria-hidden="true" />
+                )}
+                {t("workflowRun.stepCard.confirmAgentAction")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAwaitingAgentSignal ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="force-complete-node"
+                disabled={actionDisabled}
+                onClick={() => setForceOpen(true)}
+              >
+                {t("workflowRun.stepCard.forceAction")}
               </Button>
             </>
           ) : completionProvisional ? (
@@ -787,7 +912,11 @@ export function RunNodeSessionChat({
                       title={t("workflowRun.completeNode.action")}
                       aria-busy={complete.isPending}
                       disabled={!completeEnabled}
-                      onClick={() => handleComplete(false)}
+                      onClick={() =>
+                        completionAgentConfirmation
+                          ? handleCompleteAgent()
+                          : handleComplete(false)
+                      }
                     >
                       {complete.isPending ? (
                         <Spinner className="size-4" aria-hidden="true" />
@@ -832,7 +961,7 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceTitle")}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {completionNeedsConfirmation
+                {openingTurnUnconfirmed
                   ? t("workflowRun.stepCard.forceDescriptionUnconfirmed")
                   : completionUserStopped
                     ? t("workflowRun.stepCard.forceDescriptionUserStopped")
@@ -849,7 +978,9 @@ export function RunNodeSessionChat({
                 disabled={complete.isPending}
                 onClick={() => {
                   setForceOpen(false);
-                  handleComplete(true);
+                  // The opening turn's own confirmation remains required even on the force
+                  // path; only `turn_unconfirmed` needs it (ADR D5).
+                  handleComplete(true, openingTurnUnconfirmed);
                 }}
               >
                 {t("workflowRun.stepCard.forceConfirm")}
@@ -927,6 +1058,10 @@ const ABNORMAL_BLOCKER_REASON_KEYS: Record<
   turn_refused: "workflowRun.stepCard.abnormalReason.turn_refused",
   turn_unknown: "workflowRun.stepCard.abnormalReason.turn_unknown",
   turn_unconfirmed: "workflowRun.stepCard.abnormalReason.turn_unconfirmed",
+  agent_signal_pending:
+    "workflowRun.stepCard.abnormalReason.agent_signal_pending",
+  agent_confirmation_pending:
+    "workflowRun.stepCard.abnormalReason.agent_confirmation_pending",
   structured_invalid: "workflowRun.stepCard.abnormalReason.structured_invalid",
   output_missing: "workflowRun.stepCard.abnormalReason.output_missing",
   file_missing: "workflowRun.stepCard.abnormalReason.file_missing",

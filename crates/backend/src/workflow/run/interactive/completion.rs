@@ -5,9 +5,10 @@
 //! engine commit are done by the caller around [`prepare_completion`].
 
 use super::super::completion_snapshot::{
-    CompletionBlocker, CompletionBlockerKind, CompletionSnapshot, FILE_CHECK_UNAVAILABLE,
-    TurnOrigin, completion_final_text, completion_payload, derive_completion_snapshot,
-    forced_completion_audit, output_contract_blocker, parse_completion_snapshot,
+    CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
+    CompletionPolicy, CompletionSnapshot, ConfirmationBy, FILE_CHECK_UNAVAILABLE, TurnOrigin,
+    completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
+    has_precise_stop_blocker, output_contract_blocker, parse_completion_snapshot,
     trailing_assistant_text, unknown_completion_snapshot, with_file_check_warning,
 };
 use super::super::executor::apply_output_contract;
@@ -22,9 +23,10 @@ use ora_application::{
     ApplicationError, Clock, FileChange, WorkflowGraph, WorkflowRunEngineRepository,
 };
 use ora_contracts::{
-    PublicError, WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
-    WorkflowNodeCompletionBlockerParams, WorkflowNodeIncompleteParams,
-    WorkflowNodeOutputChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
+    EmptyErrorParams, NodeCompletionRequester, PublicError, WorkflowNodeCompletionBlocker,
+    WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
+    WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
+    WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
@@ -43,13 +45,28 @@ pub(crate) struct PreparedCompletion {
     pub structured_output: Option<serde_json::Value>,
     pub stop_reason: Option<String>,
     pub session_id: Option<SessionId>,
-    /// Payload keys committed atomically with the completion itself.
-    ///
-    /// Covers a forced audit and the file-warning completion snapshot when either must survive
-    /// even if a prepare-time repair write was lost.
+    /// Payload keys committed atomically with the completion (forced audit, file warnings).
     pub payload_patch: Option<serde_json::Value>,
     /// Frozen declaration reused to capture declared ignored files in the display diff.
     pub completion: Option<ora_application::AgentCompletion>,
+    /// The human approval of an accepted agent signal, committed with the completion.
+    pub confirmation: Option<CompletionConfirmation>,
+    /// Who the server attributes this completion to, derived from the signal path.
+    pub requester: NodeCompletionRequester,
+}
+
+/// Merges the commit-time payload patch with the confirmation and server-derived requester.
+pub(crate) fn merge_completion_patch(
+    payload_patch: Option<serde_json::Value>,
+    confirmation: Option<CompletionConfirmation>,
+    requester: NodeCompletionRequester,
+) -> Option<serde_json::Value> {
+    let mut patch = payload_patch.unwrap_or_else(|| serde_json::json!({}));
+    if let Some(confirmation) = confirmation {
+        patch["confirmation"] = serde_json::to_value(confirmation).ok()?;
+    }
+    patch["requester"] = serde_json::to_value(requester).ok()?;
+    Some(patch)
 }
 
 /// What the user explicitly approved on this completion request.
@@ -62,6 +79,21 @@ pub(crate) struct PreparedCompletion {
 pub(crate) struct CompletionApproval {
     pub(crate) confirm_initial_turn: bool,
     pub(crate) force: bool,
+    /// Fingerprint of the confirmed agent signal id; `None` when the request did not confirm one.
+    pub(crate) confirm_agent_completion: Option<u64>,
+    /// The host is accepting a settled signal without a user request (headless auto-accept).
+    pub(crate) auto_confirm: bool,
+}
+
+/// FNV-1a fingerprint used to keep the approval `Copy` while still binding the confirmation to
+/// the exact signal id the client saw.
+pub(crate) fn signal_fingerprint(signal_id: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in signal_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    hash
 }
 
 impl CompletionApproval {
@@ -69,16 +101,24 @@ impl CompletionApproval {
     pub(crate) const PLAIN: Self = Self {
         confirm_initial_turn: false,
         force: false,
+        confirm_agent_completion: None,
+        auto_confirm: false,
     };
     /// Adopts the workflow's opening turn as a normal completion.
+    #[cfg(test)]
     pub(crate) const CONFIRM: Self = Self {
         confirm_initial_turn: true,
         force: false,
+        confirm_agent_completion: None,
+        auto_confirm: false,
     };
     /// Completes despite a non-confirmation blocker, recording the forced audit.
+    #[cfg(test)]
     pub(crate) const FORCE: Self = Self {
         confirm_initial_turn: false,
         force: true,
+        confirm_agent_completion: None,
+        auto_confirm: false,
     };
 }
 
@@ -135,6 +175,42 @@ pub(crate) fn claim_node_for_completion(
         .into());
     }
     Ok(node_run.id)
+}
+
+/// Rejects a combined first-turn confirmation and force before the node is claimed.
+///
+/// The combination is only meaningful for an `agent` policy node whose opening turn is still
+/// unconfirmed and whose settlement carries no signal: confirmation lifts `turn_unconfirmed` and
+/// force covers the resulting `agent_signal_pending`. Anything else has no coherent meaning and
+/// must fail without changing durable state (ADR D2 row 1).
+pub(crate) fn validate_first_turn_force_confirmation(
+    pool: &RepositoryPool,
+    run_id: &WorkflowRunId,
+    node_id: &str,
+) -> Result<(), BackendError> {
+    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let node_run = repository
+        .list_node_runs(run_id)
+        .map_err(repository_error)?
+        .into_iter()
+        .find(|node_run| node_run.node_id == node_id)
+        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
+            node_id: node_id.to_string(),
+        })?;
+    let meta = CompletionMeta::from_payload(node_run.payload.as_deref());
+    let snapshot = parse_completion_snapshot(node_run.payload.as_deref());
+    let has_unconfirmed = snapshot.as_ref().is_some_and(|snapshot| {
+        snapshot
+            .blockers
+            .iter()
+            .any(|blocker| blocker.kind == CompletionBlockerKind::TurnUnconfirmed)
+    });
+    if meta.policy != CompletionPolicy::Agent || !has_unconfirmed || meta.agent_signal.is_some() {
+        return Err(completion_rejected(PublicError::InvalidRequest(
+            EmptyErrorParams {},
+        )));
+    }
+    Ok(())
 }
 
 /// Re-validates under the per-run gate that the run is still `Running` and the node still
@@ -235,6 +311,24 @@ pub(crate) fn prepare_completion(
     }
     let output_contract = agent_config.and_then(|config| config.output_contract.as_ref());
     let stored = parse_completion_snapshot(node_run.payload.as_deref());
+    // The frozen node owns the policy; a legacy payload has no `completionPolicy` and must not be
+    // read as the default when the graph says `agent` (ADR D7).
+    let frozen_policy = match agent_config.map(|config| config.completion_signal) {
+        Some(ora_application::AgentCompletionSignal::Agent) => CompletionPolicy::Agent,
+        Some(ora_application::AgentCompletionSignal::EndTurn) | None => CompletionPolicy::EndTurn,
+    };
+    let stored_meta = CompletionMeta::from_payload(node_run.payload.as_deref());
+    // A parked snapshot already carries the frozen policy; a legacy payload that predates the
+    // field falls back to the node's current frozen graph (ADR D7).
+    let policy = if payload_has_completion_policy(node_run.payload.as_deref()) {
+        stored_meta.policy
+    } else {
+        frozen_policy
+    };
+    let meta = CompletionMeta {
+        policy,
+        ..stored_meta
+    };
     // A repair keeps the park's own origin and stop cause: only the turn facts are re-derived, so a
     // provisional opening turn must not become a human one and an unexplained timeout must not lose
     // its reason. A node that parked before these fields existed materializes as a human turn (ADR
@@ -294,6 +388,12 @@ pub(crate) fn prepare_completion(
             },
         )));
     }
+    let derived = derived.with_agent_signal_gate(&meta);
+    // Upgraded snapshots materialize the frozen policy on the first completion attempt even when
+    // their turn identity is already complete, so later reads no longer default them to legacy.
+    if !payload_has_completion_policy(node_run.payload.as_deref()) {
+        persist_completion_policy(&repository, &node_run.id, meta.policy);
+    }
     // The live file check is independent of the turn snapshot: it may add blockers (which are
     // never persisted) and warnings (which repair the projection when a later baseline became
     // unusable). Compute it before finalizing the snapshot so both writes can be coalesced.
@@ -331,20 +431,91 @@ pub(crate) fn prepare_completion(
     {
         effective_blockers.push(blocker);
     }
-    // File blockers join the same list as the turn and output-contract checks, after the
-    // turn/digest conflicts above, and are never persisted into the snapshot projection reads.
+
+    // File blockers join the same list as the turn and output-contract checks.
     effective_blockers.extend(file_check.blockers);
+    // The agent signal gate only applies to an otherwise normally settled turn. Precise stop or
+    // output blockers describe the turn itself; a signal cannot change their outcome.
+    let mut agent_confirmed = false;
+    let mut signal_matches = false;
+    if meta.policy == CompletionPolicy::Agent {
+        let has_precise_blocker = has_precise_stop_blocker(&effective_blockers);
+        signal_matches = snapshot.turn_key.is_some()
+            && meta
+                .agent_signal
+                .as_ref()
+                .is_some_and(|signal| Some(signal.turn_key) == snapshot.turn_key);
+        if let Some(requested) = approval.confirm_agent_completion {
+            match (&meta.agent_signal, signal_matches) {
+                (Some(signal), true) if signal_fingerprint(&signal.signal_id) == requested => {
+                    agent_confirmed = true;
+                }
+                _ => {
+                    return Err(completion_rejected(PublicError::WorkflowNodeSignalChanged(
+                        Box::new(WorkflowNodeSignalChangedParams {
+                            node_id: node_run.node_id.clone(),
+                            expected: meta
+                                .agent_signal
+                                .as_ref()
+                                .map(|signal| signal.signal_id.clone()),
+                            actual: Some(
+                                "confirmation does not match the parked agent signal".to_string(),
+                            ),
+                        }),
+                    )));
+                }
+            }
+        }
+        if !has_precise_blocker {
+            // The park already materialized the gate; recompute it here for snapshots written
+            // before that change, replacing rather than appending so a stale value never survives.
+            effective_blockers.retain(|blocker| {
+                !matches!(
+                    blocker.kind,
+                    CompletionBlockerKind::AgentSignalPending
+                        | CompletionBlockerKind::AgentConfirmationPending
+                )
+            });
+            if !signal_matches {
+                effective_blockers.push(CompletionBlocker::new(
+                    CompletionBlockerKind::AgentSignalPending,
+                ));
+            } else if meta.confirmation.is_none() && !agent_confirmed {
+                effective_blockers.push(CompletionBlocker::new(
+                    CompletionBlockerKind::AgentConfirmationPending,
+                ));
+            }
+        }
+    }
+
     // `confirm_initial_turn` only lifts `turn_unconfirmed`; every other blocker still applies and
     // `force` cannot stand in for confirmation. What remains is exactly what the user has not
     // resolved, so a rejection lists only those blockers (ADR D2 rows 5–10).
     let unfulfilled: Vec<CompletionBlocker> = effective_blockers
         .iter()
         .filter(|blocker| {
-            !(approval.confirm_initial_turn
-                && blocker.kind == CompletionBlockerKind::TurnUnconfirmed)
+            let lifted_by_initial_confirmation = approval.confirm_initial_turn
+                && blocker.kind == CompletionBlockerKind::TurnUnconfirmed;
+            // Confirming the agent's signal resolves the signal's own gate. The opening turn still
+            // needs its explicit `confirmInitialTurn`; one confirmation cannot stand in for both.
+            let lifted_by_agent_confirmation =
+                agent_confirmed && blocker.kind == CompletionBlockerKind::AgentConfirmationPending;
+            !lifted_by_initial_confirmation && !lifted_by_agent_confirmation
         })
         .cloned()
         .collect();
+    // The combined first-turn exception is only valid when a `turn_unconfirmed` is actually
+    // lifted and at least one other blocker remains for `force` to cover.
+    if approval.force && approval.confirm_initial_turn {
+        let had_unconfirmed = effective_blockers
+            .iter()
+            .any(|blocker| blocker.kind == CompletionBlockerKind::TurnUnconfirmed);
+        if !had_unconfirmed || unfulfilled.is_empty() {
+            return Err(completion_rejected(PublicError::InvalidRequest(
+                EmptyErrorParams {},
+            )));
+        }
+    }
     let forced = !unfulfilled.is_empty()
         && approval.force
         && !unfulfilled
@@ -360,6 +531,45 @@ pub(crate) fn prepare_completion(
             Err(_) => return Err(incomplete(&node_run.node_id, &unfulfilled)),
         };
 
+    // Confirmation is a normal completion fact, so it is committed beside the snapshot; only a
+    // forced completion uses the audit instead (ADR D5). `by: auto` means the host accepted without
+    // a user request (`approval.auto_confirm`), never merely that the node allows auto-accept: a
+    // human clicking confirm on such a node is still a human confirmation (ADR D6).
+    let auto_confirmed = agent_confirmed
+        && approval.auto_confirm
+        && snapshot.turn_origin != Some(TurnOrigin::Workflow)
+        && !snapshot.blockers.iter().any(|blocker| {
+            matches!(
+                blocker.kind,
+                CompletionBlockerKind::TurnStopped
+                    | CompletionBlockerKind::TurnTruncated
+                    | CompletionBlockerKind::TurnRefused
+                    | CompletionBlockerKind::TurnUnknown
+                    | CompletionBlockerKind::StructuredInvalid
+                    | CompletionBlockerKind::OutputMissing
+            )
+        });
+    let confirmation = agent_confirmed.then(|| CompletionConfirmation {
+        by: if auto_confirmed {
+            ConfirmationBy::Auto
+        } else {
+            ConfirmationBy::Human
+        },
+        // Wall-clock millis: the acceptance time is a durable fact and must not depend on the
+        // logging clock's initialization.
+        at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or_default(),
+    });
+    // The requester is a server fact: only a signal bound to this settled turn attributes the
+    // completion to the agent; a stale or absent signal leaves it a human completion.
+    let requester = if signal_matches {
+        NodeCompletionRequester::Agent
+    } else {
+        NodeCompletionRequester::Human
+    };
+
     Ok(PreparedCompletion {
         node_run_id: node_run.id,
         output,
@@ -371,6 +581,8 @@ pub(crate) fn prepare_completion(
             forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
         ),
         completion: completion.cloned(),
+        confirmation,
+        requester,
     })
 }
 
@@ -470,9 +682,29 @@ fn persist_derived_snapshot(
     derived: CompletionSnapshot,
 ) -> CompletionSnapshot {
     let patch = completion_payload(&derived);
+    persist_patch(repository, node_run_id, &patch);
+    derived
+}
+
+/// Writes the frozen completion policy onto a payload that predates the field.
+fn persist_completion_policy(
+    repository: &SqliteWorkflowRunEngineRepository,
+    node_run_id: &WorkflowNodeRunId,
+    policy: CompletionPolicy,
+) {
+    let patch = serde_json::json!({ "completionPolicy": policy });
+    persist_patch(repository, node_run_id, &patch);
+}
+
+/// Applies one payload-only guarded repair, logging instead of failing on a lost guard.
+fn persist_patch(
+    repository: &SqliteWorkflowRunEngineRepository,
+    node_run_id: &WorkflowNodeRunId,
+    patch: &serde_json::Value,
+) {
     if let Err(error) = repository.repair_node_payload(
         node_run_id,
-        &patch,
+        patch,
         crate::clock::SystemClock.now_timestamp_millis(),
     ) {
         ora_warn!(
@@ -481,7 +713,13 @@ fn persist_derived_snapshot(
             "failed to persist a completion snapshot while preparing a completion"
         );
     }
-    derived
+}
+
+/// Returns whether a payload already names its completion policy.
+fn payload_has_completion_policy(payload: Option<&str>) -> bool {
+    payload
+        .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .is_some_and(|payload| payload.get("completionPolicy").is_some())
 }
 
 /// Maps one persisted blocker onto the contract shape carried by the rejection.
@@ -493,6 +731,12 @@ fn to_contract_blocker(blocker: &CompletionBlocker) -> WorkflowNodeCompletionBlo
         CompletionBlockerKind::TurnUnknown => WorkflowNodeCompletionBlockerKind::TurnUnknown,
         CompletionBlockerKind::TurnUnconfirmed => {
             WorkflowNodeCompletionBlockerKind::TurnUnconfirmed
+        }
+        CompletionBlockerKind::AgentSignalPending => {
+            WorkflowNodeCompletionBlockerKind::AgentSignalPending
+        }
+        CompletionBlockerKind::AgentConfirmationPending => {
+            WorkflowNodeCompletionBlockerKind::AgentConfirmationPending
         }
         CompletionBlockerKind::StructuredInvalid => {
             WorkflowNodeCompletionBlockerKind::StructuredInvalid

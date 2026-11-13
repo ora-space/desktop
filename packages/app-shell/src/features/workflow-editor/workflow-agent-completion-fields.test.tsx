@@ -142,6 +142,44 @@ describe("Agent completion files", () => {
     expect(persistedConfig().schemaVersion).toBe(3);
   });
 
+  it("keeps version 4 when the last file is removed from a signal node", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(
+      <Harness
+        node={agentNode({ schemaVersion: 4, completionSignal: "agent" })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await user.type(screen.getByLabelText("File 1 path"), "reports/*.md");
+    await user.click(screen.getByRole("button", { name: "Remove file 1" }));
+
+    expect(persistedConfig()).not.toHaveProperty("completion");
+    expect(persistedConfig()).toMatchObject({
+      schemaVersion: 4,
+      completionSignal: "agent",
+    });
+  });
+
+  it("writes version 4 and the agent policy when auto-accept is enabled", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(<Harness node={agentNode()} />);
+
+    const toggle = document.getElementById(
+      "workflow-agent-auto-accept-completion",
+    );
+    expect(toggle).not.toBeNull();
+    await user.click(toggle as HTMLElement);
+
+    expect(persistedConfig()).toMatchObject({
+      schemaVersion: 4,
+      completionSignal: "agent",
+      autoAcceptAgentCompletion: true,
+    });
+  });
+
   it("explains that files are checked on completion and shows declared count", async () => {
     await appI18n.changeLanguage("en-US");
     render(<Harness node={agentNode()} />);

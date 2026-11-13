@@ -82,6 +82,42 @@ impl HistoryState {
     }
 }
 
+/// Host-only capabilities a session was created with.
+///
+/// The runtime restores a persisted session lazily after a restart, so the capability has to be
+/// durable. A workflow-owned session whose frozen node requires the completion tool keeps it;
+/// ordinary conversations and `end_turn` nodes do not.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionHostCapabilities {
+    /// No host-only MCP server is injected.
+    #[default]
+    None,
+    /// The workflow completion MCP server is injected for interactive agent-policy turns.
+    WorkflowCompletion,
+}
+
+impl SessionHostCapabilities {
+    /// Returns the stable text stored in the sessions table.
+    pub fn database_value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::WorkflowCompletion => "workflow_completion",
+        }
+    }
+
+    /// Restores the capability from its persisted column value.
+    pub fn from_database_value(value: &str) -> Result<Self, DomainModelError> {
+        match value {
+            "none" => Ok(Self::None),
+            "workflow_completion" => Ok(Self::WorkflowCompletion),
+            _ => Err(DomainModelError::InvalidSessionHostCapabilities(
+                value.to_string(),
+            )),
+        }
+    }
+}
+
 /// Represents one conversation and the provider session it currently runs on.
 ///
 /// `agent_ref` and `agent_session_id` are the conversation's *current* binding,
@@ -97,6 +133,8 @@ pub struct Session {
     pub status: SessionStatus,
     pub history_state: HistoryState,
     pub mcp_selection: SessionMcpSelection,
+    /// Host-only capabilities this session was created with; survives restarts.
+    pub host_capabilities: SessionHostCapabilities,
     pub audit_fields: AuditFields,
 }
 
@@ -123,8 +161,15 @@ impl Session {
             status,
             history_state: HistoryState::Writable,
             mcp_selection,
+            host_capabilities: SessionHostCapabilities::None,
             audit_fields,
         }
+    }
+
+    /// Records the host-only capabilities this session was created with.
+    pub fn with_host_capabilities(mut self, capabilities: SessionHostCapabilities) -> Self {
+        self.host_capabilities = capabilities;
+        self
     }
 
     /// Changes only registration state while preserving the current provider binding.

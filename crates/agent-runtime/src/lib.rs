@@ -265,22 +265,34 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::Published,
-            self.inner.session_mcp.clone(),
+            // Ordinary sessions never receive workflow-only host capabilities.
+            self.inner
+                .session_mcp
+                .with_selection(SessionMcpSelection::Automatic),
+            ora_domain::SessionHostCapabilities::None,
         )
         .await
     }
 
     /// Starts a workflow-owned session while keeping it out of ordinary list snapshots.
+    ///
+    /// `host_capabilities` decides whether the session may carry host-only tools; the caller
+    /// derives it from the frozen node so a node without the completion policy cannot acquire
+    /// the capability through a session-level default.
     pub async fn start_workflow_node_session(
         &self,
         request: StartSessionRequest,
         selection: SessionMcpSelection,
+        host_capabilities: ora_domain::SessionHostCapabilities,
     ) -> Result<StartSessionResponse, RuntimeError> {
         self.start_session_with_visibility(
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
-            self.inner.session_mcp.with_selection(selection),
+            self.inner
+                .session_mcp
+                .view_for_session(selection, host_capabilities),
+            host_capabilities,
         )
         .await
     }
@@ -691,10 +703,12 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         }
         let cwd = self.workspace_cwd(&session.workspace_id)?;
         let connection = self.inner.connections.for_agent(&session.agent_ref)?;
+        // Restore the capability the session was created with. Deriving it from the live actor is
+        // impossible after a restart, and an ordinary view would silently drop the completion tool.
         let session_mcp = self
             .inner
             .session_mcp
-            .with_selection(session.mcp_selection.clone());
+            .view_for_session(session.mcp_selection.clone(), session.host_capabilities);
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),

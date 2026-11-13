@@ -5,12 +5,15 @@
 //! the snapshot is derived before the gate is taken (ADR D3 steps 1 and 4).
 
 use super::super::completion_snapshot::{
-    StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
-    unknown_completion_snapshot, with_file_check_warning,
+    CompletionMeta, CompletionPolicy, StopCause, TurnOrigin, completion_payload_with_meta,
+    derive_completion_snapshot, unknown_completion_snapshot, with_file_check_warning,
 };
+use super::super::interactive::AgentSignalStore;
 use super::super::transitions::WorkflowRunTransitions;
 use super::NodeExecutionError;
-use ora_application::{AgentCompletion, AgentOutputContract, RepositoryError};
+use ora_application::{
+    AgentCompletion, AgentCompletionSignal, AgentOutputContract, RepositoryError,
+};
 use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowRunId};
 use ora_history::read_session_history;
 use ora_logging::ora_warn;
@@ -25,6 +28,10 @@ pub(super) struct FirstTurnPark {
     pub session_id: SessionId,
     pub output_contract: Option<AgentOutputContract>,
     pub completion: Option<AgentCompletion>,
+    pub completion_signal: AgentCompletionSignal,
+    pub agent_signals: Arc<AgentSignalStore>,
+    pub attempt_id: Option<String>,
+    pub auto_accept: bool,
     pub baseline_available: bool,
     pub stop_cause: Option<StopCause>,
 }
@@ -41,10 +48,18 @@ pub(super) async fn park_first_interactive_turn(
         session_id,
         output_contract,
         completion,
+        completion_signal,
+        agent_signals,
+        attempt_id,
+        auto_accept,
         baseline_available,
         stop_cause,
     } = park;
     tokio::task::spawn_blocking(move || {
+        let policy = match completion_signal {
+            AgentCompletionSignal::Agent => CompletionPolicy::Agent,
+            AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
+        };
         let snapshot = with_file_check_warning(
             match read_session_history(&sessions_root, session_id.as_ref()) {
                 Ok(history) => derive_completion_snapshot(
@@ -70,8 +85,24 @@ pub(super) async fn park_first_interactive_turn(
             completion.as_ref(),
             baseline_available,
         );
+        // Bind only the settlement this attempt produced; a late tool call after the turn changed
+        // cannot attach its signal to a newer turn.
+        let agent_signal = attempt_id.as_deref().and_then(|attempt| {
+            let turn_key = snapshot.turn_key?;
+            agent_signals.bind(&format!("{node_run_id}"), attempt, turn_key)
+        });
+        if let Some(attempt) = attempt_id.as_deref() {
+            agent_signals.revoke_attempt(&format!("{node_run_id}"), attempt);
+        }
+        let meta = CompletionMeta {
+            policy,
+            agent_signal,
+            confirmation: None,
+            auto_accept,
+        };
+        let snapshot = snapshot.with_agent_signal_gate(&meta);
         transitions
-            .park_node_run(&run_id, &node_run_id, &completion_payload(&snapshot))
+            .park_node_run(&run_id, &node_run_id, &completion_payload_with_meta(&snapshot, &meta))
             .map_err(NodeExecutionError::from)
     })
     .await
@@ -140,6 +171,10 @@ mod tests {
                     session_id: SessionId::new("session-1"),
                     output_contract: None,
                     completion,
+                    completion_signal: AgentCompletionSignal::EndTurn,
+                    agent_signals: Arc::new(AgentSignalStore::new()),
+                    attempt_id: None,
+                    auto_accept: false,
                     baseline_available: false,
                     stop_cause: None,
                 },

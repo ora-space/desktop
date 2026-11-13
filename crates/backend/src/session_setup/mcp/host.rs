@@ -1,6 +1,7 @@
 //! Catalog and configuration ports for Session MCP resolution.
 
 use crate::plugin::PluginApi;
+use agent_client_protocol_schema::v1::McpServer;
 use ora_contracts::ListInstalledPluginsRequest;
 use ora_domain::{AgentRef, PluginId};
 use ora_plugin_config::{
@@ -63,6 +64,8 @@ pub(crate) trait SessionMcpConfigurationSource {
 pub(crate) struct SessionMcpHost {
     plugin_host: Arc<PluginApi>,
     pub(crate) selection: SessionMcpSelection,
+    /// Host-owned ACP servers injected beside the selected plugin servers.
+    host_servers: Vec<McpServer>,
 }
 
 impl SessionMcpHost {
@@ -70,6 +73,7 @@ impl SessionMcpHost {
         Self {
             plugin_host,
             selection: SessionMcpSelection::Automatic,
+            host_servers: Vec::new(),
         }
     }
 
@@ -78,7 +82,29 @@ impl SessionMcpHost {
         Self {
             plugin_host: self.plugin_host.clone(),
             selection,
+            // Ordinary sessions never receive the workflow completion capability.
+            host_servers: Vec::new(),
         }
+    }
+
+    /// Creates a workflow-owned session view that carries the host completion capability.
+    pub(crate) fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        Self {
+            plugin_host: self.plugin_host.clone(),
+            selection,
+            host_servers: self.host_servers.clone(),
+        }
+    }
+
+    /// Returns a copy carrying host-owned servers for this runtime composition.
+    pub(crate) fn with_host_servers(mut self, host_servers: Vec<McpServer>) -> Self {
+        self.host_servers = host_servers;
+        self
+    }
+
+    /// Host-owned servers delivered beside plugin MCP servers.
+    pub(crate) fn host_mcp_servers(&self) -> Vec<McpServer> {
+        self.host_servers.clone()
     }
 
     /// Translates a Session's persisted agent identity into the plugin that owns its barrier.

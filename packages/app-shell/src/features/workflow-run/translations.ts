@@ -57,6 +57,8 @@ export const workflowRunTranslations = {
       "本轮对话已变化，请刷新运行后重新确认。",
     "errors.workflow_node_output_changed":
       "本轮产出已变化，请刷新运行后重新确认。",
+    "errors.workflow_node_signal_changed":
+      "本轮完成信号已变化，请刷新运行后重新确认。",
     "errors.workflow_node_not_diagnosable":
       "只有失败的智能体节点才能做 AI 分析。",
     "workflowRun.loading": "正在加载运行…",
@@ -283,6 +285,16 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.unconfirmedReason": "首轮结果尚未确认",
     "workflowRun.stepCard.unconfirmedHint":
       "本次停靠来自 workflow 的首轮自动回合，不代表本步骤已完成。如果智能体在等你回答，请直接在下方回复；也可以继续当前步骤，或确认完成。",
+    "workflowRun.stepCard.agentConfirmationTitle": "等待你确认完成",
+    "workflowRun.stepCard.agentConfirmationReason": "智能体已上报本步骤完成",
+    "workflowRun.stepCard.agentConfirmationHint":
+      "确认后会采用当前产出并进入下一步。如果智能体还在等你回答，请直接在下方回复或继续当前步骤。",
+    "workflowRun.stepCard.agentSignalTitle": "等待智能体上报完成",
+    "workflowRun.stepCard.agentSignalReason":
+      "本步骤需要智能体的显式完成信号，当前回合还没有收到",
+    "workflowRun.stepCard.agentSignalHint":
+      "可以继续当前步骤；如果确认产出已经完整，也可以强制完成。",
+    "workflowRun.stepCard.confirmAgentAction": "确认并完成",
     "workflowRun.stepCard.confirmInitialAction": "确认并完成：{{next}}",
     "workflowRun.stepCard.confirmInitialLastAction": "确认并完成",
     "workflowRun.stepCard.continueStep": "继续当前步骤",
@@ -314,6 +326,10 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.abnormalReason.turn_refused": "上一轮异常结束：拒答",
     "workflowRun.stepCard.abnormalReason.turn_unknown": "上一轮异常结束：未知",
     "workflowRun.stepCard.abnormalReason.turn_unconfirmed": "首轮结果尚未确认",
+    "workflowRun.stepCard.abnormalReason.agent_signal_pending":
+      "智能体尚未上报本步骤完成",
+    "workflowRun.stepCard.abnormalReason.agent_confirmation_pending":
+      "智能体已上报完成，等待你的确认",
     "workflowRun.stepCard.abnormalReason.structured_invalid":
       "上一轮异常结束：结构化输出不符合",
     "workflowRun.stepCard.abnormalReason.output_missing":
@@ -583,6 +599,8 @@ export const workflowRunTranslations = {
       "The current turn changed. Refresh the run and try again.",
     "errors.workflow_node_output_changed":
       "This turn's output changed. Refresh the run and try again.",
+    "errors.workflow_node_signal_changed":
+      "This turn's completion signal changed. Refresh the run and try again.",
     "errors.workflow_node_not_diagnosable":
       "AI analysis is only available for a failed agent node.",
     "workflowRun.loading": "Loading run…",
@@ -826,6 +844,19 @@ export const workflowRunTranslations = {
       "The opening turn is not confirmed yet",
     "workflowRun.stepCard.unconfirmedHint":
       "This park came from the workflow's opening turn, so the step is not complete yet. If the agent is waiting for your answer, reply below; you can also continue the current step or confirm completion.",
+    "workflowRun.stepCard.agentConfirmationTitle":
+      "Waiting for your confirmation",
+    "workflowRun.stepCard.agentConfirmationReason":
+      "The agent reported this step as complete",
+    "workflowRun.stepCard.agentConfirmationHint":
+      "Confirming adopts the current output and advances the workflow. If the agent is still waiting for your answer, reply below or continue the current step.",
+    "workflowRun.stepCard.agentSignalTitle":
+      "Waiting for the agent to report completion",
+    "workflowRun.stepCard.agentSignalReason":
+      "This step needs the agent's explicit completion signal, which this turn has not received",
+    "workflowRun.stepCard.agentSignalHint":
+      "Continue the current step, or complete anyway if the output is already complete.",
+    "workflowRun.stepCard.confirmAgentAction": "Confirm and complete",
     "workflowRun.stepCard.confirmInitialAction":
       "Confirm and complete: {{next}}",
     "workflowRun.stepCard.confirmInitialLastAction": "Confirm and complete",
@@ -865,6 +896,10 @@ export const workflowRunTranslations = {
       "The previous turn ended abnormally: unknown",
     "workflowRun.stepCard.abnormalReason.turn_unconfirmed":
       "The opening turn is not confirmed yet",
+    "workflowRun.stepCard.abnormalReason.agent_signal_pending":
+      "The agent has not reported this step as complete",
+    "workflowRun.stepCard.abnormalReason.agent_confirmation_pending":
+      "The agent reported completion; waiting for your confirmation",
     "workflowRun.stepCard.abnormalReason.structured_invalid":
       "The previous turn ended abnormally: structured output invalid",
     "workflowRun.stepCard.abnormalReason.output_missing":

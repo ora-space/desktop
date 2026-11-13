@@ -74,6 +74,7 @@ fn test_plugins_with_host(
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
+            host_mcp_servers: Vec::new(),
         })
         .expect("agent runtime"),
     );

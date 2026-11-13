@@ -85,8 +85,8 @@ pub use workflow::{
     WorkflowDocumentSourceState, WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
-    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentConfig, AgentExecutor,
-    AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
+    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentCompletionSignal, AgentConfig,
+    AgentExecutor, AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
     AgentSkillDeliveryError, AgentSkillDeliveryProvider, AuthoringParticipation,
     BeginNodeRetryResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CompletionFile,
     CompositeRegion, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, DeleteWorkflowRunResult,

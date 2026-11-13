@@ -27,11 +27,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::super::completion_snapshot::{
-    CompletionSnapshot, StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
-    unknown_completion_snapshot, with_file_check_warning,
+    CompletionMeta, CompletionPolicy, CompletionSnapshot, StopCause, TurnOrigin,
+    completion_payload_with_meta, derive_completion_snapshot, unknown_completion_snapshot,
+    with_file_check_warning,
 };
 use super::super::worktree::worktree_baseline_available;
 use super::CompletingNodeRuns;
+use super::agent_signal::AgentSignalStore;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
 
 /// How long cleanup waits for the dropped turn's durable `TurnEnded` before parking provisionally.
@@ -61,6 +63,11 @@ pub(crate) enum HumanTurnAdmission {
         /// The localized step boundary this turn's prompt must carry, rendered from the frozen
         /// graph so the recorded user message stays the user's own text.
         step_boundary: String,
+        /// How this node decides the turn is complete; carried so the human prompt can issue the
+        /// agent completion token and the park can persist the same policy.
+        completion_policy: CompletionPolicy,
+        /// Whether a settled human turn accepts an agent signal without waiting for the user.
+        auto_accept: bool,
     },
 }
 
@@ -134,6 +141,11 @@ pub(crate) async fn begin_human_turn(
             .as_ref()
             .ok_or_else(|| node_not_awaiting(&node_run.node_id))?;
         let prompt_inactivity = config.prompt_inactivity;
+        let completion_policy = match config.completion_signal {
+            ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
+            ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
+        };
+        let auto_accept = config.auto_accept_agent_completion;
         // Render the boundary while the frozen graph is at hand: the prompt path must not re-read
         // scheduling state, and the turn must always carry the step it was admitted for.
         let step_boundary = super::super::prompt::render_step_boundary(
@@ -157,6 +169,8 @@ pub(crate) async fn begin_human_turn(
                 node_run_id: node_run.id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy,
+                auto_accept,
             }),
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {
                 Err(node_not_awaiting(&node_run.node_id))
@@ -177,6 +191,7 @@ pub(crate) async fn begin_human_turn(
 /// The park itself takes the per-run gate (ADR D3 step 4) and both the history read and that lock
 /// are blocking work, so it runs on the blocking pool. Everything before it — resolving the node's
 /// session and output contract — is one short read that holds no lock.
+#[allow(dead_code)] // Test-facing wrapper; production uses the signal variant below.
 pub(crate) async fn end_human_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,
@@ -184,6 +199,35 @@ pub(crate) async fn end_human_turn(
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
     stop_cause: Option<StopCause>,
+) -> Result<(), BackendError> {
+    end_human_turn_with_signal(
+        pool,
+        sessions_root,
+        baselines_root,
+        transitions,
+        node_run_id,
+        stop_cause,
+        CompletionPolicy::EndTurn,
+        false,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Parks a human turn with the completion policy and optional agent attempt it was admitted for.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn end_human_turn_with_signal(
+    pool: &RepositoryPool,
+    sessions_root: &Path,
+    baselines_root: &Path,
+    transitions: &Arc<WorkflowRunTransitions>,
+    node_run_id: &WorkflowNodeRunId,
+    stop_cause: Option<StopCause>,
+    completion_policy: CompletionPolicy,
+    auto_accept: bool,
+    agent_signals: Option<Arc<AgentSignalStore>>,
+    attempt_id: Option<String>,
 ) -> Result<(), BackendError> {
     let context = {
         let pool = pool.clone();
@@ -224,7 +268,23 @@ pub(crate) async fn end_human_turn(
             context.baseline_available,
         ),
     };
-    let completion = completion_payload(&snapshot);
+    let agent_signal = agent_signals.as_deref().and_then(|store| {
+        let attempt = attempt_id.as_deref()?;
+        let turn_key = snapshot.turn_key?;
+        store.bind(&format!("{node_run_id}"), attempt, turn_key)
+    });
+    if let (Some(store), Some(attempt)) = (agent_signals.as_deref(), attempt_id.as_deref()) {
+        store.revoke_attempt(&format!("{node_run_id}"), attempt);
+    }
+    let completion = completion_payload_with_meta(
+        &snapshot,
+        &CompletionMeta {
+            policy: completion_policy,
+            agent_signal,
+            confirmation: None,
+            auto_accept,
+        },
+    );
     let transitions = transitions.clone();
     let node_run_id = node_run_id.clone();
     let run_id = context.run_id.clone();
@@ -572,6 +632,8 @@ mod tests {
                 node_run_id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
@@ -657,6 +719,8 @@ mod tests {
                 node_run_id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
