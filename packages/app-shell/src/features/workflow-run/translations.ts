@@ -334,12 +334,18 @@ export const workflowRunTranslations = {
       "上一轮异常结束：结构化输出不符合",
     "workflowRun.stepCard.abnormalReason.output_missing":
       "上一轮异常结束：没有输出",
+    "workflowRun.stepCard.abnormalReason.file_missing":
+      "完成检查：声明的文件缺失",
+    "workflowRun.stepCard.abnormalReason.file_unchanged":
+      "完成检查：声明的文件未变更",
     "workflowRun.stepCard.provisional":
       "本轮仍在收尾；点完成时会按本轮重新校验，未结束会给出原因。",
     "workflowRun.stepCard.warning.empty_output":
       "本轮没有文本输出；该节点未声明输出契约，仍可完成。",
     "workflowRun.stepCard.warning.history_integrity_gap":
       "会话历史存在缺口，本轮结果可能不完整。",
+    "workflowRun.stepCard.warning.file_check_unavailable":
+      "没有找到节点启动时的文件基线，无法判断“必须变更”的文件；只检查了文件是否存在。",
     "workflowRun.stepCard.warning.history_unavailable":
       "无法读取会话历史，本轮结果未知。",
     "workflowRun.stepCard.warning.turn_not_settled":
@@ -372,6 +378,10 @@ export const workflowRunTranslations = {
       "结构化输出不符合：本轮输出未通过声明的结构校验。",
     "workflowRun.stepCard.blocker.output_missing":
       "没有输出：本轮没有产生声明的输出。",
+    "workflowRun.stepCard.blocker.file_missing": "缺少文件：{{path}} 不存在。",
+    "workflowRun.stepCard.blocker.file_unchanged":
+      "文件未变更：{{path}} 与节点开始时的基线相同。",
+    "workflowRun.stepCard.completionRejectedTitle": "上次完成被拒绝",
     "workflowRun.hitl.panelLabel": "需要你的参与",
     "workflowRun.hitl.title": "确认本步理解",
     "workflowRun.hitl.hint": "填写后提交，工作流才会继续。",
@@ -894,12 +904,18 @@ export const workflowRunTranslations = {
       "The previous turn ended abnormally: structured output invalid",
     "workflowRun.stepCard.abnormalReason.output_missing":
       "The previous turn ended abnormally: no output",
+    "workflowRun.stepCard.abnormalReason.file_missing":
+      "Completion check: a declared file is missing",
+    "workflowRun.stepCard.abnormalReason.file_unchanged":
+      "Completion check: a declared file is unchanged",
     "workflowRun.stepCard.provisional":
       "This turn is still settling; completing re-checks it and reports a reason if it has not finished.",
     "workflowRun.stepCard.warning.empty_output":
       "This turn had no text output; the node declares no output contract, so it can still complete.",
     "workflowRun.stepCard.warning.history_integrity_gap":
       "The session history has a gap; this turn's result may be incomplete.",
+    "workflowRun.stepCard.warning.file_check_unavailable":
+      "The baseline from when the node started is missing, so mustChange files could only be checked for existence.",
     "workflowRun.stepCard.warning.history_unavailable":
       "The session history could not be read; this turn's result is unknown.",
     "workflowRun.stepCard.warning.turn_not_settled":
@@ -934,6 +950,12 @@ export const workflowRunTranslations = {
       "Structured output invalid: this turn did not match the declared schema.",
     "workflowRun.stepCard.blocker.output_missing":
       "No output: this turn produced none of the declared output.",
+    "workflowRun.stepCard.blocker.file_missing":
+      "Missing file: {{path}} does not exist.",
+    "workflowRun.stepCard.blocker.file_unchanged":
+      "File unchanged: {{path}} is identical to the baseline from when the node started.",
+    "workflowRun.stepCard.completionRejectedTitle":
+      "The last completion was rejected",
     "workflowRun.hitl.panelLabel": "Your input is required",
     "workflowRun.hitl.title": "Confirm this step",
     "workflowRun.hitl.hint": "Submit to continue the workflow.",

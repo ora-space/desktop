@@ -256,10 +256,12 @@ fn the_agent_signal_binds_to_the_turn_and_the_human_confirmation_completes_it() 
                     WorkflowNodeCompletionBlocker {
                         kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
                         message: None,
+                        params: None,
                     },
                     WorkflowNodeCompletionBlocker {
                         kind: WorkflowNodeCompletionBlockerKind::AgentConfirmationPending,
                         message: None,
+                        params: None,
                     },
                 ],
             })

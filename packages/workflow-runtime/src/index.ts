@@ -16,6 +16,8 @@ export type {
   Unsubscribe,
   WorkflowArtifact,
   WorkflowArtifactKind,
+  WorkflowAgentCompletion,
+  WorkflowAgentCompletionFile,
   WorkflowAgentConfig,
   WorkflowAgentMcpConfig,
   WorkflowAgentRetryPolicy,

@@ -1,3 +1,4 @@
+export * from "./agent-completion";
 export * from "./agent-identity";
 export * from "./agent-retry";
 export * from "./capabilities";

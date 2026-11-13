@@ -124,6 +124,7 @@ async fn assert_default_completion_rejected(backend: &Backend, run_id: &str) {
             blockers: vec![WorkflowNodeCompletionBlocker {
                 kind: WorkflowNodeCompletionBlockerKind::TurnStopped,
                 message: None,
+                params: None,
             }],
         }),
         "the default completion must name the blocking turn, not advance the run"

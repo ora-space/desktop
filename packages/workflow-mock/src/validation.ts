@@ -3,6 +3,7 @@ import {
   WORKFLOW_ANNOTATION_THEMES,
   type WorkflowAnnotationNode,
 } from "./annotation-data";
+import { workflowAgentCompletionIssues } from "./agent-completion";
 import { validateWorkflowAgentRetry } from "./agent-retry";
 import { WORKFLOW_NODE_KINDS, type WorkflowAgentConfig } from "./node-data";
 import type { DemoWorkflow } from "./fixtures";
@@ -128,6 +129,7 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
     return false;
   }
   const config = value as Partial<WorkflowAgentConfig>;
+  const completionIssues = workflowAgentCompletionIssues(config.completion);
   return (
     (config.schemaVersion === 3 || config.schemaVersion === 4) &&
     // Version 3 forbids the completion policy; only a graph that writes it must bump to 4.
@@ -138,6 +140,8 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
       config.completionSignal === "end_turn") &&
     (config.autoAcceptAgentCompletion === undefined ||
       typeof config.autoAcceptAgentCompletion === "boolean") &&
+    (config.completion == null ? true : config.schemaVersion === 4) &&
+    completionIssues.length === 0 &&
     typeof config.executor === "object" &&
     config.executor !== null &&
     typeof config.executor.agentCli === "string" &&

@@ -1,5 +1,6 @@
 import { WorkflowMcpFields } from "./workflow-mcp-fields";
 import { WorkflowAgentRetryFields } from "./workflow-agent-retry-fields";
+import { WorkflowAgentCompletionFields } from "./workflow-agent-completion-fields";
 import { WorkflowAgentInactivityField } from "./workflow-agent-inactivity-field";
 import { WorkflowAgentCompletionField } from "./workflow-agent-completion-field";
 import type { WorkflowMcpCatalogStatus } from "./mcp-catalog";
@@ -1036,6 +1037,9 @@ function AgentConfigurationFields({
           </div>
         )}
       </div>
+      {(config.interactive === true || config.completion !== undefined) && (
+        <WorkflowAgentCompletionFields config={config} onChange={onChange} />
+      )}
       {/* Interactive nodes wait for a person instead of rerunning, so the setting would be inert. */}
       {workflowAgentRetryApplies(config) && (
         <WorkflowAgentRetryFields config={config} onChange={onChange} />

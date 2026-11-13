@@ -28,19 +28,23 @@ pub(crate) struct WorkflowSessionTurns {
     agent_signals: Arc<AgentSignalStore>,
     /// Weak owner used to run the headless auto-accept after a settled human turn parks.
     auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
+    baselines_root: PathBuf,
 }
 
 impl WorkflowSessionTurns {
     /// Shares the completion and callback gates owned by the run module.
     ///
     /// `sessions_root` lets the drop cleanup derive the settled turn's snapshot from the same
-    /// durable history the completion path reads.
+    /// durable history the completion path reads; `baselines_root` lets that snapshot record a
+    /// missing `mustChange` baseline while the turn parks.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::workflow::run) fn new(
         pool: RepositoryPool,
         run_locks: Arc<KeyedResourceLocks>,
         completing_node_runs: Arc<CompletingNodeRuns>,
         transitions: Arc<WorkflowRunTransitions>,
         sessions_root: PathBuf,
+        baselines_root: PathBuf,
         agent_signals: Arc<AgentSignalStore>,
         auto_completer: Option<std::sync::Weak<WorkflowRuns>>,
     ) -> Self {
@@ -50,6 +54,7 @@ impl WorkflowSessionTurns {
             completing_node_runs,
             transitions,
             sessions_root,
+            baselines_root,
             agent_signals,
             auto_completer,
         }
@@ -142,6 +147,7 @@ impl WorkflowSessionTurns {
         let end_report = stream.end_report();
         let pool = self.pool.clone();
         let sessions_root = self.sessions_root.clone();
+        let baselines_root = self.baselines_root.clone();
         let transitions = self.transitions.clone();
         let agent_signals = self.agent_signals.clone();
         let auto_completer = self.auto_completer.clone();
@@ -152,6 +158,7 @@ impl WorkflowSessionTurns {
             park_ended_turn(
                 &pool,
                 &sessions_root,
+                &baselines_root,
                 &transitions,
                 &node_run_id,
                 end_report,
@@ -183,6 +190,7 @@ impl WorkflowSessionTurns {
 pub(super) async fn park_ended_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,
+    baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
     end_report: Option<PromptEndReport>,
@@ -195,6 +203,7 @@ pub(super) async fn park_ended_turn(
     crate::workflow::run::interactive::end_human_turn_with_signal(
         pool,
         sessions_root,
+        baselines_root,
         transitions,
         node_run_id,
         stop_cause,

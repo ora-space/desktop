@@ -1,8 +1,5 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
-use super::completion_snapshot::{
-    CompletionMeta, CompletionPolicy, StopCause, TurnOrigin, completion_payload_with_meta,
-    derive_completion_snapshot, unknown_completion_snapshot,
-};
+use super::completion_snapshot::StopCause;
 use super::interactive::AgentSignalStore;
 use super::last_failure::previous_failure_for_injection;
 #[cfg(feature = "test-support")]
@@ -15,12 +12,13 @@ use crate::clock::SystemClock;
 use crate::error::BackendError;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigKind, TextContent};
+use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
-    AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
-    Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
-    RepositoryError, StructuredOutputError, VariableTemplateError, WorkflowGraphNode,
-    WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload, render_variable_template,
+    AgentConfig, AgentDefinitionRepository, AgentSkill, BindWorkflowNodeSessionResult, Clock,
+    ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind, RepositoryError,
+    StructuredOutputError, VariableTemplateError, WorkflowGraphNode, WorkflowRunCallback,
+    WorkflowRunEngineRepository, WorkflowRunPayload, render_variable_template,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -28,18 +26,23 @@ use ora_contracts::{
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
 use ora_domain::SessionHostCapabilities;
-use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowRunId};
-use ora_history::read_session_history;
+use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId};
 use ora_logging::ora_warn;
 
 use super::transitions::WorkflowRunTransitions;
-use super::worktree::{capture_worktree_snapshot, compute_file_changes, persist_worktree_baseline};
+use super::worktree::{
+    WorktreeBaseline, capture_completion_baseline, capture_worktree_snapshot, compute_file_changes,
+    persist_worktree_baseline,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 use thiserror::Error;
 
+#[cfg(test)]
+mod completion_baseline_tests;
+mod first_turn_park;
 #[cfg(test)]
 mod inactivity_tests;
 mod loop_exit;
@@ -355,79 +358,18 @@ impl NodeExecutionError {
     }
 }
 
-/// Drives one interactive node's first-turn park off the async runtime.
+/// Captures the baseline for one Agent node.
 ///
-/// Both halves of the park are blocking work: reading the whole session history is file I/O, and
-/// the transition sink takes the per-run gate, which is a blocking lock. Running them on a
-/// blocking worker keeps a long conversation from occupying a tokio worker and matches how the
-/// human-turn cleanup performs the same park. The snapshot is derived before the gate is taken,
-/// so no lock is held across the history read (ADR D3 steps 1 and 4).
-#[allow(clippy::too_many_arguments)]
-async fn park_first_interactive_turn(
-    transitions: Arc<WorkflowRunTransitions>,
-    sessions_root: PathBuf,
-    run_id: WorkflowRunId,
-    node_run_id: WorkflowNodeRunId,
-    session_id: SessionId,
-    output_contract: Option<AgentOutputContract>,
-    completion_signal: ora_application::AgentCompletionSignal,
-    agent_signals: Arc<AgentSignalStore>,
-    attempt_id: Option<String>,
-    auto_accept: bool,
-    stop_cause: Option<StopCause>,
-) -> Result<(), NodeExecutionError> {
-    tokio::task::spawn_blocking(move || {
-        let policy = match completion_signal {
-            ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
-            ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
-        };
-        let snapshot = match read_session_history(&sessions_root, session_id.as_ref()) {
-            Ok(history) => derive_completion_snapshot(
-                &history,
-                output_contract.as_ref(),
-                false,
-                TurnOrigin::Workflow,
-                stop_cause,
-            ),
-            Err(error) => {
-                ora_warn!(
-                    node_run_id = %node_run_id,
-                    error = %error,
-                    "failed to read session history while parking; recording an unknown completion snapshot"
-                );
-                unknown_completion_snapshot(false, TurnOrigin::Workflow, Some(StopCause::Unknown))
-            }
-        };
-        // Bind only the settlement this attempt produced; a late tool call after the turn changed
-        // cannot attach its signal to a newer turn.
-        let agent_signal = attempt_id.as_deref().and_then(|attempt| {
-            let turn_key = snapshot.turn_key?;
-            agent_signals.bind(&format!("{node_run_id}"), attempt, turn_key)
-        });
-        if let Some(attempt) = attempt_id.as_deref() {
-            agent_signals.revoke_attempt(&format!("{node_run_id}"), attempt);
-        }
-        let meta = CompletionMeta {
-            policy,
-            agent_signal,
-            confirmation: None,
-            auto_accept,
-        };
-        transitions
-            .park_node_run(
-                &run_id,
-                &node_run_id,
-                &completion_payload_with_meta(&snapshot, &meta),
-            )
-            .map_err(NodeExecutionError::from)
-    })
-    .await
-    .map_err(|source| {
-        NodeExecutionError::Repository(RepositoryError::from_message(format!(
-            "interactive park did not complete: {source}"
-        )))
-    })?
-    .map(|_advanced| ())
+/// Completion declarations are a gate only for interactive nodes. An automatic node that keeps a
+/// stale `completion.files` declaration after `interactive` is turned off must keep the ordinary
+/// Git-visible baseline, or declared ignored/large files would appear in its automatic diff even
+/// though no completion file check runs.
+fn capture_agent_baseline(worktree_root: &Path, config: &AgentConfig) -> Option<WorktreeBaseline> {
+    let completion = config
+        .interactive
+        .then_some(config.completion.as_ref())
+        .flatten();
+    capture_completion_baseline(worktree_root, completion)
 }
 
 /// Runs the start → prompt → stop session chain for one agent node.
@@ -607,7 +549,7 @@ async fn drive_agent_node(
             context.run.snapshot_id.as_ref(),
             clock.now_timestamp_millis(),
         )?;
-        let baseline = capture_worktree_snapshot(&workspace_root);
+        let baseline = capture_agent_baseline(&workspace_root, config);
 
         let mut stream = agent_runtime
             .prompt_session_with_inactivity_policy(PromptSessionRequest {
@@ -675,25 +617,35 @@ async fn drive_agent_node(
         // (oversized/unavailable) baseline or a failed write still parks the node; its completion
         // later reports no file changes rather than failing the run.
         if config.interactive {
-            if let Some(baseline) = baseline.as_ref()
-                && let Err(error) = persist_worktree_baseline(baselines_root, node_run_id, baseline)
-            {
-                ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes");
+            let mut baseline_available = false;
+            if let Some(baseline) = baseline.as_ref() {
+                match persist_worktree_baseline(baselines_root, node_run_id, baseline) {
+                    Ok(()) => baseline_available = true,
+                    Err(error) => {
+                        ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes")
+                    }
+                }
             }
             // The snapshot and the guarded status flip commit together so a `Pending` row always
             // has the completion facts the read projection parses.
             park_first_interactive_turn(
                 transitions.clone(),
-                sessions_root.to_path_buf(),
-                context.run.id.clone(),
-                node_run_id.clone(),
-                session_id.clone(),
-                config.output_contract.clone(),
-                config.completion_signal,
-                agent_signals.clone(),
-                completion_attempt.clone(),
-                config.auto_accept_agent_completion,
-                StopCause::of_prompt_end(stream.end_cause()),
+                FirstTurnPark {
+                    sessions_root: sessions_root.to_path_buf(),
+                    run_id: context.run.id.clone(),
+                    node_run_id: node_run_id.clone(),
+                    session_id: session_id.clone(),
+                    output_contract: config.output_contract.clone(),
+                    completion: config.completion.clone(),
+                    completion_signal: config.completion_signal,
+                    agent_signals: agent_signals.clone(),
+                    attempt_id: completion_attempt.clone(),
+                    auto_accept: config.auto_accept_agent_completion,
+                    baseline_available,
+                    // A first turn the user stopped must still park as awaiting them, so the cause
+                    // travels with the park instead of being read back from the stop reason.
+                    stop_cause: StopCause::of_prompt_end(stream.end_cause()),
+                },
             )
             .await?;
             return Ok(AgentNodeOutcome::AwaitingInput);
@@ -824,6 +776,7 @@ fn resolve_required_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ora_application::AgentOutputContract;
     use ora_application::StructuredTextExposure;
     use ora_contracts::WorkflowRunLocale;
     use ora_utils::path::StrictRelativePath;

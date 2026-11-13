@@ -18,9 +18,11 @@ mod trusted;
 
 pub use canonical::{canonicalize, strip_verbatim_prefix};
 mod directories;
+mod glob;
 mod links;
 pub use containment::{CanonicalPathRoot, PathContainmentError};
 pub use directories::{check_directory_without_symlinks, create_directories_without_symlinks};
+pub use glob::{RelativeGlob, RelativeGlobError};
 #[cfg(unix)]
 pub use identity::DirectoryIdentity;
 pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, normalize_relative};

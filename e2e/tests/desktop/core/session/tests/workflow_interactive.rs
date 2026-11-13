@@ -296,6 +296,7 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
                     message: None,
+                    params: None,
                 }],
             })
         );
@@ -378,6 +379,7 @@ async fn restart_scenario(refuse_load: bool) -> TestResult {
             blockers: vec![WorkflowNodeCompletionBlocker {
                 kind: WorkflowNodeCompletionBlockerKind::TurnStopped,
                 message: None,
+                params: None,
             }],
         })
     );
@@ -523,6 +525,7 @@ fn the_opening_turn_completes_only_by_explicit_confirmation() -> TestResult {
                     blockers: vec![WorkflowNodeCompletionBlocker {
                         kind: WorkflowNodeCompletionBlockerKind::TurnUnconfirmed,
                         message: None,
+                        params: None,
                     }],
                 })
             );

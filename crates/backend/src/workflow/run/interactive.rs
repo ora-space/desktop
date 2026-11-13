@@ -4,6 +4,7 @@ mod agent_signal;
 #[cfg(test)]
 mod cleanup_tests;
 mod completion;
+mod completion_files;
 mod completion_server;
 #[cfg(test)]
 mod completion_tests;

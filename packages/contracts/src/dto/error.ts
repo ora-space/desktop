@@ -482,6 +482,10 @@ export type WorkflowNodeCompletionBlocker = {
    * Human-readable technical detail, e.g. the schema message; never user-authored text.
    */
   message?: string;
+  /**
+   * Structured blocker input, such as the declared file path, when the kind has one.
+   */
+  params?: WorkflowNodeCompletionBlockerParams;
 };
 
 /**
@@ -496,7 +500,19 @@ export type WorkflowNodeCompletionBlockerKind =
   | "agent_signal_pending"
   | "agent_confirmation_pending"
   | "structured_invalid"
-  | "output_missing";
+  | "output_missing"
+  | "file_missing"
+  | "file_unchanged";
+
+/**
+ * Carries the declared input a blocker refers to, so a client can name it without parsing text.
+ */
+export type WorkflowNodeCompletionBlockerParams = {
+  /**
+   * The original `completion.files[].path` declaration that produced the blocker.
+   */
+  path?: string;
+};
 
 /**
  * Lists every blocker that stops a completion before an explicit force.

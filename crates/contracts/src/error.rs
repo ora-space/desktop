@@ -155,6 +155,21 @@ pub enum WorkflowNodeCompletionBlockerKind {
     AgentConfirmationPending,
     StructuredInvalid,
     OutputMissing,
+    /// No existing workspace file matched a declared `completion.files` entry.
+    FileMissing,
+    /// A declared `mustChange` file exists but is unchanged from the node's baseline.
+    FileUnchanged,
+}
+
+/// Carries the declared input a blocker refers to, so a client can name it without parsing text.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowNodeCompletionBlockerParams {
+    /// The original `completion.files[].path` declaration that produced the blocker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
 }
 
 /// Carries one blocker of a rejected completion with the detail its kind does not encode.
@@ -167,6 +182,10 @@ pub struct WorkflowNodeCompletionBlocker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
+    /// Structured blocker input, such as the declared file path, when the kind has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub params: Option<WorkflowNodeCompletionBlockerParams>,
 }
 
 /// Lists every blocker that stops a completion before an explicit force.
@@ -569,9 +588,10 @@ mod tests {
         PluginConfigurationValidationParams, PluginPackageInvalidParams, PublicError, RequestId,
         SessionMcpSetupFailedParams, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
         WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
-        WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
-        WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
-        WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
+        WorkflowNodeCompletionBlockerParams, WorkflowNodeIncompleteParams,
+        WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
+        WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
+        WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -763,6 +783,7 @@ mod tests {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnStopped,
                     message: None,
+                    params: None,
                 }],
             }),
             PublicError::WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams {

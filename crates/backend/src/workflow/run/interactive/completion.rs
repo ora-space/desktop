@@ -6,14 +6,17 @@
 
 use super::super::completion_snapshot::{
     CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
-    CompletionPolicy, CompletionSnapshot, ConfirmationBy, TurnOrigin, completion_final_text,
-    completion_payload, derive_completion_snapshot, forced_completion_audit,
+    CompletionPolicy, CompletionSnapshot, ConfirmationBy, FILE_CHECK_UNAVAILABLE, TurnOrigin,
+    completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
     has_precise_stop_blocker, output_contract_blocker, parse_completion_snapshot,
-    trailing_assistant_text, unknown_completion_snapshot,
+    trailing_assistant_text, unknown_completion_snapshot, with_file_check_warning,
 };
 use super::super::executor::apply_output_contract;
-use super::super::worktree::{capture_worktree_snapshot, compute_file_changes};
+use super::super::worktree::{
+    compute_file_changes, load_worktree_baseline, worktree_baseline_available,
+};
 use super::CompletingNodeRuns;
+use super::completion_files::declared_file_blockers;
 use crate::error::{BackendError, ErrorClassification};
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
@@ -21,17 +24,16 @@ use ora_application::{
 };
 use ora_contracts::{
     EmptyErrorParams, NodeCompletionRequester, PublicError, WorkflowNodeCompletionBlocker,
-    WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
-    WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
+    WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
+    WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
     WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
-    SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkspaceId,
+    SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus,
 };
 use ora_history::read_session_history;
 use ora_logging::ora_warn;
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,23 +45,23 @@ pub(crate) struct PreparedCompletion {
     pub structured_output: Option<serde_json::Value>,
     pub stop_reason: Option<String>,
     pub session_id: Option<SessionId>,
-    /// The run's workspace, resolved by the caller because only it owns the runtime directory port.
-    pub workspace_id: WorkspaceId,
-    /// The payload keys a forced completion must commit with the completion itself.
-    pub audit: Option<serde_json::Value>,
+    /// Payload keys committed atomically with the completion (forced audit, file warnings).
+    pub payload_patch: Option<serde_json::Value>,
+    /// Frozen declaration reused to capture declared ignored files in the display diff.
+    pub completion: Option<ora_application::AgentCompletion>,
     /// The human approval of an accepted agent signal, committed with the completion.
     pub confirmation: Option<CompletionConfirmation>,
     /// Who the server attributes this completion to, derived from the signal path.
     pub requester: NodeCompletionRequester,
 }
 
-/// Merges the forced audit, confirmation and server-derived requester into one payload patch.
+/// Merges the commit-time payload patch with the confirmation and server-derived requester.
 pub(crate) fn merge_completion_patch(
-    audit: Option<serde_json::Value>,
+    payload_patch: Option<serde_json::Value>,
     confirmation: Option<CompletionConfirmation>,
     requester: NodeCompletionRequester,
 ) -> Option<serde_json::Value> {
-    let mut patch = audit.unwrap_or_else(|| serde_json::json!({}));
+    let mut patch = payload_patch.unwrap_or_else(|| serde_json::json!({}));
     if let Some(confirmation) = confirmation {
         patch["confirmation"] = serde_json::to_value(confirmation).ok()?;
     }
@@ -260,6 +262,8 @@ pub(crate) fn revalidate_completion(
 pub(crate) fn prepare_completion(
     pool: &RepositoryPool,
     sessions_root: &Path,
+    baselines_root: &Path,
+    worktree_root: &Path,
     run_id: &WorkflowRunId,
     node_id: &str,
     approval: CompletionApproval,
@@ -334,15 +338,29 @@ pub(crate) fn prepare_completion(
         .and_then(|stored| stored.turn_origin)
         .unwrap_or(TurnOrigin::Human);
     let stop_cause = stored.as_ref().and_then(|stored| stored.stop_cause);
+    // Parse availability once: both the derived snapshot and the repair below must agree on
+    // whether the baseline can actually attribute changes.
+    let baseline_available = worktree_baseline_available(baselines_root, &node_run.id);
+    let completion = agent_config.and_then(|config| config.completion.as_ref());
     let (history, derived) = match node_run.session_id.as_ref() {
         Some(session_id) => {
             let history = read_session_history(sessions_root, session_id.as_ref())
                 .map_err(|error| BackendError::internal("failed to read session history", error))?;
-            let derived =
-                derive_completion_snapshot(&history, output_contract, false, origin, stop_cause);
+            let derived = with_file_check_warning(
+                derive_completion_snapshot(&history, output_contract, false, origin, stop_cause),
+                completion,
+                baseline_available,
+            );
             (Some(history), derived)
         }
-        None => (None, unknown_completion_snapshot(false, origin, stop_cause)),
+        None => (
+            None,
+            with_file_check_warning(
+                unknown_completion_snapshot(false, origin, stop_cause),
+                completion,
+                baseline_available,
+            ),
+        ),
     };
     // The conflicts are decided against the freshly derived turn, before any repair write: a stale
     // completion must be told what changed even when the stored snapshot itself is still coherent.
@@ -376,12 +394,22 @@ pub(crate) fn prepare_completion(
     if !payload_has_completion_policy(node_run.payload.as_deref()) {
         persist_completion_policy(&repository, &node_run.id, meta.policy);
     }
-    let snapshot = settle_snapshot(
+    // The live file check is independent of the turn snapshot: it may add blockers (which are
+    // never persisted) and warnings (which repair the projection when a later baseline became
+    // unusable). Compute it before finalizing the snapshot so both writes can be coalesced.
+    let file_check = declared_file_blockers(
+        agent_config.and_then(|config| config.completion.as_ref()),
+        &node_run.id,
+        baselines_root,
+        worktree_root,
+    );
+    let snapshot = persist_file_warnings(
         &repository,
         &node_run.id,
-        stored.as_ref(),
-        derived,
-        meta.policy,
+        settle_snapshot(&repository, &node_run.id, stored.as_ref(), derived),
+        completion,
+        baseline_available,
+        &file_check.warnings,
     );
     let stop_reason = snapshot.stop_reason.clone();
     // A forced completion without a settled turn takes the last assistant reply as its output and
@@ -403,6 +431,9 @@ pub(crate) fn prepare_completion(
     {
         effective_blockers.push(blocker);
     }
+
+    // File blockers join the same list as the turn and output-contract checks.
+    effective_blockers.extend(file_check.blockers);
     // The agent signal gate only applies to an otherwise normally settled turn. Precise stop or
     // output blockers describe the turn itself; a signal cannot change their outcome.
     let mut agent_confirmed = false;
@@ -456,6 +487,7 @@ pub(crate) fn prepare_completion(
             }
         }
     }
+
     // `confirm_initial_turn` only lifts `turn_unconfirmed`; every other blocker still applies and
     // `force` cannot stand in for confirmation. What remains is exactly what the user has not
     // resolved, so a rejection lists only those blockers (ADR D2 rows 5–10).
@@ -544,11 +576,40 @@ pub(crate) fn prepare_completion(
         structured_output,
         stop_reason,
         session_id: node_run.session_id,
-        workspace_id: context.workspace.id,
-        audit: forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
+        payload_patch: completion_payload_patch(
+            &snapshot,
+            forced.then(|| forced_completion_audit(&snapshot, &unfulfilled)),
+        ),
+        completion: completion.cloned(),
         confirmation,
         requester,
     })
+}
+
+/// Builds the payload patch that must commit with a successful completion.
+///
+/// A prepare-time warning write is a best-effort early projection; the final completion transaction
+/// is the authority. When the snapshot carries a file warning, include that snapshot in the patch
+/// so a lost early write cannot leave a completed node without the warning. The forced audit, when
+/// present, is merged into the same patch and committed in one transaction. File blockers are not
+/// part of the snapshot, so this patch never persists them.
+fn completion_payload_patch(
+    snapshot: &CompletionSnapshot,
+    forced_audit: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let mut patch = serde_json::Map::new();
+    if snapshot
+        .warnings
+        .iter()
+        .any(|warning| warning == FILE_CHECK_UNAVAILABLE)
+        && let serde_json::Value::Object(completion) = completion_payload(snapshot)
+    {
+        patch.extend(completion);
+    }
+    if let Some(serde_json::Value::Object(audit)) = forced_audit {
+        patch.extend(audit);
+    }
+    (!patch.is_empty()).then_some(serde_json::Value::Object(patch))
 }
 
 /// Returns the snapshot the gate must apply, repairing or materializing it first when needed.
@@ -563,12 +624,11 @@ fn settle_snapshot(
     node_run_id: &WorkflowNodeRunId,
     stored: Option<&CompletionSnapshot>,
     derived: CompletionSnapshot,
-    policy: CompletionPolicy,
 ) -> CompletionSnapshot {
     let Some(stored) = stored else {
         // Upgrade path: the node parked before snapshots existed. Materialize once so the
         // blockers gate below applies to it exactly as it does to a new node.
-        return persist_derived_snapshot(repository, node_run_id, derived, policy);
+        return persist_derived_snapshot(repository, node_run_id, derived);
     };
     if derived.turn_key.is_none() {
         // Nothing settled yet, so there is nothing to repair with; keep the stored snapshot.
@@ -584,7 +644,32 @@ fn settle_snapshot(
     if !same_user_message || (stored.turn_key.is_some() && !stored.provisional) {
         return stored.clone();
     }
-    persist_derived_snapshot(repository, node_run_id, derived, policy)
+    persist_derived_snapshot(repository, node_run_id, derived)
+}
+
+/// Adds baseline/file-check warnings to an already stored snapshot and persists any new ones.
+///
+/// The write is payload-only and guarded by `Pending`, like the other completion repairs; a failed
+/// write keeps the in-memory warning for this completion and only logs the stale projection.
+fn persist_file_warnings(
+    repository: &SqliteWorkflowRunEngineRepository,
+    node_run_id: &WorkflowNodeRunId,
+    snapshot: CompletionSnapshot,
+    completion: Option<&ora_application::AgentCompletion>,
+    baseline_available: bool,
+    extra_warnings: &[String],
+) -> CompletionSnapshot {
+    let original_warnings = snapshot.warnings.len();
+    let mut warned = with_file_check_warning(snapshot, completion, baseline_available);
+    for warning in extra_warnings {
+        if !warned.warnings.iter().any(|existing| existing == warning) {
+            warned.warnings.push(warning.clone());
+        }
+    }
+    if warned.warnings.len() != original_warnings {
+        persist_derived_snapshot(repository, node_run_id, warned.clone());
+    }
+    warned
 }
 
 /// Writes the derived snapshot back and returns it, logging instead of failing on a lost guard.
@@ -595,10 +680,8 @@ fn persist_derived_snapshot(
     repository: &SqliteWorkflowRunEngineRepository,
     node_run_id: &WorkflowNodeRunId,
     derived: CompletionSnapshot,
-    policy: CompletionPolicy,
 ) -> CompletionSnapshot {
-    let mut patch = completion_payload(&derived);
-    patch["completionPolicy"] = serde_json::json!(policy);
+    let patch = completion_payload(&derived);
     persist_patch(repository, node_run_id, &patch);
     derived
 }
@@ -659,6 +742,8 @@ fn to_contract_blocker(blocker: &CompletionBlocker) -> WorkflowNodeCompletionBlo
             WorkflowNodeCompletionBlockerKind::StructuredInvalid
         }
         CompletionBlockerKind::OutputMissing => WorkflowNodeCompletionBlockerKind::OutputMissing,
+        CompletionBlockerKind::FileMissing => WorkflowNodeCompletionBlockerKind::FileMissing,
+        CompletionBlockerKind::FileUnchanged => WorkflowNodeCompletionBlockerKind::FileUnchanged,
     };
     WorkflowNodeCompletionBlocker {
         kind,
@@ -667,6 +752,13 @@ fn to_contract_blocker(blocker: &CompletionBlocker) -> WorkflowNodeCompletionBlo
             .get("message")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string),
+        params: blocker
+            .params
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .map(|path| WorkflowNodeCompletionBlockerParams {
+                path: Some(path.to_string()),
+            }),
     }
 }
 
@@ -686,12 +778,32 @@ pub(crate) fn completion_file_changes(
     baselines_root: &Path,
     node_run_id: &WorkflowNodeRunId,
     worktree_root: &Path,
+    completion: Option<&ora_application::AgentCompletion>,
 ) -> Vec<FileChange> {
     match load_worktree_baseline(baselines_root, node_run_id) {
-        Some(baseline) => compute_file_changes(
-            Some(&baseline),
-            capture_worktree_snapshot(worktree_root).as_ref(),
-        ),
+        Some(baseline) => {
+            // New baselines recorded declared ignored files, so the current side must add them
+            // too or an unchanged deliverable would look deleted. A legacy text-only baseline
+            // never observed ignored files at all; adding them now would instead turn a
+            // pre-existing ignored file into a fabricated addition. Keep the old Git-visible
+            // current set for legacy baselines. A current snapshot that exceeded its budget still
+            // yields no display diff rather than reporting the whole baseline as deleted.
+            let current = crate::workflow::run::worktree::capture_worktree_snapshot(worktree_root)
+                .map(|mut snapshot| {
+                    if !baseline.legacy
+                        && let Some(completion) = completion
+                    {
+                        snapshot.extend(
+                            crate::workflow::run::worktree::capture_declared_worktree_files(
+                                worktree_root,
+                                completion,
+                            ),
+                        );
+                    }
+                    snapshot
+                });
+            compute_file_changes(Some(&baseline), current.as_ref())
+        }
         None => {
             ora_warn!(
                 node_run_id = %node_run_id,
@@ -700,17 +812,6 @@ pub(crate) fn completion_file_changes(
             Vec::new()
         }
     }
-}
-
-/// Loads the worktree baseline persisted when an interactive node started, or `None` when the
-/// file is missing or unreadable (the completion then reports no file changes).
-fn load_worktree_baseline(
-    baselines_root: &Path,
-    node_run_id: &WorkflowNodeRunId,
-) -> Option<BTreeMap<String, Option<String>>> {
-    let path = baselines_root.join(format!("{}.json", node_run_id.as_ref()));
-    let bytes = std::fs::read(&path).ok()?;
-    serde_json::from_slice(&bytes).ok()
 }
 
 /// Maps a workflow engine repository failure onto the public backend error.

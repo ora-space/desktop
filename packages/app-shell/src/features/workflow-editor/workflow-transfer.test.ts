@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin, Skill } from "@ora/contracts";
-import { createMockWorkflow } from "@ora/workflow-mock";
+import {
+  createMockWorkflow,
+  normalizeWorkflowNodeAgentConfigs,
+} from "@ora/workflow-mock";
 import {
   parseWorkflowGraph,
   serializeWorkflowGraph,
@@ -172,6 +175,137 @@ describe("workflow inactivity setting transfer", () => {
       }
     },
   );
+});
+
+describe("invalid completion declarations survive normalization", () => {
+  it.each([
+    { name: "array completion", completion: [] as unknown, version: 4 },
+    { name: "string completion", completion: "bad" as unknown, version: 4 },
+    { name: "boolean completion", completion: true as unknown, version: 4 },
+    {
+      name: "string schema version",
+      completion: { files: [{ path: "a.md" }] },
+      version: "3" as unknown as 3,
+    },
+  ])(
+    "$name reaches the import validator instead of being dropped",
+    ({ completion, version }) => {
+      const workflow = createMockWorkflow("en-US");
+      const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+      agent.data.agentConfig = {
+        ...agent.data.agentConfig!,
+        schemaVersion: version,
+        completion,
+      } as typeof agent.data.agentConfig;
+
+      // This is the editor load/save path: normalization, graph codec, then export/import.
+      const nodes = normalizeWorkflowNodeAgentConfigs(workflow.nodes);
+      const snapshot = parseWorkflowGraph(
+        serializeWorkflowGraph({
+          nodes,
+          edges: workflow.edges.map(({ id, source, target }) => ({
+            id,
+            source,
+            target,
+          })),
+          viewport: workflow.viewport,
+          annotations: workflow.annotations,
+          globalVariables: workflow.globalVariables,
+          description: workflow.description,
+        }),
+      );
+      const normalizedAgent = snapshot.nodes.find(
+        (node) => node.id === agent.id,
+      )!;
+      expect(normalizedAgent.data.agentConfig?.completion).toEqual(completion);
+      expect(normalizedAgent.data.agentConfig?.schemaVersion).toBe(version);
+
+      const exported = workflowExportDocument(workflow, snapshot);
+      const imported = parseWorkflowImportFile(JSON.stringify(exported));
+      expect(imported.ok).toBe(false);
+      if (imported.ok || imported.failure.reason !== "invalidAgentConfig") {
+        throw new Error("expected an invalid Agent configuration failure");
+      }
+    },
+  );
+});
+
+describe("completion declaration transfer", () => {
+  it("exports and imports the version and every declared file", () => {
+    const workflow = createMockWorkflow("en-US");
+    const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+    agent.data.agentConfig = {
+      ...agent.data.agentConfig!,
+      schemaVersion: 4,
+      completion: {
+        files: [
+          { path: "reports/*.md" },
+          { path: "reports/final.md", mustChange: true },
+        ],
+      },
+    };
+    const snapshot = parseWorkflowGraph(
+      serializeWorkflowGraph({
+        ...workflow,
+        edges: workflow.edges.map(({ id, source, target }) => ({
+          id,
+          source,
+          target,
+        })),
+      }),
+    );
+    const exported = workflowExportDocument(workflow, snapshot);
+    const imported = parseWorkflowImportFile(JSON.stringify(exported));
+
+    expect(imported).toEqual({ ok: true, workflow: exported });
+    const importedAgent = (
+      imported.ok ? imported.workflow : undefined
+    )?.nodes.find((node) => node.id === agent.id);
+    expect(importedAgent?.data.agentConfig).toMatchObject({
+      schemaVersion: 4,
+      completion: {
+        files: [
+          { path: "reports/*.md" },
+          { path: "reports/final.md", mustChange: true },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: "version 3 with completion",
+      config: { schemaVersion: 3, completion: { files: [{ path: "a.md" }] } },
+      detail: "requires agentConfig.schemaVersion 4",
+    },
+    {
+      name: "an unsupported version",
+      config: { schemaVersion: 5 },
+      detail: "unsupported agentConfig.schemaVersion 5",
+    },
+    {
+      name: "an unsupported completion field",
+      config: {
+        schemaVersion: 4,
+        completion: { files: [{ path: "a.md" }], criteria: [] },
+      },
+      detail: "only files is defined",
+    },
+  ])("refuses $name instead of dropping it", ({ config, detail }) => {
+    const workflow = createMockWorkflow("en-US");
+    const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+    agent.data.agentConfig = {
+      ...agent.data.agentConfig!,
+      ...config,
+    } as typeof agent.data.agentConfig;
+    const result = parseWorkflowImportFile(JSON.stringify(workflow));
+    expect(result.ok).toBe(false);
+    if (result.ok || result.failure.reason !== "invalidAgentConfig") {
+      throw new Error("expected an invalid Agent configuration failure");
+    }
+    expect(result.failure.nodeTitle).toBe(agent.data.title);
+    expect(result.failure.detail).toContain(detail);
+  });
 });
 
 describe("collectWorkflowDependencies", () => {

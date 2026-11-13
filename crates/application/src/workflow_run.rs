@@ -8,11 +8,11 @@ mod ports;
 mod tests;
 
 pub use engine::{
-    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletionSignal, AgentConfig, AgentExecutor,
-    AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
+    AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentCompletionSignal, AgentConfig,
+    AgentExecutor, AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
     AgentSkillDeliveryError, AgentSkillDeliveryProvider, AuthoringParticipation,
-    BeginNodeRetryResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CompositeRegion,
-    EngineError, ExecutionContext, FailurePropagation, FileChange, GraphError,
+    BeginNodeRetryResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CompletionFile,
+    CompositeRegion, EngineError, ExecutionContext, FailurePropagation, FileChange, GraphError,
     INVALID_START_OPTION_DETAIL, IterationConfig, IterationErrorStrategy, IterationLedger,
     IterationRoundContinuation, LoopCompletionReason, LoopConfig, LoopExitCleanup, LoopExitState,
     LoopInitialValue, LoopMaxIterationsBehavior, LoopRoundAdvance, LoopRoundDecision,

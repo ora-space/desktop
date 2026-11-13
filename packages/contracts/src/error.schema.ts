@@ -69,11 +69,16 @@ export const openLocationFailedParamsSchema = z.object({
     target: openLocationTargetSchema
 });
 
-export const workflowNodeCompletionBlockerKindSchema = z.union([z.literal("turn_stopped"), z.literal("turn_truncated"), z.literal("turn_refused"), z.literal("turn_unknown"), z.literal("turn_unconfirmed"), z.literal("agent_signal_pending"), z.literal("agent_confirmation_pending"), z.literal("structured_invalid"), z.literal("output_missing")]);
+export const workflowNodeCompletionBlockerKindSchema = z.union([z.literal("turn_stopped"), z.literal("turn_truncated"), z.literal("turn_refused"), z.literal("turn_unknown"), z.literal("turn_unconfirmed"), z.literal("agent_signal_pending"), z.literal("agent_confirmation_pending"), z.literal("structured_invalid"), z.literal("output_missing"), z.literal("file_missing"), z.literal("file_unchanged")]);
+
+export const workflowNodeCompletionBlockerParamsSchema = z.object({
+    path: z.string().optional()
+});
 
 export const workflowNodeCompletionBlockerSchema = z.object({
     kind: workflowNodeCompletionBlockerKindSchema,
-    message: z.string().optional()
+    message: z.string().optional(),
+    params: workflowNodeCompletionBlockerParamsSchema.optional()
 });
 
 export const workflowNodeTurnKeySchema = z.object({
