@@ -680,6 +680,22 @@ function WorkflowCanvasInner({
     [nodes, openSelectionMenu, readOnly],
   );
 
+  /** Multi-select draws a selection rect; right-clicks there do not hit a node. */
+  const handleSelectionContextMenu = useCallback(
+    (event: ReactMouseEvent, selectedNodes: WorkflowCanvasNode[]): void => {
+      if (readOnly) {
+        return;
+      }
+      openSelectionMenu(
+        event,
+        selectedNodes
+          .filter((node) => node.type === WORKFLOW_FLOW_NODE_TYPE)
+          .map((node) => node.id),
+      );
+    },
+    [openSelectionMenu, readOnly],
+  );
+
   const deleteMenuNodes = useCallback((): void => {
     if (selectionMenu === null || selectionMenu.deleteIds.length === 0) {
       return;
@@ -992,6 +1008,7 @@ function WorkflowCanvasInner({
                     onNodeDragStop={handleNodeDragStop}
                     onNodeClick={handleNodeClick}
                     onNodeContextMenu={handleNodeContextMenu}
+                    onSelectionContextMenu={handleSelectionContextMenu}
                     onPaneContextMenu={handlePaneContextMenu}
                     onConnectStart={handleConnectStart}
                     onConnect={onConnect}
