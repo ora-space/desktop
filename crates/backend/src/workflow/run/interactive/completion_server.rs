@@ -422,15 +422,23 @@ mod tests {
             .expect("http endpoint")
             .to_string();
         let (addr, path) = rest.split_once('/').expect("path");
-        let mut stream = TcpStream::connect(addr).expect("connect");
-        write!(
-            stream,
-            "POST /{path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            MAX_REQUEST_BYTES + 1
-        )
-        .expect("write headers");
+        // The server rejects from the headers without reading the body, so the peer may reset the
+        // connection while the client is still writing; a retry keeps the assertion deterministic
+        // across platforms without weakening it.
         let mut response = String::new();
-        stream.read_to_string(&mut response).expect("read response");
+        for _ in 0..3 {
+            let mut stream = TcpStream::connect(addr).expect("connect");
+            let _ = write!(
+                stream,
+                "POST /{path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                MAX_REQUEST_BYTES + 1
+            );
+            response.clear();
+            let _ = stream.read_to_string(&mut response);
+            if response.starts_with("HTTP/1.1 413") {
+                break;
+            }
+        }
         assert!(
             response.starts_with("HTTP/1.1 413"),
             "unexpected response: {response:?}"
