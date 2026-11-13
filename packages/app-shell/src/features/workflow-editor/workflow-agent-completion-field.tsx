@@ -89,7 +89,14 @@ export function WorkflowAgentCompletionField({
             className="shrink-0"
             checked={config.autoAcceptAgentCompletion ?? false}
             onCheckedChange={(autoAcceptAgentCompletion) =>
-              onChange({ ...config, autoAcceptAgentCompletion })
+              onChange({
+                ...config,
+                schemaVersion: 4,
+                // The switch is only rendered for the agent policy; make that policy explicit when
+                // the node relied on the default so the saved graph stays self-describing.
+                completionSignal: config.completionSignal ?? "agent",
+                autoAcceptAgentCompletion,
+              })
             }
           />
         </div>

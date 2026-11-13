@@ -953,15 +953,29 @@ function AgentConfigurationFields({
               checked={config.interactive ?? false}
               disabled={iterationMember}
               onCheckedChange={(interactive) =>
-                onChange({
-                  ...config,
-                  interactive,
-                  // New interactive nodes start on the explicit signal; an explicit `end_turn`
-                  // choice already on the config stays as the user saved it.
-                  ...(interactive && config.completionSignal == null
-                    ? { schemaVersion: 4, completionSignal: "agent" as const }
-                    : {}),
-                })
+                onChange(
+                  interactive
+                    ? {
+                        ...config,
+                        interactive,
+                        // New interactive nodes start on the explicit signal; an explicit
+                        // `end_turn` choice already on the config stays as the user saved it.
+                        ...(config.completionSignal == null
+                          ? {
+                              schemaVersion: 4,
+                              completionSignal: "agent" as const,
+                            }
+                          : {}),
+                      }
+                    : {
+                        ...config,
+                        interactive,
+                        // The signal and auto-accept only exist for an interactive node; leaving
+                        // them behind would give a non-interactive prompt an unusable token.
+                        completionSignal: undefined,
+                        autoAcceptAgentCompletion: undefined,
+                      },
+                )
               }
             />
           </div>
@@ -976,7 +990,14 @@ function AgentConfigurationFields({
                 variant="outline"
                 size="sm"
                 className="mt-2 h-7"
-                onClick={() => onChange({ ...config, interactive: false })}
+                onClick={() =>
+                  onChange({
+                    ...config,
+                    interactive: false,
+                    completionSignal: undefined,
+                    autoAcceptAgentCompletion: undefined,
+                  })
+                }
               >
                 {t("settings.workflow.iteration.disableInteractive")}
               </Button>

@@ -142,7 +142,7 @@ export function RunNodeSessionChat({
     interaction?.completion,
   );
   // An agent-policy turn whose accepted signal waits for the user's approval, or one that has not
-  // signaled yet. The backend derives both from the parked policy and signal, not from blockers.
+  // signaled yet. The backend materializes both gates into blockers and the card reads those.
   const completionAgentConfirmation =
     interaction?.completion?.requiresAgentConfirmation === true;
   const completionAwaitingAgentSignal =

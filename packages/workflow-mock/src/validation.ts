@@ -123,6 +123,25 @@ function isWorkflowAnnotation(value: unknown): value is WorkflowAnnotationNode {
   );
 }
 
+/**
+ * Returns whether any field that requires the version-4 shape is present.
+ *
+ * The editor and the validator share this predicate so removing the last completion file never
+ * downgrades a node that still carries a completion policy or its auto-accept flag.
+ */
+export function agentConfigNeedsSchemaVersion4(
+  config: Pick<
+    Partial<WorkflowAgentConfig>,
+    "completion" | "completionSignal" | "autoAcceptAgentCompletion"
+  >,
+): boolean {
+  return (
+    config.completion != null ||
+    config.completionSignal != null ||
+    config.autoAcceptAgentCompletion != null
+  );
+}
+
 /** Validates the serialized Agent contract before a definition can be edited or run. */
 function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
   if (typeof value !== "object" || value === null) {
@@ -132,15 +151,14 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
   const completionIssues = workflowAgentCompletionIssues(config.completion);
   return (
     (config.schemaVersion === 3 || config.schemaVersion === 4) &&
-    // Version 3 forbids the completion policy; only a graph that writes it must bump to 4.
-    !(config.schemaVersion === 3 && config.completionSignal != null) &&
+    // Version 3 forbids every field that belongs to the version-4 shape.
+    (!agentConfigNeedsSchemaVersion4(config) || config.schemaVersion === 4) &&
     (config.completionSignal === undefined ||
       config.completionSignal === null ||
       config.completionSignal === "agent" ||
       config.completionSignal === "end_turn") &&
     (config.autoAcceptAgentCompletion === undefined ||
       typeof config.autoAcceptAgentCompletion === "boolean") &&
-    (config.completion == null ? true : config.schemaVersion === 4) &&
     completionIssues.length === 0 &&
     typeof config.executor === "object" &&
     config.executor !== null &&
