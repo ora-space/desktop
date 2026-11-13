@@ -307,7 +307,24 @@ pub(crate) fn prepare_completion(
     }
     let output_contract = agent_config.and_then(|config| config.output_contract.as_ref());
     let stored = parse_completion_snapshot(node_run.payload.as_deref());
-    let meta = CompletionMeta::from_payload(node_run.payload.as_deref());
+    // The frozen node owns the policy; a legacy payload has no `completionPolicy` and must not be
+    // read as the default when the graph says `agent` (ADR D7).
+    let frozen_policy = match agent_config.map(|config| config.completion_signal) {
+        Some(ora_application::AgentCompletionSignal::Agent) => CompletionPolicy::Agent,
+        Some(ora_application::AgentCompletionSignal::EndTurn) | None => CompletionPolicy::EndTurn,
+    };
+    let stored_meta = CompletionMeta::from_payload(node_run.payload.as_deref());
+    // A parked snapshot already carries the frozen policy; a legacy payload that predates the
+    // field falls back to the node's current frozen graph (ADR D7).
+    let policy = if payload_has_completion_policy(node_run.payload.as_deref()) {
+        stored_meta.policy
+    } else {
+        frozen_policy
+    };
+    let meta = CompletionMeta {
+        policy,
+        ..stored_meta
+    };
     // A repair keeps the park's own origin and stop cause: only the turn facts are re-derived, so a
     // provisional opening turn must not become a human one and an unexplained timeout must not lose
     // its reason. A node that parked before these fields existed materializes as a human turn (ADR
@@ -353,7 +370,19 @@ pub(crate) fn prepare_completion(
             },
         )));
     }
-    let snapshot = settle_snapshot(&repository, &node_run.id, stored.as_ref(), derived);
+    let derived = derived.with_agent_signal_gate(&meta);
+    // Upgraded snapshots materialize the frozen policy on the first completion attempt even when
+    // their turn identity is already complete, so later reads no longer default them to legacy.
+    if !payload_has_completion_policy(node_run.payload.as_deref()) {
+        persist_completion_policy(&repository, &node_run.id, meta.policy);
+    }
+    let snapshot = settle_snapshot(
+        &repository,
+        &node_run.id,
+        stored.as_ref(),
+        derived,
+        meta.policy,
+    );
     let stop_reason = snapshot.stop_reason.clone();
     // A forced completion without a settled turn takes the last assistant reply as its output and
     // never claims a structured output; a settled turn always uses its own contract window.
@@ -471,11 +500,11 @@ pub(crate) fn prepare_completion(
         };
 
     // Confirmation is a normal completion fact, so it is committed beside the snapshot; only a
-    // forced completion uses the audit instead (ADR D5).
-    // Auto-accept is only valid for a settled human turn: the opening turn and every abnormal stop
-    // still require the user (ADR D6).
+    // forced completion uses the audit instead (ADR D5). `by: auto` means the host accepted without
+    // a user request (`approval.auto_confirm`), never merely that the node allows auto-accept: a
+    // human clicking confirm on such a node is still a human confirmation (ADR D6).
     let auto_confirmed = agent_confirmed
-        && (approval.auto_confirm || meta.auto_accept)
+        && approval.auto_confirm
         && snapshot.turn_origin != Some(TurnOrigin::Workflow)
         && !snapshot.blockers.iter().any(|blocker| {
             matches!(
@@ -534,11 +563,12 @@ fn settle_snapshot(
     node_run_id: &WorkflowNodeRunId,
     stored: Option<&CompletionSnapshot>,
     derived: CompletionSnapshot,
+    policy: CompletionPolicy,
 ) -> CompletionSnapshot {
     let Some(stored) = stored else {
         // Upgrade path: the node parked before snapshots existed. Materialize once so the
         // blockers gate below applies to it exactly as it does to a new node.
-        return persist_derived_snapshot(repository, node_run_id, derived);
+        return persist_derived_snapshot(repository, node_run_id, derived, policy);
     };
     if derived.turn_key.is_none() {
         // Nothing settled yet, so there is nothing to repair with; keep the stored snapshot.
@@ -554,7 +584,7 @@ fn settle_snapshot(
     if !same_user_message || (stored.turn_key.is_some() && !stored.provisional) {
         return stored.clone();
     }
-    persist_derived_snapshot(repository, node_run_id, derived)
+    persist_derived_snapshot(repository, node_run_id, derived, policy)
 }
 
 /// Writes the derived snapshot back and returns it, logging instead of failing on a lost guard.
@@ -565,11 +595,33 @@ fn persist_derived_snapshot(
     repository: &SqliteWorkflowRunEngineRepository,
     node_run_id: &WorkflowNodeRunId,
     derived: CompletionSnapshot,
+    policy: CompletionPolicy,
 ) -> CompletionSnapshot {
-    let patch = completion_payload(&derived);
+    let mut patch = completion_payload(&derived);
+    patch["completionPolicy"] = serde_json::json!(policy);
+    persist_patch(repository, node_run_id, &patch);
+    derived
+}
+
+/// Writes the frozen completion policy onto a payload that predates the field.
+fn persist_completion_policy(
+    repository: &SqliteWorkflowRunEngineRepository,
+    node_run_id: &WorkflowNodeRunId,
+    policy: CompletionPolicy,
+) {
+    let patch = serde_json::json!({ "completionPolicy": policy });
+    persist_patch(repository, node_run_id, &patch);
+}
+
+/// Applies one payload-only guarded repair, logging instead of failing on a lost guard.
+fn persist_patch(
+    repository: &SqliteWorkflowRunEngineRepository,
+    node_run_id: &WorkflowNodeRunId,
+    patch: &serde_json::Value,
+) {
     if let Err(error) = repository.repair_node_payload(
         node_run_id,
-        &patch,
+        patch,
         crate::clock::SystemClock.now_timestamp_millis(),
     ) {
         ora_warn!(
@@ -578,7 +630,13 @@ fn persist_derived_snapshot(
             "failed to persist a completion snapshot while preparing a completion"
         );
     }
-    derived
+}
+
+/// Returns whether a payload already names its completion policy.
+fn payload_has_completion_policy(payload: Option<&str>) -> bool {
+    payload
+        .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .is_some_and(|payload| payload.get("completionPolicy").is_some())
 }
 
 /// Maps one persisted blocker onto the contract shape carried by the rejection.

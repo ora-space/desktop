@@ -238,11 +238,11 @@ fn handle_rpc(store: &Arc<AgentSignalStore>, message: &Value) -> Value {
                         "isError": false
                     }
                 }),
-                Err(_) => json!({
+                Err(error) => json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
-                        "content": [{ "type": "text", "text": "unknown attempt token" }],
+                        "content": [{ "type": "text", "text": error.as_str() }],
                         "isError": true
                     }
                 }),

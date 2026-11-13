@@ -1427,4 +1427,46 @@ mod tests {
         assert_eq!(signaled["completion"]["parkKind"], json!("awaiting_user"));
         assert_eq!(signaled["agentSignal"]["signalId"], json!("signal-1"));
     }
+
+    /// A precise stop owns the gate; an accepted signal must not add a confirmation blocker.
+    #[test]
+    fn a_precise_stop_keeps_its_blockers_without_the_signal_gate() {
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(1),
+            turn_key: Some(TurnKey {
+                user_seq: 1,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("cancelled".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: Some(StopCause::PromptTimedOut),
+            park_kind: Some(ParkKind::Abnormal),
+            blockers: vec![CompletionBlocker::new(CompletionBlockerKind::TurnStopped)],
+            warnings: Vec::new(),
+            output_digest: None,
+            provisional: false,
+        };
+        let payload = completion_payload_with_meta(
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(AgentSignal {
+                    signal_id: "signal-1".to_string(),
+                    requested_at: 42,
+                    turn_key: TurnKey {
+                        user_seq: 1,
+                        ended_seq: 2,
+                    },
+                }),
+                confirmation: None,
+                auto_accept: true,
+            },
+        );
+        assert_eq!(
+            payload["completion"]["blockers"],
+            json!([{ "kind": "turn_stopped" }]),
+            "the precise stop wins over an accepted signal"
+        );
+        assert_eq!(payload["completion"]["parkKind"], json!("abnormal"));
+    }
 }

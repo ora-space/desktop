@@ -1168,3 +1168,109 @@ fn a_headless_auto_accept_records_auto_confirmation() {
         );
     });
 }
+
+/// A human confirmation on an auto-accept node stays a human confirmation.
+#[test]
+fn a_manual_confirmation_on_an_auto_accept_node_is_recorded_as_human() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_run_id, sessions_root) = parked_run(&temp, &pool);
+        write_settled_turn(&sessions_root, "session-1", "go", "done");
+        let snapshot = CompletionSnapshot {
+            user_seq: Some(0),
+            turn_key: Some(TurnKey {
+                user_seq: 0,
+                ended_seq: 2,
+            }),
+            stop_reason: Some("end_turn".to_string()),
+            turn_origin: Some(TurnOrigin::Human),
+            stop_cause: None,
+            park_kind: None,
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            output_digest: Some(format!("sha256:{}", sha256_hex(b"done"))),
+            provisional: false,
+        };
+        store_snapshot_with_meta(
+            &pool,
+            &node_run_id,
+            &snapshot,
+            &CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(AgentSignal {
+                    signal_id: "signal-manual".to_string(),
+                    requested_at: 1,
+                    turn_key: TurnKey {
+                        user_seq: 0,
+                        ended_seq: 2,
+                    },
+                }),
+                confirmation: None,
+                auto_accept: true,
+            },
+        );
+
+        let prepared = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval {
+                confirm_initial_turn: false,
+                force: false,
+                confirm_agent_completion: Some(signal_fingerprint("signal-manual")),
+                auto_confirm: false,
+            },
+        )
+        .expect("the card's confirmation completes the turn");
+
+        assert_eq!(
+            prepared.confirmation.map(|confirmation| confirmation.by),
+            Some(ConfirmationBy::Human),
+            "only the headless host path may attribute the completion to auto"
+        );
+    });
+}
+
+/// Preparing a legacy parked node writes the frozen completion policy back to its payload.
+#[test]
+fn prepare_materializes_the_frozen_completion_policy() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let graph = INTERACTIVE_AGENT_GRAPH.replace(
+            "\"interactive\":true",
+            "\"interactive\":true,\"completionSignal\":\"agent\"",
+        );
+        let (run_id, node_run_id, sessions_root) = parked_run_on(&temp, &pool, &graph);
+        write_settled_turn(&sessions_root, "session-1", "go", "partial");
+        store_snapshot(&pool, &node_run_id, &stopped_snapshot());
+
+        let error = prepare_completion(
+            &pool,
+            &sessions_root,
+            &run_id,
+            "agent",
+            CompletionApproval::PLAIN,
+        )
+        .expect_err("the stopped turn still blocks completion");
+        assert!(matches!(
+            error.public_error(),
+            PublicError::WorkflowNodeIncomplete(_)
+        ));
+
+        let repository = SqliteWorkflowRunEngineRepository::new(pool);
+        let node = repository
+            .list_node_runs(&run_id)
+            .expect("node runs")
+            .into_iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        let payload: serde_json::Value =
+            serde_json::from_str(node.payload.as_deref().expect("payload")).expect("payload JSON");
+        assert_eq!(
+            payload["completionPolicy"],
+            serde_json::json!("agent"),
+            "prepare must materialize the frozen policy for upgraded snapshots"
+        );
+    });
+}
