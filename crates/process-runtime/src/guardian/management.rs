@@ -56,9 +56,11 @@ impl Management {
     }
 
     /// Advances accepted responsibilities independently of client connection lifetime.
-    pub(super) fn reconcile(&mut self) {
+    /// Returns whether the Scope has settled, after which periodic calls have nothing left to do.
+    pub(super) fn reconcile(&mut self) -> bool {
         // The next request reports storage errors; the runtime still advances existing stop plans.
         let _ = self.runs.reconcile(&mut self.connection);
+        self.runs.settled()
     }
 
     /// Uses the management owner for stale-host checks immediately before executing a Run operation.

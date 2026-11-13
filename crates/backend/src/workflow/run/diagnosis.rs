@@ -15,6 +15,7 @@ use ora_contracts::{
     WorkflowRunLocale,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
+use ora_domain::SessionHostCapabilities;
 use ora_domain::{SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkspaceId};
 use ora_history::{HistoryRecord, SessionHistory, read_session_history};
 use ora_logging::ora_warn;
@@ -188,6 +189,8 @@ pub(super) async fn run_diagnosis(
                 model: Some(executor.model_id.clone()),
             },
             SessionMcpSelection::Explicit(BTreeSet::new()),
+            // Diagnosis is a one-shot host conversation, not a node attempt: no completion tool.
+            SessionHostCapabilities::None,
         )
         .await?;
     let session_id = SessionId::new(started.session.id);

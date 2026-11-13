@@ -2,8 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use agent_client_protocol_schema::v1::*;
 use ora_plugin_protocol::{
@@ -43,6 +45,22 @@ const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
 /// node outputs stay production-realistic final answers.
 const PROMPT_JOURNAL: &str = "acp_prompts.jsonl";
 
+/// Prompt marker that keeps the fake agent alive and silent after it receives the prompt.
+const SILENT_MARKER: &str = "[fake-agent-silent]";
+/// Prompt marker that makes the fake agent process exit after recording prompt receipt.
+const CRASH_MARKER: &str = "[fake-agent-crash]";
+/// Prompt marker that keeps the process alive and silent until the owning stream is dropped.
+const DROP_MARKER: &str = "[fake-agent-drop]";
+/// Prompt marker that makes the fake agent skip the host completion tool for this turn.
+const SKIP_COMPLETION_MARKER: &str = "[fake-agent-skip-completion]";
+
+/// Host-injected completion capability this agent must call when the step is done.
+const COMPLETION_SERVER_NAME: &str = "ora-workflow-completion";
+/// Prompt block the host appends to a workflow attempt with its single-use attempt token.
+const COMPLETION_BLOCK: &str = "<workflow_completion>";
+/// Journal of host completion tool calls the fake agent made, one JSON line per attempt.
+const COMPLETION_JOURNAL: &str = "mcp_completion_calls.jsonl";
+
 /// Prefix a workflow task's deterministic answer carries so tests can tell the fake's replies
 /// from user-authored template text.
 const REPLY_PREFIX: &str = "Fake agent received: ";
@@ -71,6 +89,8 @@ struct FakeSession {
     model: String,
     title: Option<String>,
     active: bool,
+    /// Loopback URL of the host completion capability delivered beside the plugin servers.
+    completion_endpoint: Option<String>,
 }
 
 /// One successfully handled ACP request plus notifications that must precede its response.
@@ -103,6 +123,17 @@ impl AcpError {
     }
 }
 
+/// Deterministic abnormal prompt behaviors the E2E suite can request through prompt markers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptMode {
+    /// The prompt was received, but no update or terminal response will be produced.
+    Silent,
+    /// The prompt was received, then the whole plugin process exits abruptly.
+    Crash,
+    /// The process stays alive and silent until the prompt owner drops its stream.
+    Drop,
+}
+
 /// Stateful ACP peer that implements the capabilities advertised during initialization.
 #[derive(Default)]
 pub(super) struct FakeAcpAgent {
@@ -126,24 +157,33 @@ impl FakeAcpAgent {
             return self.handle_notification(method, params);
         };
 
-        // This explicit fixture prompt emits its first update but settles only after ACP cancel.
-        // No timer or process-wide flag controls the race, so tests can synchronize on the update.
-        let held_session =
-            if method == AGENT_METHOD_NAMES.session_prompt {
-                serde_json::from_value::<PromptRequest>(params.clone())
-                    .ok()
-                    .and_then(|request| {
-                        request.prompt.iter().any(|block| matches!(block,
-                    ContentBlock::Text(text) if text.text.contains("[hold-for-cancel]")
-                )).then(|| request.session_id.to_string())
-                    })
-            } else {
-                None
-            };
+        // Held fixtures keep the request open until ACP cancel. The legacy hold still emits its
+        // first update so lifecycle tests can observe an in-flight turn; abnormal modes stay
+        // silent and only journal prompt receipt, which is the test's synchronization point.
+        let held_prompt = if method == AGENT_METHOD_NAMES.session_prompt {
+            serde_json::from_value::<PromptRequest>(params.clone())
+                .ok()
+                .and_then(|request| {
+                    let session_id = request.session_id.to_string();
+                    let prompt = prompt_text(&request.prompt);
+                    if prompt.contains("[hold-for-cancel]") {
+                        Some((session_id, None))
+                    } else {
+                        prompt_mode(&prompt).map(|mode| (session_id, Some(mode)))
+                    }
+                })
+        } else {
+            None
+        };
 
         match self.handle_request(method, params) {
             Ok(mut call) => {
-                if let Some(session_id) = held_session {
+                if let Some((session_id, mode)) = held_prompt {
+                    // Abnormal modes are deliberately silent: dropping the generated notification
+                    // is what makes "received the prompt but produced nothing" literal.
+                    if mode.is_some() {
+                        call.notifications.clear();
+                    }
                     self.pending_prompts.insert(session_id, id);
                     return call.notifications;
                 }
@@ -196,6 +236,7 @@ impl FakeAcpAgent {
                     model: model.clone(),
                     title: None,
                     active: true,
+                    completion_endpoint: completion_endpoint(&request.mcp_servers),
                 },
             );
             record_acp_call(method, &session_id);
@@ -221,9 +262,11 @@ impl FakeAcpAgent {
                     model: default_model_id().to_string(),
                     title: None,
                     active: true,
+                    completion_endpoint: None,
                 });
             session.cwd = request.cwd;
             session.additional_directories = request.additional_directories;
+            session.completion_endpoint = completion_endpoint(&request.mcp_servers);
             session.active = true;
             return success(
                 LoadSessionResponse::new().config_options(config_options(&session.model)),
@@ -329,21 +372,30 @@ impl FakeAcpAgent {
             return Err(AcpError::invalid_params(method, "session is closed"));
         }
 
-        let prompt = request
-            .prompt
-            .iter()
-            .filter_map(|block| {
-                if let ContentBlock::Text(text) = block {
-                    Some(text.text.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
+        if let Some(mode) = prompt_mode(&prompt) {
+            if mode == PromptMode::Crash {
+                // An abrupt exit of the whole plugin process is a session crash, not a prompt
+                // stream the test dropped; the journal write above is already flushed.
+                std::process::exit(17);
+            }
+            // Silent and drop modes return a normal result to this frame handler, which discards
+            // its notifications and holds the request until ACP cancel. This keeps the process
+            // alive for drop mode and produces no update or terminal end for silent mode.
+        }
         if let Some(error) = planned_prompt_failure(&prompt) {
             return Err(error);
+        }
+        // A real agent reports completion through the host capability before it ends the turn. The
+        // fake does the same whenever the attempt carried a token, and a marker lets a scenario
+        // exercise the missing-signal gate instead.
+        let completion_endpoint = session.completion_endpoint.clone();
+        if !prompt.contains(SKIP_COMPLETION_MARKER)
+            && let Some(token) = completion_token(&prompt)
+            && let Some(endpoint) = completion_endpoint.as_deref()
+        {
+            record_completion_call(completion_call(endpoint, token));
         }
         let response = fake_reply(&prompt);
         if session.title.is_none() {
@@ -445,6 +497,34 @@ fn planned_prompt_failure(prompt: &str) -> Option<AcpError> {
             failed + 1
         ),
     })
+}
+
+/// Joins the text blocks of one ACP prompt for mode detection and deterministic replies.
+fn prompt_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::Text(text) = block {
+                Some(text.text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Reads the abnormal mode a test requested through one of the explicit prompt markers.
+fn prompt_mode(prompt: &str) -> Option<PromptMode> {
+    if prompt.contains(SILENT_MARKER) {
+        Some(PromptMode::Silent)
+    } else if prompt.contains(CRASH_MARKER) {
+        Some(PromptMode::Crash)
+    } else if prompt.contains(DROP_MARKER) {
+        Some(PromptMode::Drop)
+    } else {
+        None
+    }
 }
 
 /// Records one served prompt so tests can assert prompt-level content that never belongs in a
@@ -569,5 +649,106 @@ fn record_mcp_call(method: &str, session_id: &str, servers: &[McpServer]) {
         eprintln!(
             "fake-agent could not record MCP call `{method}` for session `{session_id}`: {error}"
         );
+    }
+}
+
+/// Finds the loopback endpoint of the host completion capability in one session's MCP list.
+fn completion_endpoint(servers: &[McpServer]) -> Option<String> {
+    servers.iter().find_map(|server| match server {
+        McpServer::Http(server) if server.name == COMPLETION_SERVER_NAME => {
+            Some(server.url.to_string())
+        }
+        _ => None,
+    })
+}
+
+/// Reads the attempt token the host appended to a workflow prompt.
+fn completion_token(prompt: &str) -> Option<&str> {
+    prompt
+        .split(COMPLETION_BLOCK)
+        .nth(1)?
+        .lines()
+        .find_map(|line| line.split("attemptToken unchanged:").nth(1))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+/// Performs one MCP JSON-RPC request over the loopback endpoint and returns the decoded body.
+fn post_mcp(endpoint: &str, message: &serde_json::Value) -> Option<serde_json::Value> {
+    let rest = endpoint.strip_prefix("http://")?;
+    let (authority, path) = rest.split_once('/')?;
+    let mut stream = TcpStream::connect(authority).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    let payload = message.to_string();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    )
+    .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    let (head, body) = response.split_once("\r\n\r\n")?;
+    if !head.starts_with("HTTP/1.1 200") {
+        return None;
+    }
+    serde_json::from_str(body).ok()
+}
+
+/// Initializes the host server, then calls the completion tool with this attempt's token.
+fn completion_call(endpoint: &str, token: &str) -> serde_json::Value {
+    let initialized = post_mcp(
+        endpoint,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": { "protocolVersion": "2025-03-26", "capabilities": {} }
+        }),
+    );
+    if initialized
+        .as_ref()
+        .and_then(|message| message["result"]["serverInfo"]["name"].as_str())
+        != Some(COMPLETION_SERVER_NAME)
+    {
+        return json!({ "tool": "ora_complete_workflow_step", "accepted": false, "error": "initialize" });
+    }
+    let response = post_mcp(
+        endpoint,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "ora_complete_workflow_step",
+                "arguments": { "attemptToken": token }
+            }
+        }),
+    );
+    let accepted = response
+        .as_ref()
+        .and_then(|message| message["result"]["isError"].as_bool())
+        .is_some_and(|is_error| !is_error);
+    let signal_id = response
+        .as_ref()
+        .and_then(|message| message["result"]["content"][0]["text"].as_str())
+        .and_then(|text| text.strip_prefix("accepted:"))
+        .unwrap_or_default();
+    json!({
+        "tool": "ora_complete_workflow_step",
+        "accepted": accepted,
+        "signalId": signal_id,
+    })
+}
+
+/// Journals one completion tool call without the attempt token or the endpoint's server token.
+fn record_completion_call(outcome: serde_json::Value) {
+    let result = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(COMPLETION_JOURNAL)
+        .and_then(|mut file| writeln!(file, "{outcome}"));
+    if let Err(error) = result {
+        eprintln!("fake-agent could not record the completion tool call: {error}");
     }
 }

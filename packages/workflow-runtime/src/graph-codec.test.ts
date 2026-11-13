@@ -491,6 +491,43 @@ it.each([undefined, null, "timeout", "wait"] as const)(
   },
 );
 
+// Completion is a version-4 declaration; the codec must carry both the version and every entry
+// through save, publish, and export instead of treating the field as editor-only metadata.
+it("preserves version 4 completion declarations across graph round trips", () => {
+  const agent: WorkflowDefinitionNode = {
+    id: "agent-1",
+    type: "workflow",
+    position: { x: 0, y: 0 },
+    data: {
+      kind: "agent",
+      title: "Agent",
+      description: "",
+      agentConfig: {
+        schemaVersion: 4,
+        executor: { agentCli: "official/agent", modelId: "model" },
+        roleId: "",
+        skills: [],
+        mcps: [],
+        prompt: "",
+        completion: {
+          files: [
+            { path: "reports/*.md" },
+            { path: "reports/final.md", mustChange: true },
+          ],
+        },
+      },
+    },
+  };
+  const input = {
+    nodes: [agent],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    annotations: [],
+    globalVariables: [],
+  };
+  expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
+});
+
 // Absent retry means "default policy" to the engine, so the codec must neither add nor drop it.
 it("preserves agent retry settings and their absence across graph round trips", () => {
   const agent = (

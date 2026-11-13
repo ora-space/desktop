@@ -1,6 +1,8 @@
 import { WorkflowMcpFields } from "./workflow-mcp-fields";
 import { WorkflowAgentRetryFields } from "./workflow-agent-retry-fields";
+import { WorkflowAgentCompletionFields } from "./workflow-agent-completion-fields";
 import { WorkflowAgentInactivityField } from "./workflow-agent-inactivity-field";
+import { WorkflowAgentCompletionField } from "./workflow-agent-completion-field";
 import type { WorkflowMcpCatalogStatus } from "./mcp-catalog";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -951,7 +953,29 @@ function AgentConfigurationFields({
               checked={config.interactive ?? false}
               disabled={iterationMember}
               onCheckedChange={(interactive) =>
-                onChange({ ...config, interactive })
+                onChange(
+                  interactive
+                    ? {
+                        ...config,
+                        interactive,
+                        // New interactive nodes start on the explicit signal; an explicit
+                        // `end_turn` choice already on the config stays as the user saved it.
+                        ...(config.completionSignal == null
+                          ? {
+                              schemaVersion: 4,
+                              completionSignal: "agent" as const,
+                            }
+                          : {}),
+                      }
+                    : {
+                        ...config,
+                        interactive,
+                        // The signal and auto-accept only exist for an interactive node; leaving
+                        // them behind would give a non-interactive prompt an unusable token.
+                        completionSignal: undefined,
+                        autoAcceptAgentCompletion: undefined,
+                      },
+                )
               }
             />
           </div>
@@ -966,7 +990,14 @@ function AgentConfigurationFields({
                 variant="outline"
                 size="sm"
                 className="mt-2 h-7"
-                onClick={() => onChange({ ...config, interactive: false })}
+                onClick={() =>
+                  onChange({
+                    ...config,
+                    interactive: false,
+                    completionSignal: undefined,
+                    autoAcceptAgentCompletion: undefined,
+                  })
+                }
               >
                 {t("settings.workflow.iteration.disableInteractive")}
               </Button>
@@ -975,6 +1006,9 @@ function AgentConfigurationFields({
         </div>
       </InspectorField>
       <WorkflowAgentInactivityField config={config} onChange={onChange} />
+      {config.interactive === true && (
+        <WorkflowAgentCompletionField config={config} onChange={onChange} />
+      )}
       <div className="min-w-0 space-y-1.5">
         <div className="flex items-center justify-between gap-3">
           <Label
@@ -1024,6 +1058,9 @@ function AgentConfigurationFields({
           </div>
         )}
       </div>
+      {(config.interactive === true || config.completion !== undefined) && (
+        <WorkflowAgentCompletionFields config={config} onChange={onChange} />
+      )}
       {/* Interactive nodes wait for a person instead of rerunning, so the setting would be inert. */}
       {workflowAgentRetryApplies(config) && (
         <WorkflowAgentRetryFields config={config} onChange={onChange} />

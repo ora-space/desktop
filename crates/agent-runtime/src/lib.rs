@@ -39,6 +39,9 @@ mod suspend;
 mod title_acquisition;
 mod tool_timing;
 
+#[cfg(feature = "test-support")]
+mod test_support;
+
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
@@ -107,6 +110,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+#[cfg(feature = "test-support")]
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
@@ -137,6 +142,9 @@ struct ManagerInner<H: AgentRuntimeHost> {
     clock: SystemClock,
     scheduler: Scheduler,
     events: H::Events,
+    /// E2E-only inactivity windows; `None` keeps the production constant schedule.
+    #[cfg(feature = "test-support")]
+    prompt_inactivity_windows: RwLock<Option<&'static [Duration]>>,
 }
 
 #[derive(Clone)]
@@ -179,6 +187,9 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     session_mcp: H::Setup,
     barriers: Arc<AgentSessionBarriers>,
     live_mcp: LiveMcpState,
+    /// E2E-only schedule copied from the manager; production uses the shared constant.
+    #[cfg(feature = "test-support")]
+    test_prompt_inactivity_windows: Option<&'static [Duration]>,
     #[cfg(test)]
     exit_probe: Option<oneshot::Sender<()>>,
 }
@@ -239,6 +250,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 clock,
                 scheduler,
                 events,
+                #[cfg(feature = "test-support")]
+                prompt_inactivity_windows: RwLock::new(None),
             }),
         })
     }
@@ -252,22 +265,34 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::Published,
-            self.inner.session_mcp.clone(),
+            // Ordinary sessions never receive workflow-only host capabilities.
+            self.inner
+                .session_mcp
+                .with_selection(SessionMcpSelection::Automatic),
+            ora_domain::SessionHostCapabilities::None,
         )
         .await
     }
 
     /// Starts a workflow-owned session while keeping it out of ordinary list snapshots.
+    ///
+    /// `host_capabilities` decides whether the session may carry host-only tools; the caller
+    /// derives it from the frozen node so a node without the completion policy cannot acquire
+    /// the capability through a session-level default.
     pub async fn start_workflow_node_session(
         &self,
         request: StartSessionRequest,
         selection: SessionMcpSelection,
+        host_capabilities: ora_domain::SessionHostCapabilities,
     ) -> Result<StartSessionResponse, RuntimeError> {
         self.start_session_with_visibility(
             SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
-            self.inner.session_mcp.with_selection(selection),
+            self.inner
+                .session_mcp
+                .view_for_session(selection, host_capabilities),
+            host_capabilities,
         )
         .await
     }
@@ -678,10 +703,12 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         }
         let cwd = self.workspace_cwd(&session.workspace_id)?;
         let connection = self.inner.connections.for_agent(&session.agent_ref)?;
+        // Restore the capability the session was created with. Deriving it from the live actor is
+        // impossible after a restart, and an ordinary view would silently drop the completion tool.
         let session_mcp = self
             .inner
             .session_mcp
-            .with_selection(session.mcp_selection.clone());
+            .view_for_session(session.mcp_selection.clone(), session.host_capabilities);
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),
@@ -735,6 +762,12 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             commands: commands.clone(),
         };
         actors.insert(session.id.clone(), handle.clone());
+        #[cfg(feature = "test-support")]
+        let test_prompt_inactivity_windows = *self
+            .inner
+            .prompt_inactivity_windows
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         tokio::spawn(
             RuntimeActor {
                 cleanup_outcomes: HashMap::new(),
@@ -758,6 +791,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 session_mcp: setup.session_mcp,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
+                #[cfg(feature = "test-support")]
+                test_prompt_inactivity_windows,
                 #[cfg(test)]
                 exit_probe: None,
             }

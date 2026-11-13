@@ -80,6 +80,7 @@ fn runtime_tables_use_direct_workspace_ownership() {
             "updated_at",
             "is_deleted",
             "mcp_selection",
+            "host_capabilities",
         ],
     );
     assert_eq!(

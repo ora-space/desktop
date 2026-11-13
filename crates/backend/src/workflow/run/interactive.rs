@@ -1,8 +1,11 @@
 //! Coordination for human interaction with workflow node sessions.
 
+mod agent_signal;
 #[cfg(test)]
 mod cleanup_tests;
 mod completion;
+mod completion_files;
+mod completion_server;
 #[cfg(test)]
 mod completion_tests;
 #[cfg(test)]
@@ -15,11 +18,16 @@ mod turns_tests;
 use ora_domain::WorkflowNodeRunId;
 use std::collections::HashSet;
 
+pub(crate) use agent_signal::AgentSignalStore;
 pub(crate) use completion::{
-    CompletionApproval, claim_node_for_completion, completion_file_changes, prepare_completion,
-    revalidate_completion,
+    CompletionApproval, claim_node_for_completion, completion_file_changes, merge_completion_patch,
+    prepare_completion, revalidate_completion, signal_fingerprint,
+    validate_first_turn_force_confirmation,
 };
-pub(crate) use session::{begin_human_turn, end_human_turn};
+pub(crate) use completion_server::CompletionMcpServer;
+#[allow(unused_imports)]
+// `end_human_turn` is the test-facing wrapper; production uses the signal variant.
+pub(crate) use session::{begin_human_turn, end_human_turn, end_human_turn_with_signal};
 pub(crate) use turns::WorkflowSessionTurns;
 
 /// Tracks node runs currently claimed by an in-process manual completion.

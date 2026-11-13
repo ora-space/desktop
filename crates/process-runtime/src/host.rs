@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod non_launch_tests;
+#[cfg(test)]
+mod scope_cache_tests;
 mod server;
 mod worker;
 pub use server::serve_process_host;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -24,6 +27,10 @@ pub struct HostCoordinator {
     active: BTreeSet<ScopeId>,
     progress: BTreeMap<ScopeId, Progress>,
     state: HostState,
+    // Mirrors the journal's Scope intents so tick does not re-read the whole table every pass.
+    // Only this coordinator inserts them and nothing deletes them, so loading once and appending
+    // after each committed insert keeps this equal to the journal.
+    scopes: BTreeSet<ScopeId>,
     guardian: PathBuf,
     owner: u32,
     cursor: Option<ScopeId>,
@@ -40,18 +47,25 @@ struct Progress {
 }
 
 impl HostCoordinator {
-    pub fn new(state: HostState, guardian: PathBuf) -> Self {
+    /// Loads the accepted Scopes once, so created and recovered state start from the same journal.
+    pub fn new(state: HostState, guardian: PathBuf) -> Result<Self, ProcessStateError> {
         // SAFETY: geteuid only reads the current process identity.
         let owner = unsafe { libc::geteuid() };
-        Self {
+        let scopes = state
+            .scope_intents()?
+            .into_iter()
+            .map(|intent| intent.scope)
+            .collect();
+        Ok(Self {
             jobs: JoinSet::new(),
             active: BTreeSet::new(),
             progress: BTreeMap::new(),
             state,
+            scopes,
             guardian,
             owner,
             cursor: None,
-        }
+        })
     }
 
     /// Reports the incarnation owned under the original host lock, never a caller-selected epoch.
@@ -61,7 +75,9 @@ impl HostCoordinator {
 
     /// Accepts creation without waiting for guardian startup or making cancellation connection-owned.
     pub fn create_scope(&mut self, scope: ScopeId) -> Result<HostScopeView, ProcessStateError> {
+        // Cache only what the journal accepted; a failed insert must not become a tracked Scope.
         self.state.record_scope_intent(scope)?;
+        self.scopes.insert(scope);
         self.query_scope(scope)
     }
 
@@ -199,13 +215,13 @@ impl HostCoordinator {
             progress.control_pending = false;
             progress.status = status;
         }
-        let scopes = self.state.scope_intents()?;
-        let mut ordered: Vec<_> = scopes.into_iter().map(|intent| intent.scope).collect();
-        if let Some(cursor) = self.cursor {
-            let pivot = ordered.partition_point(|scope| *scope <= cursor);
-            ordered.rotate_left(pivot);
-        }
-        for scope in ordered {
+        // Resume after the last dispatched Scope and wrap around, so a full worker cap rotates fairly.
+        let resume = self.cursor.map_or(Bound::Unbounded, Bound::Excluded);
+        let wrapped = self
+            .cursor
+            .into_iter()
+            .flat_map(|cursor| self.scopes.range(..=cursor));
+        for &scope in self.scopes.range((resume, Bound::Unbounded)).chain(wrapped) {
             if self.active.len() >= 32 {
                 break;
             }
@@ -258,7 +274,7 @@ mod tests {
         let mut host = HostCoordinator::new(
             HostState::create(&directory.path().join("s"))?,
             guardian.clone(),
-        );
+        )?;
         let mut listeners = Vec::new();
         for index in 1..=32 {
             let scope: ScopeId = format!("00000000-0000-0000-0000-{index:012x}").parse()?;
@@ -321,7 +337,7 @@ mod tests {
             .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
             .tempdir_in(home)?;
         let state = HostState::create(&directory.path().join("s"))?;
-        let mut host = HostCoordinator::new(state, directory.path().join("unused"));
+        let mut host = HostCoordinator::new(state, directory.path().join("unused"))?;
         let scope = ScopeId::new();
         host.create_scope(scope)?;
         host.progress.insert(
@@ -354,7 +370,7 @@ mod tests {
         let mut host = HostCoordinator::new(
             HostState::create(&directory.path().join("s"))?,
             directory.path().join("unused"),
-        );
+        )?;
         let scope = ScopeId::new();
         host.create_scope(scope)?;
         host.close(scope)?;
@@ -388,7 +404,7 @@ mod tests {
         let mut host = HostCoordinator::new(
             HostState::create(&directory.path().join("s"))?,
             directory.path().join("unused"),
-        );
+        )?;
         let scope = ScopeId::new();
         host.create_scope(scope)?;
         host.active.insert(scope);

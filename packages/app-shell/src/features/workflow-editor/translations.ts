@@ -65,6 +65,10 @@ export const workflowEditorTranslations = {
       "文件包含无法识别的节点类型「{{kind}}」。",
     "settings.workflow.transfer.failure.unknownNodeKindDetail":
       "该文件可能来自更新版本的 Ora，请升级后再导入。",
+    "settings.workflow.transfer.failure.invalidAgentConfig":
+      "Agent 节点「{{node}}」的配置无效。",
+    "settings.workflow.transfer.failure.invalidAgentConfigDetail":
+      "{{detail}}。请修正文件中的 agentConfig 后再导入。",
     "settings.workflow.transfer.failure.fileTooLarge": "文件大于 5 MB。",
     "settings.workflow.transfer.failure.fileTooLargeDetail":
       "请确认选择的是由 Ora 导出的工作流文件。",
@@ -145,6 +149,14 @@ export const workflowEditorTranslations = {
     "settings.workflow.loading": "正在加载工作流…",
     "settings.workflow.loadError": "无法加载工作流。",
     "settings.workflow.canvas": "工作流画布",
+    "settings.workflow.copyNodes": "复制",
+    "settings.workflow.pasteNodes": "粘贴",
+    "settings.workflow.duplicateNodes": "原位复制",
+    "settings.workflow.alignLeft": "左对齐",
+    "settings.workflow.alignTop": "顶对齐",
+    "settings.workflow.distributeHorizontal": "横向均分",
+    "settings.workflow.deleteNodes": "删除",
+    "settings.workflow.deleteNodesCount": "删除 {{count}} 个节点",
     "settings.workflow.connections": "工作流连线",
     "settings.workflow.canvasControls": "画布视图控制",
     "settings.workflow.canvasTools": "画布工具",
@@ -471,7 +483,52 @@ export const workflowEditorTranslations = {
       "持续等待时，不会因长时间未收到 Agent 进展而取消当前执行，可手动停止。实际执行错误仍按失败自动重试设置处理。",
     "settings.workflow.field.interactiveDescription":
       "开启后节点首轮结束会停在等待人工输入，可在节点内持续对话。",
+    "settings.workflow.field.completionSignal": "完成判定",
+    "settings.workflow.completionSignal.end_turn": "回合正常结束即可",
+    "settings.workflow.completionSignal.agent": "智能体显式上报完成",
+    "settings.workflow.completionSignal.hint":
+      "选择“智能体显式上报完成”时，回合正常结束后仍需要智能体调用完成工具或由你确认，才会推进工作流。",
+    "settings.workflow.field.autoAcceptAgentCompletion": "自动接受智能体完成",
+    "settings.workflow.autoAcceptAgentCompletion.hint":
+      "回合正常结算且智能体已上报完成时，无需人工确认直接推进；异常停靠和首轮不会自动接受。",
     "settings.workflow.field.structuredOutput": "结构化输出",
+    "settings.workflow.field.completionFiles": "完成时检查的文件",
+    "settings.workflow.completion.hint":
+      "点击完成时检查运行 workspace：声明的文件缺失或未变更会阻止完成，补齐或修改后可再次点击完成。路径须是 workspace 内的相对路径，可使用 *、**、?。",
+    "settings.workflow.completion.empty": "尚未声明文件；完成时不做文件检查。",
+    "settings.workflow.completion.path": "文件 {{index}} 路径",
+    "settings.workflow.completion.pathPlaceholder": "例如 reports/*.md",
+    "settings.workflow.completion.mustChange": "文件 {{index}} 必须变更",
+    "settings.workflow.completion.mustChangeLabel": "必须变更",
+    "settings.workflow.completion.remove": "移除文件 {{index}}",
+    "settings.workflow.completion.add": "添加文件",
+    "settings.workflow.completion.count": "{{count}} / {{max}} 个文件",
+    "settings.workflow.completion.pathIssue.empty": "请填写文件路径。",
+    "settings.workflow.completion.pathIssue.tooLong":
+      "路径不能超过 {{max}} 个 UTF-8 字节。",
+    "settings.workflow.completion.pathIssue.controlCharacter":
+      "路径不能包含控制字符。",
+    "settings.workflow.completion.pathIssue.backslash":
+      "请使用 / 作为分隔符，路径不能包含反斜杠。",
+    "settings.workflow.completion.pathIssue.unsupportedGlobCharacter":
+      "路径只能使用 *、** 和 ? 作为通配符。",
+    "settings.workflow.completion.pathIssue.negation": "不支持取反（!）写法。",
+    "settings.workflow.completion.pathIssue.absolute":
+      "路径必须是 workspace 内的相对路径。",
+    "settings.workflow.completion.pathIssue.emptySegment":
+      "路径不能包含空段或 . 段。",
+    "settings.workflow.completion.pathIssue.parentTraversal":
+      "路径不能包含 .. 段。",
+    "settings.workflow.completion.pathIssue.drivePrefix":
+      "路径不能包含 Windows 盘符。",
+    "settings.workflow.completion.pathIssue.reservedName":
+      "路径不能使用 Windows 保留设备名。",
+    "settings.workflow.completion.pathIssue.invalidGlobstar":
+      "** 通配符必须单独占一段路径。",
+    "settings.workflow.completion.pathIssue.segmentTooLong":
+      "单段路径不能超过 255 个字节或 UTF-16 编码单元。",
+    "settings.workflow.completion.pathIssue.tooDeep":
+      "路径不能超过 32 层目录。",
     "settings.workflow.field.retry": "失败自动重试",
     "settings.workflow.field.retryMaxRetries": "最多重试次数",
     "settings.workflow.field.retryInitialDelay": "首次等待（秒）",
@@ -613,6 +670,10 @@ export const workflowEditorTranslations = {
       "This file contains an unrecognized node type “{{kind}}”. ",
     "settings.workflow.transfer.failure.unknownNodeKindDetail":
       "It may come from a newer version of Ora. Update Ora, then import it again.",
+    "settings.workflow.transfer.failure.invalidAgentConfig":
+      'The Agent node "{{node}}" has an invalid configuration.',
+    "settings.workflow.transfer.failure.invalidAgentConfigDetail":
+      "{{detail}}. Fix the agentConfig in the file and import it again.",
     "settings.workflow.transfer.failure.fileTooLarge":
       "This file is larger than 5 MB. ",
     "settings.workflow.transfer.failure.fileTooLargeDetail":
@@ -700,6 +761,14 @@ export const workflowEditorTranslations = {
     "settings.workflow.loading": "Loading workflow…",
     "settings.workflow.loadError": "Unable to load the workflow.",
     "settings.workflow.canvas": "Workflow canvas",
+    "settings.workflow.copyNodes": "Copy",
+    "settings.workflow.pasteNodes": "Paste",
+    "settings.workflow.duplicateNodes": "Duplicate",
+    "settings.workflow.alignLeft": "Align left",
+    "settings.workflow.alignTop": "Align top",
+    "settings.workflow.distributeHorizontal": "Distribute horizontally",
+    "settings.workflow.deleteNodes": "Delete",
+    "settings.workflow.deleteNodesCount": "Delete {{count}} nodes",
     "settings.workflow.connections": "Workflow connections",
     "settings.workflow.canvasControls": "Canvas view controls",
     "settings.workflow.canvasTools": "Canvas tools",
@@ -1063,7 +1132,56 @@ export const workflowEditorTranslations = {
       "Keep waiting prevents cancellation when the agent has not reported progress for a long time. You can stop it manually. Execution errors still follow the retry-on-failure setting.",
     "settings.workflow.field.interactiveDescription":
       "When enabled the node pauses for human input after its first turn, so you can keep conversing inside the node.",
+    "settings.workflow.field.completionSignal": "Completion rule",
+    "settings.workflow.completionSignal.end_turn": "A normally ended turn",
+    "settings.workflow.completionSignal.agent":
+      "The agent reports completion explicitly",
+    "settings.workflow.completionSignal.hint":
+      "With explicit reporting, a normally ended turn still needs the agent's completion tool call or your confirmation before the workflow advances.",
+    "settings.workflow.field.autoAcceptAgentCompletion":
+      "Accept the agent's completion automatically",
+    "settings.workflow.autoAcceptAgentCompletion.hint":
+      "Advance without human confirmation once the turn settled normally and the agent reported completion. Abnormal parks and the first turn are never auto-accepted.",
     "settings.workflow.field.structuredOutput": "Structured output",
+    "settings.workflow.field.completionFiles": "Files checked on completion",
+    "settings.workflow.completion.hint":
+      "Files are checked when you click complete: a missing file or an unchanged `mustChange` file blocks completion, and you can fix the workspace and retry. Paths are workspace-relative and may use *, **, and ?.",
+    "settings.workflow.completion.empty":
+      "No files declared; completion does no file check.",
+    "settings.workflow.completion.path": "File {{index}} path",
+    "settings.workflow.completion.pathPlaceholder": "e.g. reports/*.md",
+    "settings.workflow.completion.mustChange": "File {{index}} must change",
+    "settings.workflow.completion.mustChangeLabel": "Must change",
+    "settings.workflow.completion.remove": "Remove file {{index}}",
+    "settings.workflow.completion.add": "Add file",
+    "settings.workflow.completion.count": "{{count}} / {{max}} files",
+    "settings.workflow.completion.pathIssue.empty": "Enter a file path.",
+    "settings.workflow.completion.pathIssue.tooLong":
+      "The path must not exceed {{max}} UTF-8 bytes.",
+    "settings.workflow.completion.pathIssue.controlCharacter":
+      "The path must not contain control characters.",
+    "settings.workflow.completion.pathIssue.backslash":
+      "Use / as the separator and do not include a backslash.",
+    "settings.workflow.completion.pathIssue.unsupportedGlobCharacter":
+      "Only *, **, and ? are supported as wildcards.",
+    "settings.workflow.completion.pathIssue.negation":
+      "Glob negation (!) is not supported.",
+    "settings.workflow.completion.pathIssue.absolute":
+      "The path must be relative to the workspace.",
+    "settings.workflow.completion.pathIssue.emptySegment":
+      "The path must not contain an empty or . segment.",
+    "settings.workflow.completion.pathIssue.parentTraversal":
+      "The path must not contain a .. segment.",
+    "settings.workflow.completion.pathIssue.drivePrefix":
+      "The path must not contain a Windows drive prefix.",
+    "settings.workflow.completion.pathIssue.reservedName":
+      "The path must not use a Windows reserved device name.",
+    "settings.workflow.completion.pathIssue.invalidGlobstar":
+      "The ** wildcard must be a complete path segment.",
+    "settings.workflow.completion.pathIssue.segmentTooLong":
+      "Each path segment must not exceed 255 bytes or UTF-16 units.",
+    "settings.workflow.completion.pathIssue.tooDeep":
+      "The path must not nest deeper than 32 directories.",
     "settings.workflow.field.retry": "Retry on failure",
     "settings.workflow.field.retryMaxRetries": "Max retries",
     "settings.workflow.field.retryInitialDelay": "First wait (seconds)",

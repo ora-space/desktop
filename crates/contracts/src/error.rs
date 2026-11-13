@@ -126,6 +126,18 @@ pub struct WorkflowNodeOutputChangedParams {
     pub actual: Option<String>,
 }
 
+/// Reports that a confirmation referenced a signal other than the stored current one.
+///
+/// A stale confirmation must be re-read and retried instead of being applied to a newer signal.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowNodeSignalChangedParams {
+    pub node_id: String,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+}
+
 /// Enumerates the declared reasons an awaiting interactive turn is not complete.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -137,8 +149,27 @@ pub enum WorkflowNodeCompletionBlockerKind {
     TurnUnknown,
     /// The workflow's opening turn settled normally, but the user has not confirmed the step.
     TurnUnconfirmed,
+    /// The current turn has no accepted agent completion signal.
+    AgentSignalPending,
+    /// The current turn has an accepted signal, but no human has confirmed it yet.
+    AgentConfirmationPending,
     StructuredInvalid,
     OutputMissing,
+    /// No existing workspace file matched a declared `completion.files` entry.
+    FileMissing,
+    /// A declared `mustChange` file exists but is unchanged from the node's baseline.
+    FileUnchanged,
+}
+
+/// Carries the declared input a blocker refers to, so a client can name it without parsing text.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowNodeCompletionBlockerParams {
+    /// The original `completion.files[].path` declaration that produced the blocker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
 }
 
 /// Carries one blocker of a rejected completion with the detail its kind does not encode.
@@ -151,6 +182,10 @@ pub struct WorkflowNodeCompletionBlocker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
+    /// Structured blocker input, such as the declared file path, when the kind has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub params: Option<WorkflowNodeCompletionBlockerParams>,
 }
 
 /// Lists every blocker that stops a completion before an explicit force.
@@ -365,6 +400,7 @@ pub enum PublicError {
     WorkflowNodeIncomplete(WorkflowNodeIncompleteParams),
     WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams),
     WorkflowNodeOutputChanged(WorkflowNodeOutputChangedParams),
+    WorkflowNodeSignalChanged(Box<WorkflowNodeSignalChangedParams>),
 }
 
 impl PublicError {
@@ -511,6 +547,7 @@ impl PublicError {
             Self::WorkflowNodeIncomplete(_) => "workflow_node_incomplete",
             Self::WorkflowNodeTurnChanged(_) => "workflow_node_turn_changed",
             Self::WorkflowNodeOutputChanged(_) => "workflow_node_output_changed",
+            Self::WorkflowNodeSignalChanged(_) => "workflow_node_signal_changed",
         }
     }
 }
@@ -553,7 +590,8 @@ mod tests {
         PluginConfigurationValidationParams, PluginPackageInvalidParams, PublicError, RequestId,
         SessionMcpSetupFailedParams, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
         WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
-        WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
+        WorkflowNodeCompletionBlockerParams, WorkflowNodeIncompleteParams,
+        WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
         WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
@@ -748,6 +786,7 @@ mod tests {
                 blockers: vec![WorkflowNodeCompletionBlocker {
                     kind: WorkflowNodeCompletionBlockerKind::TurnStopped,
                     message: None,
+                    params: None,
                 }],
             }),
             PublicError::WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams {
@@ -763,6 +802,11 @@ mod tests {
                 expected: Some("sha256:abc".to_string()),
                 actual: Some("sha256:def".to_string()),
             }),
+            PublicError::WorkflowNodeSignalChanged(Box::new(WorkflowNodeSignalChangedParams {
+                node_id: "review".to_string(),
+                expected: Some("signal-1".to_string()),
+                actual: Some("signal-2".to_string()),
+            })),
         ];
 
         for error in &samples {
@@ -896,7 +940,8 @@ mod tests {
                 | PublicError::WorkflowNodeNotDiagnosable(_)
                 | PublicError::WorkflowNodeIncomplete(_)
                 | PublicError::WorkflowNodeTurnChanged(_)
-                | PublicError::WorkflowNodeOutputChanged(_) => {}
+                | PublicError::WorkflowNodeOutputChanged(_)
+                | PublicError::WorkflowNodeSignalChanged(_) => {}
             }
         }
 
@@ -907,7 +952,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 123);
+        assert_eq!(samples.len(), 124);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

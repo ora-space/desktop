@@ -204,9 +204,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // The refresh reconnects the delivered MCP servers before responding, so its inactivity
         // window widens with the snapshot just like `session/new` does.
         let window = session_setup_window(&snapshot);
+        let mut servers = snapshot.servers().to_vec();
+        servers.extend(self.session_mcp.host_mcp_servers());
         let request =
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(snapshot.servers().to_vec());
+                .mcp_servers(servers);
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,

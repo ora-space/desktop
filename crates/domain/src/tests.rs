@@ -2,8 +2,9 @@ use crate::{
     AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME, DomainModelError,
     HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, ScheduledTask,
     ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
-    ScheduledTaskWeekday, Session, SessionId, SessionMcpSelection, SessionStatus, Skill, SkillId,
-    Task, TaskId, WorkspaceId, Worktree, WorktreeActivity, WorktreeBaseline,
+    ScheduledTaskWeekday, Session, SessionHostCapabilities, SessionId, SessionMcpSelection,
+    SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId, Worktree, WorktreeActivity,
+    WorktreeBaseline,
 };
 use pretty_assertions::assert_eq;
 
@@ -95,6 +96,7 @@ fn constructs_schema_backed_entities() {
             status: SessionStatus::Running,
             history_state: HistoryState::Writable,
             mcp_selection: SessionMcpSelection::Automatic,
+            host_capabilities: SessionHostCapabilities::None,
             audit_fields: audit_fields.clone(),
         }
     );

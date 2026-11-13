@@ -53,6 +53,8 @@ fn every_human_turn_uses_the_frozen_policy_after_a_draft_edit() {
                 node_run_id: admitted,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy: _,
+                auto_accept: _,
             } = &admission
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
@@ -63,9 +65,16 @@ fn every_human_turn_uses_the_frozen_policy_after_a_draft_edit() {
                 step_boundary.starts_with("<workflow_step_boundary>"),
                 "every human turn carries the step boundary"
             );
-            end_human_turn(&pool, &sessions_root, &transitions, &node_run_id, None)
-                .await
-                .unwrap();
+            end_human_turn(
+                &pool,
+                &sessions_root,
+                &temp.path().join("baselines"),
+                &transitions,
+                &node_run_id,
+                None,
+            )
+            .await
+            .unwrap();
         }
         assert_eq!(
             repository

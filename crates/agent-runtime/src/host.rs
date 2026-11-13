@@ -8,9 +8,10 @@
 
 use crate::error::RuntimeError;
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
+use agent_client_protocol_schema::v1::McpServer;
 use ora_domain::{
-    AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
-    SessionTitle, WorkspaceId,
+    AgentRef, HistoryState, PluginId, Session, SessionHostCapabilities, SessionId,
+    SessionMcpSelection, SessionStatus, SessionTitle, WorkspaceId,
 };
 use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
@@ -153,8 +154,39 @@ pub trait SessionSetup: Clone + Send + Sync + 'static {
     /// Creates a session-local view without mutating the shared source.
     fn with_selection(&self, selection: SessionMcpSelection) -> Self;
 
+    /// Creates a workflow-owned view that also carries host-only capabilities.
+    ///
+    /// Ordinary sessions must use [`Self::with_selection`], which excludes those capabilities even
+    /// when the same host implements them.
+    fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        self.with_selection(selection)
+    }
+
+    /// Creates the session view implied by the capabilities the session was created with.
+    ///
+    /// The frozen node decides whether the completion tool is present, and the persisted session
+    /// carries that decision across a restart, so restore and creation share this one mapping.
+    fn view_for_session(
+        &self,
+        selection: SessionMcpSelection,
+        capabilities: SessionHostCapabilities,
+    ) -> Self {
+        match capabilities {
+            SessionHostCapabilities::None => self.with_selection(selection),
+            SessionHostCapabilities::WorkflowCompletion => self.workflow_view(selection),
+        }
+    }
+
     /// The selection this view resolves.
     fn selection(&self) -> &SessionMcpSelection;
+
+    /// Host-owned servers delivered beside the selected plugin MCP servers.
+    ///
+    /// These are not part of the session selection or its revision; they are a runtime capability
+    /// the host injects into every ACP setup for this session view.
+    fn host_mcp_servers(&self) -> Vec<McpServer> {
+        Vec::new()
+    }
 
     /// Builds the secret-free Desired revision without producing ACP payloads.
     fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError>;

@@ -1447,6 +1447,109 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("deletes the right-clicked node from the canvas menu", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    fireEvent.contextMenu(agent.closest(".react-flow__node") ?? agent);
+    await user.click(await screen.findByRole("menuitem", { name: /^删除/ }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("Agent节点: 理解改动"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("aligns selected nodes from the canvas menu and undoes that move", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const understand = await screen.findByLabelText("Agent节点: 理解改动");
+    const quality = await screen.findByLabelText("条件分支节点: 质量门禁");
+    await user.click(understand.closest(".react-flow__node") ?? understand);
+    await user.keyboard("{Shift>}");
+    await user.click(quality.closest(".react-flow__node") ?? quality);
+    await user.keyboard("{/Shift}");
+    fireEvent.contextMenu(quality.closest(".react-flow__node") ?? quality);
+
+    const before = nodeGraphPosition("条件分支节点: 质量门禁");
+    await user.click(await screen.findByRole("menuitem", { name: "左对齐" }));
+    await waitFor(() => {
+      expect(nodeGraphPosition("条件分支节点: 质量门禁").x).not.toBe(before.x);
+    });
+    await user.keyboard("{Control>}z{/Control}");
+    await waitFor(() => {
+      expect(nodeGraphPosition("条件分支节点: 质量门禁")).toEqual(before);
+    });
+  });
+
+  it("duplicates the right-clicked node from the canvas menu", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    fireEvent.contextMenu(agent.closest(".react-flow__node") ?? agent);
+
+    expect(
+      await screen.findByRole("menuitem", { name: /原位复制/ }),
+    ).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: /粘贴/ })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: /原位复制/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+  });
+
+  it("duplicates the selected node beside it and undoes that copy in one step", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    await user.click(agent.closest(".react-flow__node") ?? agent);
+    await user.keyboard("{Control>}d{/Control}");
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+
+    await user.keyboard("{Control>}z{/Control}");
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(1);
+    });
+  });
+
+  it("pastes a copied node without disturbing text-field copy", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const agent = await screen.findByLabelText("Agent节点: 理解改动");
+    await user.click(agent.closest(".react-flow__node") ?? agent);
+    await user.keyboard("{Control>}c{/Control}");
+    await user.keyboard("{Control>}v{/Control}");
+
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+    });
+
+    const prompt = await screen.findByLabelText("自定义 Prompt");
+    fireEvent.keyDown(prompt, { key: "c", ctrlKey: true });
+    fireEvent.keyDown(prompt, { key: "v", ctrlKey: true });
+    expect(screen.getAllByLabelText("Agent节点: 理解改动")).toHaveLength(2);
+  });
+
   it("restores each workflow from its React Flow viewport snapshot", async () => {
     const user = userEvent.setup();
     renderEditor();

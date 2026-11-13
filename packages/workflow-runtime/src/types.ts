@@ -205,9 +205,24 @@ export interface WorkflowAgentRetryPolicy {
   initialDelaySeconds: number;
 }
 
+/** One file a node declares as a completion deliverable. */
+export interface WorkflowAgentCompletionFile {
+  /** Workspace-relative POSIX path or minimal glob (`*`, `**`, `?`). */
+  path: string;
+  /** Require at least one matching existing file to differ from the node's baseline. */
+  mustChange?: boolean;
+}
+
+/** Optional `agentConfig.completion` declaration checked when the node completes. */
+export interface WorkflowAgentCompletion {
+  /** Between 1 and 32 declarations. */
+  files: WorkflowAgentCompletionFile[];
+}
+
 /** Transport-neutral execution contract for an Agent node. */
 export interface WorkflowAgentConfig {
-  schemaVersion: 3;
+  /** Shape version; declaring `completion` or `completionSignal` requires version 4. */
+  schemaVersion: 3 | 4;
   executor: {
     agentCli: string;
     modelId: string;
@@ -219,6 +234,10 @@ export interface WorkflowAgentConfig {
   prompt: string;
   /** Opt the node into a persistent interactive session that pauses for human input. */
   interactive?: boolean;
+  /** How an interactive node decides its settled turn is complete; absent is `end_turn`. */
+  completionSignal?: "agent" | "end_turn" | null;
+  /** Accept an agent signal after the turn settles without waiting for the user. */
+  autoAcceptAgentCompletion?: boolean;
   /** Silence handling for this node's prompts; absent or null keeps the default timeout. */
   promptInactivity?: "timeout" | "wait" | null;
   /**
@@ -227,6 +246,8 @@ export interface WorkflowAgentConfig {
    */
   /** Optional structured parsing performed in addition to the stable raw output. */
   outputContract?: WorkflowAgentOutputContract;
+  /** Optional deliverables checked when the node completes; requires schemaVersion 4. */
+  completion?: WorkflowAgentCompletion;
   /** Automatic retry after retryable failures; absent means the default policy. */
   retry?: WorkflowAgentRetryPolicy;
 }
@@ -376,8 +397,12 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_refused"
   | "turn_unknown"
   | "turn_unconfirmed"
+  | "agent_signal_pending"
+  | "agent_confirmation_pending"
   | "structured_invalid"
-  | "output_missing";
+  | "output_missing"
+  | "file_missing"
+  | "file_unchanged";
 
 /** One completion blocker with implementation detail the UI may present as a hint. */
 export interface WorkflowNodeCompletionBlocker {
@@ -423,6 +448,24 @@ export interface WorkflowNodeTurnKey {
   endedSeq: number;
 }
 
+/** How an interactive node decides its settled turn is complete. */
+export type WorkflowNodeCompletionPolicy = "agent" | "end_turn";
+
+/** One accepted agent completion signal bound to the turn it settled. */
+export interface WorkflowNodeAgentSignal {
+  signalId: string;
+  /** Epoch milliseconds when the completion tool accepted the request. */
+  requestedAt: number;
+  turnKey: WorkflowNodeTurnKey;
+}
+
+/** Who approved an accepted agent completion signal. */
+export interface WorkflowNodeCompletionConfirmation {
+  by: "human" | "auto";
+  /** Epoch milliseconds when the approval was committed. */
+  at: number;
+}
+
 /**
  * Read-only completion preview persisted as `payload.completion` on a parked interactive node.
  *
@@ -452,6 +495,16 @@ export interface WorkflowNodeCompletion {
   outputDigest?: string;
   /** Cleanup timed out before the actor settled; `prepare` may still repair this snapshot. */
   provisional: boolean;
+  /** Policy frozen at park; absent means the legacy `end_turn` policy. */
+  completionPolicy?: WorkflowNodeCompletionPolicy;
+  /** The accepted completion request for this turn, if the agent signaled. */
+  agentSignal?: WorkflowNodeAgentSignal;
+  /** The human or auto approval of `agentSignal`. */
+  confirmation?: WorkflowNodeCompletionConfirmation;
+  /** Server-derived attribution for the committed completion. */
+  requester?: "human" | "agent";
+  /** Accept an agent signal after the turn settles without waiting for the user. */
+  autoAcceptAgentCompletion?: boolean;
   /** No blockers and not provisional; the node can advance without an explicit force. */
   ready: boolean;
   /**
@@ -461,6 +514,15 @@ export interface WorkflowNodeCompletion {
    * a plain completion would still be rejected, and only `confirmInitialTurn` lifts this gate.
    */
   needsConfirmation: boolean;
+  /**
+   * The agent signaled this turn and its approval is still missing.
+   *
+   * Consumers confirm with `confirmAgentCompletion: { signalId }`; the signal is visible so a stale
+   * id can be detected and re-read instead of being applied to a newer turn.
+   */
+  requiresAgentConfirmation?: boolean;
+  /** The `agent` policy turn has no accepted signal yet, so only force can complete it. */
+  awaitsAgentSignal?: boolean;
 }
 
 /** Structured failure persisted on a node run as `payload.error_detail`. */

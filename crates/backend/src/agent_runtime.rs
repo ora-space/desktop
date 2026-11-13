@@ -102,6 +102,8 @@ pub(crate) struct AgentRuntimeSetup {
     pub sessions_root: PathBuf,
     pub scheduler: Scheduler,
     pub app_events: AppEventPublisher,
+    /// Host-owned MCP servers delivered beside the selected plugin servers.
+    pub host_mcp_servers: Vec<agent_client_protocol_schema::v1::McpServer>,
 }
 
 /// Builds the Desktop runtime, reconciling stale rows and starting one supervisor per agent.
@@ -116,10 +118,12 @@ pub(crate) fn open_agent_runtime(
         sessions_root,
         scheduler,
         app_events,
+        host_mcp_servers,
     } = setup;
     Ok(AgentRuntimeManager::new(
         ora_agent_runtime::AgentRuntimeSetup {
-            session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone()),
+            session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone())
+                .with_host_servers(host_mcp_servers),
             attach: plugin_host,
             store: DesktopSessionStore { pool: pool.clone() },
             directory: DesktopWorkspaceDirectory {
@@ -275,8 +279,16 @@ impl SessionSetup for SessionMcpHost {
         SessionMcpHost::with_selection(self, selection)
     }
 
+    fn workflow_view(&self, selection: SessionMcpSelection) -> Self {
+        SessionMcpHost::workflow_view(self, selection)
+    }
+
     fn selection(&self) -> &SessionMcpSelection {
         &self.selection
+    }
+
+    fn host_mcp_servers(&self) -> Vec<agent_client_protocol_schema::v1::McpServer> {
+        SessionMcpHost::host_mcp_servers(self)
     }
 
     fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError> {

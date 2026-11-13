@@ -33,7 +33,7 @@ async fn complete(
 async fn close_before_dispatch_never_executes_and_survives_recovery() -> TestResult {
     let fixture = Fixture::new()?;
     let root = fixture.directory.path().join("s");
-    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone());
+    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone())?;
     let scope = ScopeId::new();
     host.create_scope(scope)?;
     let mut spec = RunSpec::new(
@@ -51,7 +51,7 @@ async fn close_before_dispatch_never_executes_and_survives_recovery() -> TestRes
     host.start(intent.clone())?;
     host.close(scope)?;
     drop(host);
-    let mut host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone());
+    let mut host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone())?;
     let expected = RunSnapshot {
         id: intent.run,
         launch: LaunchFact::NotStarted("cancelled before guardian acceptance".into()),
@@ -74,7 +74,7 @@ async fn close_before_dispatch_never_executes_and_survives_recovery() -> TestRes
 async fn host_projection_and_replay_do_not_repeat_side_effects() -> TestResult {
     let fixture = Fixture::new()?;
     let root = fixture.directory.path().join("s");
-    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone());
+    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone())?;
     let scope = ScopeId::new();
     host.create_scope(scope)?;
     let mut spec = RunSpec::new(
@@ -101,7 +101,7 @@ async fn host_projection_and_replay_do_not_repeat_side_effects() -> TestResult {
     let state = recover(&root).await?;
     let access = state.guardian_access(scope)?.ok_or("missing access")?;
     let pid = guardian_pid(&access).await?;
-    let mut host = HostCoordinator::new(state, fixture.executable.clone());
+    let mut host = HostCoordinator::new(state, fixture.executable.clone())?;
     assert_eq!(
         host.query_run(intent.run)?.coordination,
         HostCoordination::Pending
@@ -137,7 +137,7 @@ async fn host_projection_and_replay_do_not_repeat_side_effects() -> TestResult {
         Some(expected.clone())
     );
     drop(host);
-    let host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone());
+    let host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone())?;
     assert_eq!(host.query_run(intent.run)?.last_observed, Some(expected));
     assert_eq!(fs::read(fixture.directory.path().join("count"))?, b"x");
     Ok(())
@@ -155,7 +155,7 @@ async fn unavailable_scope_does_not_stall_independent_work() -> TestResult {
     fs::copy("/bin/false", &failed_guardian)?;
     let _ = state.start_guardian(unavailable, &failed_guardian).await;
     assert!(state.guardian_access(unavailable)?.is_some());
-    let mut host = HostCoordinator::new(state, fixture.executable.clone());
+    let mut host = HostCoordinator::new(state, fixture.executable.clone())?;
     let scope = ScopeId::new();
     host.create_scope(scope)?;
     let intent = HostRunIntent {
@@ -187,7 +187,7 @@ async fn unavailable_scope_does_not_stall_independent_work() -> TestResult {
 async fn recovered_host_finishes_previously_accepted_stop() -> TestResult {
     let fixture = Fixture::new()?;
     let root = fixture.directory.path().join("s");
-    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone());
+    let mut host = HostCoordinator::new(HostState::create(&root)?, fixture.executable.clone())?;
     let scope = ScopeId::new();
     host.create_scope(scope)?;
     let intent = HostRunIntent {
@@ -212,7 +212,7 @@ async fn recovered_host_finishes_previously_accepted_stop() -> TestResult {
     }
     host.stop(intent.run)?;
     drop(host);
-    let mut host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone());
+    let mut host = HostCoordinator::new(recover(&root).await?, fixture.executable.clone())?;
     assert!(host.query_run(intent.run)?.stop_requested);
     assert_eq!(
         complete(&mut host, intent.run).await?,

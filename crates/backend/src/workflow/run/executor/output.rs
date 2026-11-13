@@ -1,7 +1,11 @@
+use super::NodeExecutionError;
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::MessageId;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::ToolCallId;
+use ora_application::{
+    AgentOutputContract, StructuredOutputError, extract_json_object, validate_against_schema,
+};
 use std::collections::HashSet;
 
 /// Accumulates only the final assistant deliverable produced by one prompt turn.
@@ -149,5 +153,50 @@ mod tests {
             ContentBlock::Text(TextContent::new("world")),
         )));
         assert_eq!(accumulator.into_output(), Some("hello world".to_string()));
+    }
+}
+
+/// Resolves a completed node's final response into the output variables to commit.
+///
+/// A structured contract parses the response as a JSON object and validates it against the schema.
+/// The raw result remains the node's stable `output`; absent and legacy text contracts perform no
+/// additional parsing.
+pub(crate) fn apply_output_contract(
+    contract: Option<&AgentOutputContract>,
+    final_text: Option<String>,
+    node_id: &str,
+) -> Result<(Option<String>, Option<serde_json::Value>), NodeExecutionError> {
+    match contract {
+        None => Ok((final_text, None)),
+        Some(AgentOutputContract::None) => Ok((final_text, None)),
+        Some(AgentOutputContract::Text) => Ok((final_text, None)),
+        Some(AgentOutputContract::Structured {
+            schema,
+            text_exposure: _,
+        }) => {
+            let Some(text) = final_text else {
+                return Err(NodeExecutionError::StructuredOutput {
+                    node_id: node_id.to_string(),
+                    source: StructuredOutputError::NotJsonObject {
+                        reason: "the agent produced no final response".to_string(),
+                    },
+                    output: None,
+                });
+            };
+            let structured = match extract_json_object(&text).and_then(|value| {
+                validate_against_schema(&value, schema)?;
+                Ok(value)
+            }) {
+                Ok(structured) => structured,
+                Err(source) => {
+                    return Err(NodeExecutionError::StructuredOutput {
+                        node_id: node_id.to_string(),
+                        source,
+                        output: Some(text),
+                    });
+                }
+            };
+            Ok((Some(text), Some(structured)))
+        }
     }
 }

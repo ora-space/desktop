@@ -1,3 +1,4 @@
+use super::agent_config::AgentCompletionSignal;
 use crate::workflow_run::engine::start_input::StartInputFieldType;
 use crate::workflow_run::engine::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError, NodeType,
@@ -312,11 +313,15 @@ fn parses_agent_config_into_the_model() {
             prompt: "do a".to_string(),
             // The linear_chain fixture omits `interactive`, so the default must be false.
             interactive: false,
+            // The linear_chain fixture omits `completionSignal`, so legacy end-turn applies.
+            completion_signal: AgentCompletionSignal::EndTurn,
+            auto_accept_agent_completion: false,
             // The linear_chain fixture omits `outputContract`, so the default must be `None`.
             output_contract: None,
             // The linear_chain fixture omits `retry`, so the default policy applies.
             retry: crate::workflow_run::engine::AgentRetryPolicy::default(),
             prompt_inactivity: ora_domain::PromptInactivityPolicy::Timeout,
+            completion: None,
         }),
         condition_config: None,
         aggregator_config: None,

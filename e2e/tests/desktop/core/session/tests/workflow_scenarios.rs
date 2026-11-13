@@ -16,8 +16,8 @@ use ora_contracts::*;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -25,6 +25,21 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const AGENT_CLI: &str = "official/ora-space.opencode";
 /// Generous deadline: composite scenarios open one session per round through a real backend.
 const RUN_DEADLINE: Duration = Duration::from_secs(20);
+
+/// Polls until the Effect worker materializes one expected Skill file.
+///
+/// The Effect suite allows heavier plugin IPC and disk work than ordinary session readiness, so
+/// this local deadline matches its 15-second budget without changing the shared readiness timeout.
+fn wait_for_materialized_skill(path: &Path) -> TestResult {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if path.is_file() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!("skill package was not materialized at {}", path.display()).into())
+}
 
 /// One executed run together with the fake-agent journal for failure diagnostics.
 struct ScenarioRun {
@@ -192,6 +207,11 @@ impl WorkflowHarness {
             published_workflow_ids: Vec::new(),
             _setup: setup,
         })
+    }
+
+    /// The seeded main Workspace the Effect worker materializes Skills into.
+    fn workspace_root(&self) -> PathBuf {
+        self._setup.root().join("workspace")
     }
 
     /// Publishes the graph and drives one run to a terminal status with the given Start values.
@@ -1555,8 +1575,10 @@ fn file_typed_start_values_render_as_references_and_reject_unsafe_paths() -> Tes
 /// An installed Skill plugin contributes a skill the run can bind: deployment freezes the
 /// binding into the materialization receipt, the agent's prompt opens with the mandatory
 /// `/name` invocation contract naming the materialized worktree copy, and the node output
-/// stays the agent's answer. Disabled bindings remain portable without blocking deployment,
-/// while an enabled binding to a skill that does not exist fails run creation actionably.
+/// stays the agent's answer. The on-disk directory keeps the Skill's canonical `_` while the
+/// prompt's `/name` spelling normalizes it to `-`. Disabled bindings remain portable without
+/// blocking deployment, while an enabled binding to a skill that does not exist fails run
+/// creation actionably.
 #[test]
 fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
     ora_logging::with_trace_logging(|| {
@@ -1565,6 +1587,13 @@ fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
                 install_skill_plugin(home, "review-pack", "code_review")?;
                 Ok(())
             })?;
+            let materialized_skill = harness
+                .workspace_root()
+                .join(".opencode")
+                .join("skills")
+                .join("code_review")
+                .join("SKILL.md");
+            wait_for_materialized_skill(&materialized_skill)?;
             let graph = json!({
                 "nodes": [
                     {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[]}},
@@ -1601,10 +1630,19 @@ fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
                 "missing invocation: {prompt:?}"
             );
             // The discovery root is the agent plugin's declared Effect Resource
-            // (`.opencode/skills` for this fixture), not a host-wide convention.
+            // (`.opencode/skills` for this fixture), not a host-wide convention. The prompt names
+            // the directory Effect materialized, not the Agent invocation spelling.
             assert!(
-                prompt.contains(".opencode/skills/code-review"),
+                prompt.contains(".opencode/skills/code_review"),
                 "the prompt must name the materialized worktree copy: {prompt:?}"
+            );
+            assert!(
+                !prompt.contains(".opencode/skills/code-review"),
+                "the prompt must not substitute the invocation spelling for the disk identity: {prompt:?}"
+            );
+            assert!(
+                materialized_skill.is_file(),
+                "the prompt path must exist in the worktree: {materialized_skill:?}"
             );
             assert!(
                 !prompt.contains("nonexistent_skill"),

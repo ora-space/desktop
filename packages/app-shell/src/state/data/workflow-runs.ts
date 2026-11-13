@@ -21,8 +21,10 @@ import {
   type GraphWorkflowRun,
   type WorkflowDefinition,
   type WorkflowNodeConversationItem,
+  type WorkflowNodeAgentSignal,
   type WorkflowNodeCompletion,
   type WorkflowNodeCompletionBlocker,
+  type WorkflowNodeCompletionConfirmation,
   type WorkflowNodeErrorDetail,
   type WorkflowNodeAiDiagnosis,
   type WorkflowNodeFileChange,
@@ -317,6 +319,8 @@ export function useCompleteWorkflowNode() {
        * `turn_unconfirmed`; it is a normal completion and must never be combined with `force`.
        */
       confirmInitialTurn?: boolean;
+      /** Confirms the accepted agent signal the user saw; a stale id is rejected. */
+      confirmAgentCompletion?: { signalId: string };
     }) =>
       client.workflowRun.completeNode({
         runId: input.runId,
@@ -325,6 +329,9 @@ export function useCompleteWorkflowNode() {
         ...(input.confirmInitialTurn === undefined
           ? {}
           : { confirmInitialTurn: input.confirmInitialTurn }),
+        ...(input.confirmAgentCompletion === undefined
+          ? {}
+          : { confirmAgentCompletion: input.confirmAgentCompletion }),
       }),
     onSuccess: (_result, variables) => {
       invalidateRunViews(queryClient, variables.runId);
@@ -728,7 +735,7 @@ function projectPersistedNodeState(
 ): GraphWorkflowNodeState {
   const payload =
     nodeRun.payload != null ? parseNodePayload(nodeRun.payload) : null;
-  const completion = parseCompletion(payload?.completion);
+  const completion = parseCompletion(payload?.completion, payload);
   const errorDetail = parseErrorDetail(payload?.error_detail);
   const aiDiagnosis = parseAiDiagnosis(payload?.ai_diagnosis);
   const parsedRetryWait = parseRetryWait(payload?.retry_wait);
@@ -860,6 +867,11 @@ function parseNodePayload(payload: string): {
   retry_wait?: unknown;
   auto_retry?: unknown;
   completion?: unknown;
+  completionPolicy?: unknown;
+  agentSignal?: unknown;
+  confirmation?: unknown;
+  requester?: unknown;
+  autoAcceptAgentCompletion?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -876,6 +888,11 @@ function parseNodePayload(payload: string): {
       retry_wait?: unknown;
       auto_retry?: unknown;
       completion?: unknown;
+      completionPolicy?: unknown;
+      agentSignal?: unknown;
+      confirmation?: unknown;
+      requester?: unknown;
+      autoAcceptAgentCompletion?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -919,6 +936,19 @@ function parseNodePayload(payload: string): {
       ...(value.completion !== undefined
         ? { completion: value.completion }
         : {}),
+      ...(value.completionPolicy !== undefined
+        ? { completionPolicy: value.completionPolicy }
+        : {}),
+      ...(value.agentSignal !== undefined
+        ? { agentSignal: value.agentSignal }
+        : {}),
+      ...(value.confirmation !== undefined
+        ? { confirmation: value.confirmation }
+        : {}),
+      ...(value.requester !== undefined ? { requester: value.requester } : {}),
+      ...(value.autoAcceptAgentCompletion !== undefined
+        ? { autoAcceptAgentCompletion: value.autoAcceptAgentCompletion }
+        : {}),
     };
   } catch {
     return null;
@@ -931,7 +961,19 @@ function parseNodePayload(payload: string): {
  * A malformed or absent snapshot returns `undefined`, which callers must treat as the
  * conservative `turn_unknown` state rather than inferring readiness from old node runs.
  */
-function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
+function parseCompletion(
+  value: unknown,
+  payload:
+    | {
+        completionPolicy?: unknown;
+        agentSignal?: unknown;
+        confirmation?: unknown;
+        requester?: unknown;
+        autoAcceptAgentCompletion?: unknown;
+      }
+    | null
+    | undefined,
+): WorkflowNodeCompletion | undefined {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -976,6 +1018,26 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
   const turnOrigin = parseTurnOrigin(snapshot.turnOrigin);
   const stopCause = parseStopCause(snapshot.stopCause);
   const parkKind = parseParkKind(snapshot.parkKind);
+  const completionPolicy: WorkflowNodeCompletion["completionPolicy"] =
+    payload?.completionPolicy === "agent" ? "agent" : "end_turn";
+  const agentSignal = parseAgentSignal(payload?.agentSignal);
+  const confirmation = parseCompletionConfirmation(payload?.confirmation);
+  const autoAcceptAgentCompletion = payload?.autoAcceptAgentCompletion === true;
+  const requester: WorkflowNodeCompletion["requester"] =
+    payload?.requester === "agent"
+      ? "agent"
+      : payload?.requester === "human"
+        ? "human"
+        : undefined;
+  // The backend materializes the agent gate into blockers, so the card derives its state from the
+  // same fact as readiness. A precise stop already won the gate and carries no signal blocker, so
+  // an abnormal park with an accepted signal must not offer a confirmation that cannot succeed.
+  const requiresAgentConfirmation = blockers.some(
+    (blocker) => blocker.kind === "agent_confirmation_pending",
+  );
+  const awaitsAgentSignal = blockers.some(
+    (blocker) => blocker.kind === "agent_signal_pending",
+  );
   return {
     ...(typeof snapshot.userSeq === "number"
       ? { userSeq: snapshot.userSeq }
@@ -997,12 +1059,62 @@ function parseCompletion(value: unknown): WorkflowNodeCompletion | undefined {
       ? { outputDigest: snapshot.outputDigest }
       : {}),
     provisional,
+    completionPolicy,
+    ...(agentSignal !== undefined ? { agentSignal } : {}),
+    ...(confirmation !== undefined ? { confirmation } : {}),
+    ...(requester !== undefined ? { requester } : {}),
+    ...(autoAcceptAgentCompletion ? { autoAcceptAgentCompletion } : {}),
     ready: blockers.length === 0 && !provisional,
     needsConfirmation:
       !provisional &&
       blockers.length === 1 &&
       blockers[0]?.kind === "turn_unconfirmed",
+    requiresAgentConfirmation,
+    awaitsAgentSignal,
   };
+}
+
+/** Parses one accepted agent signal, dropping a malformed id or turn key. */
+function parseAgentSignal(value: unknown): WorkflowNodeAgentSignal | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const signal = value as {
+    signalId?: unknown;
+    requestedAt?: unknown;
+    turnKey?: unknown;
+  };
+  const turnKey = parseTurnKey(signal.turnKey);
+  if (
+    typeof signal.signalId !== "string" ||
+    signal.signalId === "" ||
+    typeof signal.requestedAt !== "number" ||
+    turnKey === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    signalId: signal.signalId,
+    requestedAt: signal.requestedAt,
+    turnKey,
+  };
+}
+
+/** Parses the committed approval of an accepted agent signal. */
+function parseCompletionConfirmation(
+  value: unknown,
+): WorkflowNodeCompletionConfirmation | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const confirmation = value as { by?: unknown; at?: unknown };
+  if (
+    (confirmation.by !== "human" && confirmation.by !== "auto") ||
+    typeof confirmation.at !== "number"
+  ) {
+    return undefined;
+  }
+  return { by: confirmation.by, at: confirmation.at };
 }
 
 /** Keeps an unknown future turn origin absent instead of guessing whose turn it was. */
@@ -1072,6 +1184,8 @@ function normalizeCompletionBlockerKind(
     case "turn_refused":
     case "turn_unknown":
     case "turn_unconfirmed":
+    case "agent_signal_pending":
+    case "agent_confirmation_pending":
     case "structured_invalid":
     case "output_missing":
       return kind;

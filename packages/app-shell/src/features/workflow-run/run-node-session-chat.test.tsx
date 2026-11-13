@@ -776,6 +776,58 @@ describe("RunNodeSessionChat", () => {
     errorToast.mockRestore();
   });
 
+  it("renders file blockers from a rejected completion in the step card", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "id");
+    const { handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      readyCompletion(),
+    );
+    handlers.completeWorkflowNode = async () => {
+      throw new RemoteContractError(
+        {
+          code: "workflow_node_incomplete",
+          params: {
+            nodeId,
+            blockers: [
+              {
+                kind: "file_missing",
+                params: { path: "reports/plan.md" },
+              },
+            ],
+          },
+          requestId: "550e8400-e29b-41d4-a716-446655440001",
+        },
+        null,
+      );
+    };
+
+    await userEvent.click(screen.getByTestId("complete-ready-node"));
+
+    expect(await screen.findByText("上次完成被拒绝")).toBeInTheDocument();
+    expect(
+      screen.getByText("缺少文件：reports/plan.md 不存在。"),
+    ).toBeInTheDocument();
+    errorToast.mockRestore();
+  });
+
+  it("localizes the file baseline warning in the step card", () => {
+    renderDock("awaiting_input", false, [], undefined, undefined, undefined, {
+      ...readyCompletion(),
+      warnings: ["file_check_unavailable"],
+    });
+
+    expect(
+      screen.getByText(
+        "没有找到节点启动时的文件基线，无法判断“必须变更”的文件；只检查了文件是否存在。",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     ["turn_stopped", "已停止：本轮生成被中断。"],
     ["turn_truncated", "被截断：本轮达到输出上限。"],
@@ -973,6 +1025,161 @@ describe("RunNodeSessionChat", () => {
       expect.objectContaining({ force: true }),
     );
     await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("confirms an accepted agent signal by its id without force", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("agent_confirmation_pending", false, {
+        turnOrigin: "human",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-1",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: true,
+        awaitsAgentSignal: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const button = screen.getByTestId("confirm-agent-completion");
+    expect(button).toHaveTextContent("确认并完成");
+    await userEvent.click(button);
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmAgentCompletion: { signalId: "signal-1" },
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("offers continue and the documented force exit for a first turn without a signal", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        awaitsAgentSignal: true,
+        requiresAgentConfirmation: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    expect(screen.queryByTestId("confirm-initial-turn")).toBeNull();
+    expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
+    await userEvent.click(screen.getByTestId("force-complete-node"));
+    await userEvent.click(screen.getByTestId("confirm-force-complete"));
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: true,
+        confirmInitialTurn: true,
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("confirms the opening turn together with an accepted agent signal", async () => {
+    const onNodeCompleted = vi.fn();
+    const { client, handlers } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      onNodeCompleted,
+      undefined,
+      blockedCompletion("turn_unconfirmed", false, {
+        turnOrigin: "workflow",
+        parkKind: "awaiting_user",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-1",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: true,
+        awaitsAgentSignal: false,
+      }),
+    );
+    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
+      completedRunResponse(),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const button = screen.getByTestId("confirm-agent-completion");
+    expect(button).toHaveTextContent("确认并完成");
+    await userEvent.click(button);
+
+    await waitFor(() =>
+      expect(completeSpy).toHaveBeenCalledWith({
+        runId,
+        nodeId,
+        force: false,
+        confirmInitialTurn: true,
+        confirmAgentCompletion: { signalId: "signal-1" },
+      }),
+    );
+    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+  });
+
+  it("shows the abnormal exit instead of a confirmation for a precise stop with a signal", () => {
+    const { client } = renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("turn_stopped", false, {
+        turnOrigin: "human",
+        parkKind: "abnormal",
+        stopCause: "prompt_timed_out",
+        completionPolicy: "agent",
+        agentSignal: {
+          signalId: "signal-stale",
+          requestedAt: 1,
+          turnKey: { userSeq: 1, endedSeq: 2 },
+        },
+        requiresAgentConfirmation: false,
+        awaitsAgentSignal: false,
+        autoAcceptAgentCompletion: true,
+      }),
+    );
+    const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
+
+    const card = screen.getByTestId("node-step-card");
+    expect(card).toHaveTextContent("异常停靠");
+    expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
+    expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+    expect(completeSpy).not.toHaveBeenCalled();
   });
 
   it("keeps a user-stopped turn awaiting input instead of reading as an abnormal stop", () => {

@@ -1,10 +1,11 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { RemoteContractError } from "@ora/contracts";
 import {
   IconAlertTriangle,
   IconCheck,
   IconPlayerSkipForward,
 } from "@tabler/icons-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -27,9 +28,11 @@ import {
 import type {
   GraphWorkflowNodeStatus,
   WorkflowNodeCompletion,
+  WorkflowNodeCompletionBlocker,
   WorkflowNodeCompletionBlockerKind,
   WorkflowNodeStopCause,
 } from "@ora/workflow-runtime";
+import type { WorkflowNodeIncompleteParams } from "@ora/contracts";
 import { useChatStore } from "../../chat-store-context";
 import { useContractsClient } from "../../contracts-client-context";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
@@ -110,6 +113,16 @@ export function RunNodeSessionChat({
   const interactive = interaction !== undefined;
   /** Force completion stays behind an explicit confirmation because it can advance half a turn. */
   const [forceOpen, setForceOpen] = useState(false);
+  /**
+   * Blockers from the latest rejected completion, tagged with the turn they describe. File checks
+   * run only when completion is clicked, so these cannot live in the park snapshot; showing them
+   * here reuses the same blocker reasons the card already renders while keeping a ready snapshot.
+   * Tagging the turn lets a later poll clear the rejection by derivation instead of an effect.
+   */
+  const [rejection, setRejection] = useState<{
+    identity: string;
+    blockers: WorkflowNodeCompletionBlocker[];
+  }>({ identity: "", blockers: [] });
   const completion = interaction?.completion ?? UNKNOWN_COMPLETION;
   // A node parked before completion snapshots existed has no preview to gate on. It keeps the
   // ordinary completion entry: the backend materializes the snapshot from the session history and
@@ -128,6 +141,17 @@ export function RunNodeSessionChat({
   const completionNeedsConfirmation = isAwaitingConfirmation(
     interaction?.completion,
   );
+  // An agent-policy turn whose accepted signal waits for the user's approval, or one that has not
+  // signaled yet. The backend materializes both gates into blockers and the card reads those.
+  const completionAgentConfirmation =
+    interaction?.completion?.requiresAgentConfirmation === true;
+  const completionAwaitingAgentSignal =
+    interaction?.completion?.awaitsAgentSignal === true;
+  // The opening turn's own confirmation, read from the materialized blockers rather than from the
+  // single-blocker shortcut: an agent-policy first turn also carries the signal blocker.
+  const openingTurnUnconfirmed = completion.blockers.some(
+    (blocker) => blocker.kind === "turn_unconfirmed",
+  );
   const completionParkKind = hasCompletionSnapshot
     ? completion.parkKind
     : undefined;
@@ -136,6 +160,7 @@ export function RunNodeSessionChat({
     hasCompletionSnapshot &&
     !completionProvisional &&
     !completionNeedsConfirmation &&
+    !completionAwaitingAgentSignal &&
     completionParkKind === "awaiting_user";
   // Timeout, truncation, refusal, unknown end, session crash, or an output-contract failure.
   const completionAbnormal =
@@ -155,9 +180,18 @@ export function RunNodeSessionChat({
     completionReady ||
     completionProvisional ||
     completionNeedsConfirmation ||
+    completionAgentConfirmation ||
+    completionAwaitingAgentSignal ||
     completionUserStopped;
-  /** Only a ready snapshot (or the legacy snapshot-less entry) offers a normal completion. */
-  const completionActionable = completionReady || !hasCompletionSnapshot;
+  /** A ready snapshot, an accepted agent signal, or the legacy snapshot-less entry is actionable. */
+  const completionActionable =
+    completionReady || completionAgentConfirmation || !hasCompletionSnapshot;
+
+  // A new turn or another node makes the previous rejection stale; keep it while the same turn
+  // is polled again so a ready snapshot still explains why the last click was refused.
+  const completionTurnIdentity = `${interaction?.nodeId ?? ""}:${completion.turnKey?.userSeq ?? ""}:${completion.turnKey?.endedSeq ?? ""}`;
+  const rejectionBlockers =
+    rejection.identity === completionTurnIdentity ? rejection.blockers : [];
 
   useEffect(() => {
     const existing = chatStore.getState().conversations[sessionId];
@@ -298,15 +332,71 @@ export function RunNodeSessionChat({
         ...(confirmInitialTurn ? { confirmInitialTurn: true } : {}),
       },
       {
-        onSuccess: () => onNodeCompleted?.(interaction.nodeId),
+        onSuccess: () => {
+          setRejection({
+            identity: completionTurnIdentity,
+            blockers: [],
+          });
+          onNodeCompleted?.(interaction.nodeId);
+        },
         // A rejected completion is a user-visible outcome, not a refresh: a stale turn or a
         // changed output must say so instead of silently leaving the card unchanged.
         onError: (error) => {
+          if (
+            error instanceof RemoteContractError &&
+            error.code === "workflow_node_incomplete"
+          ) {
+            const params = error.payload.params as WorkflowNodeIncompleteParams;
+            setRejection({
+              identity: completionTurnIdentity,
+              blockers: params.blockers.map((blocker) => ({
+                kind: blocker.kind,
+                params:
+                  blocker.params?.path === undefined
+                    ? {}
+                    : { path: blocker.params.path },
+              })),
+            });
+          }
           showContractError(error);
         },
       },
     );
   };
+
+  /** Confirms the accepted agent signal the user is looking at; stale ids are rejected. */
+  const handleCompleteAgent = useCallback(() => {
+    if (interaction === undefined) {
+      return;
+    }
+    const signalId = interaction.completion?.agentSignal?.signalId;
+    if (signalId === undefined) {
+      return;
+    }
+    // A first-turn signal still needs the opening turn's own explicit confirmation; the backend
+    // rejects the signal alone so one click cannot stand in for both gates.
+    complete.mutate(
+      {
+        runId: interaction.runId,
+        nodeId: interaction.nodeId,
+        force: false,
+        ...(openingTurnUnconfirmed ? { confirmInitialTurn: true } : {}),
+        confirmAgentCompletion: { signalId },
+      },
+      {
+        onSuccess: () => onNodeCompleted?.(interaction.nodeId),
+        onError: (error) => {
+          showContractError(error);
+        },
+      },
+    );
+  }, [
+    interaction,
+    complete,
+    onNodeCompleted,
+    showContractError,
+    openingTurnUnconfirmed,
+  ]);
 
   const stepCard = (() => {
     if (!interactive || status !== "awaiting_input") {
@@ -382,7 +472,7 @@ export function RunNodeSessionChat({
           <p className="mt-1.5 text-xs text-muted-foreground">
             {t("workflowRun.stepCard.provisional")}
           </p>
-        ) : completionNeedsConfirmation ? (
+        ) : completionNeedsConfirmation && !completionAgentConfirmation ? (
           <>
             <p className="mt-1.5 text-xs font-medium">
               {t("workflowRun.stepCard.unconfirmedTitle")}
@@ -392,6 +482,30 @@ export function RunNodeSessionChat({
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground/80">
               {t("workflowRun.stepCard.unconfirmedHint")}
+            </p>
+          </>
+        ) : completionAgentConfirmation ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentConfirmationTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentConfirmationReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentConfirmationHint")}
+            </p>
+          </>
+        ) : completionAwaitingAgentSignal ? (
+          <>
+            <p className="mt-1.5 text-xs font-medium">
+              {t("workflowRun.stepCard.agentSignalTitle")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("workflowRun.stepCard.agentSignalReason")}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              {t("workflowRun.stepCard.agentSignalHint")}
             </p>
           </>
         ) : completionUserStopped ? (
@@ -475,6 +589,34 @@ export function RunNodeSessionChat({
             ))}
           </ul>
         )}
+        {rejectionBlockers.length > 0 && (
+          <div className="mt-1.5">
+            <p className="text-xs font-medium">
+              {t("workflowRun.stepCard.completionRejectedTitle")}
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {rejectionBlockers.map((blocker, index) => (
+                <li
+                  key={`${blocker.kind}:${index}`}
+                  className="flex items-start gap-1.5 text-xs text-muted-foreground"
+                >
+                  <IconAlertTriangle
+                    className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    {t(completionBlockerReasonKey(blocker.kind), {
+                      path:
+                        typeof blocker.params?.path === "string"
+                          ? blocker.params.path
+                          : "",
+                    })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           {completionReady ? (
             <>
@@ -504,7 +646,9 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.continueChat")}
               </Button>
             </>
-          ) : completionNeedsConfirmation ? (
+          ) : completionNeedsConfirmation &&
+            !completionAgentConfirmation &&
+            !completionAwaitingAgentSignal ? (
             <>
               <Button
                 type="button"
@@ -530,6 +674,56 @@ export function RunNodeSessionChat({
                 onClick={() => void handleContinue(false)}
               >
                 {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAgentConfirmation ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="confirm-agent-completion"
+                disabled={actionDisabled}
+                aria-busy={complete.isPending}
+                onClick={handleCompleteAgent}
+              >
+                {complete.isPending ? (
+                  <Spinner className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <IconCheck className="size-3.5" aria-hidden="true" />
+                )}
+                {t("workflowRun.stepCard.confirmAgentAction")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+            </>
+          ) : completionAwaitingAgentSignal ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                data-testid="continue-current-step"
+                disabled={actionDisabled}
+                onClick={() => void handleContinue(false)}
+              >
+                {t("workflowRun.stepCard.continueStep")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="force-complete-node"
+                disabled={actionDisabled}
+                onClick={() => setForceOpen(true)}
+              >
+                {t("workflowRun.stepCard.forceAction")}
               </Button>
             </>
           ) : completionProvisional ? (
@@ -718,7 +912,11 @@ export function RunNodeSessionChat({
                       title={t("workflowRun.completeNode.action")}
                       aria-busy={complete.isPending}
                       disabled={!completeEnabled}
-                      onClick={() => handleComplete(false)}
+                      onClick={() =>
+                        completionAgentConfirmation
+                          ? handleCompleteAgent()
+                          : handleComplete(false)
+                      }
                     >
                       {complete.isPending ? (
                         <Spinner className="size-4" aria-hidden="true" />
@@ -763,7 +961,7 @@ export function RunNodeSessionChat({
                 {t("workflowRun.stepCard.forceTitle")}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {completionNeedsConfirmation
+                {openingTurnUnconfirmed
                   ? t("workflowRun.stepCard.forceDescriptionUnconfirmed")
                   : completionUserStopped
                     ? t("workflowRun.stepCard.forceDescriptionUserStopped")
@@ -780,7 +978,9 @@ export function RunNodeSessionChat({
                 disabled={complete.isPending}
                 onClick={() => {
                   setForceOpen(false);
-                  handleComplete(true);
+                  // The opening turn's own confirmation remains required even on the force
+                  // path; only `turn_unconfirmed` needs it (ADR D5).
+                  handleComplete(true, openingTurnUnconfirmed);
                 }}
               >
                 {t("workflowRun.stepCard.forceConfirm")}
@@ -810,6 +1010,9 @@ function completionWarningText(
   }
   if (warning === "history_unavailable") {
     return translate("workflowRun.stepCard.warning.history_unavailable");
+  }
+  if (warning === "file_check_unavailable") {
+    return translate("workflowRun.stepCard.warning.file_check_unavailable");
   }
   if (warning === "turn_not_settled") {
     return translate("workflowRun.stepCard.warning.turn_not_settled");
@@ -855,8 +1058,14 @@ const ABNORMAL_BLOCKER_REASON_KEYS: Record<
   turn_refused: "workflowRun.stepCard.abnormalReason.turn_refused",
   turn_unknown: "workflowRun.stepCard.abnormalReason.turn_unknown",
   turn_unconfirmed: "workflowRun.stepCard.abnormalReason.turn_unconfirmed",
+  agent_signal_pending:
+    "workflowRun.stepCard.abnormalReason.agent_signal_pending",
+  agent_confirmation_pending:
+    "workflowRun.stepCard.abnormalReason.agent_confirmation_pending",
   structured_invalid: "workflowRun.stepCard.abnormalReason.structured_invalid",
   output_missing: "workflowRun.stepCard.abnormalReason.output_missing",
+  file_missing: "workflowRun.stepCard.abnormalReason.file_missing",
+  file_unchanged: "workflowRun.stepCard.abnormalReason.file_unchanged",
 };
 
 /**

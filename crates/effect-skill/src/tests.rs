@@ -228,6 +228,95 @@ fn skill_planner_ignores_non_skill_resource_bindings() {
     );
 }
 
+/// Materializes one Skill through the production adapter so the on-disk directory keeps the
+/// canonical underscore even though an Agent invocation spelling may use a dash.
+#[test]
+fn skill_directory_materialization_preserves_underscores_in_its_canonical_name() {
+    let name =
+        SkillName::parse("OpenSpec_Explore").unwrap_or_else(|error| panic!("skill name: {error}"));
+    assert_eq!(materialized_skill_directory(&name), "openspec_explore");
+
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().join("workspace");
+    let source = temp.path().join("source");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        b"---\nname: OpenSpec_Explore\ndescription: review\n---\n",
+    )
+    .unwrap();
+    let resource = EffectResource {
+        descriptor: VersionedResourceDescriptor::FilesystemDirectoryV1(
+            FilesystemDirectoryDescriptor {
+                workspace_root: workspace.clone(),
+                relative_path: ResourcePath::parse(".agents/skills").unwrap(),
+            },
+        ),
+        ..resource()
+    };
+    let fingerprint =
+        Fingerprint::from(ora_utils::directory::fingerprint_directory(&source, &[]).unwrap());
+    let managed_identity = ManagedIdentity::random();
+    let native_identity =
+        NativeResourceIdentity::parse(materialized_skill_directory(&name)).unwrap();
+    let operation = SkillDirectoryResourceAdapter
+        .prepare_operation(
+            &resource,
+            ReconcileAttemptId::random(),
+            Generation::new(1),
+            /*sequence*/ 0,
+            PlannedMutation {
+                managed_identity: managed_identity.clone(),
+                desired_effect: None,
+                mutation: EffectMutation::Create,
+                expected: ExactPreviousState::Missing,
+                planned: ExactPlannedState::Present {
+                    native_identity: native_identity.clone(),
+                    managed_identity,
+                    fingerprint: fingerprint.clone(),
+                },
+                input: Some(VersionedMaterializationInput::SkillDirectoryV1(
+                    SkillMaterializationInput {
+                        name: name.clone(),
+                        source: SkillSourceKey {
+                            source_kind: SkillSourceKind::Local,
+                            namespace: Namespace::local(),
+                            name,
+                        },
+                        package_root: source,
+                        skill_md_digest: Digest::sha256(b"manifest"),
+                        package_fingerprint: fingerprint,
+                    },
+                )),
+            },
+            LocalTimestamp::from_millis(1),
+        )
+        .unwrap()
+        .operation;
+    let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
+        panic!("Skill adapter must plan a filesystem directory")
+    };
+    let planned_path = plan.resource_root.join(native_identity.as_str());
+    SkillDirectoryResourceAdapter.apply(&operation).unwrap();
+
+    assert!(planned_path.join("SKILL.md").is_file());
+    assert_eq!(
+        planned_path.file_name().and_then(|name| name.to_str()),
+        Some("openspec_explore")
+    );
+    assert_eq!(
+        std::fs::canonicalize(&planned_path).unwrap(),
+        std::fs::canonicalize(
+            workspace
+                .join(".agents")
+                .join("skills")
+                .join("openspec_explore"),
+        )
+        .unwrap()
+    );
+}
+
 #[test]
 fn unowned_observed_item_is_preserved_and_never_becomes_a_mutation() {
     let resource = resource();

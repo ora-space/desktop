@@ -2,11 +2,16 @@
 
 use super::api::WorkflowRunApi;
 use super::engine::ConcreteWorkflowRunControl;
-use super::interactive::{CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns};
+use super::interactive::{
+    AgentSignalStore, CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns,
+    merge_completion_patch, signal_fingerprint,
+};
+#[cfg(feature = "test-support")]
+use super::owner_stream_drop::OwnerStreamDropControl;
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
-use crate::error::{BackendError, ErrorClassification};
+use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::repository_work::spawn_repository_work;
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
@@ -31,6 +36,11 @@ pub(crate) struct WorkflowRunSetup {
     pub transitions: Arc<WorkflowRunTransitions>,
     pub plugin_api: Arc<crate::plugin::PluginApi>,
     pub clock: SystemClock,
+    /// E2E-only owner-stream drop control shared with the node executor.
+    #[cfg(feature = "test-support")]
+    pub owner_stream_drop: Arc<OwnerStreamDropControl>,
+    /// Per-attempt tokens and accepted agent completion signals shared with the MCP server.
+    pub agent_signals: Arc<AgentSignalStore>,
 }
 
 /// Executes complete workflow-run use cases against one shared scheduling/runtime instance.
@@ -48,6 +58,12 @@ pub struct WorkflowRuns {
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
+    /// E2E-only owner-stream drop control shared with the node executor.
+    #[cfg(feature = "test-support")]
+    owner_stream_drop: Arc<OwnerStreamDropControl>,
+    /// Consumed by session prompt/cleanup in the next step of #1070.
+    #[allow(dead_code)]
+    agent_signals: Arc<AgentSignalStore>,
 }
 
 impl WorkflowRuns {
@@ -69,17 +85,47 @@ impl WorkflowRuns {
             run_locks: setup.run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             transitions: setup.transitions,
+            #[cfg(feature = "test-support")]
+            owner_stream_drop: setup.owner_stream_drop,
+            agent_signals: setup.agent_signals,
         }
     }
 
+    /// Arms one node whose real owning prompt stream an E2E test will abandon.
+    #[cfg(feature = "test-support")]
+    pub fn arm_test_owner_stream_drop(&self, node_id: &str) {
+        self.owner_stream_drop.arm(node_id);
+    }
+
+    /// Waits for the executor to claim the armed node and returns its real session id.
+    #[cfg(feature = "test-support")]
+    pub async fn wait_for_test_owner_stream_session(&self) -> Option<String> {
+        self.owner_stream_drop.wait_for_claimed_session().await
+    }
+
+    /// Confirms prompt receipt for the claimed session and requests the owner drop.
+    #[cfg(feature = "test-support")]
+    pub fn confirm_test_owner_stream_prompt(&self, session_id: &str) -> Result<(), String> {
+        self.owner_stream_drop.confirm_prompt_received(session_id)
+    }
+
+    /// Shares the per-attempt completion signal store with session coordination.
+    #[allow(dead_code)]
+    pub(crate) fn agent_signals(&self) -> Arc<AgentSignalStore> {
+        self.agent_signals.clone()
+    }
+
     /// Grants Sessions only the admission/cleanup capability sharing this run's coordination.
-    pub(crate) fn session_turns(&self) -> WorkflowSessionTurns {
+    pub(crate) fn session_turns(self: &Arc<Self>) -> WorkflowSessionTurns {
         WorkflowSessionTurns::new(
             self.pool.clone(),
             self.run_locks.clone(),
             self.completing_node_runs.clone(),
             self.transitions.clone(),
             self.sessions_root.clone(),
+            self.baselines_root.clone(),
+            self.agent_signals.clone(),
+            Some(Arc::downgrade(self)),
         )
     }
 
@@ -139,6 +185,8 @@ impl WorkflowRuns {
             }
         };
         for node_run in node_runs {
+            // The run is cancelled, so no token from any of its nodes may stay callable.
+            self.agent_signals.revoke_node(node_run.id.as_ref());
             let Some(session_id) = node_run.session_id else {
                 continue;
             };
@@ -170,24 +218,88 @@ impl WorkflowRuns {
         &self,
         request: CompleteWorkflowNodeRequest,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
-        let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
-        // The two approvals contradict each other: one accepts the completion gate, the other
-        // overrides it. Reject before claiming the node so a contradictory request changes no
-        // state (ADR D2 row 1).
-        if request.force && confirm_initial_turn {
-            return Err(BackendError::new(
-                ErrorClassification::InvalidRequest,
-                PublicError::InvalidRequest(EmptyErrorParams {}),
-                "force and confirmInitialTurn cannot be combined",
-            ));
-        }
-        let approval = if request.force {
-            CompletionApproval::FORCE
-        } else if confirm_initial_turn {
-            CompletionApproval::CONFIRM
-        } else {
-            CompletionApproval::PLAIN
+        self.complete_node_with_auto(request, false).await
+    }
+
+    /// Completes a settled human turn automatically when the node opted into auto-accept.
+    ///
+    /// Runs after the turn parks, so the snapshot and signal are already durable. A no-op when the
+    /// policy, signal or auto-accept flag is absent; a failed auto-completion is logged and left to
+    /// the user rather than failing the turn's cleanup.
+    pub(crate) async fn auto_complete_node(
+        &self,
+        node_run_id: &ora_domain::WorkflowNodeRunId,
+    ) -> Result<(), BackendError> {
+        let pool = self.pool.clone();
+        let node_run_id = node_run_id.clone();
+        let node_run = spawn_repository_work(move || {
+            SqliteWorkflowRunEngineRepository::new(pool)
+                .find_node_run_by_id(&node_run_id)
+                .map_err(|error| BackendError::internal("failed to load node run", error))
+        })
+        .await?;
+        let Some(node_run) = node_run else {
+            return Ok(());
         };
+        let meta = crate::workflow::run::completion_snapshot::CompletionMeta::from_payload(
+            node_run.payload.as_deref(),
+        );
+        if meta.policy != crate::workflow::run::completion_snapshot::CompletionPolicy::Agent
+            || !meta.auto_accept
+        {
+            return Ok(());
+        }
+        let Some(signal) = meta.agent_signal else {
+            return Ok(());
+        };
+        let request = CompleteWorkflowNodeRequest {
+            run_id: node_run.run_id.to_string(),
+            node_id: node_run.node_id,
+            force: false,
+            confirm_initial_turn: None,
+            confirm_agent_completion: Some(ConfirmAgentCompletion {
+                signal_id: signal.signal_id,
+            }),
+            requester: None,
+        };
+        if let Err(error) = self.complete_node_with_auto(request, true).await {
+            ora_warn!(
+                node_run_id = %node_run.id,
+                error = %error,
+                "auto-accept completion failed; leaving the node for the user"
+            );
+        }
+        Ok(())
+    }
+
+    /// Completes one node with an explicit auto-confirm flag for the headless auto-accept path.
+    async fn complete_node_with_auto(
+        &self,
+        request: CompleteWorkflowNodeRequest,
+        auto_confirm: bool,
+    ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
+        let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
+        // The first-turn exception is the only valid combination of these two flags. Prove it
+        // from the parked snapshot before claiming, so a contradictory request changes no state.
+        if request.force && confirm_initial_turn {
+            let pool = self.pool.clone();
+            let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
+            let node_id = request.node_id.clone();
+            spawn_repository_work(move || {
+                crate::workflow::run::interactive::validate_first_turn_force_confirmation(
+                    &pool, &run_id, &node_id,
+                )
+            })
+            .await?;
+        }
+        let mut approval = CompletionApproval::PLAIN;
+        approval.force = request.force;
+        approval.confirm_initial_turn = confirm_initial_turn;
+        approval.confirm_agent_completion = request
+            .confirm_agent_completion
+            .as_ref()
+            .map(|confirmation| signal_fingerprint(&confirmation.signal_id));
+        approval.auto_confirm = auto_confirm;
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let node_id = request.node_id.clone();
 
@@ -222,18 +334,36 @@ impl WorkflowRuns {
             let run_id = run_id.clone();
             let node_id = node_id.clone();
             match spawn_repository_work(move || {
+                // Resolve the run workspace before preparing: the file gate reads the same
+                // workspace the node ran in, and both reads happen outside the per-run gate.
+                let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+                let workspace_id = repository
+                    .find_execution_context(&run_id)
+                    .map_err(|source| {
+                        BackendError::from(ApplicationError::WorkflowRunRepository { source })
+                    })?
+                    .ok_or_else(|| {
+                        BackendError::from(ApplicationError::WorkflowRunNotFound {
+                            run_id: run_id.to_string(),
+                        })
+                    })?
+                    .workspace
+                    .id;
+                let worktree_root = agent_runtime.workspace_cwd(&workspace_id)?;
                 let prepared = crate::workflow::run::interactive::prepare_completion(
                     &pool,
                     &sessions_root,
+                    &baselines_root,
+                    &worktree_root,
                     &run_id,
                     &node_id,
                     approval,
                 )?;
-                let worktree_root = agent_runtime.workspace_cwd(&prepared.workspace_id)?;
                 let file_changes = crate::workflow::run::interactive::completion_file_changes(
                     &baselines_root,
                     &prepared.node_run_id,
                     &worktree_root,
+                    prepared.completion.as_ref(),
                 );
                 Ok((prepared, file_changes))
             })
@@ -250,8 +380,8 @@ impl WorkflowRuns {
         // Commit the node completion under the gate and release the claim in the same critical
         // section, so a prompt cannot slip in between the commit and the release. Revalidate first:
         // a cancel that won during prepare must abort this completion rather than report success.
-        // A forced completion merges its audit in that same transaction, so a committed node always
-        // carries the record of how it was completed (ADR D5).
+        // The payload patch carries a forced audit and/or a warning snapshot in that same
+        // transaction, so a committed node always carries the record of how it completed.
         let pool = self.pool.clone();
         let engine = self.engine.clone();
         let run_locks = self.run_locks.clone();
@@ -260,7 +390,11 @@ impl WorkflowRuns {
         let output = prepared.output.clone();
         let structured_output = prepared.structured_output.clone();
         let stop_reason = prepared.stop_reason.clone();
-        let audit = prepared.audit.clone();
+        let payload_patch = merge_completion_patch(
+            prepared.payload_patch.clone(),
+            prepared.confirmation.clone(),
+            prepared.requester,
+        );
         let response = spawn_repository_work(move || {
             let _gate = run_locks.acquire_exclusive(run_id.as_ref());
             let result = crate::workflow::run::interactive::revalidate_completion(
@@ -277,7 +411,7 @@ impl WorkflowRuns {
                         structured_output,
                         stop_reason,
                         file_changes,
-                        audit,
+                        payload_patch,
                     )
                     .map_err(BackendError::from)
             });
@@ -311,6 +445,10 @@ impl WorkflowRuns {
         {
             ora_warn!(session_id = %session_id, error = %error, "complete: failed to stop completed node session");
         }
+
+        // The node is terminal: no attempt token may remain callable for it.
+        self.agent_signals
+            .revoke_node(prepared.node_run_id.as_ref());
 
         Ok(response)
     }

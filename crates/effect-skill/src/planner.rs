@@ -10,6 +10,8 @@ use ora_effect::{
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::materialized_skill_directory;
+
 mod target;
 
 /// First Effect-kind planner for Skill definitions and filesystem directory Resources.
@@ -93,8 +95,9 @@ impl EffectPlanner for SkillPlanner {
                 continue;
             };
             let ora_effect::ValidatedEffectDefinition::Skill(definition) = &revision.definition;
-            let native_identity =
-                NativeResourceIdentity::parse(definition.source.name.canonical())?;
+            let native_identity = NativeResourceIdentity::parse(materialized_skill_directory(
+                &definition.source.name,
+            ))?;
             if let Some(previous) =
                 native_owners.insert(native_identity.clone(), desired_id.clone())
                 && previous != *desired_id

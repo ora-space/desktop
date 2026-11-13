@@ -82,12 +82,15 @@ pub async fn serve_guardian_bootstrap(
     let mut io_workers = JoinSet::new();
     let mut reconcile = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // A closed Scope never reopens, so a settled guardian has no responsibility left to advance.
+    // Its timer stays disarmed from then on; the listeners keep answering queries.
+    let mut settled = false;
     tokio::pin!(shutdown);
     let result = loop {
         // Fair selection lets stop/takeover traffic proceed even when reconciliation overruns a tick.
         tokio::select! {
             () = &mut shutdown => break Ok(()),
-            _ = reconcile.tick() => management.lock().await.reconcile(),
+            _ = reconcile.tick(), if !settled => settled = management.lock().await.reconcile(),
             result = control_workers.join_next(), if !control_workers.is_empty() => {
                 if let Some(Err(error)) = result { break Err(io::Error::other(error).into()); }
             }

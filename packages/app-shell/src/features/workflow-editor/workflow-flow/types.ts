@@ -56,6 +56,11 @@ export interface WorkflowCanvasProps {
   onNodeDragStart: OnNodeDrag<WorkflowCanvasNode>;
   onNodeDragStop: OnNodeDrag<WorkflowCanvasNode>;
   onDeleteAnnotation: (id: string) => void;
+  canPasteSelection: boolean;
+  onCopySelection: () => void;
+  onPasteSelection: () => void;
+  onDuplicateSelection: () => void;
+  onAlignSelection: (mode: "left" | "top" | "distribute-x") => void;
   canUndo: boolean;
   canRedo: boolean;
   historyPast: WorkflowHistoryStep[];

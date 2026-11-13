@@ -11,8 +11,8 @@
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    AdvanceWorkflowRunResult, AgentOutputContract, ApplicationError, RepositoryError,
-    WorkflowGraph, WorkflowRunEngineRepository, WorkflowRunPayload,
+    AdvanceWorkflowRunResult, AgentCompletion, AgentOutputContract, ApplicationError,
+    RepositoryError, WorkflowGraph, WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
@@ -27,10 +27,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::super::completion_snapshot::{
-    CompletionSnapshot, StopCause, TurnOrigin, completion_payload, derive_completion_snapshot,
-    unknown_completion_snapshot,
+    CompletionMeta, CompletionPolicy, CompletionSnapshot, StopCause, TurnOrigin,
+    completion_payload_with_meta, derive_completion_snapshot, unknown_completion_snapshot,
+    with_file_check_warning,
 };
+use super::super::worktree::worktree_baseline_available;
 use super::CompletingNodeRuns;
+use super::agent_signal::AgentSignalStore;
 use crate::workflow::run::transitions::WorkflowRunTransitions;
 
 /// How long cleanup waits for the dropped turn's durable `TurnEnded` before parking provisionally.
@@ -60,6 +63,11 @@ pub(crate) enum HumanTurnAdmission {
         /// The localized step boundary this turn's prompt must carry, rendered from the frozen
         /// graph so the recorded user message stays the user's own text.
         step_boundary: String,
+        /// How this node decides the turn is complete; carried so the human prompt can issue the
+        /// agent completion token and the park can persist the same policy.
+        completion_policy: CompletionPolicy,
+        /// Whether a settled human turn accepts an agent signal without waiting for the user.
+        auto_accept: bool,
     },
 }
 
@@ -133,6 +141,11 @@ pub(crate) async fn begin_human_turn(
             .as_ref()
             .ok_or_else(|| node_not_awaiting(&node_run.node_id))?;
         let prompt_inactivity = config.prompt_inactivity;
+        let completion_policy = match config.completion_signal {
+            ora_application::AgentCompletionSignal::Agent => CompletionPolicy::Agent,
+            ora_application::AgentCompletionSignal::EndTurn => CompletionPolicy::EndTurn,
+        };
+        let auto_accept = config.auto_accept_agent_completion;
         // Render the boundary while the frozen graph is at hand: the prompt path must not re-read
         // scheduling state, and the turn must always carry the step it was admitted for.
         let step_boundary = super::super::prompt::render_step_boundary(
@@ -156,6 +169,8 @@ pub(crate) async fn begin_human_turn(
                 node_run_id: node_run.id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy,
+                auto_accept,
             }),
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {
                 Err(node_not_awaiting(&node_run.node_id))
@@ -176,21 +191,55 @@ pub(crate) async fn begin_human_turn(
 /// The park itself takes the per-run gate (ADR D3 step 4) and both the history read and that lock
 /// are blocking work, so it runs on the blocking pool. Everything before it — resolving the node's
 /// session and output contract — is one short read that holds no lock.
+#[allow(dead_code)] // Test-facing wrapper; production uses the signal variant below.
 pub(crate) async fn end_human_turn(
     pool: &RepositoryPool,
     sessions_root: &Path,
+    baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
     node_run_id: &WorkflowNodeRunId,
     stop_cause: Option<StopCause>,
 ) -> Result<(), BackendError> {
+    end_human_turn_with_signal(
+        pool,
+        sessions_root,
+        baselines_root,
+        transitions,
+        node_run_id,
+        stop_cause,
+        CompletionPolicy::EndTurn,
+        false,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Parks a human turn with the completion policy and optional agent attempt it was admitted for.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn end_human_turn_with_signal(
+    pool: &RepositoryPool,
+    sessions_root: &Path,
+    baselines_root: &Path,
+    transitions: &Arc<WorkflowRunTransitions>,
+    node_run_id: &WorkflowNodeRunId,
+    stop_cause: Option<StopCause>,
+    completion_policy: CompletionPolicy,
+    auto_accept: bool,
+    agent_signals: Option<Arc<AgentSignalStore>>,
+    attempt_id: Option<String>,
+) -> Result<(), BackendError> {
     let context = {
         let pool = pool.clone();
+        let baselines_root = baselines_root.to_path_buf();
         let node_run_id = node_run_id.clone();
-        tokio::task::spawn_blocking(move || TurnEndContext::load(&pool, &node_run_id))
-            .await
-            .map_err(|source| {
-                BackendError::internal("repository operation did not complete", source)
-            })??
+        tokio::task::spawn_blocking(move || {
+            TurnEndContext::load(&pool, &baselines_root, &node_run_id)
+        })
+        .await
+        .map_err(|source| {
+            BackendError::internal("repository operation did not complete", source)
+        })??
     };
     let Some(context) = context else {
         return Ok(());
@@ -201,19 +250,41 @@ pub(crate) async fn end_human_turn(
                 sessions_root,
                 session_id,
                 context.output_contract.as_ref(),
+                context.completion.as_ref(),
+                context.baseline_available,
                 stop_cause,
             )
             .await
         }
         // A node without a bound session has no history to read; the conservative provisional
         // snapshot keeps it parkable and lets a later completion force the decision.
-        None => unknown_completion_snapshot(
-            true,
-            TurnOrigin::Human,
-            stop_cause.or(Some(StopCause::Unknown)),
+        None => with_file_check_warning(
+            unknown_completion_snapshot(
+                true,
+                TurnOrigin::Human,
+                stop_cause.or(Some(StopCause::Unknown)),
+            ),
+            context.completion.as_ref(),
+            context.baseline_available,
         ),
     };
-    let completion = completion_payload(&snapshot);
+    let agent_signal = agent_signals.as_deref().and_then(|store| {
+        let attempt = attempt_id.as_deref()?;
+        let turn_key = snapshot.turn_key?;
+        store.bind(&format!("{node_run_id}"), attempt, turn_key)
+    });
+    if let (Some(store), Some(attempt)) = (agent_signals.as_deref(), attempt_id.as_deref()) {
+        store.revoke_attempt(&format!("{node_run_id}"), attempt);
+    }
+    let completion = completion_payload_with_meta(
+        &snapshot,
+        &CompletionMeta {
+            policy: completion_policy,
+            agent_signal,
+            confirmation: None,
+            auto_accept,
+        },
+    );
     let transitions = transitions.clone();
     let node_run_id = node_run_id.clone();
     let run_id = context.run_id.clone();
@@ -260,6 +331,10 @@ struct TurnEndContext {
     session_id: Option<SessionId>,
     /// The frozen node's output contract, which decides whether the reply satisfies the node.
     output_contract: Option<AgentOutputContract>,
+    /// The frozen completion declaration, so a missing baseline can warn at park.
+    completion: Option<AgentCompletion>,
+    /// Whether the node's start-of-node worktree baseline exists for `mustChange` checks.
+    baseline_available: bool,
 }
 
 impl TurnEndContext {
@@ -269,6 +344,7 @@ impl TurnEndContext {
     /// reject the write anyway, so waiting for history and deriving a snapshot would be wasted.
     fn load(
         pool: &RepositoryPool,
+        baselines_root: &Path,
         node_run_id: &WorkflowNodeRunId,
     ) -> Result<Option<Self>, BackendError> {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
@@ -281,27 +357,32 @@ impl TurnEndContext {
         if node_run.status != WorkflowNodeStatus::Running {
             return Ok(None);
         }
-        let output_contract = match repository
+        let (output_contract, completion) = match repository
             .find_execution_context(&node_run.run_id)
             .map_err(repository_error)?
         {
-            Some(context) => frozen_output_contract(&context.graph_json, &node_run.node_id),
-            None => None,
+            Some(context) => frozen_agent_contract(&context.graph_json, &node_run.node_id),
+            None => (None, None),
         };
         Ok(Some(Self {
             run_id: node_run.run_id,
             session_id: node_run.session_id,
             output_contract,
+            completion,
+            baseline_available: worktree_baseline_available(baselines_root, node_run_id),
         }))
     }
 }
 
-/// Returns the frozen node's declared output contract, or `None` when the graph cannot be read.
+/// Returns the frozen node's declared output contract and completion declaration.
 ///
 /// `begin_human_turn` already parsed the same frozen graph before granting the turn, so a parse
-/// failure here can only come from corrupt persisted state; parking without a contract still
-/// restores the node instead of stranding it at `Running`.
-fn frozen_output_contract(graph_json: &str, node_id: &str) -> Option<AgentOutputContract> {
+/// failure here can only come from corrupt persisted state; parking without them still restores
+/// the node instead of stranding it at `Running`.
+fn frozen_agent_contract(
+    graph_json: &str,
+    node_id: &str,
+) -> (Option<AgentOutputContract>, Option<AgentCompletion>) {
     let graph = match WorkflowGraph::parse(graph_json) {
         Ok(graph) => graph,
         Err(error) => {
@@ -310,15 +391,16 @@ fn frozen_output_contract(graph_json: &str, node_id: &str) -> Option<AgentOutput
                 error = %error,
                 "parking an interactive node without its frozen output contract"
             );
-            return None;
+            return (None, None);
         }
     };
-    graph
-        .execution_node(node_id)?
-        .agent_config
-        .as_ref()?
-        .output_contract
-        .clone()
+    let config = graph
+        .execution_node(node_id)
+        .and_then(|node| node.agent_config.as_ref());
+    (
+        config.and_then(|config| config.output_contract.clone()),
+        config.and_then(|config| config.completion.clone()),
+    )
 }
 
 /// Derives the dropped turn's snapshot, waiting a bounded time for its durable `TurnEnded`.
@@ -334,6 +416,8 @@ async fn settled_snapshot(
     sessions_root: &Path,
     session_id: &SessionId,
     output_contract: Option<&AgentOutputContract>,
+    completion: Option<&AgentCompletion>,
+    baseline_available: bool,
     stop_cause: Option<StopCause>,
 ) -> CompletionSnapshot {
     let deadline = tokio::time::Instant::now() + TURN_END_WAIT;
@@ -341,12 +425,16 @@ async fn settled_snapshot(
     loop {
         match read_history_blocking(sessions_root, session_id).await {
             Ok(history) => {
-                let snapshot = derive_completion_snapshot(
-                    &history,
-                    output_contract,
-                    false,
-                    TurnOrigin::Human,
-                    stop_cause,
+                let snapshot = with_file_check_warning(
+                    derive_completion_snapshot(
+                        &history,
+                        output_contract,
+                        false,
+                        TurnOrigin::Human,
+                        stop_cause,
+                    ),
+                    completion,
+                    baseline_available,
                 );
                 if snapshot.turn_key.is_some() {
                     return snapshot;
@@ -356,12 +444,16 @@ async fn settled_snapshot(
                     // reason names the unsettled turn rather than claiming the history is
                     // unavailable, and the provisional snapshot keeps the `userSeq` the later
                     // repair matches on (ADR invariant 19).
-                    let mut unsettled = derive_completion_snapshot(
-                        &history,
-                        output_contract,
-                        true,
-                        TurnOrigin::Human,
-                        stop_cause,
+                    let mut unsettled = with_file_check_warning(
+                        derive_completion_snapshot(
+                            &history,
+                            output_contract,
+                            true,
+                            TurnOrigin::Human,
+                            stop_cause,
+                        ),
+                        completion,
+                        baseline_available,
                     );
                     unsettled.warnings.push("turn_not_settled".to_string());
                     return unsettled;
@@ -375,10 +467,14 @@ async fn settled_snapshot(
                     error = %error,
                     "failed to read session history when parking an interactive node"
                 );
-                return unknown_completion_snapshot(
-                    true,
-                    TurnOrigin::Human,
-                    stop_cause.or(Some(StopCause::Unknown)),
+                return with_file_check_warning(
+                    unknown_completion_snapshot(
+                        true,
+                        TurnOrigin::Human,
+                        stop_cause.or(Some(StopCause::Unknown)),
+                    ),
+                    completion,
+                    baseline_available,
                 );
             }
         }
@@ -536,6 +632,8 @@ mod tests {
                 node_run_id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
@@ -621,6 +719,8 @@ mod tests {
                 node_run_id,
                 prompt_inactivity,
                 step_boundary,
+                completion_policy: _,
+                auto_accept: _,
             } = result
             else {
                 panic!("a bound interactive session must be admitted as a workflow turn");
@@ -659,9 +759,16 @@ mod tests {
             )
             .await
             .unwrap();
-            end_human_turn(&pool, &sessions_root, &transitions, &_node_run_id, None)
-                .await
-                .unwrap();
+            end_human_turn(
+                &pool,
+                &sessions_root,
+                &temp.path().join("baselines"),
+                &transitions,
+                &_node_run_id,
+                None,
+            )
+            .await
+            .unwrap();
 
             assert_eq!(
                 *recording.published.lock().unwrap(),
@@ -694,6 +801,7 @@ mod tests {
             end_human_turn(
                 &pool,
                 &temp.path().join("sessions"),
+                &temp.path().join("baselines"),
                 &transitions,
                 &node_run_id,
                 None,
