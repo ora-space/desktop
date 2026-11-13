@@ -1,8 +1,7 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ExitStatus};
+use std::process::Child;
 
 /// Session membership observed through a pinned proc directory; names need not be UTF-8.
 #[derive(Debug)]
@@ -51,20 +50,6 @@ impl LinuxPidFd {
         Ok(handle)
     }
 
-    /// Checks syscall availability and signal authorization without sending a real signal.
-    pub fn probe_current() -> io::Result<()> {
-        let handle = Self::open(std::process::id())?;
-        handle.send(/*signal*/ 0)?;
-        handle.has_exited()?;
-        // Self is not our child. ECHILD proves P_PIDFD/WNOWAIT was understood without creating
-        // a probe process; unsupported or seccomp-blocked wait operations fail admission.
-        match handle.peek_child_exit() {
-            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => Ok(()),
-            Err(error) => Err(error),
-            Ok(_) => Err(io::Error::other("unexpected self wait result")),
-        }
-    }
-
     /// Opens only a positive individual PID; flags never select groups or threads.
     fn open(pid: u32) -> io::Result<Self> {
         let pid = i32::try_from(pid).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -102,14 +87,10 @@ impl LinuxPidFd {
 
     /// Delivers only to the pinned process; an already exited target is an idempotent success.
     pub fn signal(&self, signal: ProcessSignal) -> io::Result<()> {
-        self.send(match signal {
+        let signal = match signal {
             ProcessSignal::Terminate => libc::SIGTERM,
             ProcessSignal::Kill => libc::SIGKILL,
-        })
-    }
-
-    /// Shares error handling between capability probing and actual process signals.
-    fn send(&self, signal: i32) -> io::Result<()> {
+        };
         // SAFETY: the descriptor is live, and a null siginfo asks the kernel to construct it.
         if unsafe {
             libc::syscall(
@@ -127,40 +108,6 @@ impl LinuxPidFd {
             }
         }
         Ok(())
-    }
-
-    /// Observes child exit without releasing its numeric identity or blocking the caller.
-    pub fn peek_child_exit(&self) -> io::Result<Option<ExitStatus>> {
-        self.wait(libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
-    }
-
-    /// Reaps this original child; use only after exit is observed or in a dedicated waiter.
-    pub fn reap_child(&self) -> io::Result<ExitStatus> {
-        self.wait(libc::WEXITED)?
-            .ok_or_else(|| io::Error::other("missing child exit status"))
-    }
-
-    /// waitid through the pidfd never mistakes a reused numeric PID for the original child.
-    fn wait(&self, options: i32) -> io::Result<Option<ExitStatus>> {
-        // SAFETY: zero initializes siginfo_t's integer/pointer fields, including the no-event PID.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        // SAFETY: info is writable and the owned fd is a valid nonnegative id for P_PIDFD.
-        if unsafe { libc::waitid(libc::P_PIDFD, self.0.as_raw_fd() as u32, &mut info, options) } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: successful waitid initializes the SIGCHLD fields of siginfo_t.
-        if unsafe { info.si_pid() } == 0 {
-            return Ok(None);
-        }
-        let status = unsafe { info.si_status() };
-        let raw = match info.si_code {
-            libc::CLD_EXITED => status << 8,
-            libc::CLD_KILLED => status,
-            libc::CLD_DUMPED => status | 0x80,
-            _ => return Err(io::Error::other("unexpected child wait event")),
-        };
-        Ok(Some(ExitStatus::from_raw(raw)))
     }
 }
 

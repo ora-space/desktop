@@ -8,11 +8,10 @@ use std::time::{Duration, Instant};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 use pretty_assertions::assert_eq;
 
-/// Stable handles preserve exit evidence, permit peeking, and do not signal a subsequent child.
+/// Stable handles observe exit and do not signal a subsequent child after the original is reaped.
 #[test]
 fn pidfd_observation_signaling_and_reaping() -> Result<(), Box<dyn std::error::Error>> {
-    LinuxPidFd::probe_current()?;
-    let child = Command::new("/bin/sleep").arg("60").spawn()?;
+    let mut child = Command::new("/bin/sleep").arg("60").spawn()?;
     let handle = LinuxPidFd::for_child(&child)?;
     let observed = linux_process_snapshot()?
         .collect::<Result<Vec<_>, _>>()?
@@ -27,20 +26,14 @@ fn pidfd_observation_signaling_and_reaping() -> Result<(), Box<dyn std::error::E
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(/*millis*/ 1));
     }
-    for _ in 0..2 {
-        assert_eq!(
-            handle.peek_child_exit()?.and_then(|status| status.signal()),
-            Some(libc::SIGKILL)
-        );
-    }
-    assert_eq!(handle.reap_child()?.signal(), Some(libc::SIGKILL));
+    assert_eq!(child.wait()?.signal(), Some(libc::SIGKILL));
     assert!(LinuxPidFd::from_observation(&observed).is_err());
-    let next = Command::new("/bin/sleep").arg("60").spawn()?;
+    let mut next = Command::new("/bin/sleep").arg("60").spawn()?;
     let next_handle = LinuxPidFd::for_child(&next)?;
     pinned.signal(ProcessSignal::Kill)?;
     assert_eq!(next_handle.has_exited()?, false);
     next_handle.signal(ProcessSignal::Kill)?;
-    next_handle.reap_child()?;
+    next.wait()?;
     Ok(())
 }
 
@@ -52,7 +45,6 @@ fn proc_stat_accepts_non_utf8_names_and_parentheses() -> Result<(), Box<dyn std:
         .env("ORA_UTILS_PROC_FIXTURE", "1")
         .stdout(Stdio::piped())
         .spawn()?;
-    let handle = LinuxPidFd::for_child(&child)?;
     let output = child.stdout.take().ok_or("stdout")?;
     let mut reader = BufReader::new(output);
     loop {
@@ -71,7 +63,7 @@ fn proc_stat_accepts_non_utf8_names_and_parentheses() -> Result<(), Box<dyn std:
         .find(|stat| stat.pid == child.id())
         .ok_or("missing named process")?;
     LinuxPidFd::from_observation(&observed)?.signal(ProcessSignal::Kill)?;
-    assert_eq!(handle.reap_child()?.signal(), Some(libc::SIGKILL));
+    assert_eq!(child.wait()?.signal(), Some(libc::SIGKILL));
     Ok(())
 }
 
