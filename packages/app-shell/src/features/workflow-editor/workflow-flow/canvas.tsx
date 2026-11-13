@@ -94,6 +94,7 @@ import {
   type ConnectionDraft,
 } from "./connection-gesture";
 import { isValidWorkflowConnection } from "./connection-validation";
+import { selectionAlignRootCount } from "./selection-align";
 import { WorkflowSelectionMenu } from "./selection-menu";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
@@ -232,6 +233,7 @@ function WorkflowCanvasInner({
   onCopySelection,
   onPasteSelection,
   onDuplicateSelection,
+  onAlignSelection,
   canUndo,
   canRedo,
   historyPast,
@@ -678,6 +680,22 @@ function WorkflowCanvasInner({
     [nodes, openSelectionMenu, readOnly],
   );
 
+  /** Multi-select draws a selection rect; right-clicks there do not hit a node. */
+  const handleSelectionContextMenu = useCallback(
+    (event: ReactMouseEvent, selectedNodes: WorkflowCanvasNode[]): void => {
+      if (readOnly) {
+        return;
+      }
+      openSelectionMenu(
+        event,
+        selectedNodes
+          .filter((node) => node.type === WORKFLOW_FLOW_NODE_TYPE)
+          .map((node) => node.id),
+      );
+    },
+    [openSelectionMenu, readOnly],
+  );
+
   const deleteMenuNodes = useCallback((): void => {
     if (selectionMenu === null || selectionMenu.deleteIds.length === 0) {
       return;
@@ -961,7 +979,9 @@ function WorkflowCanvasInner({
                         ? WORKFLOW_NO_KEY_CODES
                         : WORKFLOW_DELETE_KEY_CODES
                     }
-                    multiSelectionKeyCode={null}
+                    multiSelectionKeyCode={
+                      readOnly ? WORKFLOW_NO_KEY_CODES : "Shift"
+                    }
                     snapGrid={WORKFLOW_SNAP_GRID}
                     snapToGrid
                     // Auto-pan under a clamped iteration member moves the viewport while
@@ -988,6 +1008,7 @@ function WorkflowCanvasInner({
                     onNodeDragStop={handleNodeDragStop}
                     onNodeClick={handleNodeClick}
                     onNodeContextMenu={handleNodeContextMenu}
+                    onSelectionContextMenu={handleSelectionContextMenu}
                     onPaneContextMenu={handlePaneContextMenu}
                     onConnectStart={handleConnectStart}
                     onConnect={onConnect}
@@ -1083,12 +1104,20 @@ function WorkflowCanvasInner({
       {selectionMenu !== null && !readOnly && (
         <WorkflowSelectionMenu
           point={selectionMenu}
-          canCopy={nodes.some((node) => node.selected === true)}
+          selectedCount={selectionMenu.deleteIds.length}
+          canCopy={selectionMenu.deleteIds.length > 0}
           canPaste={canPasteSelection}
           canDelete={selectionMenu.deleteIds.length > 0}
+          canAlign={
+            selectionAlignRootCount(nodes, selectionMenu.deleteIds) >= 2
+          }
+          canDistribute={
+            selectionAlignRootCount(nodes, selectionMenu.deleteIds) >= 3
+          }
           onCopy={onCopySelection}
           onPaste={onPasteSelection}
           onDuplicate={onDuplicateSelection}
+          onAlign={onAlignSelection}
           onDelete={deleteMenuNodes}
           onClose={closeSelectionMenu}
         />
