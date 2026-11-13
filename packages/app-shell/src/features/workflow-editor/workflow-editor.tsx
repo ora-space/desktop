@@ -100,6 +100,10 @@ import {
   WORKFLOW_DUPLICATE_STEP,
   type WorkflowSelectionCopy,
 } from "./workflow-flow/duplicate-selection";
+import {
+  alignSelectedNodes,
+  type SelectionAlignMode,
+} from "./workflow-flow/selection-align";
 import { collapsedIterationAncestorIds } from "./workflow-flow/scroll-geometry";
 import {
   authoredWorkflowNodesEqual,
@@ -2103,6 +2107,42 @@ function WorkflowEditorContent({
     toast.message(t("settings.workflow.organizeComplete"));
   }
 
+  /** Aligns the current selection as one undoable move. */
+  function alignSelection(mode: SelectionAlignMode): void {
+    const current = workflowRef.current ?? workflow;
+    if (current === null || previewedVersion !== null) {
+      return;
+    }
+    const aligned = alignSelectedNodes(current.nodes, mode);
+    if (aligned === null) {
+      return;
+    }
+    const beforeById = new Map(current.nodes.map((node) => [node.id, node]));
+    const moved = aligned.filter((node) => {
+      const previous = beforeById.get(node.id);
+      return (
+        previous !== undefined &&
+        (previous.position.x !== node.position.x ||
+          previous.position.y !== node.position.y)
+      );
+    });
+    updateWorkflow(
+      (graph) => ({
+        ...graph,
+        nodes: aligned,
+      }),
+      {
+        history: {
+          event: "node.move",
+          meta: {
+            nodeIds: moved.map((node) => node.id),
+            subject: historySubjectForNodes(moved),
+          },
+        },
+      },
+    );
+  }
+
   /** Creates a native React Flow edge after canvas validation succeeds. */
   function connectNodes(connection: Connection): void {
     const current = workflowRef.current ?? workflow;
@@ -2841,6 +2881,7 @@ function WorkflowEditorContent({
                   onDuplicateSelection={() =>
                     applySelectionShortcut("duplicate")
                   }
+                  onAlignSelection={alignSelection}
                   canUndo={workflowHistory.canUndo}
                   canRedo={workflowHistory.canRedo}
                   historyPast={workflowHistory.past}

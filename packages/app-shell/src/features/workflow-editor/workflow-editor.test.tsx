@@ -1464,6 +1464,31 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("aligns selected nodes from the canvas menu and undoes that move", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      (await screen.findByText("代码审查工作流")).closest("button")!,
+    );
+    const understand = await screen.findByLabelText("Agent节点: 理解改动");
+    const quality = await screen.findByLabelText("条件分支节点: 质量门禁");
+    await user.click(understand.closest(".react-flow__node") ?? understand);
+    await user.keyboard("{Shift>}");
+    await user.click(quality.closest(".react-flow__node") ?? quality);
+    await user.keyboard("{/Shift}");
+    fireEvent.contextMenu(quality.closest(".react-flow__node") ?? quality);
+
+    const before = nodeGraphPosition("条件分支节点: 质量门禁");
+    await user.click(await screen.findByRole("menuitem", { name: "左对齐" }));
+    await waitFor(() => {
+      expect(nodeGraphPosition("条件分支节点: 质量门禁").x).not.toBe(before.x);
+    });
+    await user.keyboard("{Control>}z{/Control}");
+    await waitFor(() => {
+      expect(nodeGraphPosition("条件分支节点: 质量门禁")).toEqual(before);
+    });
+  });
+
   it("duplicates the right-clicked node from the canvas menu", async () => {
     const user = userEvent.setup();
     renderEditor();

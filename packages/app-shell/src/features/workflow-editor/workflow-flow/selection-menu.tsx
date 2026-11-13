@@ -2,15 +2,20 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
+import type { SelectionAlignMode } from "./selection-align";
 
 interface WorkflowSelectionMenuProps {
   point: { x: number; y: number };
+  selectedCount: number;
   canCopy: boolean;
   canPaste: boolean;
   canDelete: boolean;
+  canAlign: boolean;
+  canDistribute: boolean;
   onCopy: () => void;
   onPaste: () => void;
   onDuplicate: () => void;
+  onAlign: (mode: SelectionAlignMode) => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -18,12 +23,16 @@ interface WorkflowSelectionMenuProps {
 /** Right-click actions for the selected workflow nodes. */
 export function WorkflowSelectionMenu({
   point,
+  selectedCount,
   canCopy,
   canPaste,
   canDelete,
+  canAlign,
+  canDistribute,
   onCopy,
   onPaste,
   onDuplicate,
+  onAlign,
   onDelete,
   onClose,
 }: WorkflowSelectionMenuProps) {
@@ -86,9 +95,42 @@ export function WorkflowSelectionMenu({
           onClose();
         }}
       />
+      {(canAlign || canDistribute) && (
+        <>
+          <div className="-mx-1 my-1 h-px bg-border" role="separator" />
+          <SelectionMenuItem
+            label={t("settings.workflow.alignLeft")}
+            disabled={!canAlign}
+            onSelect={() => {
+              onAlign("left");
+              onClose();
+            }}
+          />
+          <SelectionMenuItem
+            label={t("settings.workflow.alignTop")}
+            disabled={!canAlign}
+            onSelect={() => {
+              onAlign("top");
+              onClose();
+            }}
+          />
+          <SelectionMenuItem
+            label={t("settings.workflow.distributeHorizontal")}
+            disabled={!canDistribute}
+            onSelect={() => {
+              onAlign("distribute-x");
+              onClose();
+            }}
+          />
+        </>
+      )}
       <div className="-mx-1 my-1 h-px bg-border" role="separator" />
       <SelectionMenuItem
-        label={t("settings.workflow.deleteNodes")}
+        label={
+          selectedCount > 1
+            ? t("settings.workflow.deleteNodesCount", { count: selectedCount })
+            : t("settings.workflow.deleteNodes")
+        }
         shortcut="Delete"
         disabled={!canDelete}
         destructive
@@ -110,7 +152,7 @@ function SelectionMenuItem({
   onSelect,
 }: {
   label: string;
-  shortcut: string;
+  shortcut?: string;
   disabled: boolean;
   destructive?: boolean;
   onSelect: () => void;
@@ -128,9 +170,11 @@ function SelectionMenuItem({
       onClick={onSelect}
     >
       <span>{label}</span>
-      <span className="ml-auto text-xs tracking-widest text-muted-foreground">
-        {shortcut}
-      </span>
+      {shortcut !== undefined && (
+        <span className="ml-auto text-xs tracking-widest text-muted-foreground">
+          {shortcut}
+        </span>
+      )}
     </button>
   );
 }

@@ -60,6 +60,7 @@ export interface WorkflowCanvasProps {
   onCopySelection: () => void;
   onPasteSelection: () => void;
   onDuplicateSelection: () => void;
+  onAlignSelection: (mode: "left" | "top" | "distribute-x") => void;
   canUndo: boolean;
   canRedo: boolean;
   historyPast: WorkflowHistoryStep[];
