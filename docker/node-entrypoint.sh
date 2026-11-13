@@ -2,12 +2,11 @@
 # Sandbox Node entrypoint. The Sandbox Server passes the complete Node service configuration as JSON
 # in ORA_NODE_CONFIG and mounts the Workspace volume that holds every state path it names.
 #
-# The root management process owns protected configuration, Node and process-host journals.
-# Git workloads run as UID/GID 1000 through the scoped process boundary, and so do Agent plugins
-# and the processes they start when the configuration names an agent workload directory. Stop order matters:
-# the Node stops first so it can close its managed scopes
-# through a live host, and only then is the host stopped. Guardians outlive both by design; their
-# journals stay on the volume and the next container recovers them.
+# The root management process owns protected configuration and the Node's journals.
+# Git workloads run as UID/GID 1000, an identity the Node takes between fork and exec, and so do
+# Agent plugins and the processes they start when the configuration names an agent workload
+# directory. The Node runs every Git command itself and starts its own `ora-reaper`, so it is the
+# only process this entrypoint supervises.
 set -eu
 
 node_user=node
@@ -80,41 +79,10 @@ prepare() {
   supervise
 }
 
-# Succeeds once something accepts connections on the socket; a leftover socket file from an
-# earlier container does not count.
-accepting() {
-  perl -MIO::Socket::UNIX -e 'exit(IO::Socket::UNIX->new(Peer => $ARGV[0]) ? 0 : 1)' "$1" 2>/dev/null
-}
-
 supervise() {
-  host_dir=$(jq -er '.process.host_directory' "$config_file")
-  # `create` refuses an existing directory and `recover` needs the original journal, so the choice
-  # follows the volume; a failed recovery never falls back to creating a new host.
-  if [ -e "$host_dir" ]; then host_mode=recover; else host_mode=create; fi
-  /opt/ora/bin/ora-process-host "$host_mode" "$host_dir" /opt/ora/bin/ora-process-guardian &
-  host_pid=$!
   node_pid=
   stopping=0
   trap 'stopping=1; if [ -n "$node_pid" ]; then kill -TERM "$node_pid" 2>/dev/null || true; fi' TERM INT
-
-  attempts=0
-  until accepting "$host_dir/host.sock"; do
-    if [ "$stopping" = 1 ] || ! kill -0 "$host_pid" 2>/dev/null; then
-      kill -TERM "$host_pid" 2>/dev/null || true
-      wait "$host_pid" || true
-      echo "node-entrypoint: process host did not become ready" >&2
-      exit 1
-    fi
-    attempts=$((attempts + 1))
-    if [ "$attempts" -gt 300 ]; then
-      kill -TERM "$host_pid" 2>/dev/null || true
-      wait "$host_pid" || true
-      echo "node-entrypoint: process host not ready after 30s" >&2
-      exit 1
-    fi
-    sleep 0.1
-  done
-
   /opt/ora/bin/ora-node "$config_file" &
   node_pid=$!
   if [ "$stopping" = 1 ]; then kill -TERM "$node_pid" 2>/dev/null || true; fi
@@ -122,10 +90,6 @@ supervise() {
   status=0
   while kill -0 "$node_pid" 2>/dev/null; do
     wait "$node_pid" && status=0 || status=$?
-  done
-  kill -TERM "$host_pid" 2>/dev/null || true
-  while kill -0 "$host_pid" 2>/dev/null; do
-    wait "$host_pid" || true
   done
   exit "$status"
 }

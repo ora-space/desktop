@@ -1,33 +1,41 @@
-//! Node-owned Git execution association; process facts remain owned by host and guardian.
+//! Node-owned Git execution: every command is a direct child of the Node, and a command with
+//! side effects is only settled by the stop evidence of its attempt lock.
+mod attempt_lock;
 #[cfg(test)]
-mod deadline_tests;
+mod attempt_lock_tests;
 mod delivery;
+mod exec;
 #[cfg(test)]
-mod not_started_tests;
+mod exec_tests;
 mod repository;
 mod restore;
 #[cfg(test)]
 mod restore_tests;
-mod transport;
+pub(crate) use attempt_lock::AttemptLocks;
 pub(crate) use delivery::AsNode;
-pub(crate) use repository::{AttemptSettlement, CloneHost, RunAs};
+pub(crate) use repository::{AttemptSettlement, DirectGit, RunAs};
 pub(crate) use restore::{RestoreContext, RestoreStops, StopCheck};
 
 use crate::git::ExecutionGitRunner;
+use attempt_lock::{LockDurability, StopEvidence};
+use exec::{Capture, Invocation, StopGrace};
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};
-use ora_node_db::{DurableWrites, Execution, ProcessAttempt, ProcessJournal, WriteGuard};
+use ora_node_db::{
+    AttemptCommand, AttemptId, DurableWrites, Execution, ProcessAttempt, ProcessJournal, WriteGuard,
+};
 use ora_node_protocol::{ExecutionId, WorktreeFailure, WorktreeFailureCode};
-use ora_process_client::ProcessHost;
-use ora_process_protocol::*;
+use ora_process::ProcessIdentity;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
-    ffi::OsString,
-    path::PathBuf,
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+/// The most output one command may return; a caller's own limit can only be smaller.
+const CAPTURE_LIMIT: usize = 1_048_576;
 
 /// Deployment supplies paths and environment explicitly; none select a directory from HOME.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,8 +44,16 @@ pub struct ProcessConfig {
     /// Cloud's workload identity; management retains its protected OS identity.
     #[serde(default)]
     pub workload_uid: Option<u32>,
-    pub host_directory: PathBuf,
-    pub expected_uid: u32,
+    /// The state directory of the retired process host. A deployment upgraded from a Node that
+    /// ran Git through the host keeps naming it, so this Node can delete what the host left.
+    #[serde(default)]
+    pub host_directory: Option<PathBuf>,
+    /// Accepted so configurations written for the process host still load; no longer used.
+    #[serde(default)]
+    pub expected_uid: Option<u32>,
+    /// The `ora-reaper` executable; when absent, the one installed next to this program.
+    #[serde(default)]
+    pub reaper_program: Option<PathBuf>,
     pub git_program: PathBuf,
     pub environment: BTreeMap<String, String>,
     pub command_timeout_ms: u64,
@@ -65,20 +81,22 @@ impl ProcessConfig {
             .unwrap_or_else(|| self.command_budget(command.intent))
     }
 
-    fn isolate_workload(&self, spec: &mut RunSpec) {
-        if let Some(uid) = self.workload_uid {
-            let program = spec.program.clone();
-            let args = std::mem::take(&mut spec.args);
-            spec.program = "/usr/bin/setpriv".into();
-            spec.args = vec![
-                format!("--reuid={uid}").into(),
-                format!("--regid={uid}").into(),
-                "--clear-groups".into(),
-                "--no-new-privs".into(),
-                "--".into(),
-                program,
-            ];
-            spec.args.extend(args);
+    /// The OS identity Git takes between fork and exec. The group equals the user, with no
+    /// supplementary groups, no capabilities and `no_new_privs`.
+    fn identity(&self, run_as: RunAs) -> std::io::Result<ProcessIdentity> {
+        match (run_as, self.workload_uid) {
+            (RunAs::Workload, Some(uid)) => Ok(ProcessIdentity::Linux(
+                ora_utils::process::LinuxChildIdentity::new(uid, uid)?,
+            )),
+            (RunAs::Workload, None) | (RunAs::Node, _) => Ok(ProcessIdentity::Inherit),
+        }
+    }
+
+    /// Where the reaper is installed for this deployment.
+    pub fn reaper(&self) -> std::io::Result<PathBuf> {
+        match &self.reaper_program {
+            Some(program) => Ok(program.clone()),
+            None => Ok(std::env::current_exe()?.with_file_name("ora-reaper")),
         }
     }
 }
@@ -90,52 +108,74 @@ fn default_network_timeout_ms() -> u64 {
 
 /// Shutdown stops admission immediately while allowing the current command a bounded grace period.
 #[derive(Clone, Default)]
-pub struct Shutdown(Arc<Mutex<Option<Instant>>>);
+pub struct Shutdown(Arc<Mutex<Stop>>);
+
+#[derive(Default)]
+struct Stop {
+    requested: Option<Instant>,
+    failure: Option<String>,
+}
+
 impl Shutdown {
     /// May be called by a signal task without borrowing or interrupting the Node's SQLite transaction.
     pub fn request(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get_or_insert_with(Instant::now);
+        self.stop().requested.get_or_insert_with(Instant::now);
+    }
+    /// Stops the Node because it lost something it cannot run safely without. The first reason
+    /// is kept, and the process reports it instead of a clean exit.
+    pub fn fail(&self, reason: &str) {
+        let mut stop = self.stop();
+        stop.requested.get_or_insert_with(Instant::now);
+        stop.failure.get_or_insert_with(|| reason.to_owned());
+    }
+    /// The reason of a stop the Node forced on itself, if there was one.
+    pub fn failure(&self) -> Option<String> {
+        self.stop().failure.clone()
     }
     /// Reports admission closure; this is not evidence that a process has stopped.
     pub fn requested(&self) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
+        self.stop().requested.is_some()
     }
     /// Bounds graceful completion from the first request; repeated signals never extend the deadline.
     fn expired(&self, grace: Duration) -> bool {
+        self.stop()
+            .requested
+            .is_some_and(|at| at.elapsed() >= grace)
+    }
+    fn stop(&self) -> std::sync::MutexGuard<'_, Stop> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() >= grace)
     }
 }
 
-/// All Git commands use the host; only mutations need durable business-execution associations.
+/// Runs every Git command directly; only mutations need durable business-execution associations.
 pub struct ManagedGitRunner<W: WriteGuard = DurableWrites> {
     journal: ProcessJournal<W>,
     config: ProcessConfig,
     execution: RefCell<Option<ExecutionId>>,
-    runtime: tokio::runtime::Runtime,
     shutdown: Shutdown,
-    owner: RunLifetime,
-    reads: RefCell<Option<(ScopeId, usize)>>,
-    clone_host: CloneHost,
+    git: DirectGit,
 }
 
 impl<W: WriteGuard> ManagedGitRunner<W> {
-    /// Shares the Node database lease and checks deployment inputs before any managed launch.
+    /// Shares the Node database lease, checks deployment inputs and settles what the previous
+    /// Node process left behind, before any business recovery can start a command.
     pub(crate) fn new(
         journal: ProcessJournal<W>,
         config: ProcessConfig,
         shutdown: Shutdown,
+        home: &Path,
     ) -> std::io::Result<Self> {
-        if !config.host_directory.is_absolute()
-            || !config.git_program.is_absolute()
+        if !config.git_program.is_absolute()
+            || config
+                .reaper_program
+                .as_ref()
+                .is_some_and(|p| !p.is_absolute())
+            || config
+                .host_directory
+                .as_ref()
+                .is_some_and(|p| !p.is_absolute())
             || config.command_timeout_ms == 0
             || config.network_timeout_ms == 0
             || config.network_timeout_ms > 1_200_000
@@ -145,7 +185,6 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
                 "process paths must be absolute, deadlines positive, and network budget at most twenty minutes",
             ));
         }
-        let stat = ora_utils::process::linux_process(std::process::id())?;
         if let Some(uid) = config.workload_uid {
             // SAFETY: reading the management identity changes no process credentials.
             if unsafe { libc::geteuid() } != 0 || uid == 0 || !config.environment.is_empty() {
@@ -153,53 +192,118 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
                     "isolated workloads require root management, a non-root workload identity and an empty base environment",
                 ));
             }
-            ora_utils::path::open_trusted_path(
-                std::path::Path::new("/usr/bin/setpriv"),
-                0,
-                ora_utils::path::TrustedPathKind::File,
-            )
-            .map_err(std::io::Error::other)?;
         }
-        let owner = RunLifetime::TerminateOnOwnerExit {
-            pid: stat.pid,
-            start_ticks: stat.start_ticks,
-        };
-        Ok(Self {
-            clone_host: CloneHost::new(config.clone(), shutdown.clone(), owner)?,
+        let locks = AttemptLocks::open(home)?;
+        let runner = Self {
+            git: DirectGit::new(config.clone(), shutdown.clone(), locks)?,
             journal,
             config,
             shutdown,
             execution: RefCell::new(None),
-            runtime: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
-            owner,
-            reads: RefCell::new(None),
-        })
+        };
+        runner.settle_leftovers()?;
+        runner.remove_host_directory();
+        Ok(runner)
     }
 
-    /// Stops and seals every old attempt before allowing Git to interpret the resource as a residual.
+    /// Goes through the lock files of the previous Node process before anything else runs.
+    ///
+    /// A lock a recorded attempt still owes evidence for is left to that attempt's own recovery,
+    /// which reads the result; its process group is signalled here so the evidence is ready.
+    /// Every other lock belongs to a command the database never recorded, or to one already
+    /// settled: once free it is deleted, and while held it blocks new unrecorded commands.
+    fn settle_leftovers(&self) -> std::io::Result<()> {
+        let unsettled: BTreeSet<AttemptId> = self
+            .journal
+            .unsettled()
+            .map_err(std::io::Error::other)?
+            .into_iter()
+            .collect();
+        let cleanup = Duration::from_millis(self.config.cleanup_timeout_ms);
+        for (attempt, cwd) in self.git.locks.entries()? {
+            if unsettled.contains(&attempt) {
+                self.git.locks.terminate(&attempt);
+                continue;
+            }
+            match self
+                .git
+                .runtime
+                .block_on(self.git.locks.await_stop(&attempt, cleanup))
+            {
+                StopEvidence::Stopped => self.git.locks.retire(&attempt),
+                StopEvidence::Running | StopEvidence::Unknown => {
+                    ora_logging::ora_warn!(attempt = %attempt, directory = %cwd.display(), "a Git command of an earlier Node process has not stopped");
+                    self.git.locks.keep_leftover(attempt, cwd);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletes the retired process host's state once nothing of it can be running.
+    ///
+    /// The database upgrade already settled every attempt the host left, so the directory holds
+    /// nothing this Node reads. Only a directory that is recognizably the host's is removed, and
+    /// only while the host's own lock is free; a failure costs disk space, never correctness.
+    fn remove_host_directory(&self) {
+        let Some(directory) = &self.config.host_directory else {
+            return;
+        };
+        if !directory.join("host.sqlite").is_file() {
+            return;
+        }
+        let free = std::fs::File::open(directory.join("host.lock")).is_ok_and(|lock| {
+            use std::os::fd::AsRawFd;
+            // SAFETY: flock only operates on the descriptor opened above, closed on return.
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+        });
+        if !free {
+            ora_logging::ora_warn!(directory = %directory.display(), "the retired process host still holds its state directory; it is kept");
+            return;
+        }
+        match std::fs::remove_dir_all(directory) {
+            Ok(()) => {
+                ora_logging::ora_info!(directory = %directory.display(), "removed the retired process host's state directory");
+            }
+            Err(error) => {
+                ora_logging::ora_warn!(directory = %directory.display(), error = %error, "the retired process host's state directory could not be removed");
+            }
+        }
+    }
+
+    /// Obtains stop evidence for every old attempt before allowing Git to interpret the resource as a residual.
     fn handoff(&self, execution: &ExecutionId) -> std::io::Result<()> {
         for attempt in self
             .journal
             .pending(execution)
             .map_err(std::io::Error::other)?
         {
-            self.runtime.block_on(transport::close(
-                &ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid),
-                attempt.intent.scope,
-                Duration::from_millis(self.config.cleanup_timeout_ms),
-            ))?;
-            self.journal
-                .cleaned(attempt.intent.run)
-                .map_err(std::io::Error::other)?;
+            self.settle(&attempt.id)?;
         }
+        Ok(())
+    }
+
+    /// Retires a recorded attempt once its lock proves nothing of it is left.
+    fn settle(&self, attempt: &AttemptId) -> std::io::Result<()> {
+        let evidence = self.git.runtime.block_on(self.git.locks.await_stop(
+            attempt,
+            Duration::from_millis(self.config.cleanup_timeout_ms),
+        ));
+        if evidence != StopEvidence::Stopped {
+            return Err(std::io::Error::other(
+                "stop evidence of an earlier Git command is unverified",
+            ));
+        }
+        self.journal
+            .cleaned(attempt)
+            .map_err(std::io::Error::other)?;
+        self.git.locks.retire(attempt);
         Ok(())
     }
 }
 
 impl<W: WriteGuard> ExecutionGitRunner for ManagedGitRunner<W> {
-    /// Closes read-only scopes and all uncertain mutation scopes without inventing terminal business results.
+    /// Settles all uncertain mutation attempts without inventing terminal business results.
     fn shutdown(&self) -> Result<(), WorktreeFailure> {
         self.shutdown.request();
         let cleanup = || -> std::io::Result<()> {
@@ -210,16 +314,6 @@ impl<W: WriteGuard> ExecutionGitRunner for ManagedGitRunner<W> {
             {
                 self.handoff(&execution)?;
             }
-            if let Some((scope, _)) = *self.reads.borrow() {
-                let client =
-                    ProcessHost::new(self.config.host_directory.clone(), self.config.expected_uid);
-                self.runtime.block_on(transport::close(
-                    &client,
-                    scope,
-                    Duration::from_millis(self.config.cleanup_timeout_ms),
-                ))?;
-            }
-            self.reads.borrow_mut().take();
             Ok(())
         };
         cleanup().map_err(|error| {
@@ -243,7 +337,7 @@ impl<W: WriteGuard> ExecutionGitRunner for ManagedGitRunner<W> {
         *self.execution.borrow_mut() = Some(record.command.execution_id().clone());
         Ok(())
     }
-    /// Remote attempts remain in the journal even when execution returns an error or is cancelled.
+    /// Recorded attempts remain in the journal even when execution returns an error or is cancelled.
     fn end_execution(&self) {
         self.execution.borrow_mut().take();
     }
@@ -252,7 +346,7 @@ impl<W: WriteGuard> ExecutionGitRunner for ManagedGitRunner<W> {
 impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
     /// Captures a bounded prefix; truncation is an error and never fed to a Git fact parser.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
-        self.run_bounded(command, GUARDIAN_CAPTURE_LIMIT, GUARDIAN_CAPTURE_LIMIT)
+        self.run_bounded(command, CAPTURE_LIMIT, CAPTURE_LIMIT)
     }
 
     /// Requires durable execution context for mutation; uncertain attempts block subsequent observations.
@@ -276,28 +370,19 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
                 .is_empty()
         {
             return Err(fail(std::io::Error::other(
-                "prior Run cleanup is unverified",
+                "stop evidence of an earlier Git command is unverified",
             )));
         }
         if self.shutdown.requested() {
             return Err(fail(std::io::Error::other("Node is stopping")));
         }
-        let mut spec = RunSpec::new(
-            self.config.git_program.as_os_str(),
-            &command.cwd,
-            DescendantPolicy::Cleanup {
-                grace: Duration::ZERO,
-            },
-        );
-        spec.args = command.args.iter().map(OsString::from).collect();
-        self.config.isolate_workload(&mut spec);
-        spec.env = self
+        let mut environment: Vec<_> = self
             .config
             .environment
             .iter()
-            .map(|(k, v)| (k.into(), v.into()))
+            .map(|(key, value)| (key.into(), value.into()))
             .collect();
-        spec.env.insert(
+        environment.push((
             "GIT_TERMINAL_PROMPT".into(),
             if command.env.terminal_prompt {
                 "1"
@@ -305,104 +390,79 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
                 "0"
             }
             .into(),
-        );
-        spec.env
-            .insert("LANG".into(), command.env.lang.clone().into());
-        spec.env
-            .insert("GIT_PAGER".into(), command.env.pager.clone().into());
-        spec.env.extend(
+        ));
+        environment.push(("LANG".into(), command.env.lang.clone().into()));
+        environment.push(("GIT_PAGER".into(), command.env.pager.clone().into()));
+        environment.extend(
             command
                 .env
                 .variables
                 .iter()
-                .map(|(k, v)| (k.into(), v.into())),
+                .map(|(key, value)| (key.into(), value.into())),
         );
-        spec.output = OutputPolicy::Capture {
-            stdout_limit: stdout.min(GUARDIAN_CAPTURE_LIMIT),
-            stderr_limit: stderr.min(GUARDIAN_CAPTURE_LIMIT),
+        let invocation = |lock| Invocation {
+            command,
+            environment: environment.clone(),
+            identity: RunAs::Workload,
+            capture: Capture::Bounded {
+                stdout: stdout.min(CAPTURE_LIMIT),
+                stderr: stderr.min(CAPTURE_LIMIT),
+            },
+            deadline: Instant::now() + self.config.budget_for(command),
+            stop_grace: StopGrace::Honored,
+            before_cut: None,
+            lock,
         };
-        spec.lifetime = self.owner;
-        let client = ProcessHost::new(self.config.host_directory.clone(), self.config.expected_uid);
         if command.intent == GitIntent::ReadOnly {
-            // Read-only preflight has no accepted business execution yet. Its host-owned attempts
-            // share a bounded Scope; they never authorize resource mutation or recovery.
-            let mut reads = self.reads.borrow_mut();
-            if let Some((scope, count)) = *reads
-                && count >= GUARDIAN_RUN_LIMIT
-            {
-                self.runtime
-                    .block_on(transport::close(
-                        &client,
-                        scope,
-                        Duration::from_millis(self.config.cleanup_timeout_ms),
-                    ))
-                    .map_err(fail)?;
-                *reads = None;
-            }
-            let (scope, count) = reads.get_or_insert_with(|| (ScopeId::new(), 0));
-            *count += 1;
-            let intent = HostRunIntent {
-                scope: *scope,
-                run: RunId::new(),
-                spec,
-                host_disconnect: GuardianHostDisconnect::KeepRunning,
-            };
-            let result = self.runtime.block_on(transport::execute(
-                &client,
-                &intent,
-                self.config.budget_for(command),
+            // Read-only preflight has no accepted business execution yet. What it leaves behind
+            // cannot write, so it runs without an attempt lock or a record.
+            let finished = self.git.runtime.block_on(exec::run(
                 &self.config,
+                &self.git.locks,
                 &self.shutdown,
+                invocation(None),
             ));
-            if result.is_err() {
-                self.runtime
-                    .block_on(transport::close(
-                        &client,
-                        *scope,
-                        Duration::from_millis(self.config.cleanup_timeout_ms),
-                    ))
-                    .map_err(fail)?;
-                *reads = None;
-            }
-            return normalize(command, result.map_err(fail)?);
+            return normalize(command, finished.output.map_err(fail)?);
         }
         let execution = execution
             .ok_or_else(|| fail(std::io::Error::other("mutation without accepted execution")))?;
         let attempt = ProcessAttempt {
             execution,
-            host_directory: self.config.host_directory.clone(),
-            expected_uid: self.config.expected_uid,
-            intent: HostRunIntent {
-                scope: ScopeId::new(),
-                run: RunId::new(),
-                spec,
-                host_disconnect: GuardianHostDisconnect::KeepRunning,
-            },
+            id: AttemptId::generate(),
         };
+        // The lock file exists before the record, and the record before the dispatch.
+        self.git
+            .locks
+            .create(&attempt.id, &command.cwd, LockDurability::Recorded)
+            .map_err(fail)?;
         self.journal
-            .record(&attempt)
+            .record(
+                &attempt,
+                &AttemptCommand {
+                    cwd: command.cwd.clone(),
+                    args: command.args.clone(),
+                },
+            )
             .map_err(std::io::Error::other)
             .map_err(fail)?;
-        let result = self.runtime.block_on(transport::execute(
-            &client,
-            &attempt.intent,
-            self.config.budget_for(command),
+        let finished = self.git.runtime.block_on(exec::run(
             &self.config,
+            &self.git.locks,
             &self.shutdown,
+            invocation(Some(&attempt.id)),
         ));
-        // Even an output failure may follow a successful mutation. Only closed Scope evidence retires it.
-        self.runtime
-            .block_on(transport::close(
-                &client,
-                attempt.intent.scope,
-                Duration::from_millis(self.config.cleanup_timeout_ms),
-            ))
-            .map_err(fail)?;
+        // Even an output failure may follow a successful mutation. Only stop evidence retires it.
+        if finished.settlement == AttemptSettlement::Unverified {
+            return Err(fail(std::io::Error::other(
+                "Git stop evidence is unverified",
+            )));
+        }
         self.journal
-            .cleaned(attempt.intent.run)
+            .cleaned(&attempt.id)
             .map_err(std::io::Error::other)
             .map_err(fail)?;
-        normalize(command, result.map_err(fail)?)
+        self.git.locks.retire(&attempt.id);
+        normalize(command, finished.output.map_err(fail)?)
     }
 }
 

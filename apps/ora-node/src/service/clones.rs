@@ -16,10 +16,10 @@ pub(super) struct Clones {
 }
 
 impl Clones {
-    /// Starts the executor with its own host side; the worker keeps the database.
+    /// Starts the executor with a Git executor of its own; the worker keeps the database.
     pub(super) fn start(node: &ManagedNode) -> std::io::Result<Self> {
         Ok(Self {
-            executor: Executor::spawn(node.git.runner().detached_clone_host()?)?,
+            executor: Executor::spawn(node.git.runner().detached_git()?)?,
             in_flight: None,
             queue: VecDeque::new(),
             previous: None,
@@ -36,7 +36,7 @@ impl Clones {
     /// Begins a recovery pass over every recoverable clone once the previous pass has finished.
     ///
     /// Taking the snapshot only while nothing is queued or in flight lets each execution take one
-    /// turn per pass, so an execution that always needs the host cannot starve the others.
+    /// turn per pass, so an execution that always needs Git cannot starve the others.
     pub(super) fn recovery_pass(&mut self, node: &mut ManagedNode) -> Result<(), String> {
         if self.in_flight.is_some() || !self.queue.is_empty() {
             return Ok(());

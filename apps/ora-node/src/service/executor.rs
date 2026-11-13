@@ -1,9 +1,9 @@
-//! The clone executor: the one thread that waits on the host, so the worker never does.
+//! The clone executor: the one thread that waits on Git, so the worker never does.
 //!
 //! It performs one step at a time and owns no Node database connection; every step it receives
 //! was made durable by the worker first. The worker owns this thread and drains it before the
 //! Node's final cleanup.
-use crate::managed::CloneHost;
+use crate::managed::DirectGit;
 use crate::repository::{CloneStep, CloneStepResult};
 use std::{
     sync::mpsc,
@@ -20,14 +20,14 @@ pub(super) struct Executor {
 
 impl Executor {
     /// Starts the thread; it ends when the worker drops its request channel.
-    pub(super) fn spawn(host: CloneHost) -> std::io::Result<Self> {
+    pub(super) fn spawn(git: DirectGit) -> std::io::Result<Self> {
         let (steps, requests) = mpsc::channel::<CloneStep>();
         let (reply, results) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("ora-node-clone".into())
             .spawn(move || {
                 for step in requests {
-                    if reply.send(step.perform(&host)).is_err() {
+                    if reply.send(step.perform(&git)).is_err() {
                         break;
                     }
                 }
@@ -74,8 +74,8 @@ impl Executor {
 
     /// Closes the request channel and joins the thread when it has nothing left in flight.
     ///
-    /// A step still waiting on an unresponsive host is not joined: process exit ends that thread,
-    /// and the next start settles its Run from the recorded attempt.
+    /// A step still waiting on Git is not joined: process exit ends that thread, and the next
+    /// start settles the attempt it recorded.
     pub(super) fn finish(mut self, idle: bool) {
         self.steps.take();
         if let Some(thread) = self.thread.take()

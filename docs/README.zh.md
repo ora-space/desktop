@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-这些文档跨模块边界描述 Ora Desktop 以及 Cloud 运行时的可执行文件（Controller、Node、进程宿主）。某个 crate 或包内部的实现细节写在
+这些文档跨模块边界描述 Ora Desktop 以及 Cloud 运行时的可执行文件（Controller、Node）。某个 crate 或包内部的实现细节写在
 该目录的 `README.md` 中；决策的权威来源是 [ora-space/specs](https://github.com/ora-space/specs/tree/main/decisions) 中的 ADR。
 
 ## 从哪里开始
@@ -84,14 +84,6 @@
 - [Revision](node/revisions.zh.md)：经 Git 交付、会话历史上传与恢复上一个 Revision
 - [ora-git](node/ora-git.zh.md)：Agent 使用的 Git 命令、每个会话的 socket、动词、推送与退出码
 - [Node 插件](node/plugins.zh.md)
-
-**进程运行时**
-
-- [进程运行时](process/process-runtime.zh.md)：宿主、guardian、生命周期内核及其保证
-- [进程宿主](process/host.zh.md)
-- [Guardian](process/guardian.zh.md)
-- [Linux rootless 适配器](process/linux-rootless.zh.md)
-- [Linux helper](process/linux-helper.zh.md)
 
 **运维**
 

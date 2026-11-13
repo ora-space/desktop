@@ -1,6 +1,6 @@
 //! Production composition and durable admission of Agent sessions.
 use super::{AgentConfig, ServiceConfig};
-use crate::managed::{AsNode, CloneHost};
+use crate::managed::{AsNode, DirectGit};
 use crate::revision::{DeliveryGit, RevisionRestorer};
 use crate::{
     AgentSessions, DirectoryPluginCatalog, ManagedNode, ProcessConfig, SessionConfig,
@@ -16,7 +16,7 @@ use std::path::Component;
 use std::time::Duration;
 
 /// Restores prior Revisions with delivery's Git and Node-identity Git Server access.
-pub(super) type Restorer = RevisionRestorer<CloneHost, AsNode<CloneHost>>;
+pub(super) type Restorer = RevisionRestorer<DirectGit, AsNode<DirectGit>>;
 
 pub(super) type SessionHost =
     AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog, Option<Restorer>>;
@@ -40,17 +40,17 @@ pub(super) fn restorer(
     ) else {
         return Ok(None);
     };
-    let host = || {
+    let git = || {
         node.git
             .runner()
-            .detached_clone_host()
+            .detached_git()
             .map_err(ora_node_db::Error::from)
     };
-    let mut runner = host()?;
-    // Every restore command records its original Run identity before the host sees it, whether it
+    let mut runner = git()?;
+    // Every restore command is recorded as an attempt before it is dispatched, whether it
     // runs as the workload user in the checkout or as the Node for Git Server access.
     runner.track_restore(stops.clone());
-    let mut node_runner = host()?;
+    let mut node_runner = git()?;
     node_runner.track_restore(stops.clone());
     Ok(Some(
         RevisionRestorer::new(
@@ -222,7 +222,7 @@ fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<
     }
     if overlaps(directory, config, &[]) {
         return Err(io::Error::other(
-            "agent workload directory overlaps Node state, host state or the clone root",
+            "agent workload directory overlaps Node state, the retired host directory or the clone root",
         ));
     }
     Ok(())
@@ -231,7 +231,7 @@ fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<
 /// Checks the `ora-git` socket directory, which the Node creates when missing and clears of its
 /// own sockets when it starts: the same absolute path rules as the workload directory, owned by
 /// the Node identity with no one else allowed to list or change it (so `/run` or `/tmp` are
-/// refused), under a parent only trusted owners control, and overlapping no Node, host, clone or
+/// refused), under a parent only trusted owners control, and overlapping no Node, retired host, clone or
 /// workload directory.
 fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     let Some(directory) = agent.ora_git_directory.as_deref() else {
@@ -271,7 +271,9 @@ fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<(
     }
     let workload = agent.workload_directory.as_deref();
     if overlaps(directory, config, &[workload]) {
-        return refuse("overlaps Node state, host state, the clone root or the workload directory");
+        return refuse(
+            "overlaps Node state, the retired host directory, the clone root or the workload directory",
+        );
     }
     Ok(())
 }
@@ -285,7 +287,7 @@ fn overlaps(
     let directory = canonicalize_longest_existing_prefix(directory);
     let protected = [
         Some(config.node.home_directory.as_path()),
-        Some(config.process.host_directory.as_path()),
+        config.process.host_directory.as_deref(),
         config
             .clone
             .as_ref()
@@ -310,7 +312,7 @@ pub(super) fn workload(
     match (directory, process.workload_uid) {
         (Some(directory), Some(uid)) => Ok(SessionWorkload::Separate {
             directory: directory.to_path_buf(),
-            // The group equals the user, as for the clone workload's `setpriv --regid`.
+            // The group equals the user, as for the clone workload's Git.
             identity: ProcessIdentity::Linux(ora_utils::process::LinuxChildIdentity::new(
                 uid, uid,
             )?),
@@ -407,10 +409,10 @@ fn ora_git(
     ) else {
         return Ok(None);
     };
-    let host = || {
+    let git = || {
         node.git
             .runner()
-            .detached_clone_host()
+            .detached_git()
             .map_err(ora_node_db::Error::from)
     };
     let owner = node.git.runner().process_config().workload_uid;
@@ -420,8 +422,8 @@ fn ora_git(
         let service = crate::ora_git::OraGitService::new(crate::ora_git::OraGitParts {
             directory: directory.to_path_buf(),
             peer_uid,
-            workload: DeliveryGit::new(host()?, policy),
-            node: AsNode(host()?),
+            workload: DeliveryGit::new(git()?, policy),
+            node: AsNode(git()?),
             access,
             repository_root: config.repository_root.clone(),
             owner: Some(peer_uid),

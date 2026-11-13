@@ -17,9 +17,9 @@ Git Server 允许各执行写什么，见
 ```
 
 - `agent.ora_git_directory` 请求启用 `ora-git`；没有它，或没有 `git_access`，会话就没有 socket。它必须是绝对路径，父目录只由
-  可信属主控制；要么尚不存在（由 Node 创建），要么是归 Node 所有、其他人不能读写的目录；且不能与 Node home、host 目录、
-  clone 根目录或 workload 目录重叠，否则 Node 拒绝启动。Node 把它保持为 `0711`（其他用户可以穿过但不能列出），启动时只删除
-  以前的 Node 进程在其中按自己命名规则创建的 socket。
+  可信属主控制；要么尚不存在（由 Node 创建），要么是归 Node 所有、其他人不能读写的目录；且不能与 Node home、
+  配置的旧字段 `process.host_directory`、clone 根目录或 workload 目录重叠，否则 Node 拒绝启动。Node 把它保持为 `0711`
+  （其他用户可以穿过但不能列出），启动时只删除以前的 Node 进程在其中按自己命名规则创建的 socket。
 - Node 只在 `process.workload_uid` 已配置且不同于 Node 有效 UID 时启用 `ora-git`。组件对缺失或相同 UID 均拒绝启用，
   不回退到 Node UID。会话行为以 Node 通过其余启动校验为前提：
   - 在允许缺失 `workload_uid` 的本地模式中，若其余启动校验通过且已配置 ora-git 服务输入，Node 在日志中说明配置原因，

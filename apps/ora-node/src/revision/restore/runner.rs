@@ -6,7 +6,7 @@ use std::{io, time::Instant};
 /// Implementations cap their command budget and request closure on expiry; returning never
 /// substitutes a timeout or a close request for the runner's normal cleanup evidence.
 pub(crate) trait RestoreGitRunner: GitRunner {
-    /// Production binds every command to the original session before any host side effect.
+    /// Production binds every command to the original session before any Git side effect.
     fn bind_restore(
         &mut self,
         _execution: &ora_node_protocol::ExecutionId,
@@ -55,7 +55,7 @@ impl<R: RestoreGitRunner> RestoreGitRunner for RestoreCommands<'_, R> {
 }
 
 impl<R: RestoreGitRunner> GitRunner for RestoreCommands<'_, R> {
-    /// Retains the host's capture ceiling for the unbounded trait entry point.
+    /// Retains the runner's capture ceiling for the unbounded trait entry point.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
         self.run_bounded(command, usize::MAX, usize::MAX)
     }

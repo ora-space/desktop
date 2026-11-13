@@ -146,9 +146,9 @@ fn checkout_requires_a_successful_clone() {
     let (record, attempt) = dispatch(&mut db, &accepted);
     let processes = db.process_journal().unwrap();
     processes
-        .record_outcome(attempt.intent.run, /*exit_code*/ 0)
+        .record_ending(&attempt.id, AttemptEnding::Exited(0))
         .unwrap();
-    processes.cleaned(attempt.intent.run).unwrap();
+    processes.cleaned(&attempt.id).unwrap();
     db.complete_clone(&record, clone_ready(&record)).unwrap();
     assert_eq!(
         journal.checkout(&input.execution_id).unwrap(),
@@ -230,9 +230,9 @@ fn checkout_rejects_unknown_and_failed_clone() {
     assert_eq!(journal.checkout(&input.execution_id).unwrap(), None);
     let processes = db.process_journal().unwrap();
     processes
-        .record_outcome(attempt.intent.run, /*exit_code*/ 128)
+        .record_ending(&attempt.id, AttemptEnding::Exited(128))
         .unwrap();
-    processes.cleaned(attempt.intent.run).unwrap();
+    processes.cleaned(&attempt.id).unwrap();
     db.complete_clone(
         &unknown,
         CloneExecutionResult::CloneFailed(CloneFailed {

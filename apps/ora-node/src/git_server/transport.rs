@@ -242,8 +242,8 @@ impl Drop for TransportRepository {
 /// Removes every transport repository a previous Node process left, except those in `keep`.
 ///
 /// A clone whose workload sequence has not yet taken the snapshot out of its transport
-/// repository still needs it: that half of a clone is never fetched again, and a step's Run may
-/// even have outlived the Node under its guardian and still be reading it.
+/// repository still needs it: that half of a clone is never fetched again, and a step's Git may
+/// even have outlived the Node and still be reading it.
 pub(crate) fn purge_transports(repository_root: &Path, keep: &[PathBuf]) -> io::Result<()> {
     let entries = match fs::read_dir(repository_root.join(TRANSPORT_ROOT)) {
         Ok(entries) => entries,

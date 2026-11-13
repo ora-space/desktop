@@ -65,7 +65,7 @@ Hello 协商协议版本、Node 身份和 incarnation 以及能力。会话接�
 
 - 准入使用有界队列和可撤销的会话守卫。只有持久受理在守卫下进行。断线或撤销会丢弃尚未受理的排队工作，但不能取消
   已受理的 clone。读、写和准入回复都使用 `frame_timeout_ms` 截止时间，回复的计时从它对应的帧到达时开始。
-- 应答准入的 worker 拥有 Node 数据库，从不等待 Git。每个需要宿主的 clone 步骤都在单独的 clone 执行器上一次运行
+- 应答准入的 worker 拥有 Node 数据库，从不等待 Git。每个要运行 Git 的 clone 步骤都在单独的 clone 执行器上一次运行
   一步，worker 在交出之前记录每一步的输入
   （[决策](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260925-clone-git-effects-run-outside-the-admission-worker.md)）。
   因此 Git 等待远端时，状态、确认和重放仍能得到应答。停止时，未完成的步骤最多可以继续

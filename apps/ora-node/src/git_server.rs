@@ -22,7 +22,7 @@ use gitlancer::{GitCommand, GitEnv, GitExecError, GitIntent, GitOutput, GitRunne
 use ora_node_protocol::{CommitId, ExecutionId, GitRepositoryUrl};
 use std::time::{Duration, Instant};
 
-/// Captured output stays far below the guardian capture limit; Git prints refs and short lines.
+/// Captured output stays far below the Node's capture limit; Git prints refs and short lines.
 const OUTPUT_LIMIT: usize = 256 * 1024;
 
 /// How often and how patiently a retryable Git Server failure is retried.

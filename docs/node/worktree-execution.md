@@ -30,8 +30,9 @@ moved base ref or replaces a saved path, and every mutation and recovery recheck
 
 Input is durable before Git changes anything, and Git never runs inside a SQLite transaction. The
 order is: validate and deduplicate, resolve, durably accept and reserve resources (Workspace, path,
-branch), persist mutation intent, run Git through the process host, inspect the actual facts, then
-complete atomically with the original event.
+branch), persist mutation intent, run Git as a recorded attempt (see
+[Node](node.md#execution-and-recovery)), inspect the actual facts, then complete atomically with the
+original event.
 
 - Creation runs at the frozen path, branch and commit and verifies the resulting checkout; ambiguous
   partial effects are left for recovery.

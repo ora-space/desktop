@@ -72,7 +72,6 @@ jobs:
               - '.gitmodules'
               - 'third_party/cloud'
               - 'apps/ora-reaper/**'
-              - 'apps/ora-process-*/**'
               - 'apps/ora-node/**'
               - 'apps/ora-controller/**'
               - 'xtask/**'

@@ -73,7 +73,7 @@ impl ManagedNode {
     }
 
     /// Requests normal Node shutdown and waits within the configured bound; never escalates to SIGKILL,
-    /// because forcing the Node past its managed-Git cleanup would hand containment to host/guardian.
+    /// because killing the Node would cut its Git cleanup short and leave it to the next start.
     pub async fn stop(mut self) -> io::Result<()> {
         if self.child.try_wait()?.is_some() {
             return Ok(());
@@ -97,7 +97,7 @@ impl ManagedNode {
             }
             if Instant::now() >= deadline {
                 ora_logging::ora_warn!(
-                    "managed Node did not stop within stop_timeout_ms; leaving it to host/guardian containment"
+                    "managed Node did not stop within stop_timeout_ms; leaving it to finish its Git cleanup"
                 );
                 return Ok(());
             }

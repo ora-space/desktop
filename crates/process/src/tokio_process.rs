@@ -16,6 +16,7 @@ use crate::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 pub struct TokioProcessSpawner {
     identity: ProcessIdentity,
     environment: ProcessEnvironment,
+    reaper_registration: ReaperRegistration,
 }
 
 /// Whether host environment authority is inherited by every child of this spawner.
@@ -37,12 +38,23 @@ impl TokioProcessSpawner {
         Self {
             identity,
             environment: ProcessEnvironment::Inherit,
+            reaper_registration: ReaperRegistration::Register,
         }
     }
 
     /// Configures inheritance once for a scoped owner; explicit ProcessSpec envs still apply.
     pub fn with_environment(mut self, environment: ProcessEnvironment) -> Self {
         self.environment = environment;
+        self
+    }
+
+    /// Keeps every child of this spawner out of the process-global reaper, whatever its spec
+    /// asks for.
+    ///
+    /// A host that starts the reaper for one class of its children uses this for the spawners of
+    /// the other classes, whose lifetime after an abnormal host exit is decided elsewhere.
+    pub fn without_reaper_registration(mut self) -> Self {
+        self.reaper_registration = ReaperRegistration::Skip;
         self
     }
 }
@@ -79,6 +91,26 @@ fn configure_identity(
     }
 }
 
+/// Clears close-on-exec on `descriptor` in the forked child, after any identity drop marked every
+/// descriptor above the standard streams close-on-exec.
+///
+/// `pre_exec` closures run in registration order, so this must be registered after
+/// [`configure_identity`]. A failure aborts the exec and surfaces as the spawn's error.
+#[cfg(unix)]
+fn keep_descriptor(command: &mut Command, descriptor: std::os::fd::RawFd) {
+    // SAFETY: the closure runs in the forked child before exec and calls only `fcntl`, which is
+    // async-signal-safe. The spec owns the descriptor until spawn returns, so the number still
+    // names the caller's open file in the child.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(descriptor, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 impl ProcessSpawner for TokioProcessSpawner {
     type Process = TokioManagedProcess;
 
@@ -88,7 +120,10 @@ impl ProcessSpawner for TokioProcessSpawner {
                 "TokioProcessSpawner requires an active Tokio runtime: {error}"
             ))
         })?;
-        let reaper_registration = spec.reaper_registration();
+        let reaper_registration = match self.reaper_registration {
+            ReaperRegistration::Register => spec.reaper_registration(),
+            ReaperRegistration::Skip => ReaperRegistration::Skip,
+        };
         let mut command = Command::new(spec.program());
         if let ProcessEnvironment::Empty = self.environment {
             command.env_clear();
@@ -114,6 +149,10 @@ impl ProcessSpawner for TokioProcessSpawner {
         command.kill_on_drop(spec.should_kill_on_drop());
         ProcessTree::configure_command(&mut command);
         configure_identity(&mut command, self.identity);
+        #[cfg(unix)]
+        if let Some(descriptor) = spec.inherited_descriptor() {
+            keep_descriptor(&mut command, descriptor);
+        }
 
         let mut child = command.spawn()?;
         let Some(process_id) = child.id() else {

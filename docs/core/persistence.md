@@ -5,8 +5,8 @@ English | [中文](persistence.zh.md)
 Desktop keeps its application state in one SQLite database owned by `ora-db`. `ora-db` is the only
 crate that knows Ora's SQL: it defines the migration catalog, bootstraps the database and
 implements the repository ports declared by `ora-application` and `ora-effect`. Callers above it
-never see rows, columns or soft-delete bookkeeping. The Node and the process host keep their own,
-separate databases; see [Node](../node/node.md) and [Process host](../process/host.md).
+never see rows, columns or soft-delete bookkeeping. The Node keeps its own, separate database; see
+[Node](../node/node.md).
 
 ## Migration catalog
 

@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=12) {
+    if app != APPLICATION_ID || !matches!(version, 1..=13) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -87,6 +87,9 @@ pub(super) fn initialize(
     }
     if version >= 12 {
         expected.execute_batch(include_str!("scheduled_artifacts.sql"))?;
+    }
+    if version >= 13 {
+        expected.execute_batch(include_str!("direct_git.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -237,6 +240,21 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 12,
+        )?;
+        tx.commit()?;
+    }
+    if version < 13 {
+        // v13 adds the ending "stopped without an exit status" and gives it to every attempt the
+        // retired process host left unsettled. Deployment ends the old Node, host and guardian
+        // tree before this program starts, so none of those commands can still be writing; their
+        // exit status is gone with the host, and a restore's stop counts as confirmed. No
+        // existing column is rewritten.
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("direct_git.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 13,
         )?;
         tx.commit()?;
     }

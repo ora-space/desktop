@@ -94,9 +94,10 @@ fn accepted_clone_never_adopts_an_existing_directory_or_replaced_root() {
     });
 }
 
-/// Killing a real Node during the workload checkout fetch cannot authorize another Run or a directory-based success.
+/// Killing a real Node during the workload checkout fetch cannot authorize another attempt or a
+/// directory-based success: the restarted Node settles the original attempt before it recovers.
 #[test]
-fn killed_clone_recovers_original_run_without_redispatch() {
+fn killed_clone_recovers_original_attempt_without_redispatch() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let server =
@@ -121,8 +122,9 @@ fn killed_clone_recovers_original_run_without_redispatch() {
         node.configure_git_access(server.access());
         node.recover_clones().unwrap();
         let state = node.submit_clone(command.clone()).unwrap().state;
-        // The guardian terminated Git when its owner died, so recovery reads a confirmed
-        // termination: a retryable failure, not success and not permanent Unknown.
+        // Nothing of the old Git was left when recovery took its attempt lock, so the attempt is
+        // found stopped without an exit status: a retryable failure, not success and not
+        // permanent Unknown.
         assert_interrupted(&state, &record, &command);
         drop(node);
         assert_retained_attempts(&fixture, &record, &command, 2);
@@ -174,7 +176,7 @@ fn slow_clone_outlives_the_local_command_budget() {
             pause.store(false, Ordering::SeqCst);
         });
         let mut process = fixture.process();
-        // Keep local host/guardian observation viable on loaded CI machines, while proving
+        // Keep local Git viable on loaded CI machines, while proving
         // that the seven-second network wait exceeds the unchanged five-second local budget.
         process.command_timeout_ms = 5_000;
         process.network_timeout_ms = 30_000;
@@ -233,9 +235,10 @@ fn command_deadline_settles_clone_as_interrupted() {
     });
 }
 
-/// Without guardian evidence the old Git may still write, so nothing is concluded.
+/// While the attempt lock is still held the old Git may still write, so nothing is concluded;
+/// once that Git has ended, the same attempt settles as interrupted.
 #[test]
-fn guardian_loss_keeps_interrupted_clone_unknown() {
+fn clone_stays_unknown_while_its_git_outlives_the_node() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let server =
@@ -246,7 +249,7 @@ fn guardian_loss_keeps_interrupted_clone_unknown() {
         let record = seed(&fixture, &config, &command);
         let mut child = launch(&fixture, &config, "clone-lost");
         until(|| gate.ready.exists());
-        fixture.kill_guardians();
+        fixture.lose_termination_means(&child);
         child.kill();
         let mut node =
             Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
@@ -257,15 +260,108 @@ fn guardian_loss_keeps_interrupted_clone_unknown() {
             node.submit_clone(command.clone()).unwrap().state,
             ExecutionState::Unknown
         );
-        drop(node);
-        let database = NodeDatabase::open(
-            &fixture.config().home_directory.join("ora-node.sqlite3"),
-            fixture.config().identity,
-        )
-        .unwrap();
-        let journal = database.process_journal().unwrap();
-        assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 2);
         assert!(record.target.path.is_dir());
+
+        gate.release();
+        let mut state = ExecutionState::Unknown;
+        until(|| {
+            node.recover_clones().unwrap();
+            state = node.submit_clone(command.clone()).unwrap().state;
+            state != ExecutionState::Unknown
+        });
+        assert_interrupted(&state, &record, &command);
+        drop(node);
+        assert_retained_attempts(&fixture, &record, &command, 2);
+    });
+}
+
+/// A finished clone leaves nothing running: the Node's only child is its reaper, and no attempt
+/// lock is left behind.
+#[test]
+fn completed_clone_leaves_no_process_but_the_reaper() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "resident", "main");
+        seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-resident");
+        until(|| {
+            fixture
+                .log("clone-resident")
+                .contains("Node recovery pass completed")
+        });
+        assert_eq!(
+            (
+                crate::support::descendants(child.0.id()),
+                fs::read_dir(fixture.locks()).unwrap().count(),
+            ),
+            (vec![crate::support::reaper_program()], 0)
+        );
+        child.terminate();
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert!(
+            matches!(
+                clone_result(&state),
+                Some(CloneExecutionResult::CloneReady(_))
+            ),
+            "clone did not complete: {state:?}"
+        );
+    });
+}
+
+/// Upgrading from a Node that ran Git through the process host: the attempt the host never
+/// settled is ended as stopped, its clone fails as interrupted, and the host's directory is gone.
+#[test]
+fn upgrade_settles_the_retired_hosts_attempt_and_removes_its_directory() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let gate = https::WorkloadGate::install(fixture.path());
+        let command = request(&server, "upgrade", "main");
+        let record = seed(&fixture, &config, &command);
+        let mut child = launch(&fixture, &config, "clone-before-upgrade");
+        until(|| gate.ready.exists());
+        child.kill();
+        // The deployment precondition: the old process tree has ended before the new Node starts.
+        until(|| crate::support::descendants(child.0.id()).is_empty());
+        // What the host-era Node left: a dispatched attempt in the previous schema with no ending,
+        // no attempt lock, and the host's own state directory.
+        fs::remove_dir_all(fixture.locks()).unwrap();
+        let database = fixture.config().home_directory.join("ora-node.sqlite3");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "DROP TRIGGER stop_excludes_other_endings; DROP TRIGGER outcome_excludes_stop;
+                 DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;
+                 PRAGMA user_version=12;",
+            )
+            .unwrap();
+        let host = fixture.path().join("host");
+        fs::create_dir(&host).unwrap();
+        for name in ["host.sqlite", "host.lock"] {
+            fs::write(host.join(name), "").unwrap();
+        }
+        let mut process = fixture.process();
+        process.host_directory = Some(host.clone());
+        process.expected_uid = Some(1000);
+
+        let mut node = Node::open(fixture.config(), process, Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        node.recover_clones().unwrap();
+        let state = node.submit_clone(command.clone()).unwrap().state;
+        assert_interrupted(&state, &record, &command);
+        assert!(!host.exists());
+        drop(node);
+        assert_retained_attempts(&fixture, &record, &command, 2);
     });
 }
 
@@ -297,7 +393,7 @@ fn assert_interrupted(
     );
 }
 
-/// One dispatched Run, fully cleaned, and the original directory still in place.
+/// Every recorded attempt settled, and the original directory still in place.
 fn assert_retained_attempts(
     fixture: &Fixture,
     record: &CloneExecution,

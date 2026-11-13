@@ -17,7 +17,7 @@ mod schema;
 mod session;
 pub use execution::owns;
 pub use model::*;
-pub use process::{ProcessAttempt, ProcessJournal};
+pub use process::{AttemptCommand, AttemptEnding, AttemptId, ProcessAttempt, ProcessJournal};
 pub use repository_model::{
     CloneExecution, ClonePhase, CloneProgress, CloneTarget, ClonedCheckout,
 };

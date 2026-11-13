@@ -22,8 +22,6 @@ fn config(
             "repositories": [],
         },
         "process": {
-            "host_directory": root.join("host"),
-            "expected_uid": 0,
             "git_program": "/usr/bin/git",
             "environment": {},
             "command_timeout_ms": 1000,
@@ -56,9 +54,8 @@ fn directory(path: &Path, mode: u32) -> PathBuf {
 #[test]
 fn restore_cleanup_requires_original_terminal_stop_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ora_node_db::{NodeIdentity, ProcessAttempt};
+    use ora_node_db::{AttemptCommand, AttemptId, NodeIdentity, ProcessAttempt};
     use ora_node_protocol::*;
-    use ora_process_protocol::*;
     ora_logging::initialize_test_clock();
     let subscriber = tracing::Dispatch::new(
         tracing_subscriber::fmt()
@@ -100,16 +97,16 @@ fn restore_cleanup_requires_original_terminal_stop_evidence()
         let journal = node.database.session_journal()?;
         let attempt = ProcessAttempt {
             execution: input.execution_id.clone(),
-            host_directory: root.path().join("original-host"),
-            expected_uid: 42,
-            intent: HostRunIntent {
-                scope: ScopeId::new(),
-                run: RunId::new(),
-                spec: RunSpec::new("git", root.path(), DescendantPolicy::WaitForAll),
-                host_disconnect: GuardianHostDisconnect::KeepRunning,
-            },
+            id: AttemptId::generate(),
         };
-        journal.record_restore_attempt(&attempt, StopContainment::BestEffort)?;
+        journal.record_restore_attempt(
+            &attempt,
+            &AttemptCommand {
+                cwd: root.path().to_path_buf(),
+                args: vec!["fetch".into()],
+            },
+            StopContainment::BestEffort,
+        )?;
         let directory =
             node.home_directory()
                 .join("revision-restores")
@@ -146,7 +143,7 @@ fn restore_cleanup_requires_original_terminal_stop_evidence()
                 .is_err()
         );
         // The process monitor alone acknowledges its independently verified original proof.
-        journal.confirm_restore_stop(attempt.intent.run)?;
+        journal.confirm_restore_stop(&attempt.id)?;
         journal.end_session(&input.execution_id, ended)?;
         super::sweep_restores(&node, &journal)?;
         assert!(!directory.exists());
@@ -206,7 +203,7 @@ async fn serve_refuses_an_agent_workload_that_does_not_match_the_process_workloa
             "No such file or directory (os error 2)".to_string(),
             "agent workload directory must belong to the Node identity and be writable by no one else"
                 .to_string(),
-            "agent workload directory overlaps Node state, host state or the clone root"
+            "agent workload directory overlaps Node state, the retired host directory or the clone root"
                 .to_string(),
         ]
     );
@@ -253,7 +250,7 @@ async fn serve_refuses_an_ora_git_directory_that_is_not_the_nodes_alone() {
         );
     }
 
-    let overlap = "agent ora_git_directory overlaps Node state, host state, the clone root or the workload directory";
+    let overlap = "agent ora_git_directory overlaps Node state, the retired host directory, the clone root or the workload directory";
     assert_eq!(
         errors,
         vec![
@@ -441,6 +438,8 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
     let connection = rusqlite::Connection::open(home.join("ora-node.sqlite3"))?;
     connection.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
+        DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop;
+        DROP TABLE process_stops;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;
         DROP TABLE restore_process_attempts; DROP TABLE session_restores;
         CREATE TEMP TABLE v10_ids AS SELECT * FROM execution_identities;
@@ -466,6 +465,7 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
         journal.clone(),
         process,
         Duration::from_secs(/*secs*/ 60),
+        node.git.runner().direct_git().locks().clone(),
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -504,130 +504,38 @@ fn prior_revision() -> ora_node_protocol::PriorRevision {
     }
 }
 
-/// A Run the host still reports as running with its cleanup outstanding.
-fn running(
-    scope: ora_process_protocol::ScopeId,
-    run: ora_process_protocol::RunId,
-) -> ora_process_protocol::HostRunView {
-    use ora_process_protocol::*;
-    HostRunView {
-        scope,
-        run,
-        stop_requested: false,
-        last_observed: Some(RunSnapshot {
-            id: run,
-            launch: LaunchFact::Started,
-            direct: DirectProcessState::Running,
-            cleanup: CleanupState::Pending,
-        }),
-        coordination: HostCoordination::Observing,
-    }
+/// Writes a stand-in for Git that counts its starts, leaves a descendant outside its process
+/// group holding whatever it inherited, and then outlives any deadline until it is killed.
+fn escaping_git(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let program = root.join("escaping-git");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\necho start >> '{root}/starts'\nsetsid sleep 60 >/dev/null 2>&1 &\necho $! >> '{root}/escaped'\nexec sleep 60\n",
+            root = root.display()
+        ),
+    )?;
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755))?;
+    Ok(program)
 }
 
-/// Answers like a host whose guardian is unreachable: the Run never ends and no Close is ever
-/// confirmed, so no original stop can be proven.
-fn serve_refusing_close(
-    listener: std::os::unix::net::UnixListener,
-    starts: &std::sync::atomic::AtomicUsize,
-    stop: &std::sync::atomic::AtomicBool,
-) {
-    use ora_process_protocol::*;
-    use std::io::{Read, Write};
-    use std::sync::atomic::Ordering;
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking listener");
-    let mut scope = ScopeId::new();
-    while !stop.load(Ordering::SeqCst) {
-        let mut stream = match listener.accept() {
-            Ok((stream, _)) => stream,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(/*millis*/ 5));
-                continue;
-            }
-            Err(_) => return,
-        };
-        stream.set_nonblocking(false).expect("blocking connection");
-        loop {
-            let mut length = [0u8; 4];
-            match stream.read_exact(&mut length) {
-                Ok(()) => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
-                    ) =>
-                {
-                    break;
-                }
-                Err(_) => break,
-            }
-            let mut bytes = vec![0; u32::from_be_bytes(length) as usize];
-            if stream.read_exact(&mut bytes).is_err() {
-                break;
-            }
-            let Ok(request) = decode_guardian_payload::<HostRequest>(&bytes) else {
-                break;
-            };
-            let reply = match request.operation {
-                HostOperation::CreateScope { scope: requested } => {
-                    scope = requested;
-                    HostReply::Scope(HostScopeView {
-                        scope,
-                        close_requested: false,
-                        last_observed: Some(ScopeState::Open),
-                        coordination: HostCoordination::Observing,
-                    })
-                }
-                HostOperation::Start { intent } => {
-                    starts.fetch_add(1, Ordering::SeqCst);
-                    scope = intent.scope;
-                    HostReply::Run(running(scope, intent.run))
-                }
-                HostOperation::QueryRun { run } => HostReply::Run(running(scope, run)),
-                HostOperation::Close { scope: requested } => {
-                    scope = requested;
-                    HostReply::Rejected(HostRejection::GuardianUnavailable)
-                }
-                _ => HostReply::Rejected(HostRejection::IntentRejected),
-            };
-            let Ok(frame) = encode_guardian_frame(&reply) else {
-                break;
-            };
-            if stream.write_all(&frame).is_err() {
-                break;
-            }
-        }
-    }
-}
-
-/// A restore command the Node runs as itself records its original Run before the host sees it.
-/// When that Run's Close stays unconfirmed the session reaches no terminal state, and the
+/// A restore command the Node runs as itself records its original attempt before it starts.
+/// When that attempt's stop stays unconfirmed the session reaches no terminal state, and the
 /// transport repository the original Git may still read stays on disk.
 #[test]
-fn unconfirmed_node_identity_restore_run_reaches_no_terminal_state()
+fn unconfirmed_node_identity_restore_attempt_reaches_no_terminal_state()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::session::{PriorRevisionRestore, RestoreCancel, RestoreFailure, RestoreRequest};
     use ora_node_protocol::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     ora_logging::initialize_test_clock();
     let root = tempfile::tempdir()?;
     let (mut deployment, clone) = restored_deployment(root.path())?;
-    let host_directory = directory(&root.path().join("fake-host"), 0o700);
-    deployment.process.host_directory = host_directory.clone();
-    // SAFETY: reading this test's own effective user changes nothing.
-    deployment.process.expected_uid = unsafe { libc::geteuid() };
+    // The command is cut at the restore deadline, but a descendant that left its group keeps
+    // the attempt lock, so the original stop cannot be proven.
+    deployment.process.git_program = escaping_git(root.path())?;
+    deployment.process.cleanup_timeout_ms = 100;
     let checkout = directory(&root.path().join("checkout"), 0o755);
     fs::create_dir(checkout.join(".git"))?;
-    let starts = Arc::new(AtomicUsize::new(0));
-    let stop = Arc::new(AtomicBool::new(false));
-    let listener = std::os::unix::net::UnixListener::bind(host_directory.join("host.sock"))?;
-    let host = {
-        let starts = Arc::clone(&starts);
-        let stop = Arc::clone(&stop);
-        std::thread::spawn(move || serve_refusing_close(listener, &starts, &stop))
-    };
     let mut node = crate::Node::open(
         deployment.node,
         deployment.process.clone(),
@@ -650,6 +558,7 @@ fn unconfirmed_node_identity_restore_run_reaches_no_terminal_state()
         journal.clone(),
         deployment.process,
         Duration::from_millis(/*millis*/ 300),
+        node.git.runner().direct_git().locks().clone(),
     );
     let restorer = super::restorer(
         &node,
@@ -678,7 +587,7 @@ fn unconfirmed_node_identity_restore_run_reaches_no_terminal_state()
     ));
     assert_eq!(restored.err(), Some(RestoreFailure::Unavailable));
     // The Node-identity command was journaled and started; the workload's never ran.
-    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert_eq!(fs::read_to_string(root.path().join("starts"))?, "start\n");
     assert_eq!(
         journal.pending_restore_attempts(&input.execution_id)?.len(),
         1
@@ -710,8 +619,10 @@ fn unconfirmed_node_identity_restore_run_reaches_no_terminal_state()
         &input.execution_id,
     );
     assert!(transport.is_dir());
-    stop.store(true, Ordering::SeqCst);
-    host.join().ok();
+    for escaped in fs::read_to_string(root.path().join("escaped"))?.lines() {
+        // SAFETY: the pid names a sleeper this test's stand-in Git started in its own session.
+        unsafe { libc::kill(escaped.parse()?, libc::SIGKILL) };
+    }
     Ok(())
 }
 
@@ -720,9 +631,8 @@ fn unconfirmed_node_identity_restore_run_reaches_no_terminal_state()
 #[test]
 fn startup_cleanup_keeps_restore_inputs_until_original_stop_is_confirmed()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ora_node_db::ProcessAttempt;
+    use ora_node_db::{AttemptCommand, AttemptId, ProcessAttempt};
     use ora_node_protocol::*;
-    use ora_process_protocol::*;
     ora_logging::initialize_test_clock();
     let root = tempfile::tempdir()?;
     let (deployment, clone) = restored_deployment(root.path())?;
@@ -736,16 +646,16 @@ fn startup_cleanup_keeps_restore_inputs_until_original_stop_is_confirmed()
     let journal = node.database.session_journal()?;
     let attempt = ProcessAttempt {
         execution: input.execution_id.clone(),
-        host_directory: root.path().join("original-host"),
-        expected_uid: 42,
-        intent: HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: RunSpec::new("git", root.path(), DescendantPolicy::WaitForAll),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        },
+        id: AttemptId::generate(),
     };
-    journal.record_restore_attempt(&attempt, StopContainment::BestEffort)?;
+    journal.record_restore_attempt(
+        &attempt,
+        &AttemptCommand {
+            cwd: root.path().to_path_buf(),
+            args: vec!["fetch".into()],
+        },
+        StopContainment::BestEffort,
+    )?;
     // The deployment canonicalizes its roots, so the restarted Node uses the same directory.
     let repository_root = std::fs::canonicalize(&clone.repository_root)?;
     let transport = crate::git_server::TransportRepository::location(
@@ -765,7 +675,7 @@ fn startup_cleanup_keeps_restore_inputs_until_original_stop_is_confirmed()
         (true, false),
         "startup cleanup must keep only inputs an original command may still read"
     );
-    journal.confirm_restore_stop(attempt.intent.run)?;
+    journal.confirm_restore_stop(&attempt.id)?;
     journal.end_session(
         &input.execution_id,
         AgentSessionEnded {

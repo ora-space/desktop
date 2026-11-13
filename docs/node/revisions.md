@@ -147,7 +147,7 @@ without contacting the Git Server.
 The fetch and the import share one absolute deadline, retries included. It defaults to five minutes and is
 configured in the Node service file as `"restore": { "deadline_ms": 300000 }`. The value must be a positive
 integer representing a finite, representable duration; invalid values refuse service startup. Waiting for
-the restore Git lock, retries and late host exchanges never reset this cutoff. A missing delivery ref, a 403
+the restore Git lock and retries never reset this cutoff. A missing delivery ref, a 403
 or another 4xx other than 401 and 429 ends the session as `agent_failed{prior_revision_base_unavailable}`:
 the prior Revision's Git content is out of reach for good. A 401 only says the Node's own git-access
 identity did not authenticate, so it ends the session as `agent_failed{prior_revision_unavailable}`,
@@ -161,35 +161,30 @@ only once every original command of its restore proved that it stopped; startup 
 the repository of every session whose restore is not settled, instead of clearing it before recovery
 runs.
 
-Each supervised restore Git command, at either identity, receives the earlier of its own command
-deadline and the restore cutoff. No new command starts after expiry; a pending host exchange is
-bounded by that same cutoff, so it cannot defer the close request until a longer transport timeout.
-Cleanup and original Scope closure use their independent cleanup budget after execution expires. A
-late ancestor check cannot turn an expired restore into success.
+Each restore Git command, at either identity, receives the earlier of its own command deadline and
+the restore cutoff, and its process group is killed when that passes. No new command starts after
+expiry. The kill and the wait for stop evidence use their independent cleanup budget after execution
+expires. A late ancestor check cannot turn an expired restore into success.
 
-**Stop confirmation.** Every restore Git intent — the Node's transport repository creation, Git Server
-fetch and `commit_of`, and the workload user's import — is durably associated with its session before
-host admission. The first stop request is persisted before Close; cancellation observes command boundaries
-and does not abandon the blocking worker. Original Scope `Closed` plus either original Run direct-process
-exit or host-authoritative `NotStarted` permits a terminal result, transport cleanup, delivery or checkout
-reuse. Non-launch proof requires matching original Scope/Run identities, `LaunchFact::NotStarted`,
-`DirectProcessState::NotStarted` and completed cleanup together. The host rejects any non-launch report
-that contradicts its persisted confirmed launch, including after restart. A record that the host cannot
-find (`UnknownIdentity`) remains unknown and never grants release.
-
-Host-authoritative non-launch comes from a platform-confirmed spawn failure or cancellation before
-guardian acceptance. The latter requires the current host binding to fence old requests and no Start
-after Stop; an unknown guardian Run without those conditions is not proof. Linux guardian containment
-is BestEffort; cancellation reports `BestEffortComplete`, which does not claim Strong quiescence.
-See the [approved NotStarted extension](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261021-stop-confirmation-accepts-not-started.md).
+**Stop confirmation.** Every restore Git command — the Node's transport repository creation, Git Server
+fetch and `commit_of`, and the workload user's import — is recorded with its session, after its
+attempt lock file exists and before it is dispatched. The first stop request is persisted before the
+command is killed; cancellation observes command boundaries and does not abandon the blocking worker.
+Only the stop evidence of every original attempt, its attempt lock taken again (see
+[Node](node.md#execution-and-recovery)), permits a terminal result, transport cleanup, delivery or
+checkout reuse. The evidence does not tell a command that exited or was killed from one that never
+started: in each case nothing of it can still write. A recorded attempt whose lock file is missing
+remains unknown and never grants release. The guarantee is BestEffort, which does not claim Strong
+quiescence.
 
 If proof is unavailable, the original identities, inputs, terminal intention and checkout conflict
 remain durable. `stop_confirmation_ms` defaults to ten minutes, must be positive, finite and greater
 than `deadline_ms`, and is frozen at the first stop request. Retry, restart, reconnection and changed
-configuration cannot renew it. At expiry the session stops querying host evidence and the existing
-execution-status response exposes `stop_unconfirmed`, including original Scope/Run, first-request and
-bound timestamps and the selected containment. Expiry emits no terminal and grants no cleanup or reuse.
-Startup handover and later execution queries can retry closing and querying those same identities;
+configuration cannot renew it. At expiry the session stops probing for stop evidence and the existing
+execution-status response exposes `stop_unconfirmed`, including the original attempt's id (as both
+`scope_id` and `run_id`), first-request and bound timestamps and the guarantee. Expiry emits no
+terminal and grants no cleanup or reuse. Startup handover and later execution queries can retry
+killing and probing those same attempts;
 late proof settles the original execution once. A pre-upgrade restore that was still in flight remains
 unknown. Completed old terminals stay as history and do not fence later admissions, and neither does a
 running old session whose sequence counter is non-zero: v9 and v10 ran the restore synchronously before
@@ -224,10 +219,10 @@ header, and execution inputs supply the server address. The same material serves
 
 ## Limits
 
-- Agent plugins run outside host Scopes, so "process scope closed" means the session's result is written
+- Agent plugins hold no attempt lock, so "process scope closed" means the session's result is written
   and the session runtime stopped its plugin tree.
-- Delivery Git Runs are host-managed but not journaled as business mutations; an interrupted preparation
-  simply prepares again.
+- Delivery Git commands hold attempt locks but are not recorded as business mutations; an interrupted
+  preparation simply prepares again once the interrupted command's lock is free.
 - Repository configuration can still select clean or smudge filters that `git add` runs, under the
   workload identity like the agent itself.
 - Parsing the borrowed checkout objects in the transport repository has no resource limits of its own.

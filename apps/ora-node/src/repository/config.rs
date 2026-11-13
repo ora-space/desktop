@@ -56,10 +56,7 @@ impl CloneConfig {
             .map_err(|e| Error::Configuration(e.to_string()))?
             .as_path()
             .to_owned();
-        for path in protected
-            .iter()
-            .chain(std::iter::once(&process.host_directory))
-        {
+        for path in protected.iter().chain(process.host_directory.iter()) {
             let path = ora_utils::path::canonicalize_longest_existing_prefix(path);
             if path.starts_with(&self.repository_root) || self.repository_root.starts_with(path) {
                 return Err(Error::Configuration(

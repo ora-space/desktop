@@ -366,5 +366,5 @@ fn migrates_v8_without_losing_sessions() {
         .unwrap()
         .pragma_query_value(/*schema_name*/ None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
 }

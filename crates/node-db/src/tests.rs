@@ -343,6 +343,23 @@ fn definitive_create_failure_retires_its_reservation() {
     );
 }
 
+/// A recorded command description; the journal never executes it.
+fn git_command() -> AttemptCommand {
+    AttemptCommand {
+        cwd: std::path::PathBuf::from("/repositories/checkout"),
+        args: vec!["fetch".into(), "origin".into()],
+    }
+}
+
+/// Drops what v13 added, so a fixture of any earlier version matches its exact schema.
+fn remove_direct_git_schema(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;",
+        )
+        .unwrap();
+}
+
 /// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.
 fn remove_plugin_schema(path: &std::path::Path) {
     remove_session_schema(path);
@@ -383,8 +400,9 @@ fn remove_revision_schema(path: &std::path::Path) {
 
 /// Reconstructs v9 exactly: the schema before the own-branch ledger.
 fn remove_branch_heads_schema(path: &std::path::Path) {
-    Connection::open(path)
-        .unwrap()
+    let connection = Connection::open(path).unwrap();
+    remove_direct_git_schema(&connection);
+    connection
         .execute_batch("DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
         .unwrap();
 }

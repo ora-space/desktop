@@ -1,21 +1,69 @@
 use crate::{Error, Execution, NodeDatabase, Progress, WriteGuard, WritePoint};
 use ora_node_protocol::ExecutionId;
-use ora_process_protocol::{HostRunIntent, RunId};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::{fmt, path::PathBuf, sync::Arc};
 
-/// Node-owned association persisted before a host can accept a Git side effect.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Names one dispatch of a Git command. The same value names the attempt's lock file, so a
+/// restarted Node can ask whether the process tree it started is gone.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AttemptId(String);
+
+impl AttemptId {
+    /// Draws a fresh identity; one is never reused for another dispatch.
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
+
+    /// Adopts an identity read back from a file name or a row, which must be a UUID.
+    pub fn parse(value: &str) -> Option<Self> {
+        uuid::Uuid::parse_str(value)
+            .ok()
+            .map(|id| Self(id.to_string()))
+    }
+
+    /// The textual form used as the row key and the lock file stem.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AttemptId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// Node-owned association persisted before a Git side effect is dispatched.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessAttempt {
     pub execution: ExecutionId,
-    pub host_directory: PathBuf,
-    pub expected_uid: u32,
-    pub intent: HostRunIntent,
+    pub id: AttemptId,
+}
+
+/// What an attempt ran, kept for whoever inspects an attempt that never settled. It is never
+/// executed again and carries no environment, which may hold deployment secrets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptCommand {
+    pub cwd: PathBuf,
+    pub args: Vec<String>,
+}
+
+/// The single way a recorded attempt ended. The three are mutually exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptEnding {
+    /// Git exited with its own verdict.
+    Exited(i32),
+    /// A signal ended Git before it reached a verdict.
+    Terminated(i32),
+    /// The process tree is gone but nobody collected its exit status: a restarted Node found the
+    /// attempt stopped. It can back an interruption, never a success or a Git failure.
+    Stopped,
 }
 
 /// A narrow second connection shares the original database lease, not a second Node authority.
-/// Its transactions finish before host exchanges or business-state transactions begin.
+/// Its transactions finish before a command is dispatched or business-state transactions begin.
 pub struct ProcessJournal<G: WriteGuard> {
     connection: Connection,
     guard: Arc<G>,
@@ -78,69 +126,105 @@ impl<G: WriteGuard> ProcessJournal<G> {
         Ok(())
     }
 
-    /// Persists only an observed exit code, without copying process output or credentials.
-    pub fn record_outcome(&self, run: RunId, exit_code: i32) -> Result<(), Error> {
-        // A Run has exactly one ending; a recorded signal termination cannot gain an exit code.
-        let terminated: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM process_terminations WHERE run=?1)",
-            [run.to_string()],
-            |r| r.get(/*idx*/ 0),
-        )?;
-        if terminated {
-            return Err(Error::IdentityConflict);
+    /// Persists how an attempt ended, once its stop evidence held, without copying process output
+    /// or credentials.
+    ///
+    /// An attempt has exactly one ending: repeating the same one is accepted, a different one is
+    /// a conflict, whichever of the three was recorded first.
+    pub fn record_ending(&self, attempt: &AttemptId, ending: AttemptEnding) -> Result<(), Error> {
+        match self.ending(attempt)? {
+            Some(recorded) if recorded == ending => return Ok(()),
+            Some(_) => return Err(Error::IdentityConflict),
+            None => {}
         }
         self.guard.before_write(WritePoint::Process)?;
-        self.connection.execute(
-            "INSERT INTO process_outcomes VALUES (?1,?2) ON CONFLICT(run) DO NOTHING",
-            params![run.to_string(), exit_code],
-        )?;
-        let saved: i32 = self.connection.query_row(
-            "SELECT exit_code FROM process_outcomes WHERE run=?1",
-            [run.to_string()],
-            |r| r.get(/*idx*/ 0),
-        )?;
-        if saved != exit_code {
-            return Err(Error::IdentityConflict);
-        }
+        match ending {
+            AttemptEnding::Exited(code) => self.connection.execute(
+                "INSERT INTO process_outcomes VALUES (?1,?2)",
+                params![attempt.as_str(), code],
+            )?,
+            AttemptEnding::Terminated(signal) => self.connection.execute(
+                "INSERT INTO process_terminations VALUES (?1,?2)",
+                params![attempt.as_str(), signal],
+            )?,
+            AttemptEnding::Stopped => self
+                .connection
+                .execute("INSERT INTO process_stops VALUES (?1)", [attempt.as_str()])?,
+        };
         Ok(())
     }
 
-    /// Persists that a signal ended the Run before Git reached a verdict, once cleanup confirmed it.
-    ///
-    /// A Run has exactly one ending: an exit code and a termination are mutually exclusive.
-    pub fn record_termination(&self, run: RunId, signal: i32) -> Result<(), Error> {
-        let exited: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM process_outcomes WHERE run=?1)",
-            [run.to_string()],
+    /// Reads the ending an earlier pass or process recorded, so a settled attempt is never
+    /// probed again after its lock file was removed.
+    pub fn ending(&self, attempt: &AttemptId) -> Result<Option<AttemptEnding>, Error> {
+        let code: Option<i32> = self
+            .connection
+            .query_row(
+                "SELECT exit_code FROM process_outcomes WHERE run=?1",
+                [attempt.as_str()],
+                |r| r.get(/*idx*/ 0),
+            )
+            .optional()?;
+        if let Some(code) = code {
+            return Ok(Some(AttemptEnding::Exited(code)));
+        }
+        let signal: Option<i32> = self
+            .connection
+            .query_row(
+                "SELECT signal FROM process_terminations WHERE run=?1",
+                [attempt.as_str()],
+                |r| r.get(/*idx*/ 0),
+            )
+            .optional()?;
+        if let Some(signal) = signal {
+            return Ok(Some(AttemptEnding::Terminated(signal)));
+        }
+        let stopped: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM process_stops WHERE run=?1)",
+            [attempt.as_str()],
             |r| r.get(/*idx*/ 0),
         )?;
-        if exited {
-            return Err(Error::IdentityConflict);
-        }
-        self.guard.before_write(WritePoint::Process)?;
-        self.connection.execute(
-            "INSERT INTO process_terminations VALUES (?1,?2) ON CONFLICT(run) DO NOTHING",
-            params![run.to_string(), signal],
-        )?;
-        let saved: i32 = self.connection.query_row(
-            "SELECT signal FROM process_terminations WHERE run=?1",
-            [run.to_string()],
-            |r| r.get(/*idx*/ 0),
-        )?;
-        if saved != signal {
-            return Err(Error::IdentityConflict);
-        }
-        Ok(())
+        Ok(stopped.then_some(AttemptEnding::Stopped))
     }
 
     /// Retains original attempts even after cleanup so recovery can still query their terminal evidence.
     pub fn attempts(&self, execution: &ExecutionId) -> Result<Vec<ProcessAttempt>, Error> {
+        self.identities(
+            "SELECT run FROM process_attempts WHERE execution=?1 ORDER BY rowid",
+            execution,
+        )
+    }
+
+    /// Lists every attempt of any kind whose stop evidence is still owed. A lock file that
+    /// belongs to none of them was left by a command the database never recorded.
+    pub fn unsettled(&self) -> Result<Vec<AttemptId>, Error> {
         self.connection
-            .prepare("SELECT data FROM process_attempts WHERE execution=?1 ORDER BY rowid")?
-            .query_map([execution.as_str()], |r| {
-                r.get::<_, Vec<u8>>(/*idx*/ 0)
+            .prepare(
+                "SELECT run FROM process_attempts WHERE cleaned=0 UNION SELECT run FROM restore_process_attempts WHERE cleaned=0",
+            )?
+            .query_map([], |row| row.get::<_, String>(/*idx*/ 0))?
+            .map(|id| AttemptId::parse(&id?).ok_or(Error::InvalidSchema))
+            .collect()
+    }
+
+    /// Reads attempt identities only: rows written before Git ran directly hold a host intent in
+    /// `data` that nothing decodes any more.
+    fn identities(
+        &self,
+        query: &str,
+        execution: &ExecutionId,
+    ) -> Result<Vec<ProcessAttempt>, Error> {
+        self.connection
+            .prepare(query)?
+            .query_map([execution.as_str()], |row| {
+                row.get::<_, String>(/*idx*/ 0)
             })?
-            .map(|data| Ok(ora_process_protocol::decode_guardian_payload(&data?)?))
+            .map(|id| {
+                Ok(ProcessAttempt {
+                    execution: execution.clone(),
+                    id: AttemptId::parse(&id?).ok_or(Error::InvalidSchema)?,
+                })
+            })
             .collect()
     }
 
@@ -185,8 +269,8 @@ impl<G: WriteGuard> ProcessJournal<G> {
         Ok(())
     }
 
-    /// Records a unique attempt before sending CreateScope or Start; retry never invents a new ID.
-    pub fn record(&self, attempt: &ProcessAttempt) -> Result<(), Error> {
+    /// Records a unique attempt before its command is dispatched; a retry never reuses the ID.
+    pub fn record(&self, attempt: &ProcessAttempt, command: &AttemptCommand) -> Result<(), Error> {
         let unfinished: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM executions WHERE execution=?1 AND state!='completed' UNION ALL SELECT 1 FROM clone_executions WHERE execution=?1 AND state!='completed' AND json_extract(progress, '$.evidence.phase')='dispatched')",
             [attempt.execution.as_str()],
@@ -195,8 +279,8 @@ impl<G: WriteGuard> ProcessJournal<G> {
         if !unfinished {
             return Err(Error::InvalidTransition);
         }
-        // Snapshot clone has one durable Run per workload step. A repeated Run for the same
-        // step is forbidden; the next step may start only after every earlier Run is cleaned.
+        // Snapshot clone has one durable attempt per workload step. A repeated attempt for the
+        // same step is forbidden; the next step may start only after every earlier one is cleaned.
         let invalid_clone: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM clone_executions c WHERE c.execution=?1 AND (COALESCE(json_extract(c.progress, '$.evidence.step'),0) != (SELECT count(*) FROM process_attempts p WHERE p.execution=c.execution) OR EXISTS(SELECT 1 FROM process_attempts p WHERE p.execution=c.execution AND p.cleaned=0)))",
             [attempt.execution.as_str()], |r| r.get(/*idx*/ 0),
@@ -205,37 +289,31 @@ impl<G: WriteGuard> ProcessJournal<G> {
             return Err(Error::InvalidTransition);
         }
         self.guard.before_write(WritePoint::Process)?;
-        let encoded = ora_process_protocol::encode_guardian_frame(attempt)?;
         self.connection.execute(
             "INSERT INTO process_attempts VALUES (?1,?2,?3,0)",
             params![
-                attempt.intent.run.to_string(),
+                attempt.id.as_str(),
                 attempt.execution.as_str(),
-                &encoded[4..],
+                serde_json::to_vec(command)?,
             ],
         )?;
         Ok(())
     }
 
-    /// Retains every uncertain attempt until the original host/guardian has proved Scope closure.
+    /// Retains every uncertain attempt until its stop evidence held.
     pub fn pending(&self, execution: &ExecutionId) -> Result<Vec<ProcessAttempt>, Error> {
-        let mut query = self.connection.prepare(
-            "SELECT data FROM process_attempts WHERE execution=?1 AND cleaned=0 ORDER BY rowid",
-        )?;
-        query
-            .query_map([execution.as_str()], |row| {
-                row.get::<_, Vec<u8>>(/*idx*/ 0)
-            })?
-            .map(|data| Ok(ora_process_protocol::decode_guardian_payload(&data?)?))
-            .collect()
+        self.identities(
+            "SELECT run FROM process_attempts WHERE execution=?1 AND cleaned=0 ORDER BY rowid",
+            execution,
+        )
     }
 
-    /// Acknowledges observed cleanup locally without deleting historical execution/Run associations.
-    pub fn cleaned(&self, run: RunId) -> Result<(), Error> {
+    /// Acknowledges stop evidence locally without deleting historical execution/attempt associations.
+    pub fn cleaned(&self, attempt: &AttemptId) -> Result<(), Error> {
         self.guard.before_write(WritePoint::Process)?;
         self.connection.execute(
             "UPDATE process_attempts SET cleaned=1 WHERE run=?1",
-            [run.to_string()],
+            [attempt.as_str()],
         )?;
         Ok(())
     }

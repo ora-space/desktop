@@ -49,9 +49,9 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 }
 ```
 
-- 把每个 Node、进程宿主和 guardian 的状态根目录都写进 `protected_state_directories`；IPC socket 的父目录也受保护，与 Controller 状态的任何重叠都会被拒绝。把 Node 的 owner 配置为这个 ControllerId。
+- 把每个 Node 的状态根目录都写进 `protected_state_directories`；IPC socket 的父目录也受保护，与 Controller 状态的任何重叠都会被拒绝。把 Node 的 owner 配置为这个 ControllerId。
 - 沙盒里的 Node 通过平台的 WebSocket 路由器访问：`{ "kind": "websocket", "url": "wss://…", "headers": { "ate-target-actor": "atespace/sandbox-id" } }`。header 原样发送，承载厂商的寻址和平台凭据；握手仍会校验 `node_id`。
-- `--single-node` 启动配置的 Node：它必须使用 `ipc` 端点，且 `control.controller_id` 和 `control.listen` 一致；Node 在自己的进程组中运行，Controller 最多等待 `ready_timeout_ms` 让端点就绪。进程宿主和 guardian 是前提，它不负责启动。托管的 Node 自行退出时，Controller 以失败退出。
+- `--single-node` 启动配置的 Node：它必须使用 `ipc` 端点，且 `control.controller_id` 和 `control.listen` 一致；Node 在自己的进程组中运行，Controller 最多等待 `ready_timeout_ms` 让端点就绪。托管的 Node 自行退出时，Controller 以失败退出。
 - 正常关闭依次停止 Node 会话、适配器自己的工作（cloud 形态下有界地释放租约）、托管的 Node（`SIGTERM`，等待 `stop_timeout_ms`，从不 `SIGKILL`），最后释放 SQLite 租约。Controller 停止从不取消已受理的 Node 执行。
 
 每个失败或丢失的 Node 会话都按类别记录日志（不可达、未知沙盒、被拒、忙、协议、身份不匹配、Node 沉默、断开），并在 `reconnect_ms` 后重试，不会让任何执行失败或被重新创建。会话协议见[控制会话](../node/control-session.zh.md)。

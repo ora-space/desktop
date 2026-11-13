@@ -83,14 +83,14 @@ impl Revisions {
         let git = DeliveryGit::new(
             node.git
                 .runner()
-                .detached_clone_host()
+                .detached_git()
                 .map_err(ora_node_db::Error::from)?,
             policy,
         );
         let node_git = crate::managed::AsNode(
             node.git
                 .runner()
-                .detached_clone_host()
+                .detached_git()
                 .map_err(ora_node_db::Error::from)?,
         );
         let uploader =
@@ -108,7 +108,7 @@ impl Revisions {
     }
 
     /// Runs steps on a dedicated thread with its own runtime for uploads; preparation runs
-    /// outside that runtime because host-backed Git blocks on a runtime of its own.
+    /// outside that runtime because the Node's Git runner blocks on a runtime of its own.
     fn spawn<R, N, U>(
         (git, node_git, access): (DeliveryGit<R>, N, GitServerAccess),
         uploader: U,
@@ -145,7 +145,7 @@ impl Revisions {
                         }
                         Step::Deliver(jobs) => {
                             let (push_job, job) = *jobs;
-                            // Pushing runs host-backed Git, which blocks on a runtime of its own,
+                            // Pushing runs the Node's Git runner, which blocks on a runtime of its own,
                             // so it stays outside the upload runtime too.
                             let pushed = push(&node_git, &access, &push_job, &|| {
                                 shutdown.requested() || *stopping.borrow()
@@ -339,7 +339,7 @@ impl Drop for Revisions {
 /// Resolves the session, checkout and history a delivery names, all from this Node's ledger.
 ///
 /// The session must have its terminal result and no live actor (ADR D1). The Node cannot yet
-/// prove that an agent plugin's descendants are gone: plugins run outside host Scopes, and the
+/// prove that an agent plugin's descendants are gone: plugins inherit no attempt lock, and the
 /// session only ends after the plugin's own process tree was stopped (see `session::driver`).
 fn inputs(
     node: &ManagedNode,

@@ -1,9 +1,8 @@
 use super::*;
 use ora_node_protocol::*;
-use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
-/// Process associations share the Node lease, survive reopen and retain original host paths and Run identities.
+/// Process associations share the Node lease, survive reopen and retain the original attempt identities.
 #[test]
 fn process_journal_persists_before_dispatch_and_holds_the_original_lease() {
     let dir = tempfile::tempdir().unwrap();
@@ -13,21 +12,12 @@ fn process_journal_persists_before_dispatch_and_holds_the_original_lease() {
     let accepted = db.accept(&command, &target).unwrap();
     let journal = db.process_journal().unwrap();
     journal.manage(&accepted).unwrap();
-    let mut spec = RunSpec::new("git", &target.main_path, DescendantPolicy::WaitForAll);
-    spec.env.insert("EXPLICIT".into(), "private-value".into());
     let attempt = ProcessAttempt {
         execution: command.execution_id().clone(),
-        host_directory: dir.path().join("original-host"),
-        expected_uid: 42,
-        intent: HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec,
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        },
+        id: AttemptId::generate(),
     };
-    journal.record(&attempt).unwrap();
-    assert!(journal.record(&attempt).is_err());
+    journal.record(&attempt, &git_command()).unwrap();
+    assert!(journal.record(&attempt, &git_command()).is_err());
     drop(db);
     assert!(matches!(
         NodeDatabase::open(&path, NodeIdentity::Discover),
@@ -44,13 +34,13 @@ fn process_journal_persists_before_dispatch_and_holds_the_original_lease() {
         journal.pending_executions().unwrap(),
         vec![command.execution_id().clone()]
     );
-    journal.cleaned(attempt.intent.run).unwrap();
+    journal.cleaned(&attempt.id).unwrap();
     assert_eq!(journal.pending(command.execution_id()).unwrap(), vec![]);
     db.complete(&accepted, ready(&command, &target)).unwrap();
     let mut other = attempt;
-    other.intent.run = RunId::new();
+    other.id = AttemptId::generate();
     assert!(matches!(
-        journal.record(&other),
+        journal.record(&other, &git_command()),
         Err(Error::InvalidTransition)
     ));
 }

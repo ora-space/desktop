@@ -1,11 +1,11 @@
 use super::*;
 use ora_node_protocol::*;
-use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
-/// Copies actual accepted Worktree state into the exact previous schema, including pending Run evidence.
+/// Copies actual accepted Worktree state into the exact previous schema, including an attempt the
+/// retired host never settled: the upgrade keeps its identity and ends it as stopped.
 #[test]
-fn version_two_upgrade_preserves_live_process_responsibility_and_legacy_results() {
+fn version_two_upgrade_settles_the_host_attempt_and_preserves_legacy_results() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("source.db");
     let path = dir.path().join("version-two.db");
@@ -16,16 +16,9 @@ fn version_two_upgrade_preserves_live_process_responsibility_and_legacy_results(
     journal.manage(&accepted).unwrap();
     let attempt = ProcessAttempt {
         execution: command.execution_id().clone(),
-        host_directory: dir.path().join("original-host"),
-        expected_uid: 42,
-        intent: HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: RunSpec::new("git", &target.main_path, DescendantPolicy::WaitForAll),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        },
+        id: AttemptId::generate(),
     };
-    journal.record(&attempt).unwrap();
+    journal.record(&attempt, &git_command()).unwrap();
     // A separate completed execution exercises unchanged terminal JSON and outbox transfer too.
     let (mut rejected, _) = fixture(db.node_id());
     let Command::Ensure(message) = &mut rejected else {
@@ -80,11 +73,20 @@ fn version_two_upgrade_preserves_live_process_responsibility_and_legacy_results(
     assert_eq!(upgraded.pending_events().unwrap(), events);
     let journal = upgraded.process_journal().unwrap();
     assert_eq!(
-        journal.pending(command.execution_id()).unwrap(),
-        vec![attempt.clone()]
+        (
+            journal.attempts(command.execution_id()).unwrap(),
+            journal.pending(command.execution_id()).unwrap(),
+            journal.ending(&attempt.id).unwrap(),
+            journal.unsettled().unwrap(),
+        ),
+        (
+            vec![attempt.clone()],
+            vec![],
+            Some(AttemptEnding::Stopped),
+            vec![]
+        )
     );
     assert_eq!(upgraded.recoverable_clones().unwrap(), vec![]);
-    journal.cleaned(attempt.intent.run).unwrap();
     upgraded
         .complete(&accepted, ready(&command, &target))
         .unwrap();
@@ -98,7 +100,7 @@ fn version_two_upgrade_preserves_live_process_responsibility_and_legacy_results(
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     // Previous binaries accept only versions 1/2 before touching persistent pragmas or migration.
     assert!(!matches!(version, 1 | 2));
     let violations: i64 = inspect

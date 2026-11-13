@@ -39,7 +39,7 @@ fn deployment_json() -> serde_json::Value {
     serde_json::json!({
         "node": {"home_directory": "/tmp/node", "identity": "Discover", "repositories": []},
         "process": {
-            "host_directory": "/tmp/host", "expected_uid": 1000, "git_program": "/usr/bin/git",
+            "git_program": "/usr/bin/git",
             "environment": {}, "command_timeout_ms": 1000, "cleanup_timeout_ms": 1000,
             "shutdown_grace_ms": 100
         },
