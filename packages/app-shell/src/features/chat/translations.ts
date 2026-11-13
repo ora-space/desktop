@@ -2,6 +2,8 @@
 export const chatTranslations = {
   "zh-CN": {
     "chat.sessionInformation": "会话信息 / 诊断",
+    "chat.sessionInformationDescription":
+      "查看 Ora 会话 ID、插件绑定时间线与运行诊断信息。",
     "chat.bindingNotCreated": "插件会话尚未创建",
     "chat.bindingTimeline": "插件绑定时间线",
     "chat.bindingLoading": "正在读取会话信息…",
@@ -406,6 +408,8 @@ export const chatTranslations = {
     "chat.bindingChildrenUnavailable":
       "Open this conversation and scroll to a turn with subagent details first.",
     "chat.sessionInformation": "Session information / diagnostics",
+    "chat.sessionInformationDescription":
+      "Review the Ora session ID, plugin binding timeline and run diagnostics.",
     "chat.bindingNotCreated": "Provider session not created yet",
     "chat.bindingTimeline": "Provider binding timeline",
     "chat.bindingLoading": "Reading session information…",

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -184,6 +184,80 @@ describe("session information", () => {
     );
     expect(write).toHaveBeenCalledWith("opaque/full-session-id");
     expect(screen.getAllByTestId("run-diagnostics")).toHaveLength(1);
+  });
+
+  it("reserves one box for every copy feedback state so the row cannot reflow", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    const Surface = fixture({
+      getSessionBindings: ({ sessionIds }) => ({
+        sessions: sessionIds.map((id) => binding(id)),
+      }),
+    });
+    render(<Surface id="ora-1" />);
+    await user.click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    await screen.findAllByText("opaque/full-session-id");
+    const copy = screen.getAllByRole("button", {
+      name: appI18n.t("chat.bindingCopy"),
+    })[1]!;
+    const row = copy.parentElement!;
+    // Every label stays mounted in one grid cell, so the button is as wide as the longest one
+    // before any click and the identifier beside it never shrinks while feedback is shown.
+    for (const key of [
+      "chat.bindingCopy",
+      "chat.binding_copied",
+      "chat.binding_copyFailed",
+    ] as const) {
+      expect(within(copy).getByText(appI18n.t(key))).toBeInTheDocument();
+    }
+    const status = within(row).getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    await user.click(copy);
+    await waitFor(() =>
+      expect(copy).toHaveAccessibleName(appI18n.t("chat.binding_copied")),
+    );
+    // Only the active label is exposed; the announcement comes from the persistent live region.
+    expect(copy).not.toHaveAccessibleName(appI18n.t("chat.bindingCopy"));
+    expect(status).toHaveTextContent(appI18n.t("chat.binding_copied"));
+    expect(
+      within(copy).getByText(appI18n.t("chat.bindingCopy")),
+    ).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("reports a rejected clipboard write in the same button instead of a trailing label", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new Error("denied"),
+    );
+    const Surface = fixture({
+      getSessionBindings: ({ sessionIds }) => ({
+        sessions: sessionIds.map((id) => binding(id)),
+      }),
+    });
+    render(<Surface id="ora-1" />);
+    await user.click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    await screen.findAllByText("opaque/full-session-id");
+    const copy = screen.getAllByRole("button", {
+      name: appI18n.t("chat.bindingCopy"),
+    })[1]!;
+    await user.click(copy);
+    await waitFor(() =>
+      expect(copy).toHaveAccessibleName(appI18n.t("chat.binding_copyFailed")),
+    );
+    expect(
+      within(copy).getByText(appI18n.t("chat.binding_copyFailed")),
+    ).toHaveAttribute("aria-hidden", "false");
+    expect(within(copy.parentElement!).getByRole("status")).toHaveTextContent(
+      appI18n.t("chat.binding_copyFailed"),
+    );
   });
 
   it("aborts an old session query and never adopts its late response in the new panel", async () => {
