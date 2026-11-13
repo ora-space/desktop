@@ -1098,43 +1098,36 @@ describe("RunNodeSessionChat", () => {
     await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
   });
 
-  it("auto-accepts a settled human turn when the node opts in", async () => {
-    const onNodeCompleted = vi.fn();
-    const { client, handlers } = renderDock(
+  it("shows the abnormal exit instead of a confirmation for a precise stop with a signal", () => {
+    const { client } = renderDock(
       "awaiting_input",
       false,
       [],
       undefined,
-      onNodeCompleted,
       undefined,
-      blockedCompletion("agent_confirmation_pending", false, {
+      undefined,
+      blockedCompletion("turn_stopped", false, {
         turnOrigin: "human",
-        parkKind: "awaiting_user",
+        parkKind: "abnormal",
+        stopCause: "prompt_timed_out",
         completionPolicy: "agent",
         agentSignal: {
-          signalId: "signal-auto",
+          signalId: "signal-stale",
           requestedAt: 1,
           turnKey: { userSeq: 1, endedSeq: 2 },
         },
-        requiresAgentConfirmation: true,
+        requiresAgentConfirmation: false,
         awaitsAgentSignal: false,
         autoAcceptAgentCompletion: true,
       }),
     );
-    vi.spyOn(handlers, "completeWorkflowNode").mockResolvedValue(
-      completedRunResponse(),
-    );
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
-    await waitFor(() =>
-      expect(completeSpy).toHaveBeenCalledWith({
-        runId,
-        nodeId,
-        force: false,
-        confirmAgentCompletion: { signalId: "signal-auto" },
-      }),
-    );
-    await waitFor(() => expect(onNodeCompleted).toHaveBeenCalledWith(nodeId));
+    const card = screen.getByTestId("node-step-card");
+    expect(card).toHaveTextContent("异常停靠");
+    expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
+    expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+    expect(completeSpy).not.toHaveBeenCalled();
   });
 
   it("keeps a user-stopped turn awaiting input instead of reading as an abnormal stop", () => {

@@ -1029,13 +1029,15 @@ function parseCompletion(
       : payload?.requester === "human"
         ? "human"
         : undefined;
-  const requiresAgentConfirmation =
-    !provisional &&
-    completionPolicy === "agent" &&
-    agentSignal !== undefined &&
-    confirmation === undefined;
-  const awaitsAgentSignal =
-    !provisional && completionPolicy === "agent" && agentSignal === undefined;
+  // The backend materializes the agent gate into blockers, so the card derives its state from the
+  // same fact as readiness. A precise stop already won the gate and carries no signal blocker, so
+  // an abnormal park with an accepted signal must not offer a confirmation that cannot succeed.
+  const requiresAgentConfirmation = blockers.some(
+    (blocker) => blocker.kind === "agent_confirmation_pending",
+  );
+  const awaitsAgentSignal = blockers.some(
+    (blocker) => blocker.kind === "agent_signal_pending",
+  );
   return {
     ...(typeof snapshot.userSeq === "number"
       ? { userSeq: snapshot.userSeq }
@@ -1182,6 +1184,8 @@ function normalizeCompletionBlockerKind(
     case "turn_refused":
     case "turn_unknown":
     case "turn_unconfirmed":
+    case "agent_signal_pending":
+    case "agent_confirmation_pending":
     case "structured_invalid":
     case "output_missing":
       return kind;

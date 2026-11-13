@@ -400,7 +400,10 @@ describe("buildDisplayRun", () => {
                 stopReason: "end_turn",
                 turnOrigin: "workflow",
                 parkKind: "awaiting_user",
-                blockers: [{ kind: "turn_unconfirmed", params: {} }],
+                blockers: [
+                  { kind: "turn_unconfirmed", params: {} },
+                  { kind: "agent_confirmation_pending", params: {} },
+                ],
                 warnings: [],
                 provisional: false,
               },
@@ -426,6 +429,52 @@ describe("buildDisplayRun", () => {
       },
       autoAcceptAgentCompletion: true,
       requiresAgentConfirmation: true,
+      awaitsAgentSignal: false,
+      ready: false,
+    });
+  });
+
+  it("does not offer an agent confirmation for an abnormal park with a signal", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        nodes: [
+          {
+            nodeId: "explore",
+            status: "pending",
+            startedAt: 2n,
+            finishedAt: null,
+            error: null,
+            output: null,
+            payload: JSON.stringify({
+              completion: {
+                userSeq: 7,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+                stopReason: "cancelled",
+                turnOrigin: "human",
+                stopCause: "prompt_timed_out",
+                parkKind: "abnormal",
+                blockers: [{ kind: "turn_stopped", params: {} }],
+                warnings: [],
+                provisional: false,
+              },
+              completionPolicy: "agent",
+              agentSignal: {
+                signalId: "signal-stale",
+                requestedAt: 1,
+                turnKey: { userSeq: 7, endedSeq: 8 },
+              },
+              autoAcceptAgentCompletion: true,
+            }),
+          },
+        ],
+      },
+      GRAPH,
+    );
+
+    expect(display.nodeStates.explore.completion).toMatchObject({
+      parkKind: "abnormal",
+      requiresAgentConfirmation: false,
       awaitsAgentSignal: false,
       ready: false,
     });

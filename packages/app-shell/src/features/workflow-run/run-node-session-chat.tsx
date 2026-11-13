@@ -4,13 +4,7 @@ import {
   IconCheck,
   IconPlayerSkipForward,
 } from "@tabler/icons-react";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -361,33 +355,6 @@ export function RunNodeSessionChat({
     onNodeCompleted,
     showContractError,
     openingTurnUnconfirmed,
-  ]);
-
-  /**
-   * Accepts a settled agent signal automatically when the node opts in.
-   *
-   * The backend still validates the same gate and records `confirmation.by = "auto"`; this effect
-   * only saves the user the click while the step card is open.
-   */
-  const autoConfirmAttempted = useRef(false);
-  useEffect(() => {
-    if (
-      !completionAgentConfirmation ||
-      interaction?.completion?.autoAcceptAgentCompletion !== true ||
-      // The opening turn is the one turn the user did not start; it always needs the explicit
-      // click even when the node opts into auto-accept (ADR D4).
-      interaction.completion.turnOrigin !== "human" ||
-      autoConfirmAttempted.current
-    ) {
-      return;
-    }
-    autoConfirmAttempted.current = true;
-    handleCompleteAgent();
-  }, [
-    completionAgentConfirmation,
-    interaction?.completion?.autoAcceptAgentCompletion,
-    interaction?.completion?.turnOrigin,
-    handleCompleteAgent,
   ]);
 
   const stepCard = (() => {
