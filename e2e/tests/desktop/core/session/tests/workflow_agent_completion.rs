@@ -30,6 +30,7 @@ fn completion_graph(prompt: &str, completion_signal: &str, auto_accept: bool) ->
             {"id": "start", "data": {"kind": "start"}},
             {"id": "agent", "data": {"kind": "agent", "title": "Review", "agentConfig": {
                 "retry": {"enabled": false, "maxRetries": 0, "initialDelaySeconds": 0},
+                "schemaVersion": 4,
                 "executor": {"agentCli": AGENT_CLI, "modelId": "anthropic/claude-sonnet-4"},
                 "prompt": prompt,
                 "interactive": true,
@@ -53,11 +54,24 @@ fn start_run(
     completion_signal: &str,
     auto_accept: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    start_run_graph(
+        backend,
+        workspace_id,
+        completion_graph(prompt, completion_signal, auto_accept),
+    )
+}
+
+/// Publishes one explicit graph and starts a run against it.
+fn start_run_graph(
+    backend: &Backend,
+    workspace_id: &str,
+    graph: Value,
+) -> Result<String, Box<dyn std::error::Error>> {
     let workflow = backend
         .workflows()
         .create(CreateWorkflowRequest {
             name: "Agent completion".to_string(),
-            graph: Some(completion_graph(prompt, completion_signal, auto_accept).to_string()),
+            graph: Some(graph.to_string()),
         })?
         .workflow;
     backend.workflows().publish(PublishWorkflowRequest {
@@ -473,6 +487,45 @@ fn auto_accept_completes_a_settled_human_turn_without_the_card() -> TestResult {
         let calls = completion_calls(&package_root)?;
         assert_eq!(calls.len(), 1, "only the human turn signaled: {calls:?}");
         assert_eq!(calls[0]["accepted"], json!(true));
+        Ok(())
+    })
+}
+
+/// A non-interactive node keeps the policy field but must not receive a token or the tool.
+#[test]
+fn a_non_interactive_agent_policy_node_never_receives_the_completion_tool() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seeded_workspace(&setup, &backend)?;
+        let mut graph = completion_graph("review the plan", "agent", false);
+        graph["nodes"][1]["data"]["agentConfig"]["interactive"] = json!(false);
+        let run_id = start_run_graph(&backend, &workspace_id, graph)?;
+
+        let completed = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Succeeded
+        })
+        .await?;
+        assert!(
+            completed.session_id.is_some(),
+            "the automatic node still ran its session"
+        );
+
+        let session_news: Vec<_> = mcp_calls(&package_root)?
+            .into_iter()
+            .filter(|call| call["method"] == "session/new")
+            .collect();
+        assert_eq!(session_news.len(), 1, "one node session opens");
+        assert_eq!(
+            session_news[0]["servers"],
+            json!([]),
+            "a non-interactive node must not see the host completion capability"
+        );
+        assert!(
+            completion_calls(&package_root)?.is_empty(),
+            "no attempt token is issued for a non-interactive node"
+        );
         Ok(())
     })
 }

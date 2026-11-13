@@ -21,7 +21,7 @@ fn graph() -> String {
     let agent = |id, mcps| {
         json!({"id": id, "data": {"kind": "agent", "agentConfig": {
             "executor": {"agentCli": "official/ora-space.opencode", "modelId": "anthropic/claude-sonnet-4"},
-            "prompt": "hello", "interactive": true, "completionSignal": "agent", "mcps": mcps
+            "prompt": "hello", "interactive": true, "schemaVersion": 4, "completionSignal": "agent", "mcps": mcps
         }}})
     };
     json!({"nodes": [

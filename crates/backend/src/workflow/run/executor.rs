@@ -517,8 +517,9 @@ async fn drive_agent_node(
         });
         // Issue one completion token for this attempt. It travels in the prompt (not the recorded
         // transcript) and is the only value the host MCP tool accepts for this turn.
-        let completion_attempt =
-            if config.completion_signal == ora_application::AgentCompletionSignal::Agent {
+        let completion_attempt = if config.interactive
+            && config.completion_signal == ora_application::AgentCompletionSignal::Agent
+        {
                 let attempt_id = uuid::Uuid::new_v4().to_string();
                 let token = agent_signals.issue(&format!("{node_run_id}"), &attempt_id);
                 prompt.push(ContentBlock::Text(TextContent::new(format!(

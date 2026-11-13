@@ -643,8 +643,8 @@ mod tests {
     };
     use ora_acp::{AcpError, AcpPeer, AcpTransport};
     use ora_contracts::PublicError;
+    use ora_domain::SessionMcpSelection;
     use ora_domain::{AgentRef, PluginId, SessionId};
-    use ora_domain::{SessionHostCapabilities, SessionMcpSelection};
     use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
     use semver::Version;

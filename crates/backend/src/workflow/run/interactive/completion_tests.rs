@@ -1295,7 +1295,7 @@ fn prepare_materializes_the_frozen_completion_policy() {
         let (temp, pool) = bootstrap();
         let graph = INTERACTIVE_AGENT_GRAPH.replace(
             "\"interactive\":true",
-            "\"interactive\":true,\"completionSignal\":\"agent\"",
+            "\"interactive\":true,\"schemaVersion\":4,\"completionSignal\":\"agent\"",
         );
         let (run_id, node_run_id, sessions_root) = parked_run_on(&temp, &pool, &graph);
         write_settled_turn(&sessions_root, "session-1", "go", "partial");

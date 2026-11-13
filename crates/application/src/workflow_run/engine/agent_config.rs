@@ -244,10 +244,15 @@ impl WireAgentConfig {
             .as_ref()
             .map(|value| parse_completion(node_id, value))
             .transpose()?;
-        if completion.is_some() && schema_version != Some(4) {
+        // The version-4 shape spans completion files, the completion policy and its auto-accept
+        // flag; all three follow the same schema boundary as the editor and the TS validator.
+        let has_version_4_field = completion.is_some()
+            || self.completion_signal.is_some()
+            || self.auto_accept_agent_completion.is_some();
+        if has_version_4_field && schema_version != Some(4) {
             return Err(GraphError::InvalidNode {
                 reason: format!(
-                    "node {node_id} declares agentConfig.completion, which requires agentConfig.schemaVersion 4 (found {})",
+                    "node {node_id} declares a version-4 agent completion field, which requires agentConfig.schemaVersion 4 (found {})",
                     schema_version
                         .map_or_else(|| "no version".to_string(), |version| version.to_string())
                 ),
@@ -534,7 +539,8 @@ mod tests {
         );
         assert!(!config.auto_accept_agent_completion);
 
-        let explicit_end_turn = parse_config(json!({"completionSignal": "end_turn"})).unwrap();
+        let explicit_end_turn =
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "end_turn"})).unwrap();
         let config = explicit_end_turn
             .node("agent")
             .unwrap()
@@ -547,7 +553,7 @@ mod tests {
         );
 
         let graph =
-            parse_config(json!({"completionSignal": "agent", "autoAcceptAgentCompletion": true}))
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "agent", "autoAcceptAgentCompletion": true}))
                 .unwrap();
         let config = graph.node("agent").unwrap().agent_config.as_ref().unwrap();
         assert_eq!(
@@ -560,7 +566,8 @@ mod tests {
     /// An unknown completion policy is rejected with the node and field context.
     #[test]
     fn rejects_invalid_completion_signal_with_node_context() {
-        let error = parse_config(json!({"completionSignal": "human"})).unwrap_err();
+        let error =
+            parse_config(json!({"schemaVersion": 4, "completionSignal": "human"})).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -621,6 +628,23 @@ mod tests {
         );
         assert!(completion.files[0].matches("reports/plan.md"));
         assert!(!completion.files[0].matches("reports/nested/plan.md"));
+    }
+
+    /// The completion policy and its auto-accept flag share the version-4 boundary.
+    #[test]
+    fn rejects_completion_policy_without_schema_version_4() {
+        for config in [
+            json!({ "schemaVersion": 3, "completionSignal": "agent" }),
+            json!({ "schemaVersion": 3, "autoAcceptAgentCompletion": false }),
+        ] {
+            let error = parse_config(config).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("requires agentConfig.schemaVersion 4"),
+                "{error}"
+            );
+        }
     }
 
     /// Declaring `completion` without version 4 is illegal rather than silently downgraded.
