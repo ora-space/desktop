@@ -3,6 +3,7 @@ import {
   WORKFLOW_ANNOTATION_THEMES,
   type WorkflowAnnotationNode,
 } from "./annotation-data";
+import { workflowAgentCompletionIssues } from "./agent-completion";
 import { validateWorkflowAgentRetry } from "./agent-retry";
 import { WORKFLOW_NODE_KINDS, type WorkflowAgentConfig } from "./node-data";
 import type { DemoWorkflow } from "./fixtures";
@@ -128,8 +129,11 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
     return false;
   }
   const config = value as Partial<WorkflowAgentConfig>;
+  const completionIssues = workflowAgentCompletionIssues(config.completion);
   return (
-    config.schemaVersion === 3 &&
+    (config.schemaVersion === 3 || config.schemaVersion === 4) &&
+    (config.completion == null ? true : config.schemaVersion === 4) &&
+    completionIssues.length === 0 &&
     typeof config.executor === "object" &&
     config.executor !== null &&
     typeof config.executor.agentCli === "string" &&

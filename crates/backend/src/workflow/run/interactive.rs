@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod cleanup_tests;
 mod completion;
+mod completion_files;
 #[cfg(test)]
 mod completion_tests;
 #[cfg(test)]

@@ -1,5 +1,9 @@
 import type { InstalledPlugin, Skill } from "@ora/contracts";
-import { WORKFLOW_NODE_KINDS, type DemoWorkflow } from "@ora/workflow-mock";
+import {
+  WORKFLOW_NODE_KINDS,
+  workflowAgentCompletionIssues,
+  type DemoWorkflow,
+} from "@ora/workflow-mock";
 
 /** Largest workflow file accepted for preview; larger files are rejected before parsing. */
 export const MAX_WORKFLOW_IMPORT_BYTES = 5 * 1024 * 1024;
@@ -23,6 +27,7 @@ export type WorkflowImportFailure =
   | { reason: "missingName" }
   | { reason: "missingGraph" }
   | { reason: "unknownNodeKind"; kind: string }
+  | { reason: "invalidAgentConfig"; nodeTitle: string; detail: string }
   | { reason: "fileTooLarge" };
 
 /** Outcome of reading one exported workflow file before anything is persisted. */
@@ -88,6 +93,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Returns the import-blocking issue of an Agent configuration's completion contract.
+ *
+ * Only the fields this editor writes conditionally are checked: legacy files without a version
+ * still import, while an unsupported version, a version-3 completion, or an unknown declaration
+ * field is refused here instead of being silently dropped on the way to the backend.
+ */
+function agentConfigImportIssue(config: unknown): string | null {
+  if (!isRecord(config)) {
+    return null;
+  }
+  const version = config.schemaVersion;
+  if (version !== undefined && version !== 3 && version !== 4) {
+    return `unsupported agentConfig.schemaVersion ${String(version)}; supported versions are 3 and 4`;
+  }
+  const completionIssues = workflowAgentCompletionIssues(config.completion);
+  if (completionIssues.length > 0) {
+    return completionIssues[0]!;
+  }
+  if (config.completion != null && version !== 4) {
+    return "agentConfig.completion requires agentConfig.schemaVersion 4";
+  }
+  return null;
+}
+
+/**
  * Maps a `JSON.parse` failure to a 1-based line/column and nearby lines. V8 reports a
  * character offset as "at position N"; other engines may not, so the location is optional.
  */
@@ -144,13 +174,29 @@ export function parseWorkflowImportFile(
   }
   const knownKinds: readonly string[] = WORKFLOW_NODE_KINDS;
   for (const node of value.nodes) {
-    const kind =
-      isRecord(node) && isRecord(node.data) ? node.data.kind : undefined;
+    const data = isRecord(node) && isRecord(node.data) ? node.data : undefined;
+    const kind = data?.kind;
     if (typeof kind !== "string" || !knownKinds.includes(kind)) {
       return {
         ok: false,
         failure: { reason: "unknownNodeKind", kind: String(kind) },
       };
+    }
+    if (kind === "agent") {
+      const detail = agentConfigImportIssue(data?.agentConfig);
+      if (detail !== null) {
+        return {
+          ok: false,
+          failure: {
+            reason: "invalidAgentConfig",
+            nodeTitle:
+              typeof data?.title === "string" && data.title.trim() !== ""
+                ? data.title
+                : String(node && isRecord(node) ? node.id : ""),
+            detail,
+          },
+        };
+      }
     }
   }
   return {

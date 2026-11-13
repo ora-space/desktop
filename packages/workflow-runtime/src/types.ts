@@ -205,9 +205,24 @@ export interface WorkflowAgentRetryPolicy {
   initialDelaySeconds: number;
 }
 
+/** One file a node declares as a completion deliverable. */
+export interface WorkflowAgentCompletionFile {
+  /** Workspace-relative POSIX path or minimal glob (`*`, `**`, `?`). */
+  path: string;
+  /** Require at least one matching existing file to differ from the node's baseline. */
+  mustChange?: boolean;
+}
+
+/** Optional `agentConfig.completion` declaration checked when the node completes. */
+export interface WorkflowAgentCompletion {
+  /** Between 1 and 32 declarations. */
+  files: WorkflowAgentCompletionFile[];
+}
+
 /** Transport-neutral execution contract for an Agent node. */
 export interface WorkflowAgentConfig {
-  schemaVersion: 3;
+  /** Shape version; declaring `completion` requires version 4. */
+  schemaVersion: 3 | 4;
   executor: {
     agentCli: string;
     modelId: string;
@@ -227,6 +242,8 @@ export interface WorkflowAgentConfig {
    */
   /** Optional structured parsing performed in addition to the stable raw output. */
   outputContract?: WorkflowAgentOutputContract;
+  /** Optional deliverables checked when the node completes; requires schemaVersion 4. */
+  completion?: WorkflowAgentCompletion;
   /** Automatic retry after retryable failures; absent means the default policy. */
   retry?: WorkflowAgentRetryPolicy;
 }
@@ -377,7 +394,9 @@ export type WorkflowNodeCompletionBlockerKind =
   | "turn_unknown"
   | "turn_unconfirmed"
   | "structured_invalid"
-  | "output_missing";
+  | "output_missing"
+  | "file_missing"
+  | "file_unchanged";
 
 /** One completion blocker with implementation detail the UI may present as a hint. */
 export interface WorkflowNodeCompletionBlocker {

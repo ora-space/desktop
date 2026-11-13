@@ -126,6 +126,16 @@ const STEP_CARD_COPY = {
     "en-US":
       "The session history could not be read; this turn's result is unknown.",
   },
+  "workflowRun.stepCard.warning.file_check_unavailable": {
+    "zh-CN":
+      "没有找到节点启动时的文件基线，无法判断“必须变更”的文件；只检查了文件是否存在。",
+    "en-US":
+      "The baseline from when the node started is missing, so mustChange files could only be checked for existence.",
+  },
+  "workflowRun.stepCard.completionRejectedTitle": {
+    "zh-CN": "上次完成被拒绝",
+    "en-US": "The last completion was rejected",
+  },
 } as const;
 
 const BLOCKER_COPY = {
@@ -158,6 +168,15 @@ const BLOCKER_COPY = {
   "workflowRun.stepCard.blocker.output_missing": {
     "zh-CN": "没有输出：本轮没有产生声明的输出。",
     "en-US": "No output: this turn produced none of the declared output.",
+  },
+  "workflowRun.stepCard.blocker.file_missing": {
+    "zh-CN": "缺少文件：{{path}} 不存在。",
+    "en-US": "Missing file: {{path}} does not exist.",
+  },
+  "workflowRun.stepCard.blocker.file_unchanged": {
+    "zh-CN": "文件未变更：{{path}} 与节点开始时的基线相同。",
+    "en-US":
+      "File unchanged: {{path}} is identical to the baseline from when the node started.",
   },
 } as const;
 
@@ -210,6 +229,14 @@ const PARK_REASON_COPY = {
     "zh-CN": "上一轮异常结束：没有输出",
     "en-US": "The previous turn ended abnormally: no output",
   },
+  "workflowRun.stepCard.abnormalReason.file_missing": {
+    "zh-CN": "完成检查：声明的文件缺失",
+    "en-US": "Completion check: a declared file is missing",
+  },
+  "workflowRun.stepCard.abnormalReason.file_unchanged": {
+    "zh-CN": "完成检查：声明的文件未变更",
+    "en-US": "Completion check: a declared file is unchanged",
+  },
 } as const;
 
 function lookup(
@@ -247,6 +274,8 @@ describe("interactive step card translations", () => {
         "workflowRun.stepCard.pausedBadge",
         "workflowRun.stepCard.waitingBadge",
         "workflowRun.stepCard.abnormalBadge",
+        "workflowRun.stepCard.completionRejectedTitle",
+        "workflowRun.stepCard.warning.file_check_unavailable",
       ]) {
         expect(lookup(locale, key)).toBeTruthy();
       }
