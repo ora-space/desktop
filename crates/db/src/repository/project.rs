@@ -5,7 +5,6 @@ use ora_domain::{AuditFields, Project, ProjectId, WorkspaceId, WorkspaceLocation
 use ora_effect::EffectScopeId;
 use rusqlite::{Row, Transaction, TransactionBehavior, params};
 use std::collections::BTreeSet;
-use std::path::Path;
 use uuid::Uuid;
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -265,19 +264,17 @@ fn encode_location(location: &WorkspaceLocation) -> (&'static str, Option<&str>,
     }
 }
 
-/// Determines whether a main Workspace already has a local location that can be admitted.
+/// Determines the initial lifecycle and provisioning row of a new main Workspace.
+///
+/// A local checkout is never provisioned by Ora, so it is active from the start. Whether its
+/// directory exists is a runtime fact that every cwd resolution re-checks; freezing a probe taken
+/// at creation into the lifecycle left Workspaces stuck in `provisioning` forever, since nothing
+/// ever promotes them. Remote locations still wait for their provisioner.
 fn initial_workspace_state(
     location: &WorkspaceLocation,
 ) -> (&'static str, &'static str, &'static str, Option<&str>) {
     match location {
-        WorkspaceLocation::LocalFilesystem { path } => {
-            let ready = Path::new(path).is_dir();
-            if ready {
-                ("active", "ready", "local_git", None)
-            } else {
-                ("provisioning", "pending", "local_git", None)
-            }
-        }
+        WorkspaceLocation::LocalFilesystem { .. } => ("active", "ready", "local_git", None),
         WorkspaceLocation::Ssh { .. } => ("provisioning", "pending", "ssh", None),
         WorkspaceLocation::RemoteTarget { plugin_id, .. } => {
             ("provisioning", "pending", "remote_target", Some(plugin_id))
