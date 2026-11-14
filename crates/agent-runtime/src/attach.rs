@@ -28,6 +28,17 @@ use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use tokio::time::{Instant, sleep};
 
+/// How the current channel came to be.
+///
+/// `Restored` means it came from `session/load` and has not served a successful prompt yet;
+/// a successful prompt clears it back to `NotRestored`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LoadRestoration {
+    #[default]
+    NotRestored,
+    Restored,
+}
+
 /// A provider session Ora created to replace one it could not restore, before the row knows.
 ///
 /// The binding is deliberately not persisted here. A crash between building this session and
@@ -86,6 +97,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             let snapshot = self.resolve_mcp_snapshot()?;
             match self.restore_provider_session(channel, &snapshot).await {
                 Ok(config_options) => {
+                    self.load_restoration = LoadRestoration::Restored;
                     self.record_loaded_mcp(&snapshot);
                     // Applied against what this restore reported rather than the catalog the
                     // picker offered: only the agent can say whether it still serves that model.
@@ -116,7 +128,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.reported_config_options = config_options.clone();
                 Ok(setup_updates(config_options, Vec::new()))
             }
-            None => self.rebuild_provider_session(model).await,
+            None => {
+                self.load_restoration = LoadRestoration::NotRestored;
+                self.rebuild_provider_session(model).await
+            }
         }
     }
 
@@ -214,7 +229,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ///
     /// The debt is only raised when none is outstanding: a switch that has not delivered its
     /// transcript yet already owes the same conversation and already keeps its own books.
-    async fn rebuild_provider_session(
+    pub(super) async fn rebuild_provider_session(
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
@@ -248,6 +263,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.handoff = HandoffDebt::Ephemeral;
         }
         self.channel = Some(channel);
+        self.load_restoration = LoadRestoration::NotRestored;
         // `session/new` carried the current Snapshot, so the replacement starts Active on it
         // rather than owing the refresh that an attach through `session/load` has to record.
         self.live_mcp = LiveMcpState::Active(mcp_revision);
