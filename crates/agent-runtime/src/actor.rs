@@ -442,6 +442,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            load_restoration: Default::default(),
             reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -522,6 +523,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            load_restoration: Default::default(),
             reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -549,7 +551,7 @@ mod tests {
 ///
 /// A closed queue means the caller abandoned the send before it began, so the turn is dropped
 /// rather than started for nobody.
-fn publish_setup(
+pub(super) fn publish_setup(
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     setup: Vec<SessionUpdate>,
 ) -> bool {

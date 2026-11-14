@@ -16,6 +16,10 @@
 
 ## 连接与监管
 
+私有 `startup` 模块负责管理器构造与持久会话状态修正，并在连接监督器启动前执行。
+
+私有 `model_config` 模块为启动时的模型意图和 stale-load 重建识别同一个 provider 配置项：启动只应用明确提供的值，重建读取报告的当前值；空报告或没有 select 的报告不提供模型。
+
 Backend 启动时，遗留的 `Running` 会话行被协调为 `Stopped`，然后每个 Agent 在专用的运行时线程中启动并执行 `initialize`。握手声明了会话配置选项能力（模型选择器依赖它）。每个 Agent 独立重试，指数退避从 250 毫秒到 30 秒封顶；即使所有 Agent 都失败 Ora 仍然可用，对不可用 Agent 的操作报告 `agent_runtime_unavailable`。一分钟内超过三次真实失败会打开该 Agent 的重启熔断：发布 `Failing`，本进程内不再重试。没有实现 Agent 契约的插件直接进入 `Failing`。
 
 连接丢失时，该 Agent 进行中的操作失败，只把它注册的会话标为 `Stopped`，请生命周期停止旧进程，之后才启动替代进程。会话按需重新附着，prompt 从不自动重放。丢弃最后一个 Backend 所有者会停止所有 supervisor，取消路由中的操作，并结束每个进程树。
@@ -29,7 +33,7 @@ Backend 启动时，遗留的 `Running` 会话行被协调为 `Stopped`，然后
 - **启动**：`startSession` 是唯一的创建入口。它用当前的 Session MCP 快照调用 `session/new`，把调用方可选的模型意图应用到握手报告的选项上，持久化会话，打开历史并安装 actor。在 actor 接手之前，一个 guard 会在任何错误或取消时释放未暴露的 provider session（支持时用 `session/delete`，否则用 `session/close`），持久化失败还会删除历史文件并软删除已插入的行。
 - **加载**：load 只读取 Ora 自己的记录，不接触 Agent：不创建 provider session，不改变生命周期状态，所以即使 Agent 已经不在，对话也能打开。如果 actor 存在，由它自己回答 load（回放记录，再跟随进行中的 prompt），但不接管那个 prompt。
 - **附着**：prompt 才会获取 provider session。没有通道的会话先在当前连接上注册路由，用私有的 provider id 和当前 MCP 快照调用 `session/load`，丢弃 Agent 复述的内容，并把行标为 `Running`。握手得到的选项和命令在本轮之前以更新的形式送达客户端。受理会等待附着和 MCP 检查完成，所以无法连到 Agent 的发送会以"发送失败"的形式失败。
-- **重建**：无法 load 或恢复失败的 Agent，会得到一个用同一快照 `session/new` 出来的替代 provider session，下一个 prompt 携带已记录的 transcript，与切换 Agent 完全一样。
+- **重建**：无法 load 或恢复失败的 Agent，会得到一个用同一快照 `session/new` 出来的替代 provider session，下一个 prompt 携带已记录的 transcript，与切换 Agent 完全一样。Agent 也可能对已不存在的会话误报 load 成功：该通道的首个 prompt 如果没有任何 assistant 输出或工具调用就失败，runtime 会关闭它、重建、推送新的 setup 更新，并携带 transcript 与恢复会话报告的 model 重发同一 prompt 一次；重试轮仍失败则返回该轮错误，只有重建失败才返回第一次错误。该兜底只对可复用的 `RequestFailed`、且尚未产生任何输出的 prompt 生效。
 - **配置**：持有 provider 的会话报告自己的选项，通过 `setSessionConfig` 配置。在会话没有 provider 时选的模型是一个意图，在下次附着时应用。推理强度只从活跃会话报告的 `thought_level` 选项读取，没有会话之前的强度目录。
 - **停止与删除**：显式停止在 Agent 声明支持时调用 `session/close`，卸载路由并保留 provider 历史。删除见[会话历史](session-history.zh.md#删除)。
 

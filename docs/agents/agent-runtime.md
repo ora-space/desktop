@@ -65,6 +65,10 @@ over its `agent/acp` notification channel. See
 
 ## Connections and supervision
 
+The private `startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
+
+The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value; an empty or non-select-only report carries no model.
+
 At Backend start, stale `Running` session rows are reconciled to `Stopped`, then one dedicated
 runtime thread per agent starts it and performs `initialize`. The handshake advertises the
 session-config-option capability (the model selector depends on it). Each agent retries
@@ -105,7 +109,12 @@ turn locally until `startSession` returns.
   for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
-  recorded transcript, exactly as an agent switch does.
+  recorded transcript, exactly as an agent switch does. A load can also report success for a
+  session the agent no longer holds: when that channel's first prompt fails without any assistant
+  output or tool call, the runtime closes it, rebuilds, publishes the new setup updates, and
+  resends the prompt once with the transcript and the model the restored provider reported. If the
+  retry fails too, that attempt's error is returned; only a failure to rebuild returns the first
+  error. The retry only applies to a reusable `RequestFailed` before any output.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;

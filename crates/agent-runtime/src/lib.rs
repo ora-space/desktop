@@ -19,6 +19,7 @@ mod host;
 mod limits;
 mod load;
 mod memory_host;
+mod model_config;
 mod operations;
 mod plugin_agent;
 mod prompt;
@@ -33,6 +34,7 @@ mod scheduling;
 mod session_followers;
 mod session_setup;
 mod start;
+mod startup;
 mod stream;
 mod support;
 mod suspend;
@@ -172,6 +174,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     handoff: HandoffDebt,
     /// A provider session built to replace one that could not be restored, not yet in the row.
     rebuilt_binding: Option<RebuiltBinding<H>>,
+    /// Whether this channel came from `session/load` and has not served a successful prompt yet.
+    load_restoration: attach::LoadRestoration,
     /// What the provider this actor is attached to last reported as its configuration.
     ///
     /// Held rather than recorded because it describes the provider serving the conversation right
@@ -218,44 +222,6 @@ pub struct AgentRuntimeSetup<H: AgentRuntimeHost> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
-    /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
-    pub fn new(setup: AgentRuntimeSetup<H>) -> Result<Self, RuntimeError> {
-        let AgentRuntimeSetup {
-            attach,
-            store,
-            directory,
-            session_setup: session_mcp,
-            events,
-            home_directory,
-            sessions_root,
-            scheduler,
-        } = setup;
-        let clock = SystemClock;
-        reconcile_running_sessions(&store, clock)?;
-        let barriers = Arc::new(AgentSessionBarriers::new());
-        let connections =
-            ConnectionSupervisors::start(attach, store.clone(), home_directory, clock);
-        Ok(Self {
-            inner: Arc::new(ManagerInner {
-                store,
-                directory,
-                actors: RwLock::new(HashMap::new()),
-                unpublished_workflow_sessions: RwLock::new(HashSet::new()),
-                lifecycle: tokio::sync::Mutex::new(()),
-                next_operation_id: AtomicU64::new(1),
-                connections,
-                sessions_root,
-                session_mcp,
-                barriers,
-                clock,
-                scheduler,
-                events,
-                #[cfg(feature = "test-support")]
-                prompt_inactivity_windows: RwLock::new(None),
-            }),
-        })
-    }
-
     /// Creates, configures, persists, and binds one session on first use.
     pub async fn start_session(
         &self,
@@ -783,6 +749,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 connections: self.inner.connections.clone(),
                 handoff: setup.handoff,
                 rebuilt_binding: None,
+                load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),
@@ -835,26 +802,4 @@ struct ActorSetup<H: AgentRuntimeHost> {
     live_mcp: LiveMcpState,
     /// What the handshake that produced `channel` reported, empty when there is no channel.
     config_options: Vec<SessionConfigOption>,
-}
-
-/// Restores durable lifecycle truth before the managed connection starts.
-fn reconcile_running_sessions(
-    repository: &impl SessionStore,
-    clock: SystemClock,
-) -> Result<(), RuntimeError> {
-    for session in repository
-        .list_sessions()
-        .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?
-    {
-        if session.status == SessionStatus::Running {
-            repository
-                .update_session_status(
-                    &session.id,
-                    SessionStatus::Stopped,
-                    clock.now_timestamp_millis(),
-                )
-                .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?;
-        }
-    }
-    Ok(())
 }

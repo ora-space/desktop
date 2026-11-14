@@ -1,7 +1,7 @@
 use super::RuntimeActor;
 use crate::AgentRuntimeHost;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use ora_history::{read_session_history, render_handoff};
+use ora_history::{read_session_history, read_session_history_up_to, render_handoff};
 use ora_logging::{ora_debug, ora_warn};
 
 /// Whether the current provider binding still has to be told the conversation, and whether
@@ -38,6 +38,28 @@ pub(super) struct AgentPrompt {
     /// before it was ever prompted has nothing to hand over and is current the
     /// moment its first prompt lands.
     pub(super) settles_handoff: bool,
+}
+
+/// Builds the prompt a freshly rebuilt provider session needs to inherit the conversation.
+///
+/// Unlike [`prompt_for_agent`], this always renders the transcript, because a rebuild is a new
+/// provider session even when the old binding was already settled. The caller invokes it before
+/// recording the current prompt, so the transcript ends at the previous turn and the current
+/// prompt is appended exactly once. A history that cannot be read returns `None`: retrying
+/// without context would be worse than surfacing the original failure.
+pub(super) fn rebuild_prompt<H: AgentRuntimeHost>(
+    actor: &RuntimeActor<H>,
+    prompt: &[ContentBlock],
+    cutoff: u64,
+) -> Option<Vec<ContentBlock>> {
+    let history =
+        read_session_history_up_to(&actor.sessions_root, actor.session.id.as_ref(), cutoff).ok()?;
+    let mut blocks = Vec::with_capacity(prompt.len() + 1);
+    if let Some(transcript) = render_handoff(&history) {
+        blocks.push(ContentBlock::Text(TextContent::new(transcript)));
+    }
+    blocks.extend_from_slice(prompt);
+    Some(blocks)
 }
 
 /// Builds the provider prompt, injecting the recorded transcript only when one is owed.
