@@ -564,25 +564,3 @@ pub(super) fn publish_setup(
             .is_ok()
     })
 }
-
-/// Restores durable lifecycle truth before the managed connection starts.
-pub(super) fn reconcile_running_sessions(
-    repository: &impl SessionStore,
-    clock: SystemClock,
-) -> Result<(), RuntimeError> {
-    for session in repository
-        .list_sessions()
-        .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?
-    {
-        if session.status == SessionStatus::Running {
-            repository
-                .update_session_status(
-                    &session.id,
-                    SessionStatus::Stopped,
-                    clock.now_timestamp_millis(),
-                )
-                .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?;
-        }
-    }
-    Ok(())
-}

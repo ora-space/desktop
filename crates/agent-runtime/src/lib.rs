@@ -34,6 +34,7 @@ mod scheduling;
 mod session_followers;
 mod session_setup;
 mod start;
+mod startup;
 mod stream;
 mod support;
 mod suspend;
@@ -221,44 +222,6 @@ pub struct AgentRuntimeSetup<H: AgentRuntimeHost> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
-    /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
-    pub fn new(setup: AgentRuntimeSetup<H>) -> Result<Self, RuntimeError> {
-        let AgentRuntimeSetup {
-            attach,
-            store,
-            directory,
-            session_setup: session_mcp,
-            events,
-            home_directory,
-            sessions_root,
-            scheduler,
-        } = setup;
-        let clock = SystemClock;
-        actor::reconcile_running_sessions(&store, clock)?;
-        let barriers = Arc::new(AgentSessionBarriers::new());
-        let connections =
-            ConnectionSupervisors::start(attach, store.clone(), home_directory, clock);
-        Ok(Self {
-            inner: Arc::new(ManagerInner {
-                store,
-                directory,
-                actors: RwLock::new(HashMap::new()),
-                unpublished_workflow_sessions: RwLock::new(HashSet::new()),
-                lifecycle: tokio::sync::Mutex::new(()),
-                next_operation_id: AtomicU64::new(1),
-                connections,
-                sessions_root,
-                session_mcp,
-                barriers,
-                clock,
-                scheduler,
-                events,
-                #[cfg(feature = "test-support")]
-                prompt_inactivity_windows: RwLock::new(None),
-            }),
-        })
-    }
-
     /// Creates, configures, persists, and binds one session on first use.
     pub async fn start_session(
         &self,
