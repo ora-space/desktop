@@ -12,9 +12,10 @@ use super::{
     open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
-use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
+use ora_history::{HistoryRecord, read_session_history};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -433,6 +434,106 @@ fn a_stopped_step_blocks_completion_and_continues_after_a_restart() -> TestResul
     current_thread_runtime()?.block_on(async {
         restart_scenario(/*refuse_load*/ false).await?;
         restart_scenario(/*refuse_load*/ true).await
+    })
+}
+
+/// A load can succeed against a provider session that is actually gone; the first prompt then
+/// fails before producing output, so the runtime rebuilds and retries it once.
+#[test]
+fn a_stale_loaded_session_rebuilds_and_retries_the_first_prompt() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root: PathBuf =
+            install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        let mut config_option_updates = 0;
+        while let Some(event) = stream.recv().await {
+            if let PromptSessionEvent::SessionUpdate {
+                update: SessionUpdate::ConfigOptionUpdate(_),
+                ..
+            } = event?
+            {
+                config_option_updates += 1;
+            }
+        }
+        drop(stream);
+        assert!(
+            config_option_updates >= 2,
+            "the load and the rebuilt session both publish config setup to the waiting prompt (got {config_option_updates})"
+        );
+        wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending && completion_blockers(node).is_empty()
+        })
+        .await?;
+
+        let sessions_root = setup.backend_paths().app_data_directory.join("sessions");
+        let history = read_session_history(&sessions_root, &session_id)?;
+        let user_messages = history
+            .lines
+            .iter()
+            .filter(|line| match &line.record {
+                HistoryRecord::Update { update, .. } => {
+                    matches!(update.as_ref(), SessionUpdate::UserMessageChunk(_))
+                        && serde_json::to_string(update)
+                            .is_ok_and(|record| record.contains("carry on"))
+                }
+                _ => false,
+            })
+            .count();
+        assert_eq!(
+            user_messages, 1,
+            "the retry must not record the same human prompt twice"
+        );
+
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the failed first prompt after a successful load rebuilds the provider session exactly once: {calls}"
+        );
+        let load = calls.find("session/load").ok_or("the restart loads the session")?;
+        let rebuild = calls.rfind("session/new").ok_or("the retry rebuilds")?;
+        assert!(
+            load < rebuild,
+            "the retry rebuilds after the load that claimed success: {calls}"
+        );
+        let prompts = std::fs::read_to_string(package_root.join("acp_prompts.jsonl"))?;
+        assert!(
+            prompts.matches("[fail-times:1]").count() >= 2,
+            "the retry resends the same prompt after the rebuild: {prompts}"
+        );
+        assert!(
+            prompts.contains("previously handled by a different coding agent"),
+            "the retry carries the transcript of the pre-restart conversation: {prompts}"
+        );
+        Ok(())
     })
 }
 
