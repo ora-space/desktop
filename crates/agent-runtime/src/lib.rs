@@ -19,6 +19,7 @@ mod host;
 mod limits;
 mod load;
 mod memory_host;
+mod model_config;
 mod operations;
 mod plugin_agent;
 mod prompt;

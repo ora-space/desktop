@@ -13,10 +13,10 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
+use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, PromptRequest, PromptResponse, SessionConfigKind, SessionConfigOption,
-    SessionConfigOptionCategory, StopReason,
+    AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
 use tokio::time::timeout;
@@ -43,24 +43,6 @@ fn stale_load_retry_allowed(
     restoration: LoadRestoration,
 ) -> bool {
     reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
-}
-
-/// Reads the model the restored provider last reported, for the replacement handshake.
-fn current_model(options: &[SessionConfigOption]) -> Option<String> {
-    let option = options
-        .iter()
-        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
-        .or_else(|| {
-            let selects: Vec<&SessionConfigOption> = options
-                .iter()
-                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)))
-                .collect();
-            (selects.len() == 1).then_some(selects[0])
-        })?;
-    let SessionConfigKind::Select(select) = &option.kind else {
-        return None;
-    };
-    Some(select.current_value.0.to_string())
 }
 
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
@@ -748,6 +730,12 @@ mod tests {
         assert!(!produced_output(&SessionUpdate::Plan(
             Plan::new(Vec::new())
         )));
+    }
+
+    /// An empty configuration report carries no model and must not terminate the actor.
+    #[test]
+    fn an_empty_provider_report_has_no_rebuild_model() {
+        pretty_assertions::assert_eq!(current_model(&[]), None);
     }
 
     #[test]

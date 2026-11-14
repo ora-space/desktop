@@ -11,6 +11,7 @@ use crate::AgentRuntimeHost;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
 use crate::host::WorkspaceDirectory;
+use crate::model_config::model_config_id;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, LiveMcpState, SessionMcpRevision, SessionMcpSnapshot,
 };
@@ -18,9 +19,8 @@ use crate::{ErrorClassification, RuntimeError};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
     DeleteSessionRequest, DeleteSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    RequestPermissionOutcome, RequestPermissionResponse, SessionConfigId, SessionConfigKind,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
-    SessionConfigSelectOptions, SessionUpdate, SetSessionConfigOptionRequest,
+    RequestPermissionOutcome, RequestPermissionResponse, SessionConfigId, SessionConfigOption,
+    SessionConfigOptionValue, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse,
 };
 use ora_acp::{AcpClient, AcpTransport};
@@ -497,34 +497,6 @@ pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
             config_options
         }
     }
-}
-
-/// Finds the model selector only from the options reported by this exact handshake.
-fn model_config_id(config_options: &[SessionConfigOption], model: &str) -> Option<SessionConfigId> {
-    let option = config_options
-        .iter()
-        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
-        .or_else(|| {
-            let mut selects = config_options
-                .iter()
-                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)));
-            let only = selects.next()?;
-            selects.next().is_none().then_some(only)
-        })?;
-    let SessionConfigKind::Select(select) = &option.kind else {
-        return None;
-    };
-    let offered = match &select.options {
-        SessionConfigSelectOptions::Ungrouped(options) => options
-            .iter()
-            .any(|option| option.value.0.as_ref() == model),
-        SessionConfigSelectOptions::Grouped(groups) => groups
-            .iter()
-            .flat_map(|group| group.options.iter())
-            .any(|option| option.value.0.as_ref() == model),
-        _ => false,
-    };
-    offered.then(|| option.id.clone())
 }
 
 /// Sends one persisted-session configuration request and returns the provider's full report.

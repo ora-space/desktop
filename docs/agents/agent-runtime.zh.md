@@ -16,6 +16,8 @@
 
 ## 连接与监管
 
+私有 `model_config` 模块为启动时的模型意图和 stale-load 重建识别同一个 provider 配置项：启动只应用明确提供的值，重建读取报告的当前值；空报告或没有 select 的报告不提供模型。
+
 Backend 启动时，遗留的 `Running` 会话行被协调为 `Stopped`，然后每个 Agent 在专用的运行时线程中启动并执行 `initialize`。握手声明了会话配置选项能力（模型选择器依赖它）。每个 Agent 独立重试，指数退避从 250 毫秒到 30 秒封顶；即使所有 Agent 都失败 Ora 仍然可用，对不可用 Agent 的操作报告 `agent_runtime_unavailable`。一分钟内超过三次真实失败会打开该 Agent 的重启熔断：发布 `Failing`，本进程内不再重试。没有实现 Agent 契约的插件直接进入 `Failing`。
 
 连接丢失时，该 Agent 进行中的操作失败，只把它注册的会话标为 `Stopped`，请生命周期停止旧进程，之后才启动替代进程。会话按需重新附着，prompt 从不自动重放。丢弃最后一个 Backend 所有者会停止所有 supervisor，取消路由中的操作，并结束每个进程树。
