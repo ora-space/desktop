@@ -65,6 +65,8 @@ over its `agent/acp` notification channel. See
 
 ## Connections and supervision
 
+The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value; an empty or non-select-only report carries no model.
+
 At Backend start, stale `Running` session rows are reconciled to `Stopped`, then one dedicated
 runtime thread per agent starts it and performs `initialize`. The handshake advertises the
 session-config-option capability (the model selector depends on it). Each agent retries
