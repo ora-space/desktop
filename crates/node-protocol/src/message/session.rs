@@ -17,6 +17,8 @@ pub enum NodeCapability {
     PluginInstall,
     /// `StartAgentSession`, Thread events and session commands.
     AgentSession,
+    /// Explicit, exact-version MCP bindings carried in a session start.
+    SessionMcp,
     /// Scoped model access through the platform gateway; no direct upstream credentials.
     ModelProxy,
     /// `DeliverRevision` over Git and the history upload grant exchange; declared only with a

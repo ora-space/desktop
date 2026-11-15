@@ -3993,8 +3993,11 @@ dependencies = [
 name = "ora-node-protocol"
 version = "0.0.0"
 dependencies = [
+ "ora-domain",
+ "ora-plugin-config",
  "ora-utils",
  "pretty_assertions",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

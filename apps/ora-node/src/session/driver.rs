@@ -68,6 +68,9 @@ where
         node: shared.node.clone(),
         reason,
         detail: detail.map(str::to_string),
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result,
         artifact_manifest,
     };

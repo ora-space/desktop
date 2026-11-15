@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("invalid explicit session MCP selection")]
+    InvalidSessionMcp,
     #[error(
         "unconfirmed-stop evidence must retain original identities and an increasing stop bound"
     )]

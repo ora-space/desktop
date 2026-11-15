@@ -26,3 +26,6 @@ mod support;
 mod thread_preview;
 #[path = "protocol/worktree.rs"]
 mod worktree;
+
+#[path = "protocol/session_mcp.rs"]
+mod session_mcp;

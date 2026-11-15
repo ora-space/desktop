@@ -1,4 +1,8 @@
 mod agent_session;
+mod session_mcp;
+pub use session_mcp::{
+    MAX_SESSION_MCP_SERVERS, MAX_SESSION_MCP_SETTINGS_BYTES, SessionMcpBinding, SessionMcpTransport,
+};
 mod execution;
 mod git_server;
 mod model_adapter;

@@ -94,6 +94,9 @@ pub(super) async fn reconcile(
                 node: node.identity().clone(),
                 reason: AgentSessionEndReason::Interrupted,
                 detail: None,
+                plugin_id: None,
+                setting_id: None,
+                transport: None,
                 scheduled_result: None,
                 artifact_manifest: None,
             });

@@ -285,6 +285,9 @@ where
             node: self.shared.node.clone(),
             reason: AgentSessionEndReason::Interrupted,
             detail: None,
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: None,
             artifact_manifest: None,
         }

@@ -262,6 +262,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
+            mcp: Vec::new(),
             agent_configuration: None,
             node_id: node.node_id.clone(),
             agent_plugin_id: PluginId::new("official/ora-space.opencode"),
@@ -297,6 +298,9 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             node,
             reason: AgentSessionEndReason::UserEnded,
             detail: None,
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: None,
             artifact_manifest: None,
         })
@@ -441,6 +445,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     OperationId::new("operation"),
                     execution.clone(),
                     AgentSessionSpec {
+                        mcp: Vec::new(),
                         workspace_directory: Vec::new(),
                         agent_configuration: None,
                         node_id: node.node_id.clone(),
@@ -484,6 +489,9 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                         node,
                         reason: AgentSessionEndReason::AgentFailed,
                         detail: Some("prior_revision_unavailable".into()),
+                        plugin_id: None,
+                        setting_id: None,
+                        transport: None,
                         scheduled_result: None,
                         artifact_manifest: None,
                     })

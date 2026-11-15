@@ -24,6 +24,7 @@ fn runtime_ports_use_durable_ledger() {
         execution_id: ExecutionId::new("execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),
                 agent_plugin_id: PluginId::new("official/agent"),
@@ -101,6 +102,9 @@ fn runtime_ports_use_durable_ledger() {
         },
         reason: AgentSessionEndReason::UserEnded,
         detail: None,
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: None,
         artifact_manifest: None,
     };

@@ -1,7 +1,8 @@
 //! Shared wire contract between Ora Controller and execution Nodes.
 //!
 //! The crate owns typed protocol messages and their binary framing. It deliberately has no
-//! transport, persistence, filesystem, Git, or Ora application-domain dependencies.
+//! transport, persistence, filesystem or Git operations. Plugin scalar values and canonical
+//! identities reuse their owners rather than introducing a parallel wire interpretation.
 
 mod domain;
 mod frame;
@@ -18,20 +19,21 @@ pub use domain::{
     InvalidGitServerRef, MAX_AGENT_SETTINGS_BYTES, MAX_SCHEDULED_ARTIFACT_BYTES,
     MAX_SCHEDULED_ARTIFACT_REJECTION_NAME_BYTES, MAX_SCHEDULED_ARTIFACT_REJECTIONS,
     MAX_SCHEDULED_ARTIFACT_TOTAL_BYTES, MAX_SCHEDULED_ARTIFACTS_PER_RUN,
-    MAX_SCHEDULED_VERDICT_DETAIL_CHARS, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES,
-    MAX_VISIBLE_TEXT_BYTES, MAX_WORKSPACE_BRANCH_BYTES, MAX_WORKSPACE_DIRECTORY,
-    MODEL_ADAPTER_CONTRACT_VERSION, MainWorkspaceBinding, ModelAdapterCapability, ModelProtocol,
-    NodePath, ObjectKey, ObjectUploadGrant, PluginAgentConfiguration, PluginDownload,
-    PluginExecutionResult, PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome,
-    PluginItemResult, PluginRelease, PluginRemoval, PluginTargetDownload, PluginVersion,
-    PluginsCompleted, PluginsFailed, PluginsFailureCode, PresignedUrl, PriorRevision,
-    PriorRevisionCommit, REVISION_REF_PREFIX, RemovePluginsSpec, RepositoryRef, RevisionDelivered,
-    RevisionExecutionResult, RevisionFailed, RevisionFailureCode, RevisionRef, RevisionUnchanged,
-    SCHEDULED_ARTIFACT_DIRECTORY, ScheduledArtifactItem, ScheduledArtifactKind,
-    ScheduledArtifactManifest, ScheduledArtifactRejection, ScheduledArtifactRejectionReason,
-    ScheduledArtifactUpload, ScheduledArtifactUploadGrant, ScheduledArtifactsDelivered,
-    ScheduledArtifactsEvidence, ScheduledArtifactsExecutionResult, ScheduledArtifactsFailed,
-    ScheduledArtifactsFailureReason, ScheduledRunResult, ScheduledVerdict, SessionTrigger,
+    MAX_SCHEDULED_VERDICT_DETAIL_CHARS, MAX_SESSION_MCP_SERVERS, MAX_SESSION_MCP_SETTINGS_BYTES,
+    MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES,
+    MAX_WORKSPACE_BRANCH_BYTES, MAX_WORKSPACE_DIRECTORY, MODEL_ADAPTER_CONTRACT_VERSION,
+    MainWorkspaceBinding, ModelAdapterCapability, ModelProtocol, NodePath, ObjectKey,
+    ObjectUploadGrant, PluginAgentConfiguration, PluginDownload, PluginExecutionResult,
+    PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease,
+    PluginRemoval, PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed,
+    PluginsFailureCode, PresignedUrl, PriorRevision, PriorRevisionCommit, REVISION_REF_PREFIX,
+    RemovePluginsSpec, RepositoryRef, RevisionDelivered, RevisionExecutionResult, RevisionFailed,
+    RevisionFailureCode, RevisionRef, RevisionUnchanged, SCHEDULED_ARTIFACT_DIRECTORY,
+    ScheduledArtifactItem, ScheduledArtifactKind, ScheduledArtifactManifest,
+    ScheduledArtifactRejection, ScheduledArtifactRejectionReason, ScheduledArtifactUpload,
+    ScheduledArtifactUploadGrant, ScheduledArtifactsDelivered, ScheduledArtifactsEvidence,
+    ScheduledArtifactsExecutionResult, ScheduledArtifactsFailed, ScheduledArtifactsFailureReason,
+    ScheduledRunResult, ScheduledVerdict, SessionMcpBinding, SessionMcpTransport, SessionTrigger,
     Sha256Digest, SnapshotRef, StoredObject, ThreadEvent, UploadMethod, UserTurn, WorkspaceListing,
     WorkspaceRef, WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed,
     WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
@@ -70,3 +72,4 @@ pub use message::{
     UploadGrantNeededMessage, ValidateMessage, WorktreeFailedMessage, WorktreeReadyMessage,
     WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
 };
+pub use ora_plugin_config::SettingValue;

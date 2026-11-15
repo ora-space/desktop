@@ -398,6 +398,9 @@ fn a_flood_of_unusable_names_stays_inside_one_frame() {
         node: node(),
         reason: AgentSessionEndReason::IdleTimeout,
         detail: None,
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: declaration.result,
         artifact_manifest: Some(manifest),
     };

@@ -30,6 +30,7 @@ pub(in crate::cloud) fn start(
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp: Vec::new(),
                 node_id: node.clone(),
                 agent_plugin_id: PluginId::new(spec.agent_plugin_id.clone()),
                 agent_plugin_version: PluginVersion::new(spec.agent_plugin_version.clone()),
@@ -429,6 +430,7 @@ mod tests {
                 execution_id: ExecutionId::new("session"),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        mcp: Vec::new(),
                         node_id: NodeId::new("node"),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),
                         agent_plugin_version: PluginVersion::new("1.2.3"),
@@ -567,6 +569,9 @@ mod tests {
             },
             reason: AgentSessionEndReason::IdleTimeout,
             detail: None,
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: Some(ScheduledRunResult {
                 verdict: ScheduledVerdict::RangeUnresolved,
                 verdict_detail: Some("no comparison base".to_owned()),

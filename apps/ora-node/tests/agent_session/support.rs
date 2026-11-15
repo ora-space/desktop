@@ -489,6 +489,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node-1"),
                 agent_plugin_id: PluginId::new(PLUGIN_ID),
@@ -510,6 +511,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                mcp: Vec::new(),
                 agent_configuration: Some(FrozenAgentConfiguration {
                     plugin_id: PluginId::new(PLUGIN_ID),
                     plugin_version: PluginVersion::new(PLUGIN_VERSION),
