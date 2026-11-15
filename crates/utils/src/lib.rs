@@ -13,7 +13,7 @@ pub mod clock;
 pub mod directory;
 pub mod fs;
 mod git_branch;
-#[cfg(feature = "validation")]
+#[cfg(feature = "hash")]
 pub mod hash;
 #[cfg(feature = "validation")]
 pub mod html;
@@ -34,7 +34,7 @@ mod slug;
 #[cfg(feature = "validation")]
 pub mod svg;
 pub mod text;
-#[cfg(feature = "validation")]
+#[cfg(feature = "url")]
 pub mod url;
 
 pub use git_branch::{GitBranchName, GitBranchNameError};

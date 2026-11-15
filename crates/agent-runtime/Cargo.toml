@@ -16,6 +16,8 @@ workspace = true
 test-support = []
 
 [dependencies]
+ora-plugin-config.workspace = true
+ora-utils.workspace = true
 agent-client-protocol-schema = { workspace = true }
 ora-acp = { workspace = true }
 ora-contracts = { workspace = true }

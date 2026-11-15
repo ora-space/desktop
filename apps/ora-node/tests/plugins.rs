@@ -801,3 +801,6 @@ async fn an_unassociated_declaration_installs_as_inert_metadata() {
         .unwrap();
     assert!(installed.join("assets").join("config.json").is_file());
 }
+
+#[path = "plugins/mcp.rs"]
+mod mcp;

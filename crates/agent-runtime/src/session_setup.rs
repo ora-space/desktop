@@ -1,9 +1,8 @@
 //! Session setup values the runtime sends at every ACP `session/new` and `session/load`.
 //!
 //! The runtime owns what a Session MCP Snapshot *is* and how a live session converges on one; the
-//! host owns where the snapshot comes from (see [`crate::SessionSetup`]). Keeping the resolver out
-//! of this crate is what lets a host with no MCP configuration supply an empty snapshot without
-//! carrying Desktop's catalog, Setting store, or health probes.
+//! host owns where the snapshot comes from (see [`crate::SessionSetup`]). The pure resolver is
+//! shared; Desktop catalog discovery, Setting storage and health probes remain host responsibilities.
 
 mod barrier;
 mod live;

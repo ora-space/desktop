@@ -2,7 +2,7 @@
 
 [English](session-mcp.md) | 中文
 
-Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表。MCP 从不是 Effect Resource，也从不是 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。解析逻辑在 `crates/backend/src/session_setup/mcp`。
+Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表。MCP 从不是 Effect Resource，也从不是 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。纯解析逻辑在 `crates/agent-runtime/src/mcp_resolver`，Desktop 数据来源和健康探测仍在 Backend。
 
 ## 选择
 
@@ -20,7 +20,7 @@ server 名称是规范插件 id（`<namespace>/<identifier>`），按 id 排序�
 - stdio 映射为 ACP `McpServer::Stdio`；命令会被重新检查，必须是当前包版本里的普通文件。
 - HTTP 映射为 `McpServer::Http`，要求 Agent 声明 HTTP MCP 能力（否则 `mcp_http_capability_missing`）。
 - `{ "context": "workspace" }` 变成会话的绝对 cwd；字面量 `"."` 保持 `"."`。环境变量和 header 变成 ACP 的 name/value 列表。
-- 非空集合要求 Agent 支持 `session/load`，因为这是唯一能把变化后的集合送达运行中会话的帧。如果 Agent 不能 load 会话，setup 在发出任何帧之前就失败，包括重建时的 `session/new`：重建要么带着真实快照，要么不发生。
+- 非空集合要求 Agent 支持 `session/load`，因为这是唯一能把变化后的集合送达运行中会话的帧。如果 Agent 不能 load 会话，setup 在 ACP `initialize` 之后、发出任何会话 setup 帧之前就失败，包括重建时的 `session/new`：重建要么带着真实快照，要么不发生。
 
 ## 实时刷新
 
@@ -52,3 +52,22 @@ setup 成功表示完整列表已交付并被接受，从不表示 Agent 已经�
 健康从不改变交付：探测失败不会让 setup 失败，不会移除成员，也从不产生部分列表。探测健康也不等于"已在会话中生效"：Agent 仍然自己去连，所以两者可能朝任一方向不一致。
 
 展示不含机密：插件卡片在安装和配置状态旁显示健康状态，并提供重新检测；会话显示一个不阻塞的横幅，列出它自己的有效集合中 `Unhealthy` 的成员；`listMcpHealth` 回答这两种视图，`probeMcpHealth` 重新探测；`McpHealthChanged { plugin_id }` 通知客户端重新查询。在 setup 日志之后，一条结构化事件把会话和其成员的身份、code 和探测耗时对应起来。
+
+## Node 会话
+
+声明 `session_mcp` 的 Node 接受 `AgentSessionSpec.mcp`：显式列出插件 id、精确包版本和标量 Settings。
+省略或空列表表示没有插件 MCP；id 必须规范、唯一且有序。最多 16 个 Server，所有 Settings map 的紧凑
+JSON 总计最多 64 KiB。Node 使用 `ora-plugin-config` 和 `ora-agent-runtime` 中的共享解析器处理已安装包，
+从不自动发现 MCP。现有 `InstallPlugins` 已支持 MCP 包。独立 workload 使用不可写的 package view，
+使 stdio 命令可访问而不开放 Node home。
+
+包和 Setting 检查先于 Agent 启动。Agent 能力检查在 ACP `initialize` 之后、`session/new` 之前：非空集合
+要求 load 支持，HTTP 另要求 HTTP MCP 支持。失败时不发送 `session/new` 或任何 MCP 值给 Agent，
+以 `mcp_plugin_missing`、`mcp_setting_missing`、`mcp_http_capability_missing` 或 `mcp_load_session_missing` 结束。
+结构化 setup 失败和 preflight 日志只记录插件 id、适用时的设置 id、transport 和稳定 code，绝不记录值；
+终态 detail 仍只有稳定 code。MCP setup 失败时，`AgentSessionEnded` 还向 Controller 携带可选的
+`plugin_id`、`setting_id` 与 `transport`（`stdio` 或 `http`）；无法确定的字段和其他终态中的这些字段均省略。
+
+Settings 只保留在内存和成功的 ACP 请求中；ledger 输入只保留 MCP 身份、版本和空 Settings。重复 execution
+不能改变运行中的值；改变 Settings 必须新建 execution。Node 重启中断会话，不恢复值。Settings 不进入
+JSONL、Thread、日志、错误或输入 Debug。此交付路径不包含 Node 实时刷新、restore 或 Host 健康探测。

@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/mcp.rs"]
+mod mcp;
 #[path = "agent_session/resume.rs"]
 mod resume;
 #[path = "agent_session/support.rs"]
@@ -120,6 +122,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,
             agent_plugin_id: PluginId::new(PLUGIN_ID),
@@ -139,6 +142,9 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
             node: fixture.node(),
             reason: AgentSessionEndReason::AgentFailed,
             detail: Some("model_proxy_unavailable".into()),
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: None,
             artifact_manifest: None,
         }
@@ -260,6 +266,9 @@ async fn records_reach_the_thread_as_history_lines_attributed_to_their_turns() {
                 node: fixture.node(),
                 reason: AgentSessionEndReason::UserEnded,
                 detail: None,
+                plugin_id: None,
+                setting_id: None,
+                transport: None,
                 scheduled_result: None,
                 artifact_manifest: None,
             },
@@ -421,6 +430,9 @@ async fn a_crash_before_the_thread_append_leaves_the_history_one_line_ahead() {
                 node: fixture.node(),
                 reason: AgentSessionEndReason::Interrupted,
                 detail: None,
+                plugin_id: None,
+                setting_id: None,
+                transport: None,
                 scheduled_result: None,
                 artifact_manifest: None,
             },
@@ -462,6 +474,9 @@ async fn a_plugin_of_another_version_ends_the_session_without_starting_it() {
         node: fixture.node(),
         reason: AgentSessionEndReason::AgentFailed,
         detail: Some("agent_plugin_unavailable".to_string()),
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: None,
         artifact_manifest: None,
     };
@@ -825,6 +840,7 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,
             agent_plugin_id: PluginId::new(PLUGIN_ID),

@@ -7,9 +7,9 @@
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, CLIENT_METHOD_NAMES, CancelNotification,
     CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk, Implementation,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, SessionCapabilities, SessionCloseCapabilities, SessionNotification,
-    SessionUpdate, StopReason, TextContent,
+    InitializeRequest, InitializeResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
+    PromptRequest, PromptResponse, SessionCapabilities, SessionCloseCapabilities,
+    SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
@@ -42,6 +42,8 @@ struct PendingPrompt {
 #[derive(Default)]
 struct EchoAgent {
     sessions: BTreeMap<String, PathBuf>,
+    /// A safe confirmation of the session/new fixture assertion, never its setting values.
+    mcp_verified: bool,
     /// A `[hold]` prompt, answered when the host cancels it.
     held: Option<PendingPrompt>,
     /// A `[commit]` prompt, answered when the host-spawned commit exits.
@@ -153,15 +155,27 @@ impl EchoAgent {
         };
         if method == AGENT_METHOD_NAMES.initialize {
             let request: InitializeRequest = serde_json::from_value(params)?;
-            let capabilities = AgentCapabilities::new().session_capabilities(
-                SessionCapabilities::new().close(SessionCloseCapabilities::new()),
-            );
+            record_acp_method("initialize");
+            let flags: Value = std::fs::read("mcp-capabilities.json")
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(Value::Null);
+            let capabilities = AgentCapabilities::new()
+                .load_session(flags["load"].as_bool().unwrap_or(false))
+                .mcp_capabilities(
+                    McpCapabilities::new().http(flags["http"].as_bool().unwrap_or(false)),
+                )
+                .session_capabilities(
+                    SessionCapabilities::new().close(SessionCloseCapabilities::new()),
+                );
             let response = InitializeResponse::new(request.protocol_version)
                 .agent_capabilities(capabilities)
                 .agent_info(Implementation::new("ora-node-echo-agent", "1.0.0"));
             return respond(output, id, &response).await;
         }
         if method == AGENT_METHOD_NAMES.session_new {
+            record_acp_method("session/new");
+            self.mcp_verified = verify_mcp_frame(&params);
             let request: NewSessionRequest = serde_json::from_value(params)?;
             let session_id = format!("echo-session-{}", self.sessions.len() + 1);
             self.sessions.insert(session_id.clone(), request.cwd);
@@ -201,6 +215,19 @@ impl EchoAgent {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.sessions.get(&session_id).cloned().unwrap_or_default();
+        if text.contains("[mcp]") {
+            message(
+                output,
+                &session_id,
+                if self.mcp_verified {
+                    "MCP frame verified"
+                } else {
+                    "MCP frame invalid"
+                },
+            )
+            .await?;
+            return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
+        }
         if text.contains("[authentication-required]") {
             return acp(
                 output,
@@ -465,4 +492,50 @@ fn ora_git_command(cwd: &std::path::Path, args: &[&str]) -> std::io::Result<std:
         .arg("ora-git")
         .args(args)
         .output()
+}
+
+/// Records only method names so failure tests can prove no session/new was sent.
+fn record_acp_method(method: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("echo-acp-methods")
+    {
+        let _ = writeln!(file, "{method}");
+    }
+}
+
+/// Asserts the actual ACP frame entirely in memory; fixture secrets never enter transcript/files.
+fn verify_mcp_frame(params: &Value) -> bool {
+    let Some(command) = params
+        .pointer("/mcpServers/0/command")
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    std::path::Path::new(command).is_file()
+        && command_is_in_required_view(std::path::Path::new(command))
+        && params["mcpServers"]
+            == json!([
+                {"name":"official/acme.stdio", "command":command,
+                 "args":[params["cwd"], "arg-m938-runtime-secret"],
+                 "env":[{"name":"TOKEN", "value":"m938-runtime-secret"}]},
+                {"type":"http", "name":"official/acme.web", "url":"https://mcp.example.test/mcp",
+                 "headers":[{"name":"Authorization", "value":"Bearer m938-runtime-secret"}]}
+            ])
+}
+
+/// Separate workloads must receive the command through their view, never the private Node home.
+fn command_is_in_required_view(command: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read("mcp-command-view.json") else {
+        return true;
+    };
+    let Ok(bounds) = serde_json::from_slice::<Value>(&bytes) else {
+        return false;
+    };
+    let (Some(workload), Some(home)) = (bounds["workload"].as_str(), bounds["home"].as_str())
+    else {
+        return false;
+    };
+    command.starts_with(workload) && !command.starts_with(home)
 }

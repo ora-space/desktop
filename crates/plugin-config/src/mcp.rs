@@ -12,7 +12,8 @@ mod tests;
 mod transport;
 
 pub use resolve::{
-    ResolveMcpBindingError, ResolvedMcpArgument, ResolvedMcpTransport, resolve_mcp_transport,
+    ResolveMcpBindingError, ResolvedMcpArgument, ResolvedMcpTransport, resolve_mcp_settings,
+    resolve_mcp_transport,
 };
 
 use crate::agent::{

@@ -1,6 +1,7 @@
 # Session MCP setup
 
-This module resolves the MCP servers sent at ACP `session/new` and `session/load`, and tracks the
+This module supplies Desktop catalog/configuration sources to the shared pure resolver in
+`ora_agent_runtime` for the MCP servers sent at ACP `session/new` and `session/load`, and tracks the
 secret-free revision used by live sessions.
 
 ## Responsibilities

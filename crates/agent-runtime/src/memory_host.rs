@@ -1,8 +1,8 @@
 //! Host implementations for a runtime that keeps nothing beyond its process and serves no MCP.
 //!
-//! A host whose sessions never outlive the process — a sandbox Node, which ends every session on
-//! restart instead of resuming it — has no store to adapt and no MCP configuration to resolve. It
-//! composes these instead of writing its own, and the runtime's own tests use the same ones.
+//! Hosts whose sessions never outlive the process can reuse the memory store. Hosts with no MCP
+//! configuration can separately compose the empty setup; production Node sessions provide their
+//! own explicit setup. The runtime tests reuse both adapters.
 
 use crate::RuntimeError;
 use crate::host::{SessionSetup, SessionStore};

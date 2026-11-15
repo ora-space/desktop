@@ -11,6 +11,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+ora-domain.workspace = true
+ora-plugin-config.workspace = true
+semver.workspace = true
 ora-utils = { path = "../utils", default-features = false }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

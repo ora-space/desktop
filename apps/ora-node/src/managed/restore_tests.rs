@@ -29,6 +29,7 @@ pub(super) fn session() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("restore-session"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp: Vec::new(),
                 workspace_directory: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),
@@ -72,6 +73,9 @@ fn ended() -> AgentSessionEnded {
         },
         reason: AgentSessionEndReason::AgentFailed,
         detail: Some("prior_revision_unavailable".into()),
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: None,
         artifact_manifest: None,
     }

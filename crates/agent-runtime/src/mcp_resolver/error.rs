@@ -1,0 +1,186 @@
+//! Stable, secret-free Session MCP setup and refresh errors.
+
+use super::SessionMcpTransportKind;
+use ora_contracts::{EmptyErrorParams, PublicError, SessionMcpSetupFailedParams};
+use ora_domain::PluginId;
+use thiserror::Error;
+
+/// Stable diagnostic code that may appear in UI and logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionMcpErrorCode {
+    LoadCapabilityMissing,
+    HttpCapabilityMissing,
+    SettingMissing,
+    IllegalRuntimeText,
+    CommandNotInPackage,
+    WorkspaceCwdUnresolved,
+    RevisionChanged,
+    ConfigurationUnavailable,
+    CatalogUnavailable,
+    SelectedPluginUnavailable,
+    ConfigurationIncomplete,
+}
+
+impl SessionMcpErrorCode {
+    /// Wire token used by `PublicError` and operator-facing logs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LoadCapabilityMissing => "mcp_load_capability_missing",
+            Self::HttpCapabilityMissing => "mcp_http_capability_missing",
+            Self::SettingMissing => "mcp_setting_missing",
+            Self::IllegalRuntimeText => "mcp_illegal_runtime_text",
+            Self::CommandNotInPackage => "mcp_command_not_in_package",
+            Self::WorkspaceCwdUnresolved => "mcp_workspace_cwd_unresolved",
+            Self::RevisionChanged => "mcp_revision_changed",
+            Self::ConfigurationUnavailable => "mcp_configuration_unavailable",
+            Self::CatalogUnavailable => "mcp_catalog_unavailable",
+            Self::SelectedPluginUnavailable => "mcp_selected_plugin_unavailable",
+            Self::ConfigurationIncomplete => "mcp_configuration_incomplete",
+        }
+    }
+}
+
+/// A Session MCP setup or refresh failure that never carries Setting values.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum SessionMcpError {
+    #[error("agent does not support session/load required by Ora-managed MCP")]
+    LoadCapabilityMissing,
+    #[error(
+        "agent does not support HTTP MCP for plugin `{plugin_id}` (transport http, {code})",
+        code = SessionMcpErrorCode::HttpCapabilityMissing.as_str()
+    )]
+    HttpCapabilityMissing { plugin_id: PluginId },
+    #[error(
+        "MCP plugin `{plugin_id}` Setting `{setting_id}` could not be bound (transport {transport}, {code})",
+        transport = transport.as_str(),
+        code = SessionMcpErrorCode::SettingMissing.as_str()
+    )]
+    SettingMissing {
+        plugin_id: PluginId,
+        setting_id: String,
+        transport: SessionMcpTransportKind,
+    },
+    #[error(
+        "MCP plugin `{plugin_id}` Setting `{setting_id}` resolved to illegal runtime text (transport {transport}, {code})",
+        transport = transport.as_str(),
+        code = SessionMcpErrorCode::IllegalRuntimeText.as_str()
+    )]
+    IllegalRuntimeText {
+        plugin_id: PluginId,
+        setting_id: String,
+        transport: SessionMcpTransportKind,
+    },
+    #[error(
+        "MCP plugin `{plugin_id}` stdio command is not a regular file in the current package ({code})",
+        code = SessionMcpErrorCode::CommandNotInPackage.as_str()
+    )]
+    CommandNotInPackage { plugin_id: PluginId },
+    #[error(
+        "MCP plugin `{plugin_id}` workspace context could not be resolved to an absolute cwd ({code})",
+        code = SessionMcpErrorCode::WorkspaceCwdUnresolved.as_str()
+    )]
+    WorkspaceCwdUnresolved { plugin_id: PluginId },
+    #[error("MCP installed package or configuration revision changed during Session setup")]
+    RevisionChanged { plugin_id: Option<PluginId> },
+    #[error(
+        "MCP plugin `{plugin_id}` configuration could not be re-read ({code})",
+        code = SessionMcpErrorCode::ConfigurationUnavailable.as_str()
+    )]
+    ConfigurationUnavailable { plugin_id: PluginId },
+    #[error("installed MCP catalog could not be read")]
+    CatalogUnavailable,
+    #[error("selected MCP plugin `{plugin_id}` is not installed")]
+    SelectedPluginUnavailable { plugin_id: PluginId },
+    #[error(
+        "selected MCP plugin `{plugin_id}` configuration is incomplete (transport {transport})",
+        transport = transport.as_str()
+    )]
+    ConfigurationIncomplete {
+        plugin_id: PluginId,
+        transport: SessionMcpTransportKind,
+    },
+}
+
+impl SessionMcpError {
+    /// Stable diagnostic code for this failure.
+    pub fn code(&self) -> SessionMcpErrorCode {
+        match self {
+            Self::LoadCapabilityMissing => SessionMcpErrorCode::LoadCapabilityMissing,
+            Self::HttpCapabilityMissing { .. } => SessionMcpErrorCode::HttpCapabilityMissing,
+            Self::SettingMissing { .. } => SessionMcpErrorCode::SettingMissing,
+            Self::IllegalRuntimeText { .. } => SessionMcpErrorCode::IllegalRuntimeText,
+            Self::CommandNotInPackage { .. } => SessionMcpErrorCode::CommandNotInPackage,
+            Self::WorkspaceCwdUnresolved { .. } => SessionMcpErrorCode::WorkspaceCwdUnresolved,
+            Self::RevisionChanged { .. } => SessionMcpErrorCode::RevisionChanged,
+            Self::ConfigurationUnavailable { .. } => SessionMcpErrorCode::ConfigurationUnavailable,
+            Self::CatalogUnavailable => SessionMcpErrorCode::CatalogUnavailable,
+            Self::SelectedPluginUnavailable { .. } => {
+                SessionMcpErrorCode::SelectedPluginUnavailable
+            }
+            Self::ConfigurationIncomplete { .. } => SessionMcpErrorCode::ConfigurationIncomplete,
+        }
+    }
+
+    /// Identifies the member without exposing any runtime authority.
+    pub fn plugin_id(&self) -> Option<String> {
+        match self {
+            Self::LoadCapabilityMissing | Self::CatalogUnavailable => None,
+            Self::SelectedPluginUnavailable { plugin_id }
+            | Self::ConfigurationIncomplete { plugin_id, .. }
+            | Self::HttpCapabilityMissing { plugin_id }
+            | Self::SettingMissing { plugin_id, .. }
+            | Self::IllegalRuntimeText { plugin_id, .. }
+            | Self::CommandNotInPackage { plugin_id }
+            | Self::WorkspaceCwdUnresolved { plugin_id }
+            | Self::ConfigurationUnavailable { plugin_id } => Some(plugin_id.canonical()),
+            Self::RevisionChanged { plugin_id } => plugin_id.as_ref().map(PluginId::canonical),
+        }
+    }
+
+    /// Names only the failed declaration field.
+    pub fn setting_id(&self) -> Option<&str> {
+        match self {
+            Self::SettingMissing { setting_id, .. }
+            | Self::IllegalRuntimeText { setting_id, .. } => Some(setting_id),
+            Self::LoadCapabilityMissing
+            | Self::HttpCapabilityMissing { .. }
+            | Self::CommandNotInPackage { .. }
+            | Self::WorkspaceCwdUnresolved { .. }
+            | Self::RevisionChanged { .. }
+            | Self::ConfigurationUnavailable { .. }
+            | Self::CatalogUnavailable
+            | Self::SelectedPluginUnavailable { .. }
+            | Self::ConfigurationIncomplete { .. } => None,
+        }
+    }
+
+    /// Reports transport metadata rather than its resolved payload.
+    pub fn transport(&self) -> Option<SessionMcpTransportKind> {
+        match self {
+            Self::HttpCapabilityMissing { .. } => Some(SessionMcpTransportKind::Http),
+            Self::CommandNotInPackage { .. } => Some(SessionMcpTransportKind::Stdio),
+            Self::SettingMissing { transport, .. }
+            | Self::IllegalRuntimeText { transport, .. }
+            | Self::ConfigurationIncomplete { transport, .. } => Some(*transport),
+            Self::LoadCapabilityMissing
+            | Self::WorkspaceCwdUnresolved { .. }
+            | Self::RevisionChanged { .. }
+            | Self::ConfigurationUnavailable { .. }
+            | Self::CatalogUnavailable
+            | Self::SelectedPluginUnavailable { .. } => None,
+        }
+    }
+
+    /// Public contract that names Plugin ID, Setting ID, transport, and a stable code only.
+    pub fn public_error(&self) -> PublicError {
+        if matches!(self, Self::LoadCapabilityMissing) {
+            return PublicError::SessionLoadUnsupported(EmptyErrorParams {});
+        }
+        PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
+            error_code: self.code().as_str().to_string(),
+            plugin_id: self.plugin_id(),
+            setting_id: self.setting_id().map(str::to_string),
+            transport: self.transport().map(|kind| kind.as_str().to_string()),
+        }))
+    }
+}

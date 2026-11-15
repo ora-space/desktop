@@ -136,6 +136,7 @@ pub(super) fn run(
     }
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
+        capabilities.push(NodeCapability::SessionMcp);
     }
     if agents
         .as_ref()

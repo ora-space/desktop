@@ -18,6 +18,7 @@ mod history;
 mod host;
 mod limits;
 mod load;
+mod mcp_resolver;
 mod memory_host;
 mod operations;
 mod plugin_agent;
@@ -58,6 +59,12 @@ pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
     SessionStore, WorkspaceDirectory,
+};
+pub use mcp_resolver::{
+    EligibleMcpMember, InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,
+    SessionMcpConfigurationSource, SessionMcpError, SessionMcpErrorCode, effective_members,
+    find_eligible_member, resolve_session_mcp, resolve_session_mcp_revision,
+    revalidate_stdio_command,
 };
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
 pub use operations::AgentRuntime;
@@ -295,19 +302,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             host_capabilities,
         )
         .await
-    }
-
-    /// Wakes every Live Session so it re-reads the current Desired MCP revision.
-    ///
-    /// The notification is level-triggered and secret-free. Stopped Sessions ignore it; idle
-    /// Sessions refresh immediately; busy Sessions mark refresh as owed work.
-    pub fn notify_mcp_desired_changed(&self) {
-        let Ok(actors) = self.inner.actors.read() else {
-            return;
-        };
-        for handle in actors.values() {
-            let _ = handle.commands.send(RuntimeCommand::McpDesiredMaybeChanged);
-        }
     }
 
     /// Reconciles supervised agent connections with the currently installed plugin set.
