@@ -130,6 +130,26 @@ impl SessionPlacement {
         }
     }
 
+    /// Links immutable MCP package bytes beside the agent package for workload access. Plugin
+    /// identities are hashed so their two segments cannot collide with the existing layout.
+    pub(super) fn mcp_package(
+        &self,
+        id: &ora_domain::PluginId,
+        installed: &Path,
+    ) -> io::Result<PathBuf> {
+        match self {
+            Self::Shared => Ok(installed.to_path_buf()),
+            Self::Separate { directory, .. } => {
+                let view = directory.root.join(format!(
+                    "mcp-{}",
+                    ora_utils::hash::sha256_hex(id.canonical().as_bytes())
+                ));
+                ora_utils::fs::link_tree_no_follow(installed, &view)?;
+                Ok(view)
+            }
+        }
+    }
+
     /// The private workload home owns CLI state; management-owned Node directories remain closed.
     pub(super) fn home_directory(&self) -> Option<&Path> {
         match self {

@@ -104,6 +104,11 @@ impl<G: WriteGuard> NodeDatabase<G> {
         permit: Option<&RuntimeBinding>,
     ) -> Result<SessionExecution, Error> {
         command.validate()?;
+        // Runtime-only MCP scalars must never reach SQLite, including WAL pages. Durable input
+        // retains the selected identities for recovery; a repeated execution cannot replace its
+        // in-memory settings or restart a running session.
+        let durable_command = without_mcp_settings(command);
+        let command = &durable_command;
         if command.payload.spec.node_id != self.node_id {
             return Err(Error::NodeMismatch);
         }
@@ -162,7 +167,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let record = self
             .find_session(&command.operation_id, &command.execution_id)?
             .ok_or(Error::IdentityConflict)?;
-        if record.command != *command || record.state != ExecutionState::Accepted {
+        if record.command != without_mcp_settings(command)
+            || record.state != ExecutionState::Accepted
+        {
             return Err(Error::InvalidTransition);
         }
         if !self
@@ -236,4 +243,13 @@ fn decode((input, state, result, last_sequence): SessionRow) -> Result<SessionEx
         state,
         last_sequence: u64::try_from(last_sequence).map_err(|_| Error::InvalidSchema)?,
     })
+}
+
+/// Keeps one persistence projection for admission, duplicate comparison and start fencing.
+fn without_mcp_settings(command: &StartAgentSessionMessage) -> StartAgentSessionMessage {
+    let mut durable = command.clone();
+    for binding in &mut durable.payload.spec.mcp {
+        binding.settings.clear();
+    }
+    durable
 }

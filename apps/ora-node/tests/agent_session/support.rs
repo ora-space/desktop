@@ -442,6 +442,22 @@ impl Fixture {
         workload: SessionWorkload,
         model_proxy: Option<ModelProxyConfig>,
     ) -> Sessions {
+        self.compose_with_ledger(
+            installed_version,
+            workload,
+            model_proxy,
+            self.ledger.clone(),
+        )
+    }
+
+    /// Reuses the same transport fixture with a production SQLite session journal.
+    pub fn compose_with_ledger<L: SessionLedger>(
+        &self,
+        installed_version: &str,
+        workload: SessionWorkload,
+        model_proxy: Option<ModelProxyConfig>,
+        ledger: L,
+    ) -> AgentSessions<L, Checkouts, Catalog, Restorer> {
         AgentSessions::new(
             SessionConfig {
                 home_directory: self.home(),
@@ -452,19 +468,45 @@ impl Fixture {
                 workload,
             },
             self.node(),
-            self.ledger.clone(),
+            ledger,
             Checkouts(HashMap::from([(
                 ExecutionId::new(CHECKOUT_EXECUTION),
                 self.checkout(),
             )])),
             Catalog {
-                installed: HashMap::from([(
+                installed: HashMap::from([
                     (
-                        PluginId::new(PLUGIN_ID),
-                        PluginVersion::new(installed_version),
+                        (
+                            PluginId::new(PLUGIN_ID),
+                            PluginVersion::new(installed_version),
+                        ),
+                        self.package_root_of(installed_version),
                     ),
-                    self.package_root_of(installed_version),
-                )]),
+                    (
+                        (
+                            PluginId::new("official/acme.stdio"),
+                            PluginVersion::new("1.0.0"),
+                        ),
+                        self.home()
+                            .join("plugins")
+                            .join("installed")
+                            .join("official")
+                            .join("acme.stdio")
+                            .join("1.0.0"),
+                    ),
+                    (
+                        (
+                            PluginId::new("official/acme.web"),
+                            PluginVersion::new("1.0.0"),
+                        ),
+                        self.home()
+                            .join("plugins")
+                            .join("installed")
+                            .join("official")
+                            .join("acme.web")
+                            .join("1.0.0"),
+                    ),
+                ]),
                 leases: Arc::clone(&self.leases),
                 configuration: Arc::clone(&self.configuration),
             },

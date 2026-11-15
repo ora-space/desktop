@@ -10,6 +10,7 @@ mod driver;
 mod end;
 mod host;
 mod ledger;
+mod mcp;
 mod model;
 mod ports;
 mod preview;

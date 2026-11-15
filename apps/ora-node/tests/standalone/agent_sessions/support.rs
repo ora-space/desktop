@@ -151,6 +151,7 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
     // Delivery runs Git in the checkouts clone created, so clone configuration enables it, and
     // restore, which runs delivery Git in session checkouts, needs both.
     for capability in [
+        NodeCapability::SessionMcp,
         NodeCapability::RevisionDelivery,
         NodeCapability::RevisionRestore,
     ] {

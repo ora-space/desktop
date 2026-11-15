@@ -15,7 +15,7 @@ use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
 use crate::model_proxy::{ModelAccess, ModelAccessStatus, ModelRoute};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
-use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
+use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore};
 use ora_contracts::{
     PromptSessionEvent, PromptSessionRequest, PublicError, StartSessionRequest, StopPluginRequest,
     StopSessionRequest,
@@ -59,8 +59,13 @@ where
     let SessionEnd {
         reason,
         detail,
+        mcp_failure,
         scheduled,
     } = end;
+    let (plugin_id, setting_id, transport) = mcp_failure.map_or((None, None, None), |failure| {
+        let failure = *failure;
+        (failure.plugin_id, failure.setting_id, failure.transport)
+    });
     let (scheduled_result, artifact_manifest) = scheduled.map_or((None, None), |declaration| {
         (declaration.result, declaration.manifest)
     });
@@ -68,9 +73,9 @@ where
         node: shared.node.clone(),
         reason,
         detail: detail.map(str::to_string),
-        plugin_id: None,
-        setting_id: None,
-        transport: None,
+        plugin_id,
+        setting_id,
+        transport,
         scheduled_result,
         artifact_manifest,
     };
@@ -153,6 +158,14 @@ where
     {
         return SessionEnd::agent_failed(error.code());
     }
+    let (session_setup, _mcp_leases) = match super::mcp::NodeSessionMcp::prepare(
+        &shared.catalog,
+        std::mem::take(&mut spec.mcp),
+        &checkout,
+    ) {
+        Ok(prepared) => prepared,
+        Err(failure) => return failure.preflight_end(execution),
+    };
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
@@ -192,6 +205,10 @@ where
             ora_warn!(execution_id = %execution, error = %error, "session workload could not be prepared");
             return SessionEnd::agent_failed("agent_start_failed");
         }
+    };
+    let session_setup = match session_setup.in_placement(&placement) {
+        Ok(setup) => setup,
+        Err(failure) => return failure.preflight_end(execution),
     };
     let mut model_access = match &spec.model_binding_id {
         Some(binding) => {
@@ -325,7 +342,7 @@ where
         }),
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),
-        session_setup: NoSessionMcp::default(),
+        session_setup,
         events: mirror.clone(),
         home_directory: agent_home,
         sessions_root: shared.sessions_root(),
@@ -543,7 +560,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
             .await
         {
             ora_warn!(execution_id = %self.execution, error = %error, "agent session did not start");
-            return SessionEnd::agent_failed("agent_start_failed");
+            return super::mcp::start_failure(&error, self.execution);
         }
 
         let mut next_turn = Some(spec.initial_turn);

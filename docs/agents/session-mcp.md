@@ -38,9 +38,9 @@ all-or-nothing: the runtime never sends a partial list.
 - `{ "context": "workspace" }` becomes the Session's absolute cwd; a literal `"."` stays `"."`.
   Environment variables and headers become ACP name/value lists.
 - A non-empty set requires `session/load` support, because that is the only frame that can carry a
-  changed set to a running Session. If the agent cannot load sessions, setup fails before any frame
-  is sent, including the `session/new` of a rebuild: a rebuild carries the real snapshot or does not
-  happen.
+  changed set to a running Session. If the agent cannot load sessions, setup fails after ACP
+  `initialize` and before any session setup frame is sent, including the `session/new` of a rebuild:
+  a rebuild carries the real snapshot or does not happen.
 
 ## Live refresh
 
@@ -112,3 +112,27 @@ status with a re-detect action; a Session shows a non-blocking banner listing th
 members of its own effective set; `listMcpHealth` answers either view and `probeMcpHealth` re-runs a
 probe; `McpHealthChanged { plugin_id }` tells clients to re-query. After the setup log line, a
 structured event pairs the Session with its members' identity, code and probe duration.
+
+## Node sessions
+
+A Node advertising `session_mcp` accepts `AgentSessionSpec.mcp`: an explicit list of plugin id,
+exact package version and scalar settings. Omitted or empty means none; ids must be canonical,
+unique and sorted. Limits are 16 servers and 64 KiB total compact JSON settings maps. Node resolves
+installed packages with `ora-plugin-config` and the shared resolver in `ora-agent-runtime`; it never
+discovers MCPs automatically. `InstallPlugins` already accepts MCP packages. Separate workloads
+receive immutable package views so stdio commands remain accessible without opening the Node home.
+
+Package and setting checks precede agent launch. Agent capability checks follow ACP `initialize`
+and precede `session/new`: non-empty sets require load support, and HTTP needs HTTP MCP support.
+Failure sends no `session/new` or MCP values to the agent and ends with `mcp_plugin_missing`,
+`mcp_setting_missing`, `mcp_http_capability_missing` or `mcp_load_session_missing`. Structured setup
+failures and preflight logs name the plugin id and, when applicable, setting id and transport, never
+values; the terminal detail remains the stable code. For MCP setup failures, `AgentSessionEnded` also
+carries those optional identifiers to the Controller (`transport` is `stdio` or `http`), omitting unknown
+fields and all fields for other terminal results.
+
+Settings remain in memory and the successful ACP request; ledger inputs retain only MCP identities
+and versions with empty settings. Duplicate executions cannot change their live values; changing
+settings requires a new execution. Node restart interrupts sessions rather than recovering values.
+Settings never become JSONL, Thread, logs, errors or input Debug output. Node live refresh, restore
+and Host health probes are outside this delivery path.

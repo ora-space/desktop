@@ -9,8 +9,8 @@ use super::ports::SessionLedger;
 use super::thread::thread_event;
 use super::workload::PackageViewLauncher;
 use ora_agent_runtime::{
-    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, NoSessionMcp,
-    RuntimeError, RuntimeEvents, WorkspaceDirectory,
+    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, RuntimeError,
+    RuntimeEvents, WorkspaceDirectory,
 };
 use ora_contracts::StopPluginRequest;
 use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
@@ -50,8 +50,8 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
     /// A Node never resumes a session after restarting, so session rows need not outlive it.
     type Store = MemorySessionStore;
     type Attach = SessionPlugin;
-    /// Sessions receive no MCP servers until their configuration and secrets have a delivery path.
-    type Setup = NoSessionMcp;
+    /// Only the spec's explicit MCP bindings can enter this execution.
+    type Setup = super::mcp::NodeSessionMcp;
     type Events = ThreadMirror<L>;
     type Directory = CheckoutDirectory;
 }
