@@ -33,13 +33,32 @@ where
             direction = "send",
             jsonrpc_method = %jsonrpc_method,
             session_id = %session_id,
-            frame = %value,
+            frame = %trace_safe_frame(&value),
             "{}", msg,
         );
     }
     #[cfg(not(debug_assertions))]
     let _ = trace_sessions;
     transport.send(value).await
+}
+
+/// Removes MCP setup authority from debug diagnostics without changing the transmitted frame.
+#[cfg(debug_assertions)]
+fn trace_safe_frame(value: &Value) -> std::borrow::Cow<'_, Value> {
+    use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
+    if value
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(|method| {
+            method == AGENT_METHOD_NAMES.session_new || method == AGENT_METHOD_NAMES.session_load
+        })
+        && value.pointer("/params/mcpServers").is_some()
+    {
+        let mut redacted = value.clone();
+        redacted["params"]["mcpServers"] = Value::String("[REDACTED]".to_string());
+        return std::borrow::Cow::Owned(redacted);
+    }
+    std::borrow::Cow::Borrowed(value)
 }
 
 /// Extracts summary fields from a JSON-RPC frame for trace-level correlation without re-parsing.
@@ -86,7 +105,7 @@ pub(crate) fn trace_frame_summary(
 
 #[cfg(all(test, debug_assertions))]
 mod tests {
-    use super::trace_frame_summary;
+    use super::{trace_frame_summary, trace_safe_frame};
     use crate::pending::{PendingRequest, PendingRequests};
     use crate::trace::SessionTraceRegistry;
     use agent_client_protocol_schema::v1::RequestId;
@@ -144,5 +163,22 @@ mod tests {
                 "ora-session-1".to_string(),
             )
         );
+    }
+    /// Both setup methods carry secrets; unrelated frame diagnostics retain their shape.
+    #[test]
+    fn mcp_setup_trace_redacts_servers_without_mutating_the_frame() {
+        for method in ["session/new", "session/load"] {
+            let frame = json!({"method": method, "params": {"cwd": "/workspace", "mcpServers": [
+                {"args": ["m938-trace-secret"], "env": [{"value":"m938-trace-secret"}]}]}});
+            let before = frame.clone();
+            assert_eq!(
+                trace_safe_frame(&frame).as_ref(),
+                &json!({"method":method,
+                "params":{"cwd":"/workspace", "mcpServers":"[REDACTED]"}})
+            );
+            assert_eq!(frame, before);
+        }
+        let frame = json!({"method":"session/prompt", "params":{"text":"hello"}});
+        assert_eq!(trace_safe_frame(&frame).as_ref(), &frame);
     }
 }
