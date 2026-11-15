@@ -9,6 +9,8 @@ workspace = true
 [features]
 default = ["validation"]
 archive = ["dep:zip", "dep:tar", "dep:flate2"]
+hash = ["dep:sha2"]
+url = []
 http = ["dep:url", "dep:sha2", "dep:hmac"]
 http-reqwest = [
     "http",
@@ -29,7 +31,7 @@ mcp = [
     "tokio?/io-util",
     "dep:url",
 ]
-validation = ["dep:sha2", "dep:quick-xml"]
+validation = ["hash", "url", "dep:quick-xml"]
 local-ipc = ["dep:tokio", "tokio/net", "tokio/time"]
 rust-source = ["dep:proc-macro2", "dep:syn"]
 

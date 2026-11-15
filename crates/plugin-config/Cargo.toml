@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 ora-domain = { workspace = true }
-ora-utils = { workspace = true }
+ora-utils = { path = "../utils", default-features = false, features = ["hash"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

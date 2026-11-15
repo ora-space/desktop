@@ -29,6 +29,21 @@ use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use tokio::time::Instant;
 
+impl<H: AgentRuntimeHost> crate::AgentRuntimeManager<H> {
+    /// Wakes every Live Session so it re-reads the current Desired MCP revision.
+    ///
+    /// The notification is level-triggered and secret-free. Stopped Sessions ignore it; idle
+    /// Sessions refresh immediately; busy Sessions mark refresh as owed work.
+    pub fn notify_mcp_desired_changed(&self) {
+        let Ok(actors) = self.inner.actors.read() else {
+            return;
+        };
+        for handle in actors.values() {
+            let _ = handle.commands.send(RuntimeCommand::McpDesiredMaybeChanged);
+        }
+    }
+}
+
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Observes the latest Desired MCP revision without sending ACP frames.
     pub(super) fn note_desired_mcp(&mut self) {

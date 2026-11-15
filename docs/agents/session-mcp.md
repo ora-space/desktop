@@ -5,8 +5,8 @@ English | [中文](session-mcp.zh.md)
 Ora delivers configured MCP plugins as **Session runtime input**: the ACP `mcpServers` list of each
 `session/new` and `session/load`. MCP is never an Effect Resource and never a Workspace file. Every
 frame that sets up a provider session (`startSession`, the attach a prompt performs, a rebuild,
-an agent switch, a workflow start and a live refresh) uses one Session setup snapshot. Resolution
-lives in `crates/backend/src/session_setup/mcp`.
+an agent switch, a workflow start and a live refresh) uses one Session setup snapshot. Pure resolution lives in
+`crates/agent-runtime/src/mcp_resolver`; Desktop sources and health remain in Backend.
 
 ## Selection
 

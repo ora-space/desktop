@@ -2,7 +2,7 @@
 
 [English](session-mcp.md) | 中文
 
-Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表。MCP 从不是 Effect Resource，也从不是 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。解析逻辑在 `crates/backend/src/session_setup/mcp`。
+Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表。MCP 从不是 Effect Resource，也从不是 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。纯解析逻辑在 `crates/agent-runtime/src/mcp_resolver`，Desktop 数据来源和健康探测仍在 Backend。
 
 ## 选择
 

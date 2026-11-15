@@ -315,7 +315,7 @@ impl SessionSetup for SessionMcpHost {
 
 /// Reports a Session MCP failure with the public error Desktop has always returned for it.
 fn mcp_runtime_error(error: SessionMcpError) -> RuntimeError {
-    RuntimeError::from(error.into_backend())
+    RuntimeError::from(crate::session_setup::mcp_into_backend(error))
 }
 
 impl RuntimeEvents for AppEventPublisher {
