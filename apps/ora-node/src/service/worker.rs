@@ -11,6 +11,7 @@ use std::time::Instant;
 /// executors so admission waits only for SQLite and local directory work.
 pub(super) fn run(
     config: ServiceConfig,
+    hand_over: crate::CheckoutHandOver,
     receiver: mpsc::Receiver<Work>,
     ready: oneshot::Sender<Result<SessionInfo, String>>,
     shutdown: Shutdown,
@@ -39,8 +40,8 @@ pub(super) fn run(
     );
     let initialized = (|| {
         // Read before the process configuration moves into the Node.
-        let workload =
-            agents::workload(config.agent.as_ref(), &config.process).map_err(|e| e.to_string())?;
+        let workload = agents::workload(config.agent.as_ref(), &config.process, &hand_over)
+            .map_err(|e| e.to_string())?;
         let mut node =
             Node::open(config.node, config.process, shutdown.clone()).map_err(|e| e.to_string())?;
         if controlled {
@@ -71,8 +72,8 @@ pub(super) fn run(
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
         let plugins = Plugins::start(&node, config.plugins).map_err(|e| e.to_string())?;
         let grants = crate::revision::GrantStore::new();
-        let revisions =
-            Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
+        let revisions = Revisions::start(&node, grants.clone(), shutdown.clone(), hand_over)
+            .map_err(|e| e.to_string())?;
         let scheduled =
             ScheduledArtifacts::start(&mut node, grants.clone()).map_err(|e| e.to_string())?;
         let restore_policy = config.restore.policy().map_err(|error| error.to_string())?;

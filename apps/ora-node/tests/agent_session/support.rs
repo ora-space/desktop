@@ -412,6 +412,16 @@ impl Fixture {
         self.root.path().join("agent")
     }
 
+    /// The fixture's stand-in for `fs.protected_hardlinks`, created protecting hard links; tests
+    /// rewrite it to see a host that stopped protecting them.
+    pub fn protected_hardlinks(&self) -> PathBuf {
+        let sysctl = self.root.path().join("protected_hardlinks");
+        if !sysctl.exists() {
+            std::fs::write(&sysctl, "1\n").expect("sysctl stand-in");
+        }
+        sysctl
+    }
+
     /// A separate workload this unprivileged test can run: the test's own ids own the session
     /// home and checkout, and the identity is inherited, since only root may take another.
     pub fn separate_workload(&self) -> SessionWorkload {
@@ -422,6 +432,7 @@ impl Fixture {
             identity: ora_process::ProcessIdentity::Inherit,
             uid: std::os::unix::fs::MetadataExt::uid(&metadata),
             gid: std::os::unix::fs::MetadataExt::gid(&metadata),
+            hand_over: ora_node::CheckoutHandOver::new(self.protected_hardlinks()),
         }
     }
 

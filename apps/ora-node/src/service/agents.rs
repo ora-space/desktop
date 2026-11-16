@@ -310,6 +310,7 @@ fn overlaps(
 pub(super) fn workload(
     agent: Option<&AgentConfig>,
     process: &ProcessConfig,
+    hand_over: &crate::CheckoutHandOver,
 ) -> io::Result<SessionWorkload> {
     let directory = agent.and_then(|agent| agent.workload_directory.as_deref());
     match (directory, process.workload_uid) {
@@ -321,6 +322,7 @@ pub(super) fn workload(
             )?),
             uid,
             gid: uid,
+            hand_over: hand_over.clone(),
         }),
         (None, _) | (_, None) => Ok(SessionWorkload::Shared),
     }

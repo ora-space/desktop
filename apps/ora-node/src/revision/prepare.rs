@@ -3,6 +3,8 @@
 //! (Node delivery push ADR D3).
 use super::HISTORY_FILE;
 use super::snapshot::{DeliveryGit, Snapshot, SnapshotFailure, SnapshotRequest};
+use crate::CheckoutHandOver;
+use crate::hand_over::HandOverError;
 use gitlancer::GitRunner;
 use ora_node_db::{DeliveryPlan, FrozenOutcome};
 use ora_node_protocol::*;
@@ -44,12 +46,13 @@ pub(crate) fn directory_name(execution: &ExecutionId) -> String {
 /// Produces the frozen plan, or the definitive failure code. On failure nothing stays frozen.
 pub(crate) fn prepare<R: GitRunner>(
     git: &DeliveryGit<R>,
+    hand_over: &CheckoutHandOver,
     root: &Path,
     job: &Preparation,
 ) -> Result<DeliveryPlan, RevisionFailureCode> {
     let directory = directory_name(&job.execution);
     let frozen = root.join(&directory);
-    let result = freeze(git, &frozen, &directory, job);
+    let result = freeze(git, hand_over, &frozen, &directory, job);
     if result.is_err() {
         let _ = fs::remove_dir_all(&frozen);
     }
@@ -59,6 +62,7 @@ pub(crate) fn prepare<R: GitRunner>(
 /// Writes the history into a fresh directory and describes the delivery as it will be reported.
 fn freeze<R: GitRunner>(
     git: &DeliveryGit<R>,
+    hand_over: &CheckoutHandOver,
     frozen: &Path,
     directory: &str,
     job: &Preparation,
@@ -80,14 +84,31 @@ fn freeze<R: GitRunner>(
     // Agents now run as the workload user, but a checkout a session of an older Node worked in
     // (when the agent ran as the Node user) can still hold files the Node user owns with
     // owner-only modes, which delivery Git — running as the workload user like clone — could not
-    // read. The session has ended, so nothing writes the checkout now; hand it back to the
-    // workload user without following links, so a link the agent left cannot redirect this
-    // privileged change outside the checkout. A checkout that is already right costs only a walk.
+    // read. Hand it back to the workload user without following links, so a link the agent left
+    // cannot redirect this privileged change outside the checkout. A checkout that is already
+    // right costs only a walk. The session has ended, but on a shared checkout a live sibling
+    // Agent may still change the tree as the workload user while the walk runs: the walk pins
+    // every entry before acting on it, so a name swapped after pinning cannot redirect it outside
+    // the checkout, and an entry that vanishes first is skipped. Hard links are only safe while
+    // the host keeps `fs.protected_hardlinks`, which the hand-over reads again before the walk.
+    // A checkout deeper than the walk descends is refused with its own code rather than
+    // snapshotted half handed over.
     if job.mode == SnapshotMode::Worktree
         && let Some(owner) = job.owner
     {
-        ora_utils::fs::own_tree_no_follow(&job.checkout, owner, owner)
-            .map_err(|error| local(error.into(), RevisionFailureCode::SnapshotFailed))?;
+        hand_over
+            .hand_over(&job.checkout, owner, owner)
+            .map_err(|error| match error {
+                HandOverError::TooDeep => local(
+                    io::Error::other(error),
+                    RevisionFailureCode::CheckoutTooDeep,
+                ),
+                // A host that stopped protecting hard links refuses the delivery like any other
+                // hand-over failure; the log names the sysctl.
+                HandOverError::HardlinksUnprotected(error) | HandOverError::Io(error) => {
+                    local(error, RevisionFailureCode::SnapshotFailed)
+                }
+            })?;
     }
     let request = SnapshotRequest {
         checkout: &job.checkout,

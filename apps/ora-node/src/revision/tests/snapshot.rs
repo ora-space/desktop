@@ -85,7 +85,7 @@ fn unstarted_partial_restore_delivers_only_head_without_probing_files() {
                     config_args: vec![],
                 },
             );
-            let plan = prepare(&git, &fixture.root(), &job).unwrap();
+            let plan = prepare(&git, &fixture.hand_over(), &fixture.root(), &job).unwrap();
             let FrozenOutcome::Unchanged(result) = plan.outcome else {
                 panic!("partial restore was delivered");
             };
@@ -167,7 +167,7 @@ fn failed_checkout_filter_cannot_turn_partial_files_into_a_revision() {
                 config_args: vec![],
             },
         );
-        let plan = prepare(&git, &fixture.root(), &job).unwrap();
+        let plan = prepare(&git, &fixture.hand_over(), &fixture.root(), &job).unwrap();
         let FrozenOutcome::Unchanged(result) = plan.outcome else {
             panic!("failed checkout became a deliverable snapshot");
         };
@@ -196,7 +196,15 @@ impl Fixture {
             "{\"type\":\"turnEnded\"}\n",
         )
         .unwrap();
+        // The host stand-in protects hard links; tests that need otherwise rewrite it.
+        fs::write(directory.path().join("protected_hardlinks"), "1\n").unwrap();
         Self { directory, base }
+    }
+
+    /// The hand-over every preparation of this fixture uses, reading the fixture's stand-in for
+    /// `fs.protected_hardlinks`.
+    fn hand_over(&self) -> crate::CheckoutHandOver {
+        crate::CheckoutHandOver::new(self.directory.path().join("protected_hardlinks"))
     }
 
     fn checkout(&self) -> PathBuf {
@@ -257,7 +265,7 @@ impl Fixture {
                 config_args: vec![],
             },
         );
-        prepare(&git, &self.root(), job)
+        prepare(&git, &self.hand_over(), &self.root(), job)
     }
 
     /// Every worktree file outside `.git` with its content, plus the real index bytes, the
@@ -488,6 +496,60 @@ fn unusable_inputs_fail_without_frozen_objects() {
         assert_eq!(fixture.prepare(&job), Err(failure));
         assert!(!fixture.root().join(directory_name(&job.execution)).exists());
     }
+}
+
+/// A checkout nested deeper than the hand-over walk descends fails with its own code before
+/// anything is snapshotted, and leaves nothing frozen.
+#[test]
+fn a_checkout_deeper_than_the_walk_bound_fails_checkout_too_deep() {
+    let fixture = Fixture::new();
+    let job = fixture.job();
+    // `base/d/d/…/d`, built and removed with paths of at most three components: each round
+    // moves the chain so far into a fresh directory that then takes its name.
+    let base = fixture.checkout().join("deep");
+    let (top, next) = (base.join("d"), base.join("next"));
+    fs::create_dir_all(&top).unwrap();
+    for _ in 0..ora_utils::fs::MAX_OWN_TREE_DEPTH {
+        fs::create_dir(&next).unwrap();
+        fs::rename(&top, next.join("d")).unwrap();
+        fs::rename(&next, &top).unwrap();
+    }
+
+    let result = fixture.prepare(&job);
+    while top.join("d").exists() {
+        fs::rename(top.join("d"), &next).unwrap();
+        fs::remove_dir(&top).unwrap();
+        fs::rename(&next, &top).unwrap();
+    }
+
+    assert_eq!(result, Err(RevisionFailureCode::CheckoutTooDeep));
+    assert!(!fixture.root().join(directory_name(&job.execution)).exists());
+}
+
+/// Every other hand-over failure fails the delivery `snapshot_failed`, never
+/// `checkout_too_deep`: a directory the walk may not list, and a host that stopped protecting
+/// hard links after the Node started (read again before the walk). Nothing is left frozen.
+#[test]
+fn a_failed_hand_over_fails_snapshot_failed() {
+    let fixture = Fixture::new();
+    let job = fixture.job();
+    // Root may list anything, so the listing failure is only observable unprivileged.
+    let unprivileged =
+        std::os::unix::fs::MetadataExt::uid(&fs::metadata(fixture.checkout()).unwrap()) != 0;
+    let locked = fixture.checkout().join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+    let unlistable = fixture.prepare(&job);
+    fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    fs::remove_dir(&locked).unwrap();
+    fs::write(fixture.directory.path().join("protected_hardlinks"), "0\n").unwrap();
+    let unprotected = fixture.prepare(&job);
+
+    if unprivileged {
+        assert_eq!(unlistable, Err(RevisionFailureCode::SnapshotFailed));
+    }
+    assert_eq!(unprotected, Err(RevisionFailureCode::SnapshotFailed));
+    assert!(!fixture.root().join(directory_name(&job.execution)).exists());
 }
 
 /// Re-preparing an execution that never froze replaces whatever an interrupted attempt left.

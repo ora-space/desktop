@@ -284,11 +284,13 @@ fn the_workload_follows_the_process_workload_user() {
     let shared = config(temp.path(), None, None);
     let separate = config(temp.path(), Some(1000), Some(directory.clone()));
     let process = |config: &ServiceConfig| -> ProcessConfig { config.process.clone() };
+    let hand_over = crate::CheckoutHandOver::new(temp.path().join("protected_hardlinks"));
 
     assert_eq!(
         (
-            super::workload(shared.agent.as_ref(), &process(&shared)).expect("shared"),
-            super::workload(separate.agent.as_ref(), &process(&separate)).expect("separate"),
+            super::workload(shared.agent.as_ref(), &process(&shared), &hand_over).expect("shared"),
+            super::workload(separate.agent.as_ref(), &process(&separate), &hand_over)
+                .expect("separate"),
         ),
         (
             SessionWorkload::Shared,
@@ -299,6 +301,7 @@ fn the_workload_follows_the_process_workload_user() {
                 ),
                 uid: 1000,
                 gid: 1000,
+                hand_over,
             },
         )
     );

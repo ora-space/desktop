@@ -74,6 +74,7 @@ impl Revisions {
         node: &ManagedNode,
         grants: GrantStore,
         shutdown: Shutdown,
+        hand_over: crate::CheckoutHandOver,
     ) -> Result<Option<Self>, crate::Error> {
         let (Some(policy), Some(access)) = (node.delivery_git_policy()?, node.git_server()) else {
             return Ok(None);
@@ -100,6 +101,7 @@ impl Revisions {
             uploader,
             grants,
             shutdown,
+            hand_over,
             root,
             RetryPolicy::DEFAULT,
         )
@@ -114,6 +116,7 @@ impl Revisions {
         uploader: U,
         grants: GrantStore,
         shutdown: Shutdown,
+        hand_over: crate::CheckoutHandOver,
         root: PathBuf,
         policy: RetryPolicy,
     ) -> std::io::Result<Self>
@@ -135,7 +138,7 @@ impl Revisions {
                 for step in requests {
                     let finished = match step {
                         Step::Prepare(job) => {
-                            let result = prepare(&git, &frozen_root, &job);
+                            let result = prepare(&git, &hand_over, &frozen_root, &job);
                             // Git refused by a stopping Node is not the delivery's failure.
                             if result.is_err() && shutdown.requested() {
                                 Finished::Interrupted(job.execution)

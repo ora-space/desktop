@@ -11,7 +11,7 @@ use super::ports::{
 use super::queue::{Plan, plan};
 use super::resume;
 use super::scheduled;
-use super::workload::SessionPlacement;
+use super::workload::{PlacementError, SessionPlacement};
 use super::{SessionConfig, Shared};
 use crate::model_proxy::{ModelAccess, ModelAccessStatus, ModelRoute};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
@@ -197,11 +197,15 @@ where
                 .map(|placement| (placement, checkout))
         })
         .await
-        .unwrap_or_else(|error| Err(std::io::Error::other(error)))
+        .unwrap_or_else(|error| Err(std::io::Error::other(error).into()))
     };
     let (placement, checkout) = match placement {
         Ok(prepared) => prepared,
-        Err(error) => {
+        Err(PlacementError::CheckoutTooDeep) => {
+            ora_warn!(execution_id = %execution, "checkout is too deep to hand to the workload user");
+            return SessionEnd::agent_failed("checkout_too_deep");
+        }
+        Err(PlacementError::Io(error)) => {
             ora_warn!(execution_id = %execution, error = %error, "session workload could not be prepared");
             return SessionEnd::agent_failed("agent_start_failed");
         }

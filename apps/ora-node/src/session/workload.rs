@@ -17,6 +17,8 @@
 
 use super::host::{SessionEnvironment, SessionLauncher};
 use super::process::ModelProcessIsolation;
+use crate::CheckoutHandOver;
+use crate::hand_over::HandOverError;
 use ora_logging::ora_warn;
 use ora_node_protocol::{ExecutionId, GitIdentity};
 use ora_plugin_lifecycle::{
@@ -40,12 +42,14 @@ pub enum SessionWorkload {
     /// `identity` is what processes are spawned as; `uid` and `gid` own the session home and the
     /// checkout. Production names the same user in both — a group equal to the user, as the
     /// clone workload's identity drop does — and tests keep `identity` inherited while
-    /// naming their own ids, since only root may take another identity.
+    /// naming their own ids, since only root may take another identity. `hand_over` gives the
+    /// checkout to them under the Node-wide walk bound and host check.
     Separate {
         directory: PathBuf,
         identity: ProcessIdentity,
         uid: u32,
         gid: u32,
+        hand_over: CheckoutHandOver,
     },
 }
 
@@ -58,6 +62,21 @@ pub(super) enum SessionPlacement {
     },
 }
 
+/// Why a session's placement could not be prepared.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PlacementError {
+    /// The checkout nests directories deeper than the hand-over walk descends, so it was not
+    /// handed to the workload user and the session must not start in it. Every other hand-over
+    /// failure, a host that stopped protecting hard links included, is [`Self::Io`].
+    #[error(
+        "checkout is nested deeper than {} directory levels",
+        ora_utils::fs::MAX_OWN_TREE_DEPTH
+    )]
+    CheckoutTooDeep,
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
 impl SessionPlacement {
     /// Prepares the session's directory and hands a checkout left by older Nodes, whose agents
     /// ran as root, back to the workload user. Runs blocking filesystem work, so callers keep it
@@ -67,7 +86,7 @@ impl SessionPlacement {
         execution: &ExecutionId,
         package_root: &Path,
         checkout: &Path,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, PlacementError> {
         match workload {
             SessionWorkload::Shared => Ok(Self::Shared),
             SessionWorkload::Separate {
@@ -75,10 +94,26 @@ impl SessionPlacement {
                 identity,
                 uid,
                 gid,
+                hand_over,
             } => {
-                // A link the old agent left cannot redirect this privileged change: nothing is
-                // followed, and an already-right tree costs only a walk.
-                ora_utils::fs::own_tree_no_follow(checkout, *uid, *gid)?;
+                // Every session walks its checkout itself, before its own Agent starts, rather
+                // than trusting an earlier sibling to have done it: admission order says nothing
+                // about whether that sibling's walk finished, or ran at all. The walk pins every
+                // entry before acting on it and never re-resolves a path, so live sibling Agents
+                // changing the tree as the workload user cannot redirect it outside the checkout:
+                // an entry removed before it is pinned is skipped and a name replaced afterwards
+                // changes nothing the walk does. Hard links are only safe while the host keeps
+                // `fs.protected_hardlinks`, which the hand-over reads again before this walk. An
+                // already-right tree costs only a walk, and the depth bound plus the Node-wide
+                // walk permits keep the descriptors all walks hold bounded.
+                hand_over
+                    .hand_over(checkout, *uid, *gid)
+                    .map_err(|error| match error {
+                        HandOverError::TooDeep => PlacementError::CheckoutTooDeep,
+                        HandOverError::HardlinksUnprotected(error) | HandOverError::Io(error) => {
+                            PlacementError::Io(error)
+                        }
+                    })?;
                 Ok(Self::Separate {
                     directory: SessionDirectory::create(
                         directory,
