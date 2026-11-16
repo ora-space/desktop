@@ -25,6 +25,22 @@ const VIEW_DIRECTORY_MODE: u32 = 0o755;
 /// whatever was already created stays for the caller to remove. The walk uses an explicit stack, so
 /// deep trees cannot overflow the call stack.
 pub fn link_tree_no_follow(source: &Path, destination: &Path) -> io::Result<()> {
+    link_tree(source, destination, true)
+}
+
+/// Builds a hard-link-only view; a cross-device deployment fails instead of duplicating packages.
+pub fn hard_link_tree_no_follow(source: &Path, destination: &Path) -> io::Result<()> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| io::Error::other("view requires a parent"))?;
+    if fs::metadata(source)?.dev() != fs::metadata(parent)?.dev() {
+        return Err(io::Error::from_raw_os_error(libc::EXDEV));
+    }
+    link_tree(source, destination, false)
+}
+
+/// Both policies retain the same no-symlink walk and ownership behavior.
+fn link_tree(source: &Path, destination: &Path, copy_cross_device: bool) -> io::Result<()> {
     let root = fs::symlink_metadata(source)?;
     if !root.file_type().is_dir() {
         return Err(io::Error::new(
@@ -47,7 +63,9 @@ pub fn link_tree_no_follow(source: &Path, destination: &Path) -> io::Result<()> 
             } else if file_type.is_file() {
                 match fs::hard_link(&source_path, &destination_path) {
                     Ok(()) => {}
-                    Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+                    Err(error)
+                        if copy_cross_device && error.raw_os_error() == Some(libc::EXDEV) =>
+                    {
                         copy_regular_file(&source_path, &destination_path, metadata.mode())?;
                     }
                     Err(error) => return Err(error),
@@ -105,7 +123,35 @@ fn copy_regular_file(source: &Path, destination: &Path, source_mode: u32) -> io:
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_regular_file, link_tree_no_follow};
+    use super::{copy_regular_file, hard_link_tree_no_follow, link_tree_no_follow};
+
+    /// Strict views preserve inodes and reject a second device before creating any destination.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strict_views_never_copy_across_devices() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::MetadataExt;
+        let source = tempfile::tempdir()?;
+        std::fs::write(source.path().join("bytes"), b"immutable")?;
+        let target = tempfile::tempdir()?;
+        let view = target.path().join("view");
+        hard_link_tree_no_follow(source.path(), &view)?;
+        assert_eq!(
+            std::fs::metadata(source.path().join("bytes"))?.ino(),
+            std::fs::metadata(view.join("bytes"))?.ino()
+        );
+        let other = tempfile::tempdir_in("/dev/shm")?;
+        if std::fs::metadata(source.path())?.dev() != std::fs::metadata(other.path())?.dev() {
+            let rejected = other.path().join("view");
+            assert_eq!(
+                hard_link_tree_no_follow(source.path(), &rejected)
+                    .err()
+                    .and_then(|error| error.raw_os_error()),
+                Some(libc::EXDEV)
+            );
+            assert!(!rejected.exists());
+        }
+        Ok(())
+    }
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
     use std::ffi::CString;
