@@ -79,7 +79,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 
     /// Acquires a provider channel for a session holding none, rebuilding when the old is unusable.
-    async fn attach_provider_session(
+    pub(crate) async fn attach_provider_session(
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
@@ -87,6 +87,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // Pin the current supervisor for this attach and its MCP capability checks; the actor
         // and its durable conversation may outlive any number of installed incarnations.
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
+        let snapshot = self.resolve_mcp_snapshot()?;
+        self.replace_mcp_process_if_needed(&snapshot).await?;
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
@@ -104,6 +106,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     Some(self.apply_restored_model(model, config_options).await)
                 }
                 Err(error) => {
+                    if self.session_mcp.preserve_provider_identity() {
+                        self.session_mcp.mcp_failed(&error);
+                        return Err(error);
+                    }
                     // An agent that cannot restore this session is not a failed send: the
                     // conversation is Ora's, and a fresh provider session can be told it.
                     ora_debug!(
@@ -116,6 +122,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         } else {
             drop(channel);
+            if self.session_mcp.preserve_provider_identity() {
+                let error = crate::support::mcp_load_unsupported();
+                self.session_mcp.mcp_failed(&error);
+                return Err(error);
+            }
             ora_debug!(
                 session_id = %self.session.id,
                 "agent does not support session/load; rebuilding the provider session",

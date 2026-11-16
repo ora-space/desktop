@@ -165,6 +165,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 &session_mcp,
             )
             .await?;
+        session_mcp.mcp_loaded(&mcp_revision);
         let mut persisted = false;
         let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
 
@@ -277,15 +278,34 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     cwd: &Path,
     model: Option<&str>,
 ) -> Result<PendingProviderSession<H>, RuntimeError> {
-    let supervisor = connections.for_agent(agent_ref)?;
-    let connection = supervisor.current()?;
-    let mcp = session_mcp.resolve_mcp(
+    let mut supervisor = connections.for_agent(agent_ref)?;
+    let mut connection = supervisor.current()?;
+    let mut mcp = session_mcp.resolve_mcp(
         cwd,
         AgentSessionMcpCapabilities::new(
             connection.load_session_supported,
             connection.http_mcp_supported,
         ),
     )?;
+    while session_mcp.mcp_replacement_required(mcp.revision()) {
+        let plugin = session_mcp
+            .plugin_id_for_agent(agent_ref)
+            .ok_or_else(crate::support::runtime_unavailable)?;
+        connections.suspend_plugin_agent(&plugin.to_string());
+        session_mcp.replace_mcp_process().await?;
+        connections.resume_plugin_agent(&plugin.to_string());
+        connections.sync_plugin_agents();
+        supervisor = connections.for_agent(agent_ref)?;
+        supervisor.ready().await?;
+        connection = supervisor.current()?;
+        mcp = session_mcp.resolve_mcp(
+            cwd,
+            AgentSessionMcpCapabilities::new(
+                connection.load_session_supported,
+                connection.http_mcp_supported,
+            ),
+        )?;
+    }
     record_session_mcp_boundary(
         session_mcp,
         ora_session_id,
@@ -455,6 +475,7 @@ pub fn record_session_mcp_boundary(
     snapshot: &SessionMcpSnapshot,
     cwd: &Path,
 ) {
+    host.mcp_request_started(snapshot.revision());
     log_session_mcp_request(
         session_id,
         agent_ref,

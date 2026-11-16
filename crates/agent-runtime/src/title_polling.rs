@@ -75,12 +75,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             // channel is already back, so nothing is opened here; what still has
                             // to hold is that the provider carries the current MCP set.
                             match self.ensure_attached(model.as_deref()).await.and_then(|setup| {
+                                if accepted.is_closed() { return Err(crate::support::runtime_unavailable()); }
                                 if let Some(commit) = commit_admission { commit()?; }
                                 Ok(setup)
                             }) {
                                 Ok(setup) => {
-                                    let _ = accepted.send(Ok(()));
-                                    if super::publish_setup(&events, setup) {
+                                    if accepted.send(Ok(())).is_ok() && super::publish_setup(&events, setup) {
                                         self.run_prompt(operation_id, prompt, record_prompt, inactivity_policy, end_report, events).await;
                                         self.refresh_idle_mcp_if_owed().await;
                                     } else {

@@ -421,7 +421,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 retry_blocks.is_some(),
                                 self.load_restoration,
                             );
-                            if retry_stale_load {
+                            if retry_stale_load && !self.session_mcp.preserve_provider_identity() {
                                 ora_debug!(
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
