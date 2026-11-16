@@ -2,6 +2,8 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
+#[path = "agent_sessions/admission.rs"]
+mod admission;
 #[path = "agent_sessions/authority.rs"]
 mod authority;
 #[path = "agent_sessions/delivery.rs"]

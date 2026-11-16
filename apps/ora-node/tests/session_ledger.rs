@@ -150,6 +150,46 @@ fn session_mcp_settings_never_enter_the_durable_ledger() {
         let mut conflict = input.clone();
         conflict.payload.spec.mcp[0].plugin_version = PluginVersion::new("2.0.0");
         assert!(db.accept_session(&conflict).is_err());
+
+        // A refused start persists the same projection: fill a second checkout to its limit,
+        // then refuse an MCP start there and record its terminal as the service does.
+        let sibling = |id: String| {
+            let mut sibling = input.clone();
+            sibling.operation_id = OperationId::new(format!("operation-{id}"));
+            sibling.execution_id = ExecutionId::new(format!("execution-{id}"));
+            sibling.payload.spec.checkout_execution_id = ExecutionId::new("full-clone");
+            sibling.payload.spec.mcp.clear();
+            sibling
+        };
+        for index in 0..ora_node_db::MAX_SESSIONS_PER_CHECKOUT {
+            db.accept_session(&sibling(index.to_string())).unwrap();
+        }
+        let mut refused_input = sibling("refused".into());
+        refused_input.payload.spec.mcp = input.payload.spec.mcp.clone();
+        refused_input.payload.spec.mcp[0].settings.insert(
+            "token".into(),
+            SettingValue::String("m938-refused-secret".into()),
+        );
+        let refused = match db.accept_session(&refused_input) {
+            Err(ora_node_db::Error::SessionRefused(refused)) => refused,
+            other => panic!("the full checkout admitted the start: {other:?}"),
+        };
+        let node = NodeRuntimeIdentity {
+            node_id: NodeId::new("node"),
+            incarnation_id: NodeIncarnationId::new("first"),
+        };
+        let refused_record = db.refuse_session(&refused, &node).unwrap();
+        let mut refused_durable = refused_input.clone();
+        refused_durable.payload.spec.mcp[0].settings.clear();
+        assert_eq!(refused_record.command, refused_durable);
+        // The Controller may retransmit the start with any Setting value: it finds the same
+        // durable terminal, not an `IdentityConflict` that would close the control connection.
+        refused_input.payload.spec.mcp[0].settings.insert(
+            "token".into(),
+            SettingValue::String("m938-refused-other-secret".into()),
+        );
+        assert_eq!(db.accept_session(&refused_input).unwrap(), refused_record);
+
         for entry in std::fs::read_dir(root.path()).unwrap() {
             let path = entry.unwrap().path();
             if path.is_file() {
@@ -157,6 +197,8 @@ fn session_mcp_settings_never_enter_the_durable_ledger() {
                 for secret in [
                     b"m938-ledger-secret".as_slice(),
                     b"m938-ledger-other-secret".as_slice(),
+                    b"m938-refused-secret".as_slice(),
+                    b"m938-refused-other-secret".as_slice(),
                 ] {
                     assert!(!bytes.windows(secret.len()).any(|window| window == secret));
                 }
@@ -164,7 +206,17 @@ fn session_mcp_settings_never_enter_the_durable_ledger() {
         }
         drop(db);
         let db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
-        let record = db.recoverable_sessions().unwrap().pop().unwrap();
+        let record = db
+            .recoverable_sessions()
+            .unwrap()
+            .into_iter()
+            .find(|record| record.command.execution_id == durable.execution_id)
+            .unwrap();
         assert_eq!(record.command, durable);
+        assert_eq!(
+            db.find_session(&refused_durable.operation_id, &refused_durable.execution_id)
+                .unwrap(),
+            Some(refused_record)
+        );
     });
 }

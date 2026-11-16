@@ -27,8 +27,9 @@ pub use scheduled_artifacts::{
     ScheduledArtifactDeclaration, ScheduledArtifactsDelivery, ScheduledArtifactsProgress,
 };
 pub use session::{
-    CommandAdmission, RestoreAttempt, RestorePhase, SessionCommandInput, SessionCommandSettlement,
-    SessionCommandState, SessionExecution, SessionJournal,
+    CommandAdmission, MAX_SESSIONS_PER_CHECKOUT, RefusedSession, RestoreAttempt, RestorePhase,
+    SessionCommandInput, SessionCommandSettlement, SessionCommandState, SessionExecution,
+    SessionJournal, SessionRefusal,
 };
 
 use ora_node_protocol::NodeId;
@@ -63,6 +64,8 @@ pub enum Error {
     IdentityConflict,
     #[error("resource ownership conflict")]
     ResourceConflict,
+    #[error(transparent)]
+    SessionRefused(#[from] RefusedSession),
     #[error("invalid execution state transition")]
     InvalidTransition,
     #[error("invalid event acknowledgement")]

@@ -25,7 +25,7 @@ fn attempt(input: &StartAgentSessionMessage) -> ProcessAttempt {
 }
 
 /// Rewinds the fixture to the v10 schema so the v11 backfill runs against real history.
-fn reopen_after_v10_downgrade(
+pub(super) fn reopen_after_v10_downgrade(
     path: &std::path::Path,
 ) -> Result<NodeDatabase, Box<dyn std::error::Error>> {
     // v12 also changed the shared identity check and the terminal-event outbox, so both are rebuilt
@@ -100,10 +100,10 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     let mut replacement = input.clone();
     replacement.execution_id = ExecutionId::new("replacement");
     replacement.operation_id = OperationId::new("replacement-op");
-    assert!(matches!(
-        db.accept_session(&replacement),
-        Err(Error::ResourceConflict)
-    ));
+    assert_eq!(
+        refusal_of(&db.accept_session(&replacement)),
+        Some(SessionRefusal::CheckoutBusy)
+    );
     assert!(
         journal
             .record_restore_attempt(&attempt(&input), &git_command(), StopContainment::Strong)
@@ -278,10 +278,10 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
     replacement.operation_id = OperationId::new("replacement-op");
     replacement.execution_id = ExecutionId::new("replacement-execution");
     // The checkout cannot be reused while the original stop is unknown.
-    assert!(matches!(
-        db.accept_session(&replacement),
-        Err(Error::ResourceConflict)
-    ));
+    assert_eq!(
+        refusal_of(&db.accept_session(&replacement)),
+        Some(SessionRefusal::CheckoutBusy)
+    );
     // Runtime admission reads the same ledger and refuses an open Cloud binding.
     let scope = super::super::repository::runtime_scope(db.node_id());
     assert!(matches!(

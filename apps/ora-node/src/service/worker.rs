@@ -138,6 +138,7 @@ pub(super) fn run(
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
         capabilities.push(NodeCapability::SessionMcp);
+        capabilities.push(NodeCapability::SharedCheckoutSessions);
     }
     if agents
         .as_ref()
@@ -285,6 +286,7 @@ fn close_reason(error: &crate::Error) -> CloseReason {
             | StorageError::InvalidSchema
             | StorageError::NodeMismatch
             | StorageError::ResourceConflict
+            | StorageError::SessionRefused(_)
             | StorageError::InvalidTransition
             | StorageError::Injected(_),
         ) => CloseReason::InternalError,
