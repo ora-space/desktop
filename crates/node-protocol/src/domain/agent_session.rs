@@ -113,6 +113,9 @@ impl UserTurn {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSessionSpec {
+    /// Explicit opt-in; persisted without credentials and compared on duplicate starts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp_lifecycle: bool,
     /// Explicit plugin MCP selection; omitted and empty both mean none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp: Vec<super::session_mcp::SessionMcpBinding>,

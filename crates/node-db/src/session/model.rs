@@ -14,6 +14,7 @@ pub struct SessionExecution {
 /// A durable command's mutually exclusive settlement states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionCommandState {
+    Failed,
     Queued,
     Executed,
     Discarded,
@@ -29,6 +30,7 @@ pub enum SessionCommandSettlement {
 /// Terminal sessions reject commands without recording a new queue entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandAdmission {
+    McpUpdateRequired,
     Accepted,
     SessionEnded,
 }

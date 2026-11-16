@@ -16,7 +16,8 @@ pub use domain::{
 };
 pub use message::{
     GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
-    SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult, UpdateSessionMcp,
+    SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult,
+    SessionTurnFailed, SessionTurnFailedMessage, SessionTurnFailureCode, UpdateSessionMcp,
     UpdateSessionMcpMessage,
 };
 pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};

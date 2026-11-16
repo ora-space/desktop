@@ -26,6 +26,7 @@ pub(super) fn start() -> Case {
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        mcp_lifecycle: false,
                         mcp: Vec::new(),
                         agent_configuration: None,
                         node_id: NodeId::new("node-1"),
@@ -593,6 +594,7 @@ async fn session_commands_and_replies_round_trip() -> Result<(), TestError> {
                     operation_id: OperationId::new(OPERATION),
                     execution_id: ExecutionId::new(EXECUTION),
                     payload: SubmitUserTurn {
+                        mcp_generation: None,
                         node_id: NodeId::new("node-1"),
                         command_id: CommandId::new("command-1"),
                         turn: turn("turn-2", "Also update the changelog."),

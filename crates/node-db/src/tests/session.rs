@@ -3,6 +3,7 @@ use super::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 mod admission;
+mod mcp;
 mod recovery;
 mod restore;
 mod stop;
@@ -15,6 +16,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("session-execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),
@@ -48,6 +50,7 @@ fn turn(id: &str) -> SessionCommandInput {
         operation_id: start.operation_id,
         execution_id: start.execution_id,
         payload: SubmitUserTurn {
+            mcp_generation: None,
             node_id: NodeId::new("node"),
             command_id: CommandId::new(id),
             turn: start.payload.spec.initial_turn,
@@ -271,7 +274,7 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
             reason: EndSessionReason::UserEnded,
         },
     });
-    for input in [&first, &second, &end, &first] {
+    for input in [&first, &second, &first] {
         assert_eq!(
             db.accept_session_command(input).unwrap(),
             CommandAdmission::Accepted
@@ -283,7 +286,7 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
     let execution = command().execution_id;
     assert_eq!(
         journal.queued_commands(&execution).unwrap(),
-        vec![first.clone(), second.clone(), end.clone()]
+        vec![first.clone(), second.clone()]
     );
     journal
         .settle_command(
@@ -317,6 +320,19 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
         m.payload.turn.turn_id = TurnId::new("changed");
     }
     assert!(db.accept_session_command(&changed).is_err());
+    assert_eq!(
+        db.accept_session_command(&end).unwrap(),
+        CommandAdmission::Accepted
+    );
+    assert!(
+        journal
+            .settle_command(
+                &execution,
+                second.command_id(),
+                SessionCommandSettlement::Executed
+            )
+            .is_err()
+    );
     assert_eq!(
         journal.queued_commands(&execution).unwrap(),
         vec![second.clone(), end.clone()]

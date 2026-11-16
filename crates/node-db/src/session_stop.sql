@@ -1,3 +1,23 @@
+DROP INDEX queued_session_commands;
+ALTER TABLE session_commands RENAME TO previous_session_commands;
+CREATE TABLE session_commands (
+    acceptance_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    command_id TEXT NOT NULL CHECK(length(command_id)>0),
+    input TEXT NOT NULL CHECK(json_valid(input)),
+    state TEXT NOT NULL CHECK(state IN ('queued','executed','discarded','failed')),
+    UNIQUE(execution,command_id)
+);
+INSERT INTO session_commands SELECT * FROM previous_session_commands;
+DROP TABLE previous_session_commands;
+CREATE INDEX queued_session_commands ON session_commands(execution,state,acceptance_order);
+CREATE TABLE session_turn_failures (
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    turn_id TEXT NOT NULL,
+    failure TEXT NOT NULL CHECK(json_valid(failure)),
+    sequence INTEGER NOT NULL,
+    PRIMARY KEY(execution,turn_id)
+);
 CREATE TABLE session_stop_attempts (
     attempt TEXT PRIMARY KEY,
     execution TEXT NOT NULL REFERENCES node_executions(execution),
