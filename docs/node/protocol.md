@@ -42,6 +42,7 @@ a response to an earlier Hello and enforcing handshake order belong to the sessi
 | `runtime_control` | `bind_runtime` and the `controlled_*` envelopes | `runtime_control_state` |
 | `plugin_install` | `install_plugins`, `remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
+| `shared_checkout_sessions` | Up to 8 unfinished Agent sessions per checkout, with restore fencing | Refused starts end as `agent_failed{checkout_busy}` or `agent_failed{checkout_session_limit}` without closing the connection |
 | `model_proxy` | Model-bound session starts | `model_adapter` in `hello_accepted` (see below) |
 | `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result`, `upload_grant_needed` |
 | `revision_restore` | `start_agent_session` with `prior_revision` | Restore failure codes in `agent_session_ended` |

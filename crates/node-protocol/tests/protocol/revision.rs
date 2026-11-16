@@ -249,11 +249,16 @@ async fn deliver_revision_rejects_refs_keys_and_commits_outside_the_contract()
     Ok(())
 }
 
-/// The push failure codes are part of the closed set; the retired bundle failure is no longer a
-/// code at all, and a delivered result with a bundle is refused.
+/// The named delivery failure codes are part of the closed set; the retired bundle failure is
+/// no longer a code at all, and a delivered result with a bundle is refused.
 #[tokio::test]
 async fn revision_failures_name_push_outcomes() -> Result<(), TestError> {
     for (code, wire) in [
+        (
+            RevisionFailureCode::SessionNotSettled,
+            "session_not_settled",
+        ),
+        (RevisionFailureCode::CheckoutTooDeep, "checkout_too_deep"),
         (RevisionFailureCode::PushRejected, "push_rejected"),
         (RevisionFailureCode::PushFailed, "push_failed"),
         (RevisionFailureCode::UploadFailed, "upload_failed"),

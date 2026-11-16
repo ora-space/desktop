@@ -14,7 +14,9 @@ use crate::revision::{
 };
 use crate::{ManagedNode, SessionHost as _, Shutdown};
 use gitlancer::GitRunner;
-use ora_node_db::{DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery};
+use ora_node_db::{
+    DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery, SessionRefusal,
+};
 use ora_node_protocol::*;
 use ora_utils::http::{ProxyConfig, ReqwestUploader, UploadOptions};
 use std::{
@@ -74,6 +76,7 @@ impl Revisions {
         node: &ManagedNode,
         grants: GrantStore,
         shutdown: Shutdown,
+        hand_over: crate::CheckoutHandOver,
     ) -> Result<Option<Self>, crate::Error> {
         let (Some(policy), Some(access)) = (node.delivery_git_policy()?, node.git_server()) else {
             return Ok(None);
@@ -100,6 +103,7 @@ impl Revisions {
             uploader,
             grants,
             shutdown,
+            hand_over,
             root,
             RetryPolicy::DEFAULT,
         )
@@ -114,6 +118,7 @@ impl Revisions {
         uploader: U,
         grants: GrantStore,
         shutdown: Shutdown,
+        hand_over: crate::CheckoutHandOver,
         root: PathBuf,
         policy: RetryPolicy,
     ) -> std::io::Result<Self>
@@ -135,7 +140,7 @@ impl Revisions {
                 for step in requests {
                     let finished = match step {
                         Step::Prepare(job) => {
-                            let result = prepare(&git, &frozen_root, &job);
+                            let result = prepare(&git, &hand_over, &frozen_root, &job);
                             // Git refused by a stopping Node is not the delivery's failure.
                             if result.is_err() && shutdown.requested() {
                                 Finished::Interrupted(job.execution)
@@ -341,6 +346,8 @@ impl Drop for Revisions {
 /// The session must have its terminal result and no live actor (ADR D1). The Node cannot yet
 /// prove that an agent plugin's descendants are gone: plugins inherit no attempt lock, and the
 /// session only ends after the plugin's own process tree was stopped (see `session::driver`).
+/// A session refused at checkout admission is not deliverable at all: it never ran, so what the
+/// shared checkout holds is not its work.
 fn inputs(
     node: &ManagedNode,
     agents: Option<&SessionHost>,
@@ -351,6 +358,21 @@ fn inputs(
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     };
     if !matches!(session.state, ExecutionState::Completed(_)) {
+        return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
+    }
+    // A checkout-refused session never started: nothing of it exists in the checkout, so a
+    // delivery must not snapshot a shared tree's live sibling work as this session's Revision.
+    // `session_not_settled` is the reuse the closed failure-code set offers: this session
+    // never reached a state a delivery can snapshot, and the code is definitive either way.
+    if let ExecutionState::Completed(ExecutionResult::AgentSession(
+        AgentSessionResult::AgentSessionEnded(ended),
+    )) = &session.state
+        && ended
+            .detail
+            .as_deref()
+            .and_then(SessionRefusal::from_detail)
+            .is_some()
+    {
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     }
     let journal = node.database.session_journal()?;

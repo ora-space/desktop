@@ -38,6 +38,7 @@ ADR。
 | `runtime_control` | `bind_runtime` 和各个 `controlled_*` 信封 | `runtime_control_state` |
 | `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
+| `shared_checkout_sessions` | 每个 checkout 最多 8 个未结束 Agent 会话，恢复围栏不变 | 拒绝的启动以 `agent_failed{checkout_busy}` 或 `agent_failed{checkout_session_limit}` 结束，不关闭连接 |
 | `model_proxy` | 绑定了模型的会话启动 | `hello_accepted` 中的 `model_adapter`（见下文） |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
 | `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |

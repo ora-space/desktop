@@ -390,7 +390,9 @@ fn record_pid() {
         .append(true)
         .open("echo-agent.pids")
     {
-        let _ = writeln!(file, "{}", std::process::id());
+        // One write call: sibling sessions append while each other's process starts, and a
+        // split write would tear the line the tests read back.
+        let _ = file.write_all(format!("{}\n", std::process::id()).as_bytes());
     }
 }
 

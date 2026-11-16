@@ -35,6 +35,10 @@ pub use repository::CloneConfig;
 #[cfg(target_os = "linux")]
 mod git_access;
 #[cfg(target_os = "linux")]
+mod hand_over;
+#[cfg(target_os = "linux")]
+pub use hand_over::CheckoutHandOver;
+#[cfg(target_os = "linux")]
 mod git_server;
 #[cfg(target_os = "linux")]
 mod managed;

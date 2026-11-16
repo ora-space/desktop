@@ -58,7 +58,15 @@ impl Layout {
             identity: ProcessIdentity::Inherit,
             uid: metadata.uid(),
             gid: metadata.gid(),
+            hand_over: self.hand_over(),
         }
+    }
+
+    /// A hand-over reading a stand-in for `fs.protected_hardlinks` that protects hard links.
+    fn hand_over(&self) -> crate::CheckoutHandOver {
+        let sysctl = self._temp.path().join("protected_hardlinks");
+        fs::write(&sysctl, "1\n").expect("sysctl stand-in");
+        crate::CheckoutHandOver::new(sysctl)
     }
 }
 
@@ -152,6 +160,22 @@ fn a_leftover_session_directory_is_rebuilt() {
         0,
         "the leftover home was reused"
     );
+}
+
+/// Every separate start walks its own checkout before its Agent can launch, whatever siblings
+/// share it: a checkout the walk cannot open fails this start instead of being trusted to an
+/// earlier session's hand-over.
+#[test]
+fn every_separate_start_walks_its_checkout() {
+    let layout = Layout::new();
+    let absent = layout._temp.path().join("never-cloned");
+    for execution in [ExecutionId::new("first"), ExecutionId::new("sibling")] {
+        assert!(
+            SessionPlacement::prepare(&layout.separate(), &execution, &layout.package, &absent)
+                .is_err(),
+            "{execution:?} prepared without walking its checkout"
+        );
+    }
 }
 
 /// A shared placement creates nothing: the agent runs from the installed package as the Node.

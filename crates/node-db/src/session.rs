@@ -1,9 +1,11 @@
 //! Durable session responsibility and a shareable actor-facing journal under the Node's lease.
+mod admission;
 mod commands;
 mod events;
 mod journal;
 mod model;
 mod restore;
+pub use admission::{MAX_SESSIONS_PER_CHECKOUT, RefusedSession, SessionRefusal};
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
     SessionExecution,
@@ -119,10 +121,6 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 Err(Error::IdentityConflict)
             };
         }
-        let conflict: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM node_executions WHERE (state<>'completed' OR execution IN (SELECT execution FROM session_restores WHERE phase='legacy_unknown')) AND json_extract(input,'$.payload.spec.checkout_execution_id')=?1)", [command.payload.spec.checkout_execution_id.as_str()], |r| r.get(/*idx*/ 0))?;
-        if conflict {
-            return Err(Error::ResourceConflict);
-        }
         if permit.is_some() && !self.unfinished_runtime_executions()?.is_empty() {
             return Err(Error::ResourceConflict);
         }
@@ -130,6 +128,15 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // The fences and the insert share one immediate transaction, so the checkout count the
+        // decision reads is exactly the one the accepted row will join; a second admission path
+        // can never admit against a count another writer already changed.
+        if let Some(refusal) = admission::checkout_refusal(&tx, command)? {
+            return Err(Error::SessionRefused(RefusedSession {
+                refusal,
+                command: Box::new(durable_command),
+            }));
+        }
         tx.execute(
             "INSERT INTO execution_identities VALUES(?1,?2,'agent_session')",
             params![command.operation_id.as_str(), command.execution_id.as_str()],

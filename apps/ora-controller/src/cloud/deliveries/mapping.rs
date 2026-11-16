@@ -149,6 +149,11 @@ pub(super) fn result(value: &RevisionExecutionResult) -> proto::ExecutionResult 
                     RevisionFailureCode::CheckoutUnavailable => {
                         proto::RevisionFailureReason::CheckoutUnavailable
                     }
+                    // The pinned Cloud contract has no reason for it yet; to Cloud the
+                    // checkout could not be snapshotted, which is exactly what happened.
+                    RevisionFailureCode::CheckoutTooDeep => {
+                        proto::RevisionFailureReason::SnapshotFailed
+                    }
                     RevisionFailureCode::SnapshotFailed => {
                         proto::RevisionFailureReason::SnapshotFailed
                     }
@@ -553,6 +558,10 @@ mod tests {
             (
                 RevisionFailureCode::CheckoutUnavailable,
                 proto::RevisionFailureReason::CheckoutUnavailable,
+            ),
+            (
+                RevisionFailureCode::CheckoutTooDeep,
+                proto::RevisionFailureReason::SnapshotFailed,
             ),
             (
                 RevisionFailureCode::SnapshotFailed,

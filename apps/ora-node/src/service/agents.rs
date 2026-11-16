@@ -310,6 +310,7 @@ fn overlaps(
 pub(super) fn workload(
     agent: Option<&AgentConfig>,
     process: &ProcessConfig,
+    hand_over: &crate::CheckoutHandOver,
 ) -> io::Result<SessionWorkload> {
     let directory = agent.and_then(|agent| agent.workload_directory.as_deref());
     match (directory, process.workload_uid) {
@@ -321,6 +322,7 @@ pub(super) fn workload(
             )?),
             uid,
             gid: uid,
+            hand_over: hand_over.clone(),
         }),
         (None, _) | (_, None) => Ok(SessionWorkload::Shared),
     }
@@ -468,9 +470,22 @@ pub(super) fn start(
             if permit.node_incarnation_id != node.identity().incarnation_id.as_str() {
                 return Err(ora_node_db::Error::NodeMismatch.into());
             }
-            node.database.accept_controlled_session(input, permit)?
+            node.database.accept_controlled_session(input, permit)
         }
-        None => node.database.accept_session(input)?,
+        None => node.database.accept_session(input),
+    };
+    let record = match record {
+        // Refusal is bare-only: a controlled start never reaches it, because the runtime
+        // singleton refuses any unfinished execution first with `ResourceConflict`. The
+        // refused execution records no history and never becomes deliverable, so there is
+        // no transcript to seal.
+        // The refusal carries admission's MCP-free projection of `input`, which is the only
+        // input a refused execution may persist.
+        Err(ora_node_db::Error::SessionRefused(refused)) => {
+            let identity = node.identity().clone();
+            node.database.refuse_session(&refused, &identity)?
+        }
+        result => result?,
     };
     // An earlier write failure may leave Accepted in this incarnation. It has never
     // started an actor and may retry its guarded transition; Running is never restarted.

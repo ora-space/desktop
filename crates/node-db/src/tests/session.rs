@@ -2,6 +2,7 @@
 use super::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
+mod admission;
 mod recovery;
 mod restore;
 
@@ -66,6 +67,14 @@ fn event() -> ThreadEvent {
 }
 
 /// Interrupted recovery may seal both accepted and running sessions.
+/// The checkout refusal an admission result reports, if it is one.
+pub(super) fn refusal_of(result: &Result<SessionExecution, Error>) -> Option<SessionRefusal> {
+    match result {
+        Err(Error::SessionRefused(refused)) => Some(refused.refusal()),
+        _ => None,
+    }
+}
+
 pub(super) fn ended() -> AgentSessionEnded {
     AgentSessionEnded {
         node: NodeRuntimeIdentity {

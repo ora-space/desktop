@@ -9,6 +9,8 @@ mod mcp;
 mod resume;
 #[path = "agent_session/support.rs"]
 mod support;
+#[path = "agent_session/workload.rs"]
+mod workload;
 
 use ora_node::{CommandSettlement, SessionCommand, SessionHost};
 use ora_node_protocol::{AgentSessionEndReason, AgentSessionEnded, EndSessionReason, TurnId};

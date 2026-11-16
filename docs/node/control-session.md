@@ -72,6 +72,9 @@ unavailable".
 Hello negotiates the protocol version, Node identity and incarnation, and capabilities. The session
 accepts the commands of the negotiated capabilities, status queries and exact acknowledgements;
 unsupported or conflicting messages close it, and Cloud mutations require their controlled envelope.
+A checkout admission refusal is the exception: `checkout_busy` and `checkout_session_limit` are
+recorded as the new execution's terminal result and do not close the control connection or affect
+sibling sessions.
 
 - Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
   the guard. A disconnect or revocation discards unaccepted queued work but cannot cancel accepted

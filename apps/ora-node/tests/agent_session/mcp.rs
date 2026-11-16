@@ -330,3 +330,116 @@ fn mcp_preflight_failures_start_no_agent() {
         assert_no_secret_files(&fixture.home());
     }
 }
+
+/// An MCP session and a plain session share one checkout: each gets exactly its own MCP setup
+/// (the plain sibling's `session/new` lists no server), and ending the MCP session releases its
+/// package leases while the plain sibling keeps running.
+#[test]
+fn an_mcp_session_shares_a_checkout_with_a_plain_one() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let bindings = configure(&fixture, /*load*/ true, /*http*/ true);
+                let mut database = NodeDatabase::open(
+                    &fixture.home().join("ledger"),
+                    NodeIdentity::Require(NodeId::new("node-1")),
+                )
+                .unwrap();
+                let with_mcp = input(bindings);
+                let mut plain = input(Vec::new());
+                plain.operation_id = OperationId::new("plain-operation");
+                plain.execution_id = ExecutionId::new("plain-execution");
+                for session in [&with_mcp, &plain] {
+                    database.accept_session(session).unwrap();
+                    database
+                        .start_session(session, &fixture.node().incarnation_id)
+                        .unwrap();
+                }
+                let sessions = fixture.compose_with_ledger(
+                    PLUGIN_VERSION,
+                    SessionWorkload::Shared,
+                    /*model_proxy*/ None,
+                    database.session_journal().unwrap(),
+                );
+                for session in [&with_mcp, &plain] {
+                    sessions.start(
+                        session.operation_id.clone(),
+                        session.execution_id.clone(),
+                        session.payload.spec.clone(),
+                    );
+                }
+                // Both initial turns say `[mcp]`, so each Agent reports on its own frame.
+                let replies = until(|| {
+                    let events = database.pending_events().unwrap();
+                    let reply = |execution: &ExecutionId| {
+                        events.iter().find_map(|event| match event {
+                            NodeToControllerMessage::ThreadEvent(message)
+                                if message.execution_id == *execution =>
+                            {
+                                let text = serde_json::to_string(&message.payload.record).ok()?;
+                                ["MCP frame verified", "MCP frame invalid"]
+                                    .into_iter()
+                                    .find(|reply| text.contains(reply))
+                            }
+                            _ => None,
+                        })
+                    };
+                    Some((reply(&with_mcp.execution_id)?, reply(&plain.execution_id)?))
+                })
+                .await;
+                assert_eq!(replies, ("MCP frame verified", "MCP frame invalid"));
+                // The MCP session holds its two server packages besides the Agent package of
+                // each session.
+                assert_eq!(fixture.leases.load(std::sync::atomic::Ordering::SeqCst), 4);
+
+                let end = |session: &StartAgentSessionMessage| {
+                    SessionCommandInput::EndSession(EndSessionMessage {
+                        protocol_version: CURRENT_PROTOCOL_VERSION,
+                        operation_id: session.operation_id.clone(),
+                        execution_id: session.execution_id.clone(),
+                        payload: EndSession {
+                            node_id: NodeId::new("node-1"),
+                            command_id: CommandId::new(format!(
+                                "end-{}",
+                                session.execution_id.as_str()
+                            )),
+                            reason: EndSessionReason::UserEnded,
+                        },
+                    })
+                };
+                let state = |database: &NodeDatabase, session: &StartAgentSessionMessage| {
+                    database
+                        .find_session(&session.operation_id, &session.execution_id)
+                        .unwrap()
+                        .unwrap()
+                        .state
+                };
+                database.accept_session_command(&end(&with_mcp)).unwrap();
+                sessions.command_arrived(&with_mcp.execution_id);
+                until(|| {
+                    matches!(state(&database, &with_mcp), ExecutionState::Completed(_))
+                        .then_some(())
+                })
+                .await;
+                until(|| {
+                    (fixture.leases.load(std::sync::atomic::Ordering::SeqCst) == 1).then_some(())
+                })
+                .await;
+                assert_eq!(state(&database, &plain), ExecutionState::Running);
+
+                database.accept_session_command(&end(&plain)).unwrap();
+                sessions.command_arrived(&plain.execution_id);
+                until(|| {
+                    matches!(state(&database, &plain), ExecutionState::Completed(_)).then_some(())
+                })
+                .await;
+                sessions.shutdown().await;
+                assert_eq!(fixture.leases.load(std::sync::atomic::Ordering::SeqCst), 0);
+                assert_no_secret_files(&fixture.home());
+            });
+    });
+}

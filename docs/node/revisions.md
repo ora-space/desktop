@@ -39,10 +39,19 @@ Preparation happens once:
 
 1. The session must have its terminal result and no live actor (`failed{session_not_settled}`), its
    checkout must still be at the delivery's base commit (`failed{checkout_unavailable}`), and its JSONL
-   must exist (`failed{history_unavailable}`).
+   must exist (`failed{history_unavailable}`). A session refused at checkout admission
+   (`agent_failed{checkout_busy}` or `agent_failed{checkout_session_limit}`) never ran and has no
+   history, so delivering it also fails `session_not_settled` — the shared checkout is never
+   snapshotted as that session's own result.
 2. The sealed JSONL is copied into `<home>/revision-deliveries/<sha256(execution)>/history.jsonl`.
+   With `process.workload_uid` set, the checkout is then handed to the workload user as at a session
+   start ([how](agent-sessions.md#handing-a-shared-checkout-to-the-workload-user)); a checkout nested
+   deeper than 4096 directories fails `checkout_too_deep`, which the Controller reports to Cloud as
+   `REVISION_FAILURE_REASON_SNAPSHOT_FAILED` until the Cloud contract has a reason of its own.
 3. A scratch index in the checkout's Git directory snapshots the worktree (`read-tree HEAD`, `add -A`,
-   `write-tree`), as the workload user. If the tree equals `HEAD^{tree}` the final commit is `HEAD`;
+   `write-tree`), as the workload user. If sibling sessions are still live on a shared checkout, their
+   writes and HEAD changes are visible to this snapshot; delivery is not a per-session isolated diff.
+   If the tree equals `HEAD^{tree}` the final commit is `HEAD`;
    otherwise `commit-tree` adds one commit authored by the session's Git identity and committed by
    `Ora <revision@ora.invalid>`. Hooks, fsmonitor and signing are disabled, and the real index,
    worktree files and branches are not touched. `update-ref` points the local Revision ref at the final
