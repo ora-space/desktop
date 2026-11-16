@@ -133,6 +133,7 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
     git: G,
     clock: C,
     state: NodeState,
+    #[cfg(target_os = "linux")]
     session_stop: SessionStopConfig,
 }
 
@@ -299,6 +300,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             git,
             clock,
             state,
+            #[cfg(target_os = "linux")]
             session_stop: config.session_stop,
         })
     }
