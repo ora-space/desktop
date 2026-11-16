@@ -40,8 +40,9 @@ const AGENT_ATTACH_WAIT: Duration = Duration::from_secs(15);
 pub(super) type SessionLifecycle = PluginLifecycle<SessionLauncher, IgnoredStatus, GenerationTaps>;
 
 /// Launches one session's plugin from its placement, with the session's environment.
-pub(super) type SessionLauncher =
-    PackageViewLauncher<DenoPluginRuntimeLauncher<SessionEnvironment>>;
+pub(super) type SessionLauncher = PackageViewLauncher<
+    DenoPluginRuntimeLauncher<SessionEnvironment, super::stop::spawner::SessionAttemptSpawner>,
+>;
 
 /// Names the Node's host composition for one session execution over ledger `L`.
 pub(super) struct NodeRuntimeHost<L>(PhantomData<L>);

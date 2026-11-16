@@ -1,6 +1,6 @@
 //! Node-owned Git execution: every command is a direct child of the Node, and a command with
 //! side effects is only settled by the stop evidence of its attempt lock.
-mod attempt_lock;
+pub(crate) mod attempt_lock;
 #[cfg(test)]
 mod attempt_lock_tests;
 mod delivery;

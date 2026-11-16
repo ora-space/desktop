@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 #[allow(dead_code)]
 #[path = "../../src/model_proxy/test_gateway.rs"]
 pub mod gateway;
+#[path = "../support/session_stops.rs"]
+mod stops;
 
 pub const PLUGIN_ID: &str = "official/ora-space.echo";
 pub const PLUGIN_VERSION: &str = "1.0.0";
@@ -68,6 +70,7 @@ struct LedgerState {
 #[derive(Clone, Default)]
 pub struct MemoryLedger {
     state: Arc<Mutex<LedgerState>>,
+    stops: stops::Stops,
 }
 
 impl MemoryLedger {
@@ -134,6 +137,41 @@ impl MemoryLedger {
 
 impl SessionLedger for MemoryLedger {
     type Error = LedgerError;
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        self.stops
+            .record(identity, at_ms)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        self.stops
+            .records(execution)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        self.stops
+            .change(attempt, change)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn defer_session_stop_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        self.stops
+            .defer(execution, ended)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
 
     fn append_thread_event(
         &self,
@@ -471,6 +509,7 @@ impl Fixture {
     ) -> AgentSessions<L, Checkouts, Catalog, Restorer> {
         AgentSessions::new(
             SessionConfig {
+                stop: Default::default(),
                 home_directory: self.home(),
                 deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
                 timezone: chrono_tz::UTC,

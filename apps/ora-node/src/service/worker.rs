@@ -131,6 +131,12 @@ pub(super) fn run(
         NodeCapability::PluginInstall,
         NodeCapability::RuntimeControl,
     ];
+    let stop_admin = crate::session::stop::admin::Admin::start(
+        node.home_directory(),
+        node.session_stop.clone(),
+        node.database.session_journal().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     // Clones come only from the Git Server, which the Node reaches with its git-access identity.
     if node.git_server().is_some() {
         capabilities.insert(0, NodeCapability::RepositoryClone);
@@ -163,6 +169,7 @@ pub(super) fn run(
         capabilities,
     };
     if ready.send(Ok(info)).is_err() {
+        tokio::runtime::Handle::current().block_on(stop_admin.close());
         if let Some(agents) = &agents {
             tokio::runtime::Handle::current().block_on(agents.shutdown());
         }
@@ -256,6 +263,7 @@ pub(super) fn run(
         Ok(())
     };
     let drained = clones.drain(&mut node, drain);
+    tokio::runtime::Handle::current().block_on(stop_admin.close());
     node.shutdown().map_err(|e| e.to_string())?;
     result
         .and(drained)

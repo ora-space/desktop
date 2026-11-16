@@ -5,6 +5,8 @@ use crate::model_proxy::{ModelAccess, ModelAccessStatus, tests::Gateway};
 use crate::session::ports::{QueuedCommand, SessionCommand};
 use ora_node_protocol::{AgentSessionEnded, CommandId, ModelBindingId, Sequence, ThreadEvent};
 use pretty_assertions::assert_eq;
+#[path = "../../../tests/support/session_stops.rs"]
+mod stops;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
 /// The ending path must return before plugin discovery or process launch.
@@ -75,6 +77,7 @@ struct State {
 #[derive(Clone, Default)]
 struct Ledger {
     state: Arc<Mutex<State>>,
+    stops: stops::Stops,
     read: Arc<Notify>,
     terminal: Arc<Notify>,
     deferred: Arc<Notify>,
@@ -82,6 +85,33 @@ struct Ledger {
 
 impl SessionLedger for Ledger {
     type Error = std::io::Error;
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        self.stops.record(identity, at_ms)
+    }
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        self.stops.records(execution)
+    }
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        self.stops.change(attempt, change)
+    }
+    fn defer_session_stop_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        self.stops.defer(execution, ended)
+    }
 
     /// Deferred stop evidence has not sealed the session, even after its actor is gone.
     fn session_completed(&self, _execution: &ExecutionId) -> Result<bool, Self::Error> {
@@ -245,6 +275,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
     };
     let sessions = AgentSessions::new(
         SessionConfig {
+            stop: Default::default(),
             home_directory: root.path().into(),
             deno_path: root.path().join("must-not-be-executed"),
             timezone: chrono_tz::UTC,
@@ -428,6 +459,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                 let execution = ExecutionId::new("8b0e5a52-6f1c-4c55-9d3e-2a7b1f0c9e41");
                 let sessions = AgentSessions::new(
                     SessionConfig {
+                        stop: Default::default(),
                         home_directory: root.path().into(),
                         deno_path: root.path().join("must-not-run"),
                         timezone: chrono_tz::UTC,

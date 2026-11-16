@@ -125,6 +125,10 @@ impl<D: HttpDownload> Installer<D> {
 }
 
 impl PreparedPlugin {
+    /// Reports the validated staged package kind before publication consumes the staging owner.
+    pub fn is_mcp(&self) -> Result<bool, InstallError> {
+        is_mcp_package(&self.staging.path().join("package"))
+    }
     /// Publishes only verified bytes. The caller excludes session leases while replacing or
     /// removing packages. A corrupt same-version tree is retained in staging until commit succeeds.
     pub fn commit(self, data_dir: &Path) -> Result<PathBuf, InstallError> {
@@ -156,6 +160,14 @@ impl PreparedPlugin {
         }
         Ok(destination)
     }
+}
+
+/// Reads the installed manifest without widening a caller's exact-version lookup.
+pub fn is_mcp_package(path: &Path) -> Result<bool, InstallError> {
+    Ok(matches!(
+        crate::install::package::read_installed_manifest(path)?.kind(),
+        PluginKind::Mcp
+    ))
 }
 
 /// Attaches the failing path without introducing Node error vocabulary into the installer.

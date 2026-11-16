@@ -5,6 +5,18 @@ fn main() -> ExitCode {
     #[cfg(target_os = "linux")]
     {
         let args: Vec<_> = std::env::args_os().skip(1).collect();
+        if args
+            .first()
+            .is_some_and(|arg| arg == "reconcile-session-stop")
+        {
+            return match reconcile(&args[1..]) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("ora-node: reconciliation failed: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         if args.len() == 1 {
             return match run(std::path::Path::new(&args[0])) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -17,6 +29,43 @@ fn main() -> ExitCode {
     }
     eprintln!("usage (Linux): ora-node <absolute-config-file>");
     ExitCode::FAILURE
+}
+
+/// Uses the running Node's root-only socket; even an offline invocation never opens its database.
+#[cfg(target_os = "linux")]
+fn reconcile(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
+    use ora_node_db::{AttemptId, SessionStopMode, SessionStopReason, SessionStopReconcile};
+    let [home, execution, attempt, request, reason, mode] = args else {
+        return Err("usage: ora-node reconcile-session-stop <absolute-home> <execution> <attempt> <request-id> <maintenance|probe-capacity|legacy-upgrade> <recheck|after-host-reboot>".into());
+    };
+    let text = |value: &std::ffi::OsString| {
+        value
+            .to_str()
+            .map(str::to_owned)
+            .ok_or("arguments must be UTF-8")
+    };
+    let request = SessionStopReconcile {
+        request_id: text(request)?,
+        execution: ora_node_protocol::ExecutionId::new(text(execution)?),
+        attempt: AttemptId::parse(&text(attempt)?).ok_or("invalid attempt ID")?,
+        reason: match text(reason)?.as_str() {
+            "maintenance" => SessionStopReason::Maintenance,
+            "probe-capacity" => SessionStopReason::ProbeCapacity,
+            "legacy-upgrade" => SessionStopReason::LegacyUpgrade,
+            _ => return Err("invalid reason".into()),
+        },
+        mode: match text(mode)?.as_str() {
+            "recheck" => SessionStopMode::Recheck,
+            "after-host-reboot" => SessionStopMode::AfterHostReboot,
+            _ => return Err("invalid mode".into()),
+        },
+    };
+    let reply = ora_node::reconcile_session_stop(std::path::Path::new(home), &request)?;
+    println!("{}", serde_json::to_string(&reply)?);
+    if matches!(reply, ora_node::SessionStopAdminReply::Rejected { .. }) {
+        return Err("request rejected".into());
+    }
+    Ok(())
 }
 
 /// Installs shutdown handling before recovery or IPC starts; no Backend entry point is installed.

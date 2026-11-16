@@ -6,6 +6,37 @@ use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, Thr
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
     type Error = ora_node_db::Error;
 
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::record_session_stop(self, identity, at_ms)
+    }
+
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        SessionJournal::session_stop_records(self, execution)
+    }
+
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::change_session_stop(self, attempt, change)
+    }
+
+    fn defer_session_stop_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::defer_session_stop_end(self, execution, ended)
+    }
+
     /// History release follows durable terminal evidence, never actor lifetime alone.
     fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Self::Error> {
         SessionJournal::session_completed(self, execution)

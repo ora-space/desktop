@@ -167,7 +167,7 @@ impl NodeSessionMcp {
         let mut members = Vec::new();
         let mut leases = Vec::new();
         for binding in bindings {
-            leases.push(catalog.lease(&binding.plugin_id));
+            leases.push(catalog.lease_mcp(&binding.plugin_id, &binding.plugin_version));
             let root = catalog
                 .installed(&binding.plugin_id, &binding.plugin_version)
                 .ok_or_else(|| NodeMcpFailure::plugin(binding.plugin_id.as_str().to_owned()))?;

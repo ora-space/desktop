@@ -89,7 +89,8 @@ pub(super) async fn reconcile(
             continue;
         }
         let ended = journal
-            .deferred_restore_end(execution)?
+            .session_stop_end(execution)?
+            .or(journal.deferred_restore_end(execution)?)
             .unwrap_or(AgentSessionEnded {
                 node: node.identity().clone(),
                 reason: AgentSessionEndReason::Interrupted,
@@ -115,6 +116,30 @@ pub(super) async fn reconcile(
         if !confirmed {
             continue;
         }
+        if !crate::session::stop::confirm(
+            journal,
+            node.home_directory(),
+            &node.session_stop,
+            execution,
+            false,
+        )
+        .await?
+        {
+            continue;
+        }
+        if let Some(host) = host {
+            host.release_stop_resources(execution)
+                .map_err(ora_node_db::Error::from)?;
+        } else if journal
+            .session_stop_records(Some(execution))?
+            .iter()
+            .any(|r| {
+                !r.resources_released && r.identity.packages.iter().any(|p| p.view_key.is_some())
+            })
+        {
+            continue;
+        }
+        crate::session::stop::released(journal, execution)?;
         if phase.is_some()
             && let Err(detail) = crate::session::seal_unstarted_history(
                 &node.home_directory().join("sessions"),
@@ -351,6 +376,10 @@ pub(super) fn open(
         stops,
     } = recovery;
     let journal = node.database.session_journal()?;
+    if let SessionWorkload::Separate { directory, .. } = &workload {
+        crate::session::validate_workload_storage(node.home_directory(), directory)
+            .map_err(|error| crate::Error::Configuration(error.to_string()))?;
+    }
     let ora_git = config
         .and_then(|config| config.ora_git_directory.as_deref())
         .map(|directory| ora_git(node, directory, journal.clone(), shutdown.clone()))
@@ -363,6 +392,7 @@ pub(super) fn open(
                 .map_err(|_| crate::Error::Configuration("invalid Agent timezone".into()))?;
             Ok::<_, crate::Error>(AgentSessions::new(
                 SessionConfig {
+                    stop: node.session_stop.clone(),
                     home_directory: node.home_directory().to_path_buf(),
                     deno_path: config.deno_path.clone(),
                     timezone,

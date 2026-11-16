@@ -138,6 +138,7 @@ impl Fixture {
     /// Supplies the same explicit Node data directory to embedding and executable callers.
     pub fn config(&self) -> NodeConfig {
         NodeConfig {
+            session_stop: Default::default(),
             home_directory: self.path().join("node"),
             identity: NodeIdentity::Require(NodeId::new("test-node")),
             repositories: vec![RepositoryBinding {

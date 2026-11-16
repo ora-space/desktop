@@ -339,7 +339,9 @@ fn upgrade_settles_the_retired_hosts_attempt_and_removes_its_directory() {
         rusqlite::Connection::open(&database)
             .unwrap()
             .execute_batch(
-                "DROP TRIGGER stop_excludes_other_endings; DROP TRIGGER outcome_excludes_stop;
+                "DROP TABLE session_stop_audit; DROP TABLE session_stop_ends;
+                 DROP TABLE session_stop_summary; DROP TABLE session_stop_attempts;
+                 DROP TRIGGER stop_excludes_other_endings; DROP TRIGGER outcome_excludes_stop;
                  DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;
                  PRAGMA user_version=12;",
             )

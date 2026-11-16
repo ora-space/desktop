@@ -117,6 +117,7 @@ Agent 会话和插件进程不向 reaper 登记，见 [Agent 会话](agent-sessi
 | 11 | `session_restores`、`restore_process_attempts`：恢复阶段、原进程身份与停止确认时钟 |
 | 12 | `scheduled_artifact_deliveries`：定时产物上传；终态事件 outbox 覆盖所有执行族 |
 | 13 | `process_stops`：已停止但没有退出状态的尝试，与 `process_outcomes`、`process_terminations` 互斥 |
+| 14 | Agent 停止责任、终止意图、审计和汇总；见[会话停止](session-stop.zh.md) |
 
 所有执行族共享 `execution_identities`，防止不同族之间的 key 冲突。完成时，资源事实、终止结果和它的原始事件
 一起提交；状态读取从不确认。确认必须匹配 Node、operation、execution 和序号，并且只删除投递记录，结果和去重

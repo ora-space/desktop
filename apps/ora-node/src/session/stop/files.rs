@@ -1,0 +1,240 @@
+//! Session-scoped OFD evidence plus one identity-checked clue for every host-spawned process group.
+use crate::managed::attempt_lock::{AttemptLocks, LockDurability, StopEvidence};
+use ora_node_db::{
+    AttemptId, SessionStopHost, SessionStopIdentity, SessionStopKind, SessionStopProof,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    io::{self, Read, Write},
+    os::fd::OwnedFd,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+#[derive(Clone)]
+pub(crate) struct StopFiles {
+    locks: AttemptLocks,
+    directory: PathBuf,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Clue {
+    pid: u32,
+    start_ticks: u64,
+    boot_id: String,
+}
+
+impl StopFiles {
+    /// Reuses Git's lock mechanics in a separate private directory and naming namespace.
+    pub(crate) fn open(home: &Path) -> io::Result<Self> {
+        Ok(Self {
+            locks: AttemptLocks::open_sessions(home)?,
+            directory: home.join("session-attempts"),
+        })
+    }
+
+    /// The marker and parent directory are durable before the database takes responsibility.
+    pub(crate) fn create(&self, attempt: &AttemptId) -> io::Result<()> {
+        self.locks.create(
+            attempt,
+            Path::new(attempt.as_str()),
+            LockDurability::Recorded,
+        )
+    }
+
+    /// Acquires after recording; the owner serializes this against recovery and dispatch.
+    pub(crate) fn hold(&self, attempt: &AttemptId) -> io::Result<Arc<OwnedFd>> {
+        self.locks.hold(attempt)
+    }
+
+    /// An observed clue-write failure is retained conservatively; it is distinct from no dispatch.
+    pub(crate) fn mark_incomplete(&self, attempt: &AttemptId) -> io::Result<()> {
+        let path = self.directory.join(format!("{attempt}.incomplete.clue"));
+        let mut file = fs::File::create(&path)?;
+        file.write_all(b"incomplete")?;
+        file.sync_all()?;
+        fs::File::open(&self.directory)?.sync_all()
+    }
+
+    /// Clues name processes only; argument vectors, environment and Settings never enter files.
+    pub(crate) fn note_child(
+        &self,
+        attempt: &AttemptId,
+        host: &SessionStopHost,
+        pid: u32,
+    ) -> io::Result<()> {
+        let process = match ora_utils::process::linux_process(pid) {
+            Ok(process) => process,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !group_exists(pid) => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let clue = Clue {
+            pid,
+            start_ticks: process.start_ticks,
+            boot_id: host.boot_id.clone(),
+        };
+        let mut file = fs::File::create(self.directory.join(format!("{attempt}.{pid}.clue")))?;
+        file.write_all(&serde_json::to_vec(&clue)?)?;
+        file.sync_all()?;
+        fs::File::open(&self.directory)?.sync_all()
+    }
+
+    /// A different kernel needs affirmative deployment evidence; an idle local lock is insufficient.
+    pub(crate) fn probe(
+        &self,
+        identity: &SessionStopIdentity,
+        current: &SessionStopHost,
+        fenced_volume: bool,
+    ) -> (StopEvidence, Option<SessionStopProof>) {
+        if !identity.host.boot_id.is_empty()
+            && !current.boot_id.is_empty()
+            && identity.host.boot_id != current.boot_id
+        {
+            if identity
+                .host
+                .trusted_host_id
+                .as_ref()
+                .is_some_and(|id| !id.is_empty())
+                && identity.host.trusted_host_id == current.trusted_host_id
+            {
+                return (StopEvidence::Stopped, Some(SessionStopProof::HostReboot));
+            }
+            if fenced_volume {
+                return (StopEvidence::Stopped, Some(SessionStopProof::FencedVolume));
+            }
+            return (StopEvidence::Unknown, None);
+        }
+        if identity.host.boot_id.is_empty()
+            || identity.host.boot_id != current.boot_id
+            || identity.kind == SessionStopKind::LegacyAgent
+        {
+            return (StopEvidence::Unknown, None);
+        }
+        let lock = self.directory.join(format!("{}.lock", identity.attempt));
+        let valid_marker = || -> io::Result<bool> {
+            if !fs::symlink_metadata(&lock)?.is_file() {
+                return Ok(false);
+            }
+            let mut marker = Vec::new();
+            fs::File::open(&lock)?.take(128).read_to_end(&mut marker)?;
+            Ok(marker == identity.attempt.as_str().as_bytes())
+        };
+        if !matches!(valid_marker(), Ok(true)) {
+            return (StopEvidence::Unknown, None);
+        }
+        let evidence = self.locks.probe(&identity.attempt);
+        if evidence != StopEvidence::Stopped {
+            return (evidence, None);
+        }
+        let clues = match self.clues(&identity.attempt) {
+            Ok(clues) => clues,
+            Err(_) => return (StopEvidence::Unknown, None),
+        };
+        for clue in clues {
+            if clue.boot_id != current.boot_id {
+                return (StopEvidence::Unknown, None);
+            }
+            match ora_utils::process::linux_process(clue.pid) {
+                Ok(process) if process.start_ticks == clue.start_ticks => {
+                    return (StopEvidence::Running, None);
+                }
+                Ok(_) => {} // Reused PID is not our process; never signal it.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if group_exists(clue.pid) {
+                        return (StopEvidence::Running, None);
+                    }
+                }
+                Err(_) => return (StopEvidence::Unknown, None),
+            }
+        }
+        (
+            StopEvidence::Stopped,
+            Some(SessionStopProof::LockAndProcesses),
+        )
+    }
+
+    /// Signals only groups whose boot and direct-child identity still match the original attempt.
+    pub(crate) fn terminate(&self, identity: &SessionStopIdentity, current: &SessionStopHost) {
+        if current.boot_id.is_empty() || current.boot_id != identity.host.boot_id {
+            return;
+        }
+        let Ok(clues) = self.clues(&identity.attempt) else {
+            return;
+        };
+        for clue in clues {
+            if clue.boot_id != current.boot_id {
+                continue;
+            }
+            match ora_utils::process::linux_process(clue.pid) {
+                Ok(process) if process.start_ticks != clue.start_ticks => continue,
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => continue,
+            }
+            if let Ok(pid) = i32::try_from(clue.pid) {
+                // SAFETY: only an identity-checked original process group is addressed.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    /// Called only after durable confirmation and age/reference checks, never to manufacture proof.
+    pub(crate) fn retire(&self, attempt: &AttemptId) -> io::Result<()> {
+        let prefix = format!("{attempt}.");
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix))
+            {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Corrupt/unreadable clues keep the attempt unknown; missing optional clues do not replace locks.
+    fn clues(&self, attempt: &AttemptId) -> io::Result<Vec<Clue>> {
+        let prefix = format!("{attempt}.");
+        let mut clues = Vec::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".clue"))
+            {
+                if !entry.file_type()?.is_file() {
+                    return Err(io::Error::other("invalid process clue"));
+                }
+                let mut bytes = Vec::new();
+                fs::File::open(entry.path())?
+                    .take(1024)
+                    .read_to_end(&mut bytes)?;
+                clues.push(
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| io::Error::other("invalid process clue"))?,
+                );
+            }
+        }
+        Ok(clues)
+    }
+}
+
+/// A leader may already be reaped while one of its original same-group descendants remains.
+fn group_exists(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    // SAFETY: signal zero observes existence and does not terminate a process.
+    unsafe {
+        libc::kill(-pid, 0) == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+}

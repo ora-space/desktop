@@ -13,6 +13,7 @@ use pretty_assertions::assert_eq;
 fn injected_home_persists_node_but_not_incarnation() {
     let dir = tempfile::tempdir().unwrap();
     let config = || NodeConfig {
+        session_stop: Default::default(),
         home_directory: dir.path().to_path_buf(),
         identity: NodeIdentity::Discover,
         repositories: vec![],

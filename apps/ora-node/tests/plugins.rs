@@ -157,13 +157,19 @@ impl HttpDownload for ArchiveDownload {
 
 /// The archive has installed-form metadata and an entrypoint that must never execute on install.
 fn archive(root: &std::path::Path, version: &str) -> PathBuf {
+    package_archive(root, version, false)
+}
+
+/// Builds either package kind for coexistence and kind-change checks.
+fn package_archive(root: &std::path::Path, version: &str, mcp: bool) -> PathBuf {
     let path = root.join(format!("{version}.orax"));
     let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let kind = if mcp { "mcp" } else { "agent" };
     for (name, contents) in [
         (
             "orax.toml",
             format!(
-                "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"agent\"\nversion = \"{version}\"\ndescription = \"test\"\n"
+                "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"test\"\n"
             ),
         ),
         (
@@ -171,12 +177,86 @@ fn archive(root: &std::path::Path, version: &str) -> PathBuf {
             "throw new Error('installation must not execute plugins');".into(),
         ),
     ] {
+        if mcp && name == "main.js" {
+            continue;
+        }
         zip.start_file(name, zip::write::SimpleFileOptions::default())
             .unwrap();
         zip.write_all(contents.as_bytes()).unwrap();
     }
+    if mcp {
+        zip.start_file(
+            "assets/config.json",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(
+            br#"{"schemaVersion":1,"transport":{"type":"http","url":"https://example.test/mcp"}}"#,
+        )
+        .unwrap();
+    }
     zip.finish().unwrap();
     path
+}
+
+/// Publishing another MCP version preserves leased bytes and cannot switch the package kind.
+#[tokio::test]
+async fn exact_mcp_leases_allow_only_mcp_coexistence() {
+    let root = tempfile::tempdir().unwrap();
+    let source = package_archive(root.path(), "1.0.0", true);
+    let installer = PluginInstaller::new(
+        root.path().join("home"),
+        ArchiveDownload {
+            archive: source.clone(),
+            count: Arc::new(AtomicUsize::new(0)),
+        },
+        None,
+    );
+    let installed = |version| {
+        result(PluginItemOutcome::Installed {
+            version: PluginVersion::new(version),
+        })
+    };
+    assert_eq!(
+        installer.execute(&command(&source, "1.0.0"), &node()).await,
+        installed("1.0.0")
+    );
+    let catalog = installer.catalog();
+    let id = PluginId::new("official/ora-space.echo");
+    let lease = catalog.lease_mcp(&id, &PluginVersion::new("1.0.0"));
+    let old = catalog
+        .installed(&id, &PluginVersion::new("1.0.0"))
+        .unwrap();
+    let next = package_archive(root.path(), "2.0.0", true);
+    std::fs::copy(next, &source).unwrap();
+    assert_eq!(
+        installer.execute(&command(&source, "2.0.0"), &node()).await,
+        installed("2.0.0")
+    );
+    assert!(old.exists());
+    let changed = package_archive(root.path(), "3.0.0", false);
+    std::fs::copy(changed, &source).unwrap();
+    assert_eq!(
+        installer.execute(&command(&source, "3.0.0"), &node()).await,
+        result(PluginItemOutcome::Failed {
+            failure: PluginFailureCode::PluginInUse
+        })
+    );
+    assert!(old.exists());
+    // A damaged leased exact version is not repaired, even when replacement bytes are valid.
+    std::fs::write(old.join("orax.toml"), "broken").unwrap();
+    let same = package_archive(root.path(), "1.0.0", true);
+    assert_eq!(
+        installer.execute(&command(&same, "1.0.0"), &node()).await,
+        result(PluginItemOutcome::Failed {
+            failure: PluginFailureCode::PluginInUse
+        })
+    );
+    drop(lease);
+    assert_eq!(
+        installer.execute(&command(&same, "1.0.0"), &node()).await,
+        installed("1.0.0")
+    );
 }
 
 /// A complete universal input preserves Cloud's exact version and digest.
@@ -620,11 +700,12 @@ fn declared_archive(
 ) -> PathBuf {
     let path = root.join(name);
     let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let kind = "agent";
     for (name, contents) in [
         (
             "orax.toml",
             format!(
-                "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"agent\"\nversion = \"{version}\"\ndescription = \"test\"\n"
+                "resolver = 1\nidentifier = \"ora-space.echo\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"test\"\n"
             )
             .into_bytes(),
         ),
