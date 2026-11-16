@@ -1,14 +1,14 @@
 //! Stdio MCP probe: spawn, newline JSON-RPC handshake, then reclaim the process.
 
 use super::protocol::{
-    JsonRpcResponse, ProbeError, accept_result, decode_line, encode_line, initialize_request,
-    initialized_notification, tools_list_request,
+    JsonRpcResponse, MAX_RESPONSE_BYTES, ProbeError, accept_result, decode_line, encode_line,
+    initialize_request, initialized_notification, tools_list_request,
 };
 use crate::process::hide_console_window;
 use std::path::PathBuf;
 use std::process::Stdio as StdStdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::{Instant, timeout, timeout_at};
 
@@ -67,9 +67,32 @@ async fn handshake(
     stdin: &mut ChildStdin,
     reader: &mut BufReader<ChildStdout>,
 ) -> Result<(), ProbeError> {
-    send_request(stdin, reader, initialize_request(1), Some(1)).await?;
-    send_request(stdin, reader, initialized_notification(), None).await?;
-    match send_request(stdin, reader, tools_list_request(2), Some(2)).await {
+    let mut remaining = MAX_RESPONSE_BYTES;
+    send_request(
+        stdin,
+        reader,
+        initialize_request(1),
+        Some(1),
+        &mut remaining,
+    )
+    .await?;
+    send_request(
+        stdin,
+        reader,
+        initialized_notification(),
+        None,
+        &mut remaining,
+    )
+    .await?;
+    match send_request(
+        stdin,
+        reader,
+        tools_list_request(2),
+        Some(2),
+        &mut remaining,
+    )
+    .await
+    {
         Ok(_) => Ok(()),
         // A completed initialize followed by any tools/list protocol failure means the tools
         // surface is unavailable, not that the handshake failed.
@@ -86,6 +109,7 @@ async fn send_request(
     reader: &mut BufReader<ChildStdout>,
     message: serde_json::Value,
     expected_id: Option<u64>,
+    remaining: &mut usize,
 ) -> Result<Option<JsonRpcResponse>, ProbeError> {
     let bytes = encode_line(&message)?;
     stdin
@@ -100,12 +124,8 @@ async fn send_request(
         return Ok(None);
     };
     loop {
-        let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
-            .await
-            .map_err(|_| ProbeError::ExitedPrematurely)?;
-        if read == 0 {
+        let line = read_bounded_line(reader, remaining).await?;
+        if line.is_empty() {
             // EOF: the server closed stdout (or died) before answering the handshake.
             return Err(ProbeError::ExitedPrematurely);
         }
@@ -123,6 +143,35 @@ async fn send_request(
             return Err(ProbeError::HandshakeFailed);
         }
     }
+}
+
+/// Counts noise and protocol frames together, including unterminated lines, before allocation.
+async fn read_bounded_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    remaining: &mut usize,
+) -> Result<String, ProbeError> {
+    let mut bytes = Vec::new();
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|_| ProbeError::ExitedPrematurely)?;
+        if available.is_empty() {
+            break;
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let count = newline.map_or(available.len(), |index| index + 1);
+        if count > *remaining {
+            return Err(ProbeError::HandshakeFailed);
+        }
+        bytes.extend_from_slice(&available[..count]);
+        *remaining -= count;
+        reader.consume(count);
+        if newline.is_some() {
+            break;
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| ProbeError::HandshakeFailed)
 }
 
 /// Closes the child cleanly within the remaining deadline, escalating to kill if needed.

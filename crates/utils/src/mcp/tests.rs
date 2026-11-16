@@ -3,6 +3,8 @@
 //! stdio fixtures respawn this very test binary as the fake server so the success/failure matrix
 //! needs no external interpreter; HTTP fixtures use a raw loopback TCP listener.
 
+mod bounds;
+
 use super::{ProbeError, ProbeTransport, probe};
 use pretty_assertions::assert_eq;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -54,6 +56,28 @@ fn fake_mcp_stdio_server() {
         stdout.flush().expect("flush stdout");
     };
     match mode.as_str() {
+        "oversized-line" | "oversized-noise" | "oversized-tools" => {
+            let request = read_message().expect("initialize");
+            if mode == "oversized-tools" {
+                write_message(serde_json::json!({"id": request["id"], "result": {}}));
+                read_message().expect("initialized");
+                read_message().expect("tools/list");
+            }
+            let block = if mode == "oversized-noise" {
+                vec![b'\n'; 4096]
+            } else {
+                vec![b'x'; 4096]
+            };
+            for _ in 0..=super::protocol::MAX_RESPONSE_BYTES / block.len() {
+                if stdout
+                    .write_all(&block)
+                    .and_then(|_| stdout.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
         "exit" => std::process::exit(0),
         "hang" => {
             // Read forever without answering; the probe's hard timeout must kill this process.

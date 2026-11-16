@@ -9,6 +9,9 @@ use url::Url;
 /// Default hard timeout for one probe. Must stay well below a typical 30s session-setup budget.
 pub const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Maximum response bytes retained by HTTP or read across one stdio handshake.
+pub(super) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
 /// Protocol version advertised by this client during `initialize`.
 pub(super) const PROTOCOL_VERSION: &str = "2025-03-26";
 

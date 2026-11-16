@@ -107,6 +107,13 @@ Health never changes delivery: a failed probe does not fail setup, does not remo
 never produces a partial list. A healthy probe is not "in effect in the session": the agent still
 connects on its own, so the two can disagree either way.
 
+HTTP probes never follow redirects, including same-origin redirects and session DELETE, and ignore
+system proxy environment variables. Configure the final, directly reachable endpoint; endpoints
+requiring a proxy or redirect will fail. JSON and SSE response bodies are read incrementally up to
+1 MiB; stdio counts all received frames and noise against a 1 MiB handshake budget. Oversized input
+and redirects report only the stable handshake/tools failure code, never response text or Location.
+This transport policy also applies to Desktop probes.
+
 Presentation stays secret-free: the plugin card shows health beside install and configuration
 status with a re-detect action; a Session shows a non-blocking banner listing the `Unhealthy`
 members of its own effective set; `listMcpHealth` answers either view and `probeMcpHealth` re-runs a
