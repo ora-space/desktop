@@ -5,6 +5,7 @@ use pretty_assertions::assert_eq;
 mod admission;
 mod recovery;
 mod restore;
+mod stop;
 
 /// Supplies valid immutable input independently of the agent runtime.
 pub(super) fn command() -> StartAgentSessionMessage {

@@ -60,6 +60,9 @@ impl<G: WriteGuard> SessionJournal<G> {
                 })
             }
             Record::Ended(ended) => {
+                if crate::session_stop::pending(&tx, execution)? {
+                    return Err(Error::ResourceConflict);
+                }
                 let restore_phase = restore::phase(&tx, execution)?;
                 let has_attempts: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM restore_process_attempts WHERE execution=?1)",

@@ -353,11 +353,17 @@ fn git_command() -> AttemptCommand {
 
 /// Drops what v13 added, so a fixture of any earlier version matches its exact schema.
 fn remove_direct_git_schema(connection: &Connection) {
+    remove_session_stop_schema(connection);
     connection
         .execute_batch(
             "DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;",
         )
         .unwrap();
+}
+
+/// Reconstructs an exact pre-v14 schema; production has no downgrade path.
+fn remove_session_stop_schema(connection: &Connection) {
+    connection.execute_batch("DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary;").unwrap();
 }
 
 /// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.

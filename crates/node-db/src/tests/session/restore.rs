@@ -28,6 +28,7 @@ fn attempt(input: &StartAgentSessionMessage) -> ProcessAttempt {
 pub(super) fn reopen_after_v10_downgrade(
     path: &std::path::Path,
 ) -> Result<NodeDatabase, Box<dyn std::error::Error>> {
+    remove_session_stop_schema(&Connection::open(path)?);
     // v12 also changed the shared identity check and the terminal-event outbox, so both are rebuilt
     // to their exact v10 definitions (the schema check compares SQL text).
     let revision = include_str!("../../revision.sql");
@@ -137,8 +138,7 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     Ok(())
 }
 
-/// A restore command the retired host never settled cannot still be running once this program
-/// starts, so the upgrade confirms its stop and the session can reach its deferred end.
+/// Old Git recovery confirms its own stop; v14 independently retains the untracked old Agent.
 #[test]
 fn upgrade_confirms_the_stop_of_a_restore_attempt_the_host_left()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -166,6 +166,8 @@ fn upgrade_confirms_the_stop_of_a_restore_attempt_the_host_left()
         journal.pending_restore_attempts(&input.execution_id)?,
         vec![]
     );
+    assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    confirm_legacy_agent_after_reboot(&journal, &input.execution_id)?;
     journal.end_session(&input.execution_id, ended())?;
     assert_eq!(db.pending_events()?.len(), 1);
     Ok(())
@@ -314,7 +316,9 @@ fn upgrade_releases_inflight_restore_proven_after_events_were_acknowledged()
     let journal = db.session_journal()?;
     // The Agent started after v10's synchronous restore, so no restore responsibility remains.
     assert_eq!(journal.restore_phase(&input.execution_id)?, None);
-    // Startup recovery can end the session as interrupted, which releases both fences.
+    // Git proof cannot clear the independent legacy Agent responsibility introduced in v14.
+    assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    confirm_legacy_agent_after_reboot(&journal, &input.execution_id)?;
     journal.end_session(&input.execution_id, ended())?;
     assert!(db.unfinished_runtime_executions()?.is_empty());
     let scope = super::super::repository::runtime_scope(db.node_id());
@@ -326,5 +330,27 @@ fn upgrade_releases_inflight_restore_proven_after_events_were_acknowledged()
     permit.execution_id = replacement.execution_id.as_str().into();
     permit.node_operation_id = replacement.operation_id.as_str().into();
     db.accept_controlled_session(&replacement, &permit)?;
+    Ok(())
+}
+
+/// Models the stop owner supplying affirmative reboot proof, independently of old restore proof.
+fn confirm_legacy_agent_after_reboot(
+    journal: &SessionJournal,
+    execution: &ExecutionId,
+) -> Result<(), Error> {
+    for record in journal.session_stop_records(Some(execution))? {
+        assert_eq!(record.state, SessionStopState::LegacyUnknown);
+        journal.change_session_stop(
+            &record.identity.attempt,
+            SessionStopChange::Confirm {
+                at_ms: 1000,
+                proof: SessionStopProof::HostReboot,
+            },
+        )?;
+        journal.change_session_stop(
+            &record.identity.attempt,
+            SessionStopChange::ResourcesReleased,
+        )?;
+    }
     Ok(())
 }

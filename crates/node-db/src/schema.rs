@@ -10,6 +10,7 @@ pub(super) fn initialize(
     connection: &mut Connection,
     created: bool,
     identity: &NodeIdentity,
+    host: &crate::SessionStopHost,
 ) -> Result<NodeId, Error> {
     if created {
         let id = match identity {
@@ -41,7 +42,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=13) {
+    if app != APPLICATION_ID || !matches!(version, 1..=14) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -91,6 +92,9 @@ pub(super) fn initialize(
     if version >= 13 {
         expected.execute_batch(include_str!("direct_git.sql"))?;
     }
+    if version >= 14 {
+        expected.execute_batch(include_str!("session_stop.sql"))?;
+    }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
     }
@@ -111,6 +115,8 @@ pub(super) fn initialize(
     {
         return Err(Error::NodeMismatch);
     }
+    // Inspect the old schema before the first migration, including upgrades through older versions.
+    let legacy_sessions = crate::session_stop::legacy_running(connection, version)?;
     if version < 5 {
         let tx = connection.transaction()?;
         if version == 1 {
@@ -257,6 +263,9 @@ pub(super) fn initialize(
             /*pragma_value*/ 13,
         )?;
         tx.commit()?;
+    }
+    if version < 14 {
+        crate::session_stop::migrate(connection, legacy_sessions, &id, host)?;
     }
     Ok(id)
 }

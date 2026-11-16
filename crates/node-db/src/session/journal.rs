@@ -5,7 +5,11 @@ use std::path::PathBuf;
 impl<G: WriteGuard> SessionJournal<G> {
     /// A released actor with unknown stop evidence is not a sealed terminal session.
     pub fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Error> {
-        Ok(read(&self.lock()?.connection, execution)?
+        let db = self.lock()?;
+        if crate::session_stop::pending(&db.connection, execution)? {
+            return Ok(false);
+        }
+        Ok(read(&db.connection, execution)?
             .is_some_and(|record| matches!(record.state, ExecutionState::Completed(_))))
     }
 
