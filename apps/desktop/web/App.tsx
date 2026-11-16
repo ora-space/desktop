@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AppShell } from "@ora/app-shell";
+import { AppShell, appI18n, describeChatError } from "@ora/app-shell";
 import { createChatStore } from "@ora/chat";
 import { createContractsClient } from "@ora/contracts";
 import { createTauriTransport } from "./tauri-transport";
 import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
 const client = createContractsClient(createTauriTransport());
-const chatStore = createChatStore(client.session);
+// Contract failures reach the transcript as a translated sentence instead of the transport's
+// "Remote Ora request failed with <code>" diagnostic.
+const chatStore = createChatStore(client.session, {
+  describeError: (error) => describeChatError(error, appI18n.t),
+});
 const platform = createTauriPlatformAdapter();
 
 /** Fades out the html-embedded startup splash once the shell has mounted. */

@@ -421,21 +421,26 @@ pub(crate) fn resolve_project_cwd(
     absolute_project_root(PathBuf::from(path), relative_path_base)
 }
 
-/// Resolves a persisted main Workspace location against the runtime's stable path base.
+/// Anchors a persisted local Workspace location to the runtime's stable path base.
 ///
 /// Relative roots are stored against the directory from which `ORA_DATA_DIR` was
 /// created. Joining them to a live process cwd would miss those directories
 /// whenever the binary is started elsewhere — Desktop `tauri dev` starts in
 /// `src-tauri`.
+pub(crate) fn resolve_local_path(path: PathBuf, relative_path_base: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        relative_path_base.join(path)
+    }
+}
+
+/// Resolves a persisted main Workspace location and requires it to be a directory now.
 pub(crate) fn absolute_project_root(
     path: PathBuf,
     relative_path_base: &Path,
 ) -> Result<PathBuf, BackendError> {
-    let cwd = if path.is_absolute() {
-        path
-    } else {
-        relative_path_base.join(path)
-    };
+    let cwd = resolve_local_path(path, relative_path_base);
     if cwd.is_dir() {
         Ok(cwd)
     } else {

@@ -29,6 +29,7 @@ function mainWorkspaceFor(
     projectId,
     kind: "main",
     lifecycle: "active",
+    directory: { kind: "present" },
   };
   state.workspaces.push(workspace);
   return workspace;
@@ -95,6 +96,7 @@ export function workspaceHandlers(state: WorkspaceMemoryState) {
         projectId: task.projectId,
         kind: "isolated",
         lifecycle: "active",
+        directory: { kind: "present" },
       });
       state.tasks.push(task);
       return { task };

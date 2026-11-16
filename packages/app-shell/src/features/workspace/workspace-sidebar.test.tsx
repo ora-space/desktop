@@ -311,6 +311,23 @@ describe("WorkspaceSidebar", () => {
     expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
   });
 
+  it("marks a project whose main folder is missing before it is opened", async () => {
+    const state = workspaceWithOneSession();
+    state.workspaces.push({
+      id: `workspace-${PROJECT.id}`,
+      projectId: PROJECT.id,
+      kind: "main",
+      lifecycle: "active",
+      directory: { kind: "missing", path: "/gone/ora" },
+    });
+    renderSidebar(state);
+
+    const shell = await waitFor(() => treeRowShell(PROJECT.name));
+    expect(
+      await within(shell).findByLabelText(/目录不存在|Folder missing/),
+    ).toBeInTheDocument();
+  });
+
   it("opens worktree creation from the create menu", async () => {
     const user = userEvent.setup();
     renderSidebar(workspaceWithOneSession());

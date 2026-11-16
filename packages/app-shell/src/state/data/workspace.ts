@@ -168,6 +168,18 @@ export function cacheDeletedTask(
   return sessionIds;
 }
 
+/**
+ * Re-probes every workspace folder after a request was refused as `workspace_unavailable`.
+ *
+ * The list only probes when it is fetched, so a folder deleted while Ora stays focused is
+ * still reported present; a refusal is the earliest evidence that the cached probe is stale.
+ */
+export function refreshWorkspaceDirectories(
+  queryClient: QueryClient,
+): Promise<void> {
+  return queryClient.refetchQueries({ queryKey: workspaceKeys.workspaces });
+}
+
 /** Projects workspace ownership onto the sidebar tree; it does not change persistence. */
 export function findSessionPlacement(
   queryClient: QueryClient,

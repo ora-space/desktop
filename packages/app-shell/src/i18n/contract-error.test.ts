@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { activeLocale, appI18n, translationResources } from "./i18n-instance";
 import {
+  describeChatError,
   hasDiagnosticRequestId,
   localizeContractError,
 } from "./contract-error";
@@ -125,5 +126,29 @@ describe("diagnostic request IDs", () => {
         new LocalTransportError("tauri_invoke_failure", "failed"),
       ),
     ]).toEqual([true, false, true, false]);
+  });
+});
+
+describe("chat error descriptions", () => {
+  it("translates contract failures and keeps an agent's own wording", () => {
+    const refusal = new RemoteContractError(
+      {
+        code: "workspace_unavailable",
+        requestId: "00000000-0000-4000-8000-000000000004",
+        params: {},
+      },
+      {},
+    );
+
+    expect([
+      describeChatError(refusal, appI18n.t),
+      describeChatError(new Error("model quota exceeded"), appI18n.t),
+    ]).toEqual([
+      appI18n.t("errors.workspace_unavailable"),
+      "model quota exceeded",
+    ]);
+    expect(describeChatError(refusal, appI18n.t)).not.toContain(
+      "Remote Ora request failed",
+    );
   });
 });

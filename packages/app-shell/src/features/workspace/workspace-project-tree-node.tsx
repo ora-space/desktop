@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   IconFolder,
   IconFolderOpen,
+  IconFolderX,
   IconGitBranch,
   IconTrash,
 } from "@tabler/icons-react";
@@ -35,6 +36,8 @@ const EMPTY_DRAFTS: DraftPlacement[] = [];
 interface ProjectTreeNodeProps {
   project: Project;
   mainWorkspaceId: string | null;
+  /** The main folder was not found on the last workspace probe. */
+  directoryMissing: boolean;
   tasks: readonly Task[];
   sessionsByWorkspaceId: ReadonlyMap<string, readonly Session[]>;
   directSessions: readonly Session[];
@@ -58,6 +61,7 @@ function projectTreeNodePropsEqual(
 ): boolean {
   if (prev.project !== next.project) return false;
   if (prev.mainWorkspaceId !== next.mainWorkspaceId) return false;
+  if (prev.directoryMissing !== next.directoryMissing) return false;
   if (prev.tasks !== next.tasks) return false;
   if (prev.forceExpanded !== next.forceExpanded) return false;
   if (prev.searchNeedle !== next.searchNeedle) return false;
@@ -87,6 +91,7 @@ function projectTreeNodePropsEqual(
 export const ProjectTreeNode = memo(function ProjectTreeNode({
   project,
   mainWorkspaceId,
+  directoryMissing,
   tasks,
   sessionsByWorkspaceId,
   directSessions,
@@ -155,13 +160,21 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
         containsSelection={!projectOpen && projectContainsSelection}
         createFocused={projectCreateFocused}
         icon={
-          projectOpen ? (
+          directoryMissing ? (
+            <IconFolderX
+              className="size-[18px] text-amber-600 dark:text-amber-400"
+              aria-label={t("sidebar.projectDirectoryMissing")}
+            />
+          ) : projectOpen ? (
             <IconFolderOpen className="size-[18px] text-muted-foreground" />
           ) : (
             <IconFolder className="size-[18px] text-muted-foreground" />
           )
         }
         label={project.name}
+        meta={
+          directoryMissing ? t("sidebar.projectDirectoryMissing") : undefined
+        }
         expanded={projectOpen}
         onClick={() => {
           useWorkspaceSelectionStore

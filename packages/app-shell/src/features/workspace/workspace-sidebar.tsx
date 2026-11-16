@@ -33,6 +33,7 @@ import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
+import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
 import { useWorkflowRunListsByProjects } from "../../state/data/workflow-runs";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { usePersistHydrated } from "../../state/hooks/use-persist-hydrated";
@@ -230,6 +231,21 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
         workspaces
           .filter((workspace) => workspace.kind === "main")
           .map((workspace) => [workspace.projectId, workspace.id]),
+      ),
+    [workspaces],
+  );
+  // Project rows mark a deleted main folder up front, before the user opens it and finds
+  // agents that list no models.
+  const missingDirectoryProjectIds = useMemo(
+    () =>
+      new Set(
+        workspaces
+          .filter(
+            (workspace) =>
+              workspace.kind === "main" &&
+              missingWorkspaceDirectory(workspace) !== null,
+          )
+          .map((workspace) => workspace.projectId),
       ),
     [workspaces],
   );
@@ -591,6 +607,7 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
                   mainWorkspaceId={
                     mainWorkspaceByProjectId.get(project.id) ?? null
                   }
+                  directoryMissing={missingDirectoryProjectIds.has(project.id)}
                   tasks={tasksByProjectId.get(project.id) ?? EMPTY_TASKS}
                   sessionsByWorkspaceId={sessionsByWorkspaceId}
                   directSessions={

@@ -2379,3 +2379,44 @@ test("does not re-attach for a failure that is not a stopped session", async () 
   assert.equal(loads, 1);
   assert.equal(prompts, 1);
 });
+
+test("describes a failed prompt through the host's error describer", async () => {
+  const refusal = new RemoteContractError(
+    {
+      code: "workspace_unavailable",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000004",
+    },
+    null,
+  );
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+    prompt: () => {
+      throw refusal;
+    },
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const described: unknown[] = [];
+  const store = createChatStore(client, {
+    createId: () => "local-1",
+    now: () => 42,
+    // The host translates contract codes; the store must show its sentence, not the
+    // transport's "Remote Ora request failed with <code>" diagnostic.
+    describeError: (error) => {
+      described.push(error);
+      return "The project folder can't be accessed.";
+    },
+  });
+
+  await store.getState().loadSession("ora-1");
+  // The rejection still reaches the caller so the composer can restore unsent text.
+  await assert.rejects(
+    store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" }),
+    refusal,
+  );
+
+  assert.deepEqual(described, [refusal]);
+  const conversation = store.getState().conversations["ora-1"]!;
+  assert.equal(conversation.error, "The project folder can't be accessed.");
+});
