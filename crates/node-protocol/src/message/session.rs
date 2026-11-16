@@ -19,6 +19,8 @@ pub enum NodeCapability {
     AgentSession,
     /// Explicit, exact-version MCP bindings carried in a session start.
     SessionMcp,
+    /// Several independent Agent sessions may share one checkout, subject to restore fencing.
+    SharedCheckoutSessions,
     /// Scoped model access through the platform gateway; no direct upstream credentials.
     ModelProxy,
     /// `DeliverRevision` over Git and the history upload grant exchange; declared only with a
