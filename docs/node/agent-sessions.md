@@ -27,6 +27,78 @@ With `agent.ora_git_directory`, `git_access` and a `process.workload_uid` differ
 effective UID, each session also gets its own
 [ora-git](ora-git.md) socket, exported as `ORA_GIT_SOCKET`.
 
+## Checkout admission
+
+With Agents enabled the handshake also advertises `shared_checkout_sessions`. One checkout may host
+up to `MAX_SESSIONS_PER_CHECKOUT = 8` unfinished sessions. Each has its own plugin process, history,
+commands and terminal result; ending one does not stop its siblings. Completed sessions release their
+slots, and different checkouts count independently.
+
+Restore safety still requires exclusivity. A start is refused with `checkout_busy` when the checkout
+has a `legacy_unknown` restore or any uncleaned restore attempt, when the new session has a
+`prior_revision` while any sibling is unfinished, or while an unfinished sibling's own restore has
+not yet reached `agent_admitted` (so `pending`, `git_admitted` and `restored` all wait: the
+restoring session still prepares the checkout before its Agent is admitted). An `agent_admitted`
+sibling may share with ordinary sessions, but still excludes another restore. `checkout_busy` is
+decided before the count; at the limit the code is `checkout_session_limit`.
+
+These refusals retain the new execution and atomically record sequence 1 as
+`AgentSessionEnded{reason: agent_failed, detail}` before returning its Completed status. No actor,
+plugin or restore starts, and no session history exists, so a refused execution is not
+deliverable: `deliver_revision` for it fails as `session_not_settled` instead of snapshotting the
+shared checkout. The control connection stays open and every sibling continues to accept
+commands. Refusal happens on bare starts only: a controlled start never reaches checkout
+classification, because the runtime singleton refuses any unfinished execution first with
+`resource_conflict` and the connection close it always had; that singleton is separate from
+checkout admission.
+
+## Handing a shared checkout to the workload user
+
+With `process.workload_uid` set, every session start hands its checkout to the workload user
+itself, before its own Agent starts; no start relies on a sibling having done it, because
+admission order says nothing about whether that sibling's walk finished, or ran at all. Live
+sibling Agents change the tree as the workload user while the walk runs, so the walk resolves
+every name exactly once: it pins each entry with `openat(O_PATH | O_NOFOLLOW)` relative to the
+descriptor of the directory that listed it, and from then on inspects (`fstat`), re-owns
+(`fchownat(AT_EMPTY_PATH)`) and, for a directory, lists that pinned inode only through its
+descriptor. A link is re-owned as the link itself and never followed, and a name a sibling swaps
+after it was pinned — for a link or another directory — changes nothing the walk does.
+An entry that disappears before it is pinned (`.git/index.lock`, build output) is skipped; the
+checkout root itself must exist, and an entry the walk may not open, list or re-own still fails the
+start. A tree that is already right costs only a walk. Delivery preparation uses the same walk for
+its own re-own step, and start and delivery walks share one Node-wide bound (below).
+
+- **Depth.** The walk holds one descriptor per directory level, so it refuses a checkout nested
+  more than 4096 directories deep before opening the next level: the start ends
+  `agent_failed{checkout_too_deep}`, and a delivery from that checkout fails `checkout_too_deep`.
+  One walk then holds at most 4099 descriptors.
+- **`fs.protected_hardlinks` is the hard-link guarantee.** A walk sees inodes, not where else
+  they are named, so nothing in it can keep a hard-linked foreign file from being re-owned: an
+  Agent that links an outside file into the checkout and removes that link right after the walk
+  pinned it leaves a link count of one, and the outside inode is re-owned. What prevents this is
+  the host refusing the link itself. With `process.workload_uid` set the Node refuses to start
+  unless `/proc/sys/fs/protected_hardlinks` reads `1`, and reads it again before every start and
+  delivery walk. A host changed to any other value afterwards refuses that start
+  (`agent_failed{agent_start_failed}`) or delivery (`failed{snapshot_failed}`), with a log naming
+  the sysctl. Under the protection a workload Agent may only link files it owns, or regular files
+  it may already read and write, so root-owned files (an installed agent package, Node state) can
+  never enter a checkout. The sysctl is not namespaced: a container sees the host's value, and the
+  kernel default is 0.
+- **Hard links that stay in place.** As defence in depth, a file with more than one link that does
+  not already belong to the workload user keeps its owner, since its other name may lie outside
+  the checkout. This only stops links that stay in place (see above). A checkout file legitimately
+  hard-linked to another one inside it (Git creates none in a worktree, and the objects a local
+  clone hard-links already belong to the workload user that cloned them) therefore stays with its
+  old owner and whatever access its mode grants, until only one name is left.
+- **Descriptor limit.** Descriptors are process-wide, and every checkout the workload user can
+  write may be made deep. The Node therefore runs at most 9 walks at once across all checkouts —
+  the eight start walks one checkout can have plus the one delivery it prepares at a time; a
+  further start or delivery waits for a permit, which costs latency only on deep trees. With a
+  baseline of about 1,024 descriptors for the Node itself (control connections, SQLite, plugin
+  pipes, `ora-git` sockets), walks need at most 9 × 4,099 + 1,024 ≈ 38,000 however many
+  checkouts are deep. Give a separate-UID Node a soft `RLIMIT_NOFILE` of at least 38,000 (65,536
+  recommended).
+
 ## One runtime per execution
 
 Each session execution composes its own plugin lifecycle and agent runtime. Plugins are installed
@@ -71,7 +143,8 @@ workload UID (group equal to it, no supplementary groups, no capabilities, `no_n
 - `home/`: `0700`, owned by the workload user. `HOME`, the XDG directories, `DENO_DIR` and
   `DENO_NO_UPDATE_CHECK=1` point there for the plugin and host-spawned processes alike.
 
-Before launch the checkout is handed to the workload user without following links. The session
+Before launch the checkout is handed to the workload user without following links (a checkout
+nested deeper than 4096 directories ends `agent_failed{checkout_too_deep}`). The session
 directory is removed once the plugin stopped, and leftovers are removed when the service opens.
 
 ## How an execution runs
@@ -120,7 +193,8 @@ used tools states no verdict, and its artifacts are still declared.
   final one. Node never parses a Thread on Cloud's behalf; it reports the typed value
   (`scheduled_result`) and Cloud verifies it.
 - Artifacts are read from the fixed `.ora-scheduled-artifacts/` directory of the checkout before the
-  Workspace can be released. Collection is read-only and applies the closed type whitelist
+  Workspace can be released. On a shared checkout this read can include sibling sessions' writes;
+  the manifest is not a per-session isolated diff. Collection is read-only and applies the closed type whitelist
   (markdown, json, txt, log, xml, html), the same path, symbolic-link and hard-link refusals as local
   scheduled runs, and the per-file 10 MiB, per-run 64-artifact and 64 MiB total bounds. A name is
   identified after NFC normalization and Unicode case folding, so two spellings one case-insensitive

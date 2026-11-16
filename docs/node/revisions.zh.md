@@ -33,9 +33,16 @@ Git 环境运行 Git，并以 git-access 身份推送；当且仅当它同时声
 准备只做一次：
 
 1. 会话必须已有终态结果且没有存活的 actor（`failed{session_not_settled}`），它的 checkout 必须仍在交付的基础提交上
-   （`failed{checkout_unavailable}`），它的 JSONL 必须存在（`failed{history_unavailable}`）。
+   （`failed{checkout_unavailable}`），它的 JSONL 必须存在（`failed{history_unavailable}`）。在 checkout 准入被拒绝的会话
+   （`agent_failed{checkout_busy}` 或 `agent_failed{checkout_session_limit}`）从未运行、没有历史，对它的交付同样以
+   `session_not_settled` 失败——共享 checkout 绝不会被快照成该会话自己的成果。
 2. 定稿的 JSONL 复制到 `<home>/revision-deliveries/<sha256(execution)>/history.jsonl`。
+   设置了 `process.workload_uid` 时，随后像会话启动时一样把 checkout 交给工作负载用户
+   （[方式](agent-sessions.zh.md#把共享-checkout-交给工作负载用户)）；目录嵌套超过 4096 层的 checkout 以
+   `checkout_too_deep` 失败，在 Cloud 契约有自己的原因之前，Controller 向 Cloud 报告为
+   `REVISION_FAILURE_REASON_SNAPSHOT_FAILED`。
 3. 以工作负载用户身份，在 checkout 的 Git 目录中用临时 index 给工作区做快照（`read-tree HEAD`、`add -A`、`write-tree`）。
+   共享 checkout 上仍有兄弟会话存活时，它们的写入和 HEAD 变化也会被这次快照看到；交付不是按单个会话隔离的 diff。
    如果树等于 `HEAD^{tree}`，最终提交就是 `HEAD`；否则 `commit-tree` 追加一个提交，作者是会话的 Git 身份，提交者是
    `Ora <revision@ora.invalid>`。hook、fsmonitor 和签名都被禁用，真正的 index、工作区文件和分支都不受影响。
    `update-ref` 让本地 Revision ref 指向最终提交。所有运行（手工或定时）在暂存时都排除 `.ora-scheduled-artifacts/`：
