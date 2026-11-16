@@ -163,6 +163,8 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
+# Safe fd-relative syscalls (openat/fstatat/fchownat) for walks that must never re-resolve a path.
+rustix = { version = "1.1.4", default-features = false, features = ["std", "fs"] }
 semver = "1"
 quick-xml = "0.41"
 sha2 = "0.10"

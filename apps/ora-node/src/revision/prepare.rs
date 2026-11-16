@@ -87,7 +87,7 @@ fn freeze<R: GitRunner>(
         && let Some(owner) = job.owner
     {
         ora_utils::fs::own_tree_no_follow(&job.checkout, owner, owner)
-            .map_err(|error| local(error, RevisionFailureCode::SnapshotFailed))?;
+            .map_err(|error| local(error.into(), RevisionFailureCode::SnapshotFailed))?;
     }
     let request = SnapshotRequest {
         checkout: &job.checkout,
