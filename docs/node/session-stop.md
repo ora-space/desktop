@@ -1,5 +1,7 @@
 # Agent stop ownership
 
+[中文版](session-stop.zh.md)
+
 Agent launches have separate synced attempt locks under `session-attempts`. The plugin and every
 host-spawned child inherit the attempt descriptor. Synced PID/start-time/boot clues also protect
 against a child closing inherited descriptors. Shutdown closes spawn admission before waiting.
@@ -32,3 +34,21 @@ device. Startup checks hard-link support; view creation rejects cross-device cop
 version leases allow another validated MCP version to coexist, but protect leased bytes from
 repair or removal. Other plugin kinds retain ID-wide exclusion. Kind changes cannot bypass live
 or restart-retained leases.
+
+Lifecycle sessions retain their provider session ID and last active MCP revision after failed
+loads or detach. They never rebuild a provider session or replay a transcript to recover an MCP
+failure. The next turn can retry once per generation; there is no periodic refresh retry.
+An MCP package-version change, or the ninth runtime load after the initial setup, replaces only
+this execution's Agent process. The latest target is prepared before replacement; affirmative
+stop proof precedes a new attempt. HOME, checkout, model grant and ora-git context remain attached
+to the execution. New targets coalesce while cleanup is pending.
+
+Host health is independent of ACP convergence. Resolution queues one automatic probe; manual
+attempt numbers coalesce per member. The Node schedules sessions round-robin with eight global
+slots and at most two per session, including retained and recovered cleanup. A permit starts a
+ten-second budget: up to eight seconds for initialize/tools-list and the remainder for cleanup.
+Stdio uses the session's exact package view, checkout and workload identity with an empty inherited
+environment. HTTP uses the Node identity with proxies and redirects disabled. Healthy requires both
+the handshake and confirmed cleanup. Old generation results cannot update current health; unknown
+cleanup keeps its permit, lease and durable stop responsibility. No automatic failure retry or TTL
+turns an observation into readiness.

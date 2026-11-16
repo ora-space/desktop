@@ -81,7 +81,7 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
 |---|---|
 | `SessionStore` | `MemorySessionStore`：Node 重启后从不恢复会话 |
 | `AgentAttach` | 该执行自己的单插件生命周期；没有 Effect 消费者（Node 不投射 Skill） |
-| `SessionSetup` | `NoSessionMcp`：MCP 配置在 Node 上没有投递路径 |
+| `SessionSetup` | `NodeSessionMcp`：显式版本绑定与可选的代际更新；见[生命周期](session-stop.zh.md) |
 | `RuntimeEvents` | 每一行历史都变成 Thread 事件；标题和模型目录事件被丢弃 |
 | `WorkspaceDirectory` | checkout |
 

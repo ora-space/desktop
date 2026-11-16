@@ -118,9 +118,10 @@ boxed to keep `ExecutionState` small.
 
 ## Session MCP lifecycle contract types
 
-The crate also exports `SessionMcpMessage<P>` and the `UpdateSessionMcp`, `GetSessionMcpState`,
-`ProbeSessionMcp` and `SessionMcpReply` payloads. These are standalone contract types, not variants
-of the active frame enums; their presence does not advertise or enable `session_mcp_lifecycle`.
+The active frame enums include `UpdateSessionMcp`, `GetSessionMcpState`, `ProbeSessionMcp` and
+`SessionMcpReply`, using `SessionMcpMessage<P>` envelopes. A start opts in with
+`mcp_lifecycle: true`; the default remains false. The Node advertises `session_mcp_lifecycle`
+when Agent sessions are enabled.
 They carry operation/execution correlation and a request id of at most 128 UTF-8 bytes, with no
 event sequence or acknowledgement. Direct serde conversion must be followed by `ValidateMessage`.
 
@@ -135,6 +136,20 @@ Capacity refusals also omit snapshots. A configuration-revision conflict reports
 reply itself, independently of the current desired state's convergence failure.
 Authorization, immutable selection membership, update ordering and persistence exclusion belong to
 the receiving session owner, not these shape validators.
+
+The authenticated owner publishes the complete new desired generation before replying Accepted.
+The immutable selection cannot grow or shrink. Lower generations are stale; identical retransmits
+are duplicates; conflicting values at a retained configuration revision are refused. Updates and
+health observations stay in memory. A connection may retain 64 unanswered lifecycle requests;
+excess requests receive `capacity_exceeded` without resolving packages or retaining their values.
+
+New lifecycle `SubmitUserTurn` commands must carry `mcp_generation`. A missing or future floor
+receives `mcp_update_required` without entering the durable queue. Exact duplicate comparison comes
+first. Actual prompt admission waits for the latest generation and commits Executed inside the
+same boundary as target updates. A turn blocked on MCP for 300 seconds produces the reliable,
+sequenced `SessionTurnFailed` event with `mcp_refresh_wait_timeout`; queued command failure and
+its outbox event commit atomically. The session stays open, and EndSession takes priority.
+See [Session lifecycle and host probes](session-stop.md).
 
 ## Identities, status and acknowledgement
 
