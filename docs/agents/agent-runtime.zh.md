@@ -6,6 +6,10 @@
 
 ## Agent 来自插件
 
+有持久化命令队列的宿主可使用 `prompt_session_with_admission`。会话 Actor 先检查 provider 附着和 MCP
+就绪状态，再调用宿主的短同步提交，随后才记录或发送 prompt。提交失败时拒绝该轮而不执行。
+现有 prompt API 不带提交回调，保持原行为。
+
 每个 Agent 都由一个已安装的 `agent` 类型插件提供；Ora 不内置任何 Agent，用户安装提供 Agent 的包之前一个都没有（每个包一个 Agent）。插件完整拥有它的 Agent 进程：决定运行哪个 CLI，并通过 `agent/acp` 通知通道把 ACP 帧转给宿主。见 [`plugin_agent/README.md`](../../crates/agent-runtime/src/plugin_agent/README.md) 和[插件系统](../plugins/plugin-system.zh.md)。
 
 - **身份**：会话保存一个 `AgentRef`，即提供它的包的完整规范插件 id（`official/ora-space.claude`）。命名空间是身份的一部分，因为两个 marketplace 源可能发布相同的 identifier。没有 supervisor 认识的身份表示"当前未安装"，报告为 `agent_runtime_unavailable`。以更早、更短写法保存的值按原样携带，在用户重新选择 Agent 之前不匹配任何 Agent；没有任何东西会改写它们。

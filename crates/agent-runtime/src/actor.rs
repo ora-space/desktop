@@ -117,6 +117,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     operation_id,
                     prompt,
                     record_prompt,
+                    commit_admission,
                     inactivity_policy,
                     model,
                     end_report,
@@ -127,7 +128,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     // acquired. Admission waits on that: a prompt that cannot reach an agent, or
                     // that cannot be given the MCP set configured right now, has to fail as the
                     // send it was, not as a turn that started and produced nothing.
-                    match self.ensure_attached(model.as_deref()).await {
+                    match self
+                        .ensure_attached(model.as_deref())
+                        .await
+                        .and_then(|setup| {
+                            if let Some(commit) = commit_admission {
+                                commit()?;
+                            }
+                            Ok(setup)
+                        }) {
                         Ok(setup) => {
                             let _ = accepted.send(Ok(()));
                             if publish_setup(&events, setup) {

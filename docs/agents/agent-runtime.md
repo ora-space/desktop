@@ -11,6 +11,11 @@ MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 
 ## Runtime observations
 
+Hosts with durable command queues can use `prompt_session_with_admission`. The session actor first
+checks provider attachment and MCP readiness, then invokes the host's short synchronous commit before
+recording or sending the prompt. A failed commit rejects the turn without executing it. Existing
+prompt APIs have no commit callback and retain their behavior.
+
 Workspace and workflow conversation views expose read-only run details: the latest live content,
 tool or plan observation and its client receipt time, known pending permission requests, active
 tools, and recognized provider retry/compaction reports. Missing reports remain unknown. Reloaded
