@@ -53,6 +53,8 @@ struct PromptAttempt {
     skip_record: bool,
     /// Only the attempt after a load may rebuild; the retry attempt may not recurse again.
     allow_retry: bool,
+    /// Followers collected so far; the retry continues the same logical turn.
+    followers: Option<SessionFollowers>,
 }
 
 impl PromptAttempt {
@@ -61,6 +63,7 @@ impl PromptAttempt {
             blocks: None,
             skip_record: false,
             allow_retry: true,
+            followers: None,
         }
     }
 }
@@ -229,7 +232,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         let mut permissions = HashMap::new();
-        let mut followers = SessionFollowers::new();
+        let mut followers = attempt
+            .followers
+            .take()
+            .unwrap_or_else(SessionFollowers::new);
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         #[cfg(feature = "test-support")]
@@ -408,7 +414,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
                                 );
-                                followers.finish(StopReason::Cancelled);
                                 let model = current_model(&self.reported_config_options);
                                 self.isolate_channel(channel).await;
                                 match self.rebuild_provider_session(model.as_deref()).await {
@@ -420,6 +425,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                                 StopReason::Cancelled,
                                                 &tool_timings,
                                             );
+                                            followers.finish(StopReason::Cancelled);
                                             return;
                                         }
                                         return Box::pin(self.run_prompt_attempt(
@@ -433,6 +439,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                                 blocks: retry_blocks,
                                                 skip_record: true,
                                                 allow_retry: false,
+                                                followers: Some(followers),
                                             },
                                         ))
                                         .await;
@@ -751,11 +758,6 @@ mod tests {
     #[test]
     fn an_empty_provider_report_has_no_rebuild_model() {
         pretty_assertions::assert_eq!(current_model(&[]), None);
-    }
-
-    #[test]
-    fn an_empty_provider_report_has_no_rebuild_model() {
-        assert_eq!(current_model(&[]), None);
     }
 
     #[test]
