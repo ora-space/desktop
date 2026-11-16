@@ -4,6 +4,7 @@ use super::connection::AgentAcpClient;
 use super::routing::{SessionChannel, SessionEvent};
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
+use crate::actor::actor_prompt::produced_output;
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_contracts::PromptSessionEvent;
 use tokio::sync::mpsc;
@@ -57,6 +58,7 @@ pub(super) async fn settle_cancelled_prompt<Response, H: AgentRuntimeHost>(
     client: &AgentAcpClient,
     pending: ora_acp::PendingSessionRequest<Response>,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    saw_output: &mut bool,
 ) -> Option<Result<Response, ora_acp::AcpError>>
 where
     Response: serde::de::DeserializeOwned,
@@ -64,6 +66,7 @@ where
     loop {
         match channel.events.recv().await {
             Some(SessionEvent::Update(update)) => {
+                *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
@@ -97,6 +100,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
     channel: &mut SessionChannel,
     client: &AgentAcpClient,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    saw_output: &mut bool,
 ) {
     // Only drain the snapshot that was accepted before isolation was requested. Events
     // arriving after this point belong to the abandoned provider request.
@@ -107,6 +111,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
         };
         match event {
             SessionEvent::Update(update) => {
+                *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);

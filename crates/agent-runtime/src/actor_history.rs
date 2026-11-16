@@ -12,6 +12,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     pub(super) fn end_timed_turn(&mut self, stop_reason: StopReason, timings: &ToolTimings) {
         self.recorder.finish_tool_timings(timings.finish_all());
         self.end_turn(stop_reason);
+        // Any terminal prompt consumes the restored channel's one automatic-retry eligibility,
+        // including a user cancellation the agent confirmed.
+        self.load_restoration = Default::default();
     }
 
     /// Streams Ora's recorded conversation to a client that loaded it.
