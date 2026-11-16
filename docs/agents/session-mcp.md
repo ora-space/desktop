@@ -52,6 +52,11 @@ meanwhile stays pending. Failure blocks only that Session, and the next prompt r
 using old configuration. Stopped Sessions do not refresh in the background. Changes to plugins
 outside an explicit selection do not change that Session's revision.
 
+The shared revision also carries an explicit host generation. Existing hosts construct generation
+zero; a host using ordered updates supplies the generation before resolving/sending. Even when the
+member identities are unchanged, a newer generation requires its own successful convergence. An old
+response cannot make that newer target current. The generation contains no Settings digest.
+
 MCP refresh, Skill Effect mutation and agent replacement share one Agent Session Barrier so new
 prompts wait for a safe point. They share no Effect state.
 

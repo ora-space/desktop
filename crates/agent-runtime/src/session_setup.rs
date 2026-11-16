@@ -5,6 +5,8 @@
 //! shared; Desktop catalog discovery, Setting storage and health probes remain host responsibilities.
 
 mod barrier;
+#[cfg(test)]
+mod generation_tests;
 mod live;
 
 pub use barrier::{AgentSessionBarrier, AgentSessionBarriers, BarrierGuard, BarrierReason};
@@ -63,13 +65,28 @@ impl SessionMcpTransportKind {
 /// values, ACP env, or HTTP headers.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SessionMcpRevision {
+    generation: u64,
     members: Vec<SessionMcpMemberRevision>,
 }
 
 impl SessionMcpRevision {
-    /// Builds a revision from members already ordered by canonical Plugin ID.
+    /// Builds a revision for hosts without ordered updates, including existing Desktop sessions.
     pub fn new(members: Vec<SessionMcpMemberRevision>) -> Self {
-        Self { members }
+        Self::for_generation(/*generation*/ 0, members)
+    }
+
+    /// Binds a complete ordered input to its host-assigned generation before resolving or sending.
+    /// Identical members in a later generation still require their own convergence attempt.
+    pub fn for_generation(generation: u64, members: Vec<SessionMcpMemberRevision>) -> Self {
+        Self {
+            generation,
+            members,
+        }
+    }
+
+    /// The explicit host order, never a digest of configuration values.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Members in canonical Plugin ID order.

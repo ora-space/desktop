@@ -28,6 +28,10 @@ server 名称是规范插件 id（`<namespace>/<identifier>`），按 id 排序�
 
 MCP 刷新、Skill Effect 变更和 Agent 替换共用一个 Agent Session Barrier，让新 prompt 等到安全点。它们不共享任何 Effect 状态。
 
+共享 revision 还包含宿主显式分配的 generation。现有宿主构造 generation 0；采用有序更新的宿主在解析/发送前
+指定 generation。即便成员身份相同，新 generation 仍须独立收敛成功；旧响应不能让新目标变为 current。
+generation 不含 Settings 摘要。
+
 ## 机密与文件
 
 设置值可以存在于配置存储、短暂的内存快照和发给 Agent 的 ACP 帧中。它们从不进入 Effect 状态、SQLite、Workspace 文件、日志、错误、UI DTO、revision 摘要或 Agent 环境变量。错误只给出插件 id、设置 id、传输方式和稳定的 code。
