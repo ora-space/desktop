@@ -1,4 +1,10 @@
 mod agent_session;
+mod session_mcp_lifecycle;
+pub use session_mcp_lifecycle::{
+    GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
+    SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult, UpdateSessionMcp,
+    UpdateSessionMcpMessage,
+};
 mod execution;
 mod plugin;
 mod repository;

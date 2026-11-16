@@ -116,6 +116,26 @@ fact). See [Runtime control](../controller/runtime-control.md).
 Result families use disjoint `kind` tags inside the untagged `ExecutionResult`; the Revision family is
 boxed to keep `ExecutionState` small.
 
+## Session MCP lifecycle contract types
+
+The crate also exports `SessionMcpMessage<P>` and the `UpdateSessionMcp`, `GetSessionMcpState`,
+`ProbeSessionMcp` and `SessionMcpReply` payloads. These are standalone contract types, not variants
+of the active frame enums; their presence does not advertise or enable `session_mcp_lifecycle`.
+They carry operation/execution correlation and a request id of at most 128 UTF-8 bytes, with no
+event sequence or acknowledgement. Direct serde conversion must be followed by `ValidateMessage`.
+
+Updates distinguish configured members (exact version, configuration revision and scalar Settings)
+from unavailable members (id and a closed missing-plugin/settings code). The same canonical sorted
+16-member and 64 KiB limits apply. Generations and revisions cannot exceed `2^53 - 1`; new updates
+start at 1, while a manual probe can name startup generation 0 but requires a nonzero probe attempt.
+Input Debug redacts values. Snapshot identity types cannot represent Settings, commands or headers;
+health and convergence use separate closed error vocabularies. A current snapshot must have exactly
+matching desired/active identities, and missing/disabled/ended-session replies cannot carry snapshots.
+Capacity refusals also omit snapshots. A configuration-revision conflict reports its code on the
+reply itself, independently of the current desired state's convergence failure.
+Authorization, immutable selection membership, update ordering and persistence exclusion belong to
+the receiving session owner, not these shape validators.
+
 ## Identities, status and acknowledgement
 
 Identities serialize as opaque strings; the codec rejects empty or whitespace-only values and preserves

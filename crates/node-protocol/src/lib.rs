@@ -8,6 +8,17 @@ mod domain;
 mod frame;
 mod identity;
 mod message;
+pub use domain::{
+    MAX_SESSION_MCP_COUNTER, SessionMcpConvergence, SessionMcpErrorCode, SessionMcpFailure,
+    SessionMcpHealth, SessionMcpMemberIdentity, SessionMcpMemberState, SessionMcpProbeErrorCode,
+    SessionMcpRevisionIdentity, SessionMcpState, SessionMcpUnavailable, SessionMcpUnknownReason,
+    SessionMcpUpdateMember,
+};
+pub use message::{
+    GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
+    SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult, UpdateSessionMcp,
+    UpdateSessionMcpMessage,
+};
 pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 
 pub use domain::{
