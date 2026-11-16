@@ -80,6 +80,8 @@ pub(crate) struct Shared<L, C, P: PluginCatalog, R> {
     failed: std::sync::atomic::AtomicBool,
     previews: preview::PreviewBuffer,
     retained: Mutex<HashMap<ExecutionId, stop::Retained<P::Lease>>>,
+    controls: Mutex<HashMap<ExecutionId, mcp::control::Control>>,
+    probes: mcp::probes::Scheduler,
 }
 
 impl<L, C, P: PluginCatalog, R> Shared<L, C, P, R> {
@@ -103,6 +105,10 @@ impl<L, C, P: PluginCatalog, R> Shared<L, C, P, R> {
             retained.leases.clear();
         }
         resources.remove(execution);
+        self.controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(execution);
         Ok(())
     }
     /// Session histories live beside the plugin root in the Node data directory.
@@ -159,6 +165,23 @@ where
         catalog: P,
         restorer: R,
     ) -> Self {
+        let probes = mcp::probes::Scheduler::default();
+        let recovered = ledger
+            .session_stop_records(None)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| {
+                        matches!(
+                            record.identity.kind,
+                            ora_node_db::SessionStopKind::StdioProbe
+                                | ora_node_db::SessionStopKind::HttpProbe
+                        ) && !record.resources_released
+                    })
+                    .count()
+            })
+            .unwrap_or(8);
+        probes.retain_recovered(recovered);
         Self {
             shared: Arc::new(Shared {
                 config,
@@ -174,8 +197,35 @@ where
                 failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
                 previews: preview::PreviewBuffer::default(),
                 retained: Mutex::new(HashMap::new()),
+                controls: Mutex::new(HashMap::new()),
+                probes,
             }),
         }
+    }
+
+    /// Prior-incarnation probes stop consuming permits only after recovery proves them stopped.
+    pub(crate) fn refresh_probe_capacity(&self) {
+        let count = self
+            .shared
+            .ledger
+            .session_stop_records(None)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| {
+                        record.identity.node != self.shared.node
+                            && matches!(
+                                record.identity.kind,
+                                ora_node_db::SessionStopKind::StdioProbe
+                                    | ora_node_db::SessionStopKind::HttpProbe
+                            )
+                            && !record.resources_released
+                    })
+                    .count()
+            })
+            .unwrap_or(8);
+        self.shared.probes.retain_recovered(count);
+        self.shared.probes.dispatch();
     }
 }
 
@@ -184,6 +234,19 @@ where
 const ADAPTER_TARGETS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
 
 impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
+    /// Capacity is anonymous even when another execution is retaining cleanup responsibility.
+    pub(crate) fn probe_capacity_available(&self) -> bool {
+        self.shared.probes.available()
+    }
+    /// The service must authorize execution and control scope before taking this memory handle.
+    pub(crate) fn mcp_control(&self, execution: &ExecutionId) -> Option<mcp::control::Control> {
+        self.shared
+            .controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+            .cloned()
+    }
     /// Reconciliation releases resources retained by an actor after its stop deadline expired.
     pub(crate) fn release_stop_resources(&self, execution: &ExecutionId) -> std::io::Result<()> {
         self.shared.release_resources(execution)?;
@@ -284,6 +347,13 @@ where
                 return;
             }
             live.insert(execution.clone(), Arc::clone(&wake));
+            if spec.mcp_lifecycle {
+                self.shared
+                    .controls
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(execution.clone(), mcp::control::Control::new(&spec.mcp));
+            }
         }
         let mut completion = Completion {
             shared: Arc::clone(&self.shared),

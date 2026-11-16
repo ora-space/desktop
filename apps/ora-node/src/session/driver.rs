@@ -153,7 +153,7 @@ where
 /// version, or whose prior Revision cannot be restored ends without any plugin process having
 /// existed.
 async fn prepare_and_converse<L, C, P, R>(
-    shared: &Shared<L, C, P, R>,
+    shared: &Arc<Shared<L, C, P, R>>,
     operation: &OperationId,
     execution: &ExecutionId,
     mut spec: AgentSessionSpec,
@@ -201,9 +201,19 @@ where
                 view_key: None,
             }),
     );
+    let control = shared
+        .controls
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(execution)
+        .cloned();
     let (session_setup, mut mcp_leases) = match super::mcp::NodeSessionMcp::prepare(
         &shared.catalog,
-        std::mem::take(&mut spec.mcp),
+        if control.is_some() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut spec.mcp)
+        },
         &checkout,
     ) {
         Ok(prepared) => prepared,
@@ -423,9 +433,81 @@ where
         wake.clone(),
         shared.previews.clone(),
     );
+    let session_setup = if let Some(control) = &control {
+        let shared = Arc::downgrade(shared);
+        let execution = execution.clone();
+        let checkout = checkout.clone();
+        let cache = std::sync::Mutex::new(
+            None::<(ora_node_db::AttemptId, u64, super::mcp::NodeSessionMcp)>,
+        );
+        session_setup.with_lifecycle(control.clone(), move |input| {
+            let mut cached = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let shared = shared
+                .upgrade()
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?;
+            let attempt = shared
+                .retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&execution)
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?
+                .spawner
+                .identity()
+                .attempt;
+            if let Some((cached_attempt, generation, setup)) = &*cached
+                && *generation == input.generation
+                && cached_attempt == &attempt
+            {
+                return Ok(setup.clone());
+            }
+            let (setup, leases) =
+                super::mcp::NodeSessionMcp::prepare_update(&shared.catalog, input, &checkout)?;
+            let mut retained = shared
+                .retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let retained = retained
+                .get_mut(&execution)
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?;
+            let setup = setup.in_placement(&retained.placement)?;
+            retained.leases.extend(leases);
+            *cached = Some((attempt, input.generation, setup.clone()));
+            Ok(setup)
+        })
+    } else {
+        session_setup
+    };
+    let session_setup = if control.is_some() {
+        super::mcp::configure(
+            session_setup.with_initial_packages(&spec.mcp),
+            shared,
+            execution,
+            lifecycle.clone(),
+            plugin_id.clone(),
+            checkout.clone(),
+        )
+    } else {
+        session_setup
+    };
     let scheduler = Scheduler::new(shared.config.timezone);
     let manager = AgentRuntimeManager::<NodeRuntimeHost<L>>::new(AgentRuntimeSetup {
         attach: Arc::new(SessionPlugin {
+            process_admission: if control.is_some() {
+                shared
+                    .retained
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(execution)
+                    .map(|retained| super::host::SessionProcessAdmission {
+                        setup: session_setup.clone(),
+                        spawner: retained.spawner.clone(),
+                        last: tokio::sync::Mutex::new(None),
+                    })
+            } else {
+                None
+            },
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
@@ -443,6 +525,15 @@ where
     });
     let end = match manager {
         Ok(manager) => {
+            if let Some(control) = &control {
+                super::mcp::probes::register(
+                    shared,
+                    execution,
+                    &spec.checkout_execution_id,
+                    checkout.clone(),
+                    control.clone(),
+                );
+            }
             let conversation = Conversation {
                 ledger: &shared.ledger,
                 execution,
@@ -450,12 +541,17 @@ where
                 manager: &manager,
                 mirror: &mirror,
                 wake,
+                control: control.as_ref(),
+                started: std::sync::atomic::AtomicBool::new(false),
+                blocked: std::sync::Mutex::new(std::collections::HashMap::new()),
             };
             let mut stopping = shared.stopping.subscribe();
             let mut model_status = model_access.as_ref().map(|access| access.status.clone());
             let agent_ref = AgentRef::for_plugin(&plugin_id);
             let end = tokio::select! {
                 biased;
+                _ = async { if let Some(control) = &control { loop { control.probes.notified().await; shared.probes.dispatch(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
+                _ = async { if let Some(control) = &control { loop { control.refresh.notified().await; manager.notify_mcp_desired_changed(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
                 _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
                 status = async {
                     match &mut model_status {
@@ -481,6 +577,7 @@ where
                 },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
             };
+            shared.probes.unregister(execution);
             // The session leaves the runtime here: its ora-git socket goes before the plugin
             // does, once a request it was still serving has ended.
             if let Some(socket) = ora_git {

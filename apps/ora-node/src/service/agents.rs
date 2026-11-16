@@ -1,4 +1,5 @@
 //! Production composition and durable admission of Agent sessions.
+pub(super) mod mcp;
 use super::{AgentConfig, ServiceConfig};
 use crate::managed::{AsNode, DirectGit};
 use crate::revision::{DeliveryGit, RevisionRestorer};
@@ -154,6 +155,9 @@ pub(super) async fn reconcile(
             continue;
         }
         cleanup_restore(node, journal, &record)?;
+    }
+    if let Some(host) = host {
+        host.refresh_probe_capacity();
     }
     Ok(())
 }
@@ -556,6 +560,7 @@ pub(super) fn start(
 /// Admission does not wake the actor: the transport does that after sending the accepted reply.
 pub(super) fn command(
     node: &mut ManagedNode,
+    host: &SessionHost,
     controller: &ControllerId,
     input: SessionCommandInput,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
@@ -571,7 +576,12 @@ pub(super) fn command(
         node.database
             .authorize_session_command(input.execution_id(), &node.identity().incarnation_id)?;
     }
-    let result = node.database.accept_session_command(&input)?;
+    let desired = host
+        .mcp_control(input.execution_id())
+        .map(|control| control.snapshot(true).desired.generation);
+    let result = node
+        .database
+        .accept_session_command_at_generation(&input, desired)?;
     let operation_id = input.operation_id().clone();
     let execution_id = input.execution_id().clone();
     let command_id = input.command_id().clone();
@@ -592,6 +602,17 @@ pub(super) fn command(
                 payload: SessionCommandRejected {
                     command_id,
                     reason: SessionCommandRejection::SessionEnded,
+                },
+            })
+        }
+        CommandAdmission::McpUpdateRequired => {
+            NodeToControllerMessage::SessionCommandRejected(SessionCommandRejectedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id,
+                execution_id,
+                payload: SessionCommandRejected {
+                    command_id,
+                    reason: SessionCommandRejection::McpUpdateRequired,
                 },
             })
         }

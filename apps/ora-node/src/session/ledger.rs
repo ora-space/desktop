@@ -4,6 +4,13 @@ use ora_node_db::{SessionCommandInput, SessionCommandSettlement, SessionJournal,
 use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, ThreadEvent};
 
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
+    fn fail_session_turn(
+        &self,
+        execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::fail_session_turn(self, execution, failure).map(drop)
+    }
     type Error = ora_node_db::Error;
 
     fn record_session_stop(

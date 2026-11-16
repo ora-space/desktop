@@ -29,6 +29,7 @@ pub(super) fn session() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("restore-session"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 workspace_directory: Vec::new(),
                 agent_configuration: None,

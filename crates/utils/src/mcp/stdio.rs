@@ -8,8 +8,8 @@ use crate::process::hide_console_window;
 use std::path::PathBuf;
 use std::process::Stdio as StdStdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
 use tokio::time::{Instant, timeout, timeout_at};
 
 /// Spawns `command`, completes initialize + tools/list, then closes stdin and waits for exit.
@@ -63,9 +63,9 @@ pub async fn probe_stdio(
 }
 
 /// Runs initialize, the initialized notification, and tools/list over the child's pipes.
-async fn handshake(
-    stdin: &mut ChildStdin,
-    reader: &mut BufReader<ChildStdout>,
+pub async fn handshake<W: AsyncWrite + Unpin, R: AsyncBufRead + Unpin>(
+    stdin: &mut W,
+    reader: &mut R,
 ) -> Result<(), ProbeError> {
     let mut remaining = MAX_RESPONSE_BYTES;
     send_request(
@@ -104,9 +104,9 @@ async fn handshake(
 }
 
 /// Writes one framed message and, when `expected_id` is set, reads until a matching result.
-async fn send_request(
-    stdin: &mut ChildStdin,
-    reader: &mut BufReader<ChildStdout>,
+async fn send_request<W: AsyncWrite + Unpin, R: AsyncBufRead + Unpin>(
+    stdin: &mut W,
+    reader: &mut R,
     message: serde_json::Value,
     expected_id: Option<u64>,
     remaining: &mut usize,

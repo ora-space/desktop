@@ -85,6 +85,15 @@ struct Ledger {
 
 impl SessionLedger for Ledger {
     type Error = std::io::Error;
+    fn fail_session_turn(
+        &self,
+        _execution: &ExecutionId,
+        _failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        Err(std::io::Error::other(
+            "model fixture has no lifecycle turns",
+        ))
+    }
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
@@ -293,6 +302,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
+            mcp_lifecycle: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: node.node_id.clone(),
@@ -477,6 +487,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     OperationId::new("operation"),
                     execution.clone(),
                     AgentSessionSpec {
+                        mcp_lifecycle: false,
                         mcp: Vec::new(),
                         workspace_directory: Vec::new(),
                         agent_configuration: None,

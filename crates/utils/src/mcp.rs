@@ -15,6 +15,7 @@ mod tests;
 
 pub use http::probe_http;
 pub use protocol::{DEFAULT_PROBE_TIMEOUT, ProbeError, ProbeTransport};
+pub use stdio::handshake as probe_stdio_handshake;
 pub use stdio::probe_stdio;
 
 use std::time::Duration;

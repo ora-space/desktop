@@ -12,7 +12,7 @@ use tokio::{
 
 /// Controller messages one session may leave unanswered. One admission slot stays free for the
 /// replay pass, so a full pipeline never makes the worker queue itself refuse a request.
-const UNANSWERED_REQUEST_LIMIT: usize = ADMISSION_QUEUE_BOUND - 1;
+const UNANSWERED_REQUEST_LIMIT: usize = 15;
 
 /// The worker's eventual answer to one queued request.
 type Response = oneshot::Receiver<Result<Vec<NodeToControllerMessage>, Rejection>>;
@@ -327,6 +327,7 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     // Permits travel with each request until it is answered, so the bound covers the request the
     // answering future is waiting on as well as the ones queued behind it.
     let unanswered = Arc::new(Semaphore::new(UNANSWERED_REQUEST_LIMIT));
+    let mcp_unanswered = Arc::new(Semaphore::new(64));
     let (answer_later, mut answering) = async_queue::unbounded_channel();
     // Reading never waits for the worker: a peer's close, a router's ping and a truncated frame
     // must be observed while Git occupies the worker, or the control slot stays held for a peer
@@ -375,7 +376,50 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 }
                 message => message,
             };
-            let Ok(permit) = unanswered.clone().try_acquire_owned() else {
+            let mcp = match &message {
+                ControllerToNodeMessage::UpdateSessionMcp(input) => Some((
+                    &input.operation_id,
+                    &input.execution_id,
+                    &input.payload.request_id,
+                )),
+                ControllerToNodeMessage::GetSessionMcpState(input) => Some((
+                    &input.operation_id,
+                    &input.execution_id,
+                    &input.payload.request_id,
+                )),
+                ControllerToNodeMessage::ProbeSessionMcp(input) => Some((
+                    &input.operation_id,
+                    &input.execution_id,
+                    &input.payload.request_id,
+                )),
+                _ => None,
+            };
+            let permits = if mcp.is_some() {
+                &mcp_unanswered
+            } else {
+                &unanswered
+            };
+            let Ok(permit) = permits.clone().try_acquire_owned() else {
+                if let Some((operation, execution, request)) = mcp {
+                    outgoing
+                        .send(NodeToControllerMessage::SessionMcpReply(
+                            SessionMcpReplyMessage {
+                                protocol_version: CURRENT_PROTOCOL_VERSION,
+                                operation_id: operation.clone(),
+                                execution_id: execution.clone(),
+                                payload: SessionMcpReply {
+                                    node: info.identity.clone(),
+                                    request_id: request.clone(),
+                                    result: SessionMcpResult::CapacityExceeded,
+                                    code: None,
+                                    state: None,
+                                },
+                            },
+                        ))
+                        .await
+                        .map_err(queue_closed)?;
+                    continue;
+                }
                 // The Controller polls status on a timer without waiting for replies, so a long
                 // Git pass fills the pipeline with queries. Shedding the excess is safe because
                 // a query changes nothing and the Controller asks again; a command must not be

@@ -218,12 +218,44 @@ impl SessionPlacement {
             Self::Separate { directory, .. } => {
                 let view = directory.root.join(format!(
                     "mcp-{}",
-                    ora_utils::hash::sha256_hex(id.canonical().as_bytes())
+                    ora_utils::hash::sha256_hex(
+                        format!(
+                            "{}:{}",
+                            id.canonical(),
+                            installed
+                                .file_name()
+                                .ok_or_else(|| io::Error::other("missing package version"))?
+                                .to_string_lossy()
+                        )
+                        .as_bytes()
+                    )
                 ));
-                ora_utils::fs::hard_link_tree_no_follow(installed, &view)?;
+                match ora_utils::path::check_directory_without_symlinks(&view) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        ora_utils::fs::hard_link_tree_no_follow(installed, &view)?
+                    }
+                    Err(error) => return Err(error),
+                }
                 Ok(view)
             }
         }
+    }
+
+    /// Removes one obsolete immutable view only after every attempt referring to it stopped.
+    pub(super) fn release_mcp_package(&self, id: &str, version: &str) -> io::Result<()> {
+        if let Self::Separate { directory, .. } = self {
+            let view = directory.root.join(format!(
+                "mcp-{}",
+                ora_utils::hash::sha256_hex(format!("{id}:{version}").as_bytes())
+            ));
+            match fs::remove_dir_all(view) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     /// The private workload home owns CLI state; management-owned Node directories remain closed.

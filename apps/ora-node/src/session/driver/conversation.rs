@@ -1,5 +1,6 @@
 //! Serialized conversation and turn outcomes.
 use super::*;
+mod admission;
 
 /// How one running turn stopped.
 enum TurnOutcome {
@@ -22,6 +23,11 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     pub(super) manager: &'a AgentRuntimeManager<NodeRuntimeHost<L>>,
     pub(super) mirror: &'a ThreadMirror<L>,
     pub(super) wake: &'a Notify,
+    pub(super) control: Option<&'a crate::session::mcp::control::Control>,
+    pub(super) started: std::sync::atomic::AtomicBool,
+    pub(super) blocked: std::sync::Mutex<
+        std::collections::HashMap<ora_node_protocol::TurnId, tokio::time::Instant>,
+    >,
 }
 
 impl<L: SessionLedger> Conversation<'_, L> {
@@ -32,30 +38,6 @@ impl<L: SessionLedger> Conversation<'_, L> {
         spec: AgentSessionSpec,
         ready_timeout: std::time::Duration,
     ) -> SessionEnd {
-        match tokio::time::timeout(ready_timeout, self.manager.wait_for_agent(agent_ref)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                ora_warn!(execution_id = %self.execution, error = %error, "agent did not become ready");
-                return SessionEnd::agent_failed("agent_unavailable");
-            }
-            Err(_) => return SessionEnd::agent_failed("agent_unavailable"),
-        }
-        if let Err(error) = self
-            .manager
-            .start_session_with_id(
-                self.session_id.clone(),
-                StartSessionRequest {
-                    workspace_id: spec.checkout_execution_id.to_string(),
-                    agent_ref: agent_ref.to_string(),
-                    model: None,
-                },
-            )
-            .await
-        {
-            ora_warn!(execution_id = %self.execution, error = %error, "agent session did not start");
-            return crate::session::mcp::start_failure(&error, self.execution);
-        }
-
         let mut next_turn = Some(spec.initial_turn);
         loop {
             if self.mirror.is_broken() {
@@ -84,7 +66,16 @@ impl<L: SessionLedger> Conversation<'_, L> {
                     }
                 },
             };
-            match self.run_turn(turn, command_id.as_ref()).await {
+            match self
+                .run_turn(
+                    turn,
+                    command_id.as_ref(),
+                    agent_ref,
+                    &spec.checkout_execution_id,
+                    ready_timeout,
+                )
+                .await
+            {
                 Ok(TurnOutcome::Finished) => {}
                 Ok(TurnOutcome::Failed(code)) => {
                     // A committed EndSession keeps its reason even if its wake-up races the ACP
@@ -132,62 +123,21 @@ impl<L: SessionLedger> Conversation<'_, L> {
         &self,
         turn: UserTurn,
         command_id: Option<&CommandId>,
+        agent_ref: &AgentRef,
+        checkout: &ExecutionId,
+        ready_timeout: std::time::Duration,
     ) -> Result<TurnOutcome, SessionEnd> {
-        self.mirror.set_turn(Some(turn.turn_id.clone()));
-        let ledger = self.ledger.clone();
-        let execution = self.execution.clone();
-        let command_id = command_id.cloned();
-        let admission_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let commit_failed = Arc::clone(&admission_failed);
-        let prompt = turn
-            .content
-            .into_iter()
-            .map(|block| match block {
-                ContentBlock::Text { text } => AcpContentBlock::Text(TextContent::new(text)),
-            })
-            .collect();
-        let stream = self
-            .manager
-            .prompt_session_with_admission(
-                PromptSessionRequest {
-                    session_id: self.session_id.to_string(),
-                    prompt,
-                    model: None,
-                    record_prompt: None,
-                },
-                MessageId::new(turn.turn_id.as_str()),
-                move || {
-                    if let Some(command_id) = command_id {
-                        ledger
-                            .settle_command(&execution, &command_id, CommandSettlement::Executed)
-                            .map_err(|error| {
-                                commit_failed.store(true, std::sync::atomic::Ordering::Release);
-                                ora_agent_runtime::RuntimeError::internal(
-                                    "command admission could not commit",
-                                    error,
-                                )
-                            })?;
-                    }
-                    Ok(())
-                },
-            )
-            .await;
-        let mut stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                self.mirror.set_turn(None);
-                ora_warn!(execution_id = %self.execution, error = %error, "turn was not admitted");
-                return Err(SessionEnd::agent_failed(
-                    if admission_failed.load(std::sync::atomic::Ordering::Acquire) {
-                        "ledger_unavailable"
-                    } else {
-                        "agent_unavailable"
-                    },
-                ));
-            }
+        let mut stream = match self
+            .admit_turn(&turn, command_id, agent_ref, checkout, ready_timeout)
+            .await?
+        {
+            admission::Admitted::Stream(stream) => stream,
+            admission::Admitted::Outcome(outcome) => return Ok(outcome),
         };
         let outcome = loop {
+            let queued_deadline = self.expire_queued()?;
             tokio::select! {
+                () = admission::until(queued_deadline) => {},
                 event = stream.recv() => match event {
                     Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
                     Some(Err(error)) => {
@@ -258,6 +208,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
 
     /// Stops the session, cancelling a running turn and closing the provider session.
     pub(super) async fn stop(&self, end: SessionEnd) -> SessionEnd {
+        if let Some(control) = self.control {
+            control.stop();
+        }
         if let Err(error) = self
             .manager
             .stop_session(StopSessionRequest {

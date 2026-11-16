@@ -45,6 +45,13 @@ pub enum CommandSettlement {
 pub trait SessionLedger: Clone + Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
 
+    /// Commits one reliable turn failure together with its command settlement.
+    fn fail_session_turn(
+        &self,
+        execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error>;
+
     /// Registers ownership before any Agent or probe process can be dispatched.
     fn record_session_stop(
         &self,

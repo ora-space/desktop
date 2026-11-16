@@ -99,6 +99,13 @@ async fn live_direct_child_that_closes_its_descriptor_is_not_stop_proof() -> Tes
     );
     process.kill().await?;
     process.wait().await?;
+    // Concurrent forks can briefly retain the lock descriptor before exec closes it.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while files.probe(&identity, &identity.host, false).0 == StopEvidence::Running {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
     assert_eq!(
         files.probe(&identity, &identity.host, false).0,
         StopEvidence::Stopped

@@ -178,8 +178,35 @@ impl EchoAgent {
             self.mcp_verified = verify_mcp_frame(&params);
             let request: NewSessionRequest = serde_json::from_value(params)?;
             let session_id = format!("echo-session-{}", self.sessions.len() + 1);
+            if std::fs::read("mcp-capabilities.json")
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|flags| flags["load"] == true)
+            {
+                std::fs::write(request.cwd.join(".echo-provider-session"), &session_id)?;
+            }
             self.sessions.insert(session_id.clone(), request.cwd);
             return respond(output, id, &NewSessionResponse::new(session_id)).await;
+        }
+        if method == AGENT_METHOD_NAMES.session_load {
+            record_acp_method("session/load");
+            let request: agent_client_protocol_schema::v1::LoadSessionRequest =
+                serde_json::from_value(params)?;
+            let session_id = request.session_id.to_string();
+            if std::fs::read_to_string(request.cwd.join(".echo-provider-session"))
+                .ok()
+                .as_deref()
+                != Some(&session_id)
+            {
+                return acp(output,json!({"jsonrpc": JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+            }
+            self.sessions.insert(session_id, request.cwd);
+            return respond(
+                output,
+                id,
+                &agent_client_protocol_schema::v1::LoadSessionResponse::new(),
+            )
+            .await;
         }
         if method == AGENT_METHOD_NAMES.session_close {
             let _request: CloseSessionRequest = serde_json::from_value(params)?;

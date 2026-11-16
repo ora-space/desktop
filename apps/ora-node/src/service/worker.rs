@@ -144,6 +144,7 @@ pub(super) fn run(
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
         capabilities.push(NodeCapability::SessionMcp);
+        capabilities.push(NodeCapability::SessionMcpLifecycle);
         capabilities.push(NodeCapability::SharedCheckoutSessions);
     }
     if agents
@@ -315,6 +316,15 @@ fn handle(
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
+        Request::Message(ControllerToNodeMessage::UpdateSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Update(input))
+        }
+        Request::Message(ControllerToNodeMessage::GetSessionMcpState(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Get(input))
+        }
+        Request::Message(ControllerToNodeMessage::ProbeSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Probe(input))
+        }
         Request::Replay(cursors) => Ok(node
             .database
             .controller_events_after(controller, &cursors)?),
@@ -388,6 +398,7 @@ fn handle(
             agents.ok_or(crate::Error::UnsupportedMessage)?;
             agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::SubmitUserTurn(input),
             )
@@ -397,6 +408,7 @@ fn handle(
             let execution = input.execution_id.clone();
             let replies = agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::EndSession(input),
             )?;

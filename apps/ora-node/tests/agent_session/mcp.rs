@@ -72,6 +72,7 @@ fn input(mcp: Vec<SessionMcpBinding>) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp,
                 node_id: NodeId::new("node-1"),
                 agent_plugin_id: PluginId::new(PLUGIN_ID),

@@ -1,4 +1,8 @@
-//! Frozen explicit MCP input. No configuration store, discovery, health probe or value logging.
+//! Explicit MCP input, with an opt-in memory owner for ordered lifecycle updates.
+pub(crate) mod control;
+pub(crate) mod probes;
+mod replacement;
+mod resources;
 use super::PluginCatalog;
 use ora_agent_runtime::{
     AgentSessionMcpCapabilities, ErrorClassification, InstalledMcpCandidate,
@@ -13,6 +17,7 @@ use ora_node_protocol::{
     ExecutionId, PluginId as WirePluginId, SessionMcpBinding, SessionMcpTransport,
 };
 use ora_plugin_config::{CompiledConfigurationFile, SettingValue, compile_configuration_file};
+pub(super) use replacement::configure;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -49,8 +54,26 @@ pub(super) struct NodeMcpFailure {
 }
 
 impl NodeMcpFailure {
+    /// Converts to the closed wire vocabulary before publishing any observation.
+    fn observation(&self) -> ora_node_protocol::SessionMcpFailure {
+        use ora_node_protocol::SessionMcpErrorCode as Code;
+        ora_node_protocol::SessionMcpFailure {
+            code: match self.code {
+                NodeMcpError::Plugin => Code::McpPluginMissing,
+                NodeMcpError::Setting => Code::McpSettingMissing,
+                NodeMcpError::HttpCapability => Code::McpHttpCapabilityMissing,
+                NodeMcpError::LoadSession => Code::McpLoadSessionMissing,
+            },
+            plugin_id: self.plugin_id.clone().map(WirePluginId::new),
+            setting_id: self.setting_id.clone(),
+            transport: self.transport.map(|transport| match transport {
+                SessionMcpTransportKind::Stdio => SessionMcpTransport::Stdio,
+                SessionMcpTransportKind::Http => SessionMcpTransport::Http,
+            }),
+        }
+    }
     /// Names the selected package without retaining a compiler, filesystem or manifest error.
-    fn plugin(plugin_id: String) -> Self {
+    pub(super) fn plugin(plugin_id: String) -> Self {
         Self {
             code: NodeMcpError::Plugin,
             plugin_id: Some(plugin_id),
@@ -154,9 +177,132 @@ impl NodeMcpFailure {
 pub(super) struct NodeSessionMcp {
     members: Arc<Vec<(InstalledMcpCandidate, BTreeMap<String, SettingValue>)>>,
     selection: SessionMcpSelection,
+    generation: u64,
+    revisions: BTreeMap<String, u64>,
+    lifecycle: Option<(control::Control, Arc<Resolver>)>,
+    budget: Arc<std::sync::Mutex<(usize, Option<SessionMcpRevision>)>>,
+    replacement: Option<Arc<Replacement>>,
 }
 
+/// The catalog type stays with the Node composition; the runtime owns only this session resolver.
+type Resolver = dyn Fn(&control::Input) -> Result<NodeSessionMcp, NodeMcpFailure> + Send + Sync;
+type Replacement = dyn Fn() -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<SessionMcpRevision, RuntimeError>> + Send>,
+    > + Send
+    + Sync;
+
 impl NodeSessionMcp {
+    /// The first process is durably registered against startup package versions before it spawns.
+    pub(super) fn with_initial_packages(self, bindings: &[SessionMcpBinding]) -> Self {
+        let members = bindings
+            .iter()
+            .filter_map(|binding| {
+                Some(ora_agent_runtime::SessionMcpMemberRevision {
+                    plugin_id: PluginId::parse(binding.plugin_id.as_str()).ok()?,
+                    package_version: binding.plugin_version.as_str().parse().ok()?,
+                    configuration_revision: 0,
+                    transport: SessionMcpTransportKind::Stdio,
+                })
+            })
+            .collect();
+        *self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            (0, Some(SessionMcpRevision::new(members)));
+        self
+    }
+    /// Process rotation belongs to the execution owner; runtime policy only requests the boundary.
+    pub(super) fn with_replacement(
+        mut self,
+        replacement: impl Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<SessionMcpRevision, RuntimeError>> + Send>,
+        > + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.replacement = Some(Arc::new(replacement));
+        self
+    }
+    /// Associates the immutable authorization with its execution-owned mutable target.
+    pub(super) fn with_lifecycle(
+        mut self,
+        control: control::Control,
+        resolver: impl Fn(&control::Input) -> Result<Self, NodeMcpFailure> + Send + Sync + 'static,
+    ) -> Self {
+        self.selection = SessionMcpSelection::Explicit(
+            control
+                .desired()
+                .members
+                .iter()
+                .filter_map(|member| PluginId::parse(member.plugin_id().as_str()).ok())
+                .collect(),
+        );
+        self.lifecycle = Some((control, Arc::new(resolver)));
+        self
+    }
+
+    /// Reuses the exact resolver for every complete update; unavailable members block the whole set.
+    pub(super) fn prepare_update<P: PluginCatalog>(
+        catalog: &P,
+        input: &control::Input,
+        cwd: &Path,
+    ) -> Result<(Self, Vec<P::Lease>), NodeMcpFailure> {
+        let mut bindings = Vec::new();
+        let mut revisions = BTreeMap::new();
+        for member in &input.members {
+            match member {
+                ora_node_protocol::SessionMcpUpdateMember::Configured {
+                    plugin_id,
+                    plugin_version,
+                    configuration_revision,
+                    settings,
+                } => {
+                    revisions.insert(plugin_id.as_str().to_owned(), *configuration_revision);
+                    bindings.push(SessionMcpBinding {
+                        plugin_id: plugin_id.clone(),
+                        plugin_version: plugin_version.clone(),
+                        settings: settings.clone(),
+                    });
+                }
+                ora_node_protocol::SessionMcpUpdateMember::Unavailable { plugin_id, code } => {
+                    let mut failure = NodeMcpFailure::plugin(plugin_id.as_str().to_owned());
+                    if *code == ora_node_protocol::SessionMcpUnavailable::McpSettingMissing {
+                        failure.code = NodeMcpError::Setting;
+                    }
+                    return Err(failure);
+                }
+            }
+        }
+        let (mut setup, leases) = Self::prepare(catalog, bindings, cwd)?;
+        setup.generation = input.generation;
+        setup.revisions = revisions;
+        Ok((setup, leases))
+    }
+
+    /// Revision identity never contains resolved credentials.
+    fn revision(&self) -> Result<SessionMcpRevision, NodeMcpFailure> {
+        resolve_session_mcp_revision(self, self, &self.selection)
+            .map(|revision| {
+                SessionMcpRevision::for_generation(self.generation, revision.members().to_vec())
+            })
+            .map_err(|error| NodeMcpFailure::from_resolver(&error))
+    }
+
+    /// Rebinds the shared resolver's snapshot to the host generation that supplied its values.
+    fn snapshot(
+        &self,
+        cwd: &Path,
+        capabilities: AgentSessionMcpCapabilities,
+    ) -> Result<SessionMcpSnapshot, NodeMcpFailure> {
+        let snapshot = resolve_session_mcp(self, self, cwd, capabilities, &self.selection)
+            .map_err(|error| NodeMcpFailure::from_resolver(&error))?;
+        let revision = SessionMcpRevision::for_generation(
+            self.generation,
+            snapshot.revision().members().to_vec(),
+        );
+        Ok(SessionMcpSnapshot::new(snapshot.into_servers(), revision))
+    }
     /// Pins exact packages before reading declarations; leases remain owned by the driver until
     /// the agent has stopped. A preliminary resolve finds package/setting errors before launch.
     pub(super) fn prepare<P: PluginCatalog>(
@@ -236,6 +382,11 @@ impl NodeSessionMcp {
         let setup = Self {
             members: Arc::new(members),
             selection,
+            generation: 0,
+            revisions: BTreeMap::new(),
+            lifecycle: None,
+            budget: Arc::new(std::sync::Mutex::new((0, None))),
+            replacement: None,
         };
         resolve_session_mcp(
             &setup,
@@ -287,13 +438,98 @@ impl SessionMcpConfigurationSource for NodeSessionMcp {
             .1
             .clone();
         Ok(McpConfigurationEligibility::Complete {
-            revision: 0,
+            revision: self
+                .revisions
+                .get(&candidate.plugin_id.canonical())
+                .copied()
+                .unwrap_or(0),
             values,
         })
     }
 }
 
 impl SessionSetup for NodeSessionMcp {
+    fn mcp_replacement_required(&self, revision: &SessionMcpRevision) -> bool {
+        if self.lifecycle.is_none() {
+            return false;
+        }
+        let budget = self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        budget.0 >= 9
+            || budget.1.as_ref().is_some_and(|previous| {
+                previous
+                    .members()
+                    .iter()
+                    .map(|member| (&member.plugin_id, &member.package_version))
+                    .ne(revision
+                        .members()
+                        .iter()
+                        .map(|member| (&member.plugin_id, &member.package_version)))
+            })
+    }
+
+    async fn replace_mcp_process(&self) -> Result<(), RuntimeError> {
+        let revision = match &self.replacement {
+            Some(replacement) => Some(replacement().await?),
+            None => None,
+        };
+        *self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = (0, revision);
+        Ok(())
+    }
+
+    fn mcp_request_started(&self, revision: &SessionMcpRevision) {
+        if self.lifecycle.is_some() {
+            let mut budget = self
+                .budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            budget.0 += 1;
+            budget.1 = Some(revision.clone());
+        }
+    }
+    fn preserve_provider_identity(&self) -> bool {
+        self.lifecycle.is_some()
+    }
+
+    fn mcp_loaded(&self, revision: &SessionMcpRevision) {
+        if let Some((control, _)) = &self.lifecycle {
+            control.loaded(revision.generation());
+        }
+    }
+
+    fn mcp_detached(&self) {
+        if let Some((control, _)) = &self.lifecycle {
+            control.detached();
+        }
+    }
+
+    fn mcp_failed(&self, error: &RuntimeError) {
+        if let Some((control, _)) = &self.lifecycle {
+            let failure = std::error::Error::source(error)
+                .and_then(|source| source.downcast_ref::<NodeMcpFailure>())
+                .map(NodeMcpFailure::observation)
+                .unwrap_or(ora_node_protocol::SessionMcpFailure {
+                    code: match error.public_error() {
+                        PublicError::AgentTimedOut(_) => {
+                            ora_node_protocol::SessionMcpErrorCode::McpRefreshTimeout
+                        }
+                        PublicError::SessionLoadUnsupported(_) => {
+                            ora_node_protocol::SessionMcpErrorCode::McpLoadSessionMissing
+                        }
+                        _ => ora_node_protocol::SessionMcpErrorCode::McpRefreshFailed,
+                    },
+                    plugin_id: None,
+                    setting_id: None,
+                    transport: None,
+                });
+            control.failed(failure);
+        }
+    }
     /// Runtime views cannot widen the frozen authorization or enable automatic discovery.
     fn with_selection(&self, _selection: SessionMcpSelection) -> Self {
         self.clone()
@@ -304,7 +540,19 @@ impl SessionSetup for NodeSessionMcp {
     }
     /// The input cannot change during the lifetime of this execution.
     fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError> {
-        resolve_session_mcp_revision(self, self, &self.selection).map_err(runtime_error)
+        if let Some((control, resolver)) = &self.lifecycle {
+            let input = control.desired();
+            return resolver(&input)
+                .and_then(|setup| {
+                    control.resolved(input.generation);
+                    setup.revision()
+                })
+                .map_err(|failure| {
+                    control.blocked(input.generation, failure.observation());
+                    failure.into_runtime_error()
+                });
+        }
+        self.revision().map_err(NodeMcpFailure::into_runtime_error)
     }
     /// Capabilities came from initialize; failure prevents the first session/new request.
     fn resolve_mcp(
@@ -312,7 +560,20 @@ impl SessionSetup for NodeSessionMcp {
         cwd: &Path,
         capabilities: AgentSessionMcpCapabilities,
     ) -> Result<SessionMcpSnapshot, RuntimeError> {
-        resolve_session_mcp(self, self, cwd, capabilities, &self.selection).map_err(runtime_error)
+        if let Some((control, resolver)) = &self.lifecycle {
+            let input = control.begin();
+            return resolver(&input)
+                .and_then(|setup| {
+                    control.resolved(input.generation);
+                    setup.snapshot(cwd, capabilities)
+                })
+                .map_err(|failure| {
+                    control.blocked(input.generation, failure.observation());
+                    failure.into_runtime_error()
+                });
+        }
+        self.snapshot(cwd, capabilities)
+            .map_err(NodeMcpFailure::into_runtime_error)
     }
     /// Node health probing is deliberately outside this delivery contract.
     fn observe_mcp_health(&self, _session_id: &SessionId, _cwd: &Path) {}
@@ -320,11 +581,6 @@ impl SessionSetup for NodeSessionMcp {
     fn plugin_id_for_agent(&self, agent_ref: &AgentRef) -> Option<PluginId> {
         PluginId::parse(agent_ref.as_str()).ok()
     }
-}
-
-/// Converts a shared resolver failure without flattening its safe structured metadata.
-fn runtime_error(error: SessionMcpError) -> RuntimeError {
-    NodeMcpFailure::from_resolver(&error).into_runtime_error()
 }
 
 /// Logs the same safe identifiers when capability negotiation fails after ACP initialize.

@@ -8,6 +8,8 @@ mod admission;
 mod authority;
 #[path = "agent_sessions/delivery.rs"]
 mod delivery;
+#[path = "agent_sessions/mcp_lifecycle.rs"]
+mod mcp_lifecycle;
 #[path = "agent_sessions/previews.rs"]
 mod previews;
 #[path = "agent_sessions/recovery.rs"]

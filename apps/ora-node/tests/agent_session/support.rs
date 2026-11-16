@@ -59,6 +59,7 @@ struct StoredCommand {
 
 #[derive(Default)]
 struct LedgerState {
+    failures: Vec<ora_node_protocol::SessionTurnFailed>,
     events: Vec<ThreadEvent>,
     ended: Option<AgentSessionEnded>,
     commands: Vec<StoredCommand>,
@@ -137,6 +138,27 @@ impl MemoryLedger {
 
 impl SessionLedger for MemoryLedger {
     type Error = LedgerError;
+    fn fail_session_turn(
+        &self,
+        _execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        let mut state = self.state();
+        if state
+            .commands
+            .iter()
+            .any(|command| matches!(command.command, SessionCommand::EndSession { .. }))
+        {
+            return Err(LedgerError("ending".into()));
+        }
+        if let Some(command_id) = &failure.command_id {
+            state
+                .commands
+                .retain(|command| &command.command_id != command_id);
+        }
+        state.failures.push(failure);
+        Ok(())
+    }
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
@@ -581,6 +603,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node-1"),
@@ -603,6 +626,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: Some(FrozenAgentConfiguration {
                     plugin_id: PluginId::new(PLUGIN_ID),

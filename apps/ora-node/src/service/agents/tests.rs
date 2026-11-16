@@ -444,7 +444,20 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
     let connection = rusqlite::Connection::open(home.join("ora-node.sqlite3"))?;
     connection.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
-        DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary;
+        DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+DROP INDEX queued_session_commands;
+ALTER TABLE session_commands RENAME TO new_session_commands;
+CREATE TABLE session_commands (
+    acceptance_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    command_id TEXT NOT NULL CHECK(length(command_id)>0),
+    input TEXT NOT NULL CHECK(json_valid(input)),
+    state TEXT NOT NULL CHECK(state IN ('queued','executed','discarded')),
+    UNIQUE(execution,command_id)
+);
+INSERT INTO session_commands SELECT * FROM new_session_commands;
+DROP TABLE new_session_commands;
+CREATE INDEX queued_session_commands ON session_commands(execution,state,acceptance_order);
         DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop;
         DROP TABLE process_stops;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;

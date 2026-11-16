@@ -340,7 +340,20 @@ fn upgrade_settles_the_retired_hosts_attempt_and_removes_its_directory() {
             .unwrap()
             .execute_batch(
                 "DROP TABLE session_stop_audit; DROP TABLE session_stop_ends;
-                 DROP TABLE session_stop_summary; DROP TABLE session_stop_attempts;
+                 DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+DROP INDEX queued_session_commands;
+ALTER TABLE session_commands RENAME TO new_session_commands;
+CREATE TABLE session_commands (
+    acceptance_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    command_id TEXT NOT NULL CHECK(length(command_id)>0),
+    input TEXT NOT NULL CHECK(json_valid(input)),
+    state TEXT NOT NULL CHECK(state IN ('queued','executed','discarded')),
+    UNIQUE(execution,command_id)
+);
+INSERT INTO session_commands SELECT * FROM new_session_commands;
+DROP TABLE new_session_commands;
+CREATE INDEX queued_session_commands ON session_commands(execution,state,acceptance_order); DROP TABLE session_stop_attempts;
                  DROP TRIGGER stop_excludes_other_endings; DROP TRIGGER outcome_excludes_stop;
                  DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;
                  PRAGMA user_version=12;",

@@ -18,6 +18,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("test-node"),
@@ -198,6 +199,7 @@ pub(super) fn turn() -> ControllerToNodeMessage {
         operation_id: start("").operation_id,
         execution_id: ExecutionId::new(EXECUTION),
         payload: SubmitUserTurn {
+            mcp_generation: None,
             node_id: NodeId::new("test-node"),
             command_id: CommandId::new("second-command"),
             turn: UserTurn {

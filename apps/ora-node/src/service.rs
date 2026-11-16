@@ -121,7 +121,7 @@ pub struct AgentConfig {
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
-const ADMISSION_QUEUE_BOUND: usize = 16;
+const ADMISSION_QUEUE_BOUND: usize = 80;
 
 // The queue holds at most ADMISSION_QUEUE_BOUND entries; inline envelopes avoid another allocation per control message.
 #[allow(clippy::large_enum_variant)]
