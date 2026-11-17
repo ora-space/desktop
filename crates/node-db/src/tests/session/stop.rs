@@ -37,6 +37,60 @@ fn running(path: &std::path::Path) -> (NodeDatabase, SessionJournal, StartAgentS
 }
 
 #[test]
+fn prior_revision_is_fenced_by_residual_stop_even_with_a_legacy_terminal_row() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let (mut db, journal, input) = running(&path);
+    let original = identity(&input);
+    journal.record_session_stop(&original, 10).unwrap();
+    journal
+        .change_session_stop(
+            &original.attempt,
+            SessionStopChange::Request {
+                at_ms: 20,
+                bound_at_ms: 30,
+            },
+        )
+        .unwrap();
+    journal
+        .change_session_stop(&original.attempt, SessionStopChange::Unconfirmed)
+        .unwrap();
+    // Isolate the durable stop fence from the separate unfinished-execution fence. Old state
+    // and a recovered stop association can coexist; terminal appearance cannot authorize restore.
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE node_executions SET state='completed',result=?2 WHERE execution=?1",
+            rusqlite::params![
+                input.execution_id.as_str(),
+                serde_json::to_string(&ExecutionResult::AgentSession(
+                    AgentSessionResult::AgentSessionEnded(ended())
+                ))
+                .unwrap()
+            ],
+        )
+        .unwrap();
+    let mut next = input.clone();
+    next.execution_id = ExecutionId::new("restore-next");
+    next.operation_id = OperationId::new("restore-next-op");
+    next.payload.spec.prior_revision = super::restore::resumed().payload.spec.prior_revision;
+    assert_eq!(
+        refusal_of(&db.accept_session(&next)),
+        Some(SessionRefusal::CheckoutBusy)
+    );
+    journal
+        .change_session_stop(
+            &original.attempt,
+            SessionStopChange::Confirm {
+                at_ms: 40,
+                proof: SessionStopProof::LockAndProcesses,
+            },
+        )
+        .unwrap();
+    assert!(db.accept_session(&next).is_ok());
+}
+
+#[test]
 fn restart_preserves_clock_identity_terminal_intent_and_resource_fence() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");

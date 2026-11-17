@@ -201,7 +201,7 @@ async fn run<L, C, P, R>(
     .unwrap_or(Err(ProbeError::Timeout));
     spawner.close();
     let now = stop::now_ms();
-    let bound = now.saturating_add(shared.config.stop.confirmation_timeout_ms as i64);
+    let mut bound = now.saturating_add(shared.config.stop.confirmation_timeout_ms as i64);
     if shared
         .ledger
         .change_session_stop(
@@ -215,6 +215,18 @@ async fn run<L, C, P, R>(
     {
         // A journal outage cannot release the slot or its exact package leases.
         std::future::pending::<()>().await;
+    }
+    // EndSession may already have requested this stop. The first durable deadline wins.
+    match shared.ledger.session_stop_records(Some(&execution)) {
+        Ok(records) => match records
+            .iter()
+            .find(|record| record.identity.attempt == identity.attempt)
+            .and_then(|record| record.bound_at_ms)
+        {
+            Some(original) => bound = original,
+            None => std::future::pending::<()>().await,
+        },
+        Err(_) => std::future::pending::<()>().await,
     }
     let mut health = result.map_or_else(
         |error| SessionMcpHealth::Unhealthy { code: code(error) },

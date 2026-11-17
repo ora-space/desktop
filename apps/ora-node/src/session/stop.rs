@@ -30,6 +30,21 @@ pub(crate) fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// A failed lifecycle request must take the same bounded evidence path as a successful request.
+pub(super) async fn await_plugin_stop<L: SessionLedger, T, E: std::fmt::Display>(
+    ledger: &L,
+    home: &Path,
+    config: &SessionStopConfig,
+    execution: &ExecutionId,
+    stop: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<bool, L::Error> {
+    if let Err(error) = stop.await {
+        ora_logging::ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
+    }
+    // Success and failure are both requests, never proof; the original deadline still governs.
+    confirm(ledger, home, config, execution, true).await
+}
+
 /// Lock creation, durable registration and taking the OFD all precede the first dispatch.
 pub(super) fn prepare<L: SessionLedger>(
     ledger: &L,

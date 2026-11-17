@@ -604,14 +604,18 @@ where
         return SessionEnd::agent_failed("ledger_unavailable");
     }
     shared.stop_spawning(execution);
-    if let Err(error) = lifecycle
-        .stop_plugin(StopPluginRequest {
+    if let Err(error) = super::stop::await_plugin_stop(
+        &shared.ledger,
+        &shared.config.home_directory,
+        &shared.config.stop,
+        execution,
+        lifecycle.stop_plugin(StopPluginRequest {
             plugin_id: plugin_id.to_string(),
-        })
-        .await
+        }),
+    )
+    .await
     {
-        ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
-        // A transport error is not stop evidence; run() still polls the original bound.
+        ora_warn!(execution_id = %execution, error = %error, "agent stop proof unavailable");
     }
     scheduler.shutdown().await;
     if let Some(access) = &mut model_access {

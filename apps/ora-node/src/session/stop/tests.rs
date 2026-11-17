@@ -46,7 +46,12 @@ async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_pr
         drop(descriptor);
     });
     let began = tokio::time::Instant::now();
-    assert!(confirm(&journal, home.path(), &config, &identity.execution, true).await?);
+    assert!(
+        await_plugin_stop(&journal, home.path(), &config, &identity.execution, async {
+            Err::<(), _>(std::io::Error::other("injected lifecycle stop failure"))
+        })
+        .await?
+    );
     assert!(began.elapsed() >= Duration::from_millis(90));
     release.await?;
     assert_eq!(

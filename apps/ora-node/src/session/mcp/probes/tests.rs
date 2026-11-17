@@ -43,7 +43,7 @@ async fn one_execution_cannot_take_a_third_slot_even_when_node_has_six_free() {
     assert_eq!(
         serde_json::to_value(scheduler.summary()).unwrap(),
         serde_json::json!({
-            "status":"probe_capacity", "total":8,"running":0,"cleanup_pending":2,"queued":2,"available":6
+            "status":"probe_capacity", "total":8,"running":0,"cleanup_pending":2,"queued":2,"available":6,"residues":[]
         })
     );
     scheduler.unregister(&ExecutionId::new("only"));

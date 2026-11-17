@@ -99,6 +99,8 @@ impl<L, C, P: PluginCatalog, R> Shared<L, C, P, R> {
 
     /// Proof precedes view deletion and dropping the exact package leases.
     fn release_resources(&self, execution: &ExecutionId) -> std::io::Result<()> {
+        // Both live completion and automatic recovery must wake durable probe owners.
+        self.probes.1.notify_waiters();
         let mut resources = self.retained.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(retained) = resources.get_mut(execution) {
             retained.placement.release()?;

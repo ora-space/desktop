@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn desired_active_and_sending_each_reject_conflicting_held_values() {
+    for held in ["desired", "active", "sending"] {
+        let owner = owner();
+        owner.begin();
+        if held != "sending" {
+            owner.loaded(0);
+        }
+        if held != "desired" {
+            owner.update(&update(1, vec![member(1, "next")]));
+        }
+        assert_eq!(
+            owner.update(&update(2, vec![member(0, "conflict")])),
+            (
+                SessionMcpResult::Conflict,
+                Some(SessionMcpErrorCode::ConfigurationRevisionConflict)
+            ),
+            "{held}"
+        );
+    }
+}
+
+#[test]
 fn larger_manual_attempt_joins_active_probe_without_scheduling_another() {
     let owner = owner();
     owner.begin();

@@ -58,6 +58,7 @@ impl Scheduler {
             cleanup_pending: cleanup,
             queued,
             available: 8usize.saturating_sub(active + state.retained),
+            residues: vec![],
         }
     }
     /// Restored cleanup responsibilities consume capacity before accepting fresh work.

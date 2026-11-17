@@ -3,7 +3,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 /// Supplies an immutable prior input without relying on a running Git fixture.
-fn resumed() -> StartAgentSessionMessage {
+pub(super) fn resumed() -> StartAgentSessionMessage {
     let mut input = command();
     input.payload.spec.prior_revision = Some(PriorRevision {
         revision_id: RevisionId::new("prior"),

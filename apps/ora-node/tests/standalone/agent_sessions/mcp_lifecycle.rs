@@ -90,6 +90,7 @@ fn install_mcp(fixture: &Fixture, version: &str) {
     fs::write(&executable,r#"#!/usr/bin/python3
 import sys,json,subprocess,os
 assert os.environ['TOKEN'] == 'session-probe-secret'
+assert os.environ.get('PATH'), 'stdio probes require the essential process environment'
 child = subprocess.Popen(['/bin/sleep','60'])
 with open('.mcp-descendants','a') as output: output.write(str(child.pid)+'\n')
 for line in sys.stdin:
@@ -126,7 +127,7 @@ async fn current_healthy(stream: &mut UnixStream, generation: u64, attempt: u64)
 
 /// The production clock is intentionally exercised without shortening the protocol's 300 seconds.
 #[test]
-#[ignore = "exercises the real 300-second admission deadline"]
+
 fn blocked_initial_and_queued_turns_fail_once_without_ending_the_session() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();

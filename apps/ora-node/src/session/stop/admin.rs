@@ -13,6 +13,15 @@ use tokio::{
 
 const SOCKET: &str = "session-stop.sock";
 
+/// Root-only names needed to address an original retained attempt during reconciliation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProbeResidue {
+    execution: ora_node_protocol::ExecutionId,
+    attempt: AttemptId,
+    state: SessionStopState,
+    bound_at_ms: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
@@ -22,6 +31,7 @@ pub enum Reply {
         cleanup_pending: usize,
         queued: usize,
         available: usize,
+        residues: Vec<ProbeResidue>,
     },
     Completed {
         result: SessionStopAuditResult,
@@ -80,8 +90,10 @@ impl Admin {
                     let journal = journal.clone();
                     let files = files.clone();
                     let config = config.clone();
+                    let probes = probes.clone();
                     pending.spawn(async move {
                         let _ = reconcile(&journal, &files, &config, &request).await;
+                        probes.1.notify_waiters();
                     });
                 }
                 tokio::select! {
@@ -100,7 +112,7 @@ impl Admin {
                             let read=tokio::time::timeout(Duration::from_secs(2),BufReader::new(read).take(4097).read_line(&mut line)).await;
                             if !matches!(read,Ok(Ok(1..=4096))) || !line.ends_with('\n') { return; }
                             let capacity = serde_json::from_str::<serde_json::Value>(&line).ok() == Some(serde_json::json!({"operation":"probe_capacity"}));
-                            let reply=if capacity { probes.summary() } else { match serde_json::from_str::<SessionStopReconcile>(&line) {
+                            let reply=if capacity { capacity_summary(&journal, &probes) } else { match serde_json::from_str::<SessionStopReconcile>(&line) {
                                 Ok(request) => match journal.begin_session_stop_audit(peer.uid(),&request,now_ms()) {
                                     Ok(SessionStopAuditAdmission::Completed(result)) => Reply::Completed{result},
                                     Ok(SessionStopAuditAdmission::InProgress) => Reply::InProgress,
@@ -133,6 +145,36 @@ impl Admin {
         self.stop.send_replace(true);
         let _ = self.task.await;
     }
+}
+
+/// Counts remain anonymous outside this root-only response; residues contain no settings.
+fn capacity_summary(
+    journal: &SessionJournal,
+    probes: &crate::session::mcp::probes::Scheduler,
+) -> Reply {
+    let Ok(records) = journal.session_stop_records(None) else {
+        return rejected("journal_unavailable");
+    };
+    let mut reply = probes.summary();
+    if let Reply::ProbeCapacity { residues, .. } = &mut reply {
+        *residues = records
+            .into_iter()
+            .filter(|record| {
+                !record.resources_released
+                    && matches!(
+                        record.identity.kind,
+                        SessionStopKind::StdioProbe | SessionStopKind::HttpProbe
+                    )
+            })
+            .map(|record| ProbeResidue {
+                execution: record.identity.execution,
+                attempt: record.identity.attempt,
+                state: record.state,
+                bound_at_ms: record.bound_at_ms,
+            })
+            .collect();
+    }
+    reply
 }
 
 /// The client receives only stable codes, never a database error or process command line.

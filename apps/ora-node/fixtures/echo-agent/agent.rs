@@ -154,6 +154,9 @@ impl EchoAgent {
             return Ok(());
         };
         if method == AGENT_METHOD_NAMES.initialize {
+            if std::path::Path::new("fail-initialize").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"fixture initialize failed"}})).await;
+            }
             if std::path::Path::new("require-path").exists() && std::env::var_os("PATH").is_none() {
                 return Err("replacement lost ambient PATH".into());
             }
@@ -244,6 +247,18 @@ impl EchoAgent {
         request: PromptRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let session_id = request.session_id.to_string();
+        if let Ok(delay) = std::fs::read_to_string("prompt-delay-ms") {
+            std::fs::remove_file("prompt-delay-ms")?;
+            let until = tokio::time::Instant::now()
+                + std::time::Duration::from_millis(delay.trim().parse()?);
+            while tokio::time::Instant::now() < until {
+                acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"method":"session/update","params":{"sessionId":session_id,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working "}}}})).await?;
+                tokio::time::sleep_until(
+                    until.min(tokio::time::Instant::now() + std::time::Duration::from_secs(10)),
+                )
+                .await;
+            }
+        }
         let text = request
             .prompt
             .iter()
