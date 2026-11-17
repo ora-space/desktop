@@ -198,6 +198,28 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             .remove(&agent_ref);
     }
 
+    /// Explicit admission may recover a failed host-owned replacement; idle time cannot retry it.
+    pub(super) async fn recover_mcp_replacement(
+        &self,
+        agent: &AgentRef,
+        setup: &H::Setup,
+    ) -> Result<(), RuntimeError> {
+        use crate::host::SessionSetup;
+        if !setup.preserve_provider_identity() || !is_agent_suspended(&self.suspended, agent) {
+            return Ok(());
+        }
+        // Resolve before asking for another process, preserving blocked missing-package targets.
+        setup.desired_mcp_revision()?;
+        setup.replace_mcp_process().await?;
+        let plugin = setup
+            .plugin_id_for_agent(agent)
+            .ok_or_else(super::support::runtime_unavailable)?;
+        self.resume_plugin_agent(&plugin.to_string());
+        self.sync_plugin_agents();
+        self.for_agent(agent)?.ready().await?;
+        Ok(())
+    }
+
     /// Reconciles the supervised agents with the packages currently installed.
     ///
     /// Installing a plugin has to make its agent reachable in the running process: the alternative
@@ -527,6 +549,14 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                     let _ = state.send(ConnectionState::Unavailable);
                     return;
                 }
+                if !plugin_host.automatic_restarts() {
+                    suspended
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(agent_ref.clone());
+                    let _ = state.send(ConnectionState::Failing);
+                    return;
+                }
                 if restart_circuit.record_failure(Instant::now()) == RestartDecision::Stop {
                     let _ = state.send(ConnectionState::Failing);
                     ora_warn!(
@@ -552,6 +582,14 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                 return;
             }
             Err(StartFailure::Retryable(error)) => {
+                if !plugin_host.automatic_restarts() {
+                    suspended
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(agent_ref.clone());
+                    let _ = state.send(ConnectionState::Failing);
+                    return;
+                }
                 let _ = state.send(ConnectionState::Unavailable);
                 // An agent that is simply not installed is an expected local configuration, and
                 // the supervisor keeps retrying it for the whole process lifetime. Logging it

@@ -94,8 +94,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Idle path: re-read Desired MCP and refresh immediately when the Session is live.
     pub(super) async fn on_idle_mcp_desired_changed(&mut self) {
         match self.observe_desired_mcp() {
-            Ok(true) if self.channel.is_some() => {
-                if let Err(error) = self.refresh_mcp().await {
+            Ok(true) if self.channel.is_some() || self.session_mcp.preserve_provider_identity() => {
+                let result = if self.channel.is_none() {
+                    self.attach_provider_session(None).await.map(drop)
+                } else {
+                    self.refresh_mcp().await
+                };
+                if let Err(error) = result {
                     ora_warn!(
                         session_id = %self.session.id,
                         error = %error,
@@ -163,6 +168,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Converges this live Session onto the current Snapshot, holding the shared Agent barrier.
     async fn refresh_mcp(&mut self) -> Result<(), RuntimeError> {
+        self.connections
+            .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
+            .await?;
+        self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         loop {
             let snapshot = self.resolve_mcp_snapshot()?;
             if self.replace_mcp_process_if_needed(&snapshot).await? {
@@ -205,7 +214,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             requested: revision,
                         })
                         .0;
-                    return Err(error);
+                    return Err(error.during_mcp());
                 }
             }
         }

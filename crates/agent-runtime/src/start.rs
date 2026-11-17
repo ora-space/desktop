@@ -101,6 +101,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     /// through the supervisor's own startup and retries and stops at the answer the supervisor
     /// settles on. The wait is unbounded, so callers bound it themselves.
     pub async fn wait_for_agent(&self, agent_ref: &AgentRef) -> Result<(), RuntimeError> {
+        self.inner
+            .connections
+            .recover_mcp_replacement(agent_ref, &self.inner.session_mcp)
+            .await?;
         self.inner.connections.for_agent(agent_ref)?.ready().await
     }
 

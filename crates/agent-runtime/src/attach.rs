@@ -86,6 +86,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // Package replacement retires the entire supervisor, not just its process generation.
         // Pin the current supervisor for this attach and its MCP capability checks; the actor
         // and its durable conversation may outlive any number of installed incarnations.
+        self.connections
+            .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
+            .await?;
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         let snapshot = self.resolve_mcp_snapshot()?;
         self.replace_mcp_process_if_needed(&snapshot).await?;
@@ -108,7 +111,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 Err(error) => {
                     if self.session_mcp.preserve_provider_identity() {
                         self.session_mcp.mcp_failed(&error);
-                        return Err(error);
+                        return Err(error.during_mcp());
                     }
                     // An agent that cannot restore this session is not a failed send: the
                     // conversation is Ora's, and a fresh provider session can be told it.
@@ -125,7 +128,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             if self.session_mcp.preserve_provider_identity() {
                 let error = crate::support::mcp_load_unsupported();
                 self.session_mcp.mcp_failed(&error);
-                return Err(error);
+                return Err(error.during_mcp());
             }
             ora_debug!(
                 session_id = %self.session.id,

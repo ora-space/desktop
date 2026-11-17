@@ -107,6 +107,10 @@ pub struct AgentPluginAttachment {
 /// over it, and asks the host to stop it when a connection generation ends. Which plugins exist is
 /// likewise the host's answer, so a host that serves one agent reports exactly that one.
 pub trait AgentAttach: Send + Sync + 'static {
+    /// Exclusive lifecycle hosts require a fresh turn/target before retrying a failed process.
+    fn automatic_restarts(&self) -> bool {
+        true
+    }
     /// Why the host could not stop a plugin; the runtime only logs it.
     type StopError: Error + Send + Sync + 'static;
 
