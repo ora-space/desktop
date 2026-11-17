@@ -67,7 +67,7 @@ over its `agent/acp` notification channel. See
 
 The private `startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
 
-The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value; an empty or non-select-only report carries no model.
+The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value; an empty or non-select-only report carries no model. A load follower registered during the first attempt stays with the logical turn across the stale-load rebuild, so it receives exactly one terminal boundary.
 
 At Backend start, stale `Running` session rows are reconciled to `Stopped`, then one dedicated
 runtime thread per agent starts it and performs `initialize`. The handshake advertises the

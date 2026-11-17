@@ -36,6 +36,9 @@ const LOAD_REFUSAL_MARKER: &str = "refuse_session_load";
 /// drive automatic retries through the real session driver.
 const FAIL_TIMES_MARKER: &str = "[fail-times:";
 
+/// Prompt marker `[fail-delay-ms:N]`: hold the prompt this long before the planned failure.
+const FAIL_DELAY_MARKER: &str = "[fail-delay-ms:";
+
 /// Journal of prompts failed on purpose, one marker per line, so the count survives new
 /// sessions and a restarted plugin process alike.
 const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
@@ -384,6 +387,9 @@ impl FakeAcpAgent {
             // its notifications and holds the request until ACP cancel. This keeps the process
             // alive for drop mode and produces no update or terminal end for silent mode.
         }
+        if let Some(delay) = prompt_delay(&prompt) {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
         if let Some(error) = planned_prompt_failure(&prompt) {
             return Err(error);
         }
@@ -466,6 +472,15 @@ fn record_acp_call(method: &str, session_id: &str) {
     {
         let _ = writeln!(file, "{method} {session_id}");
     }
+}
+
+/// Reads `[fail-delay-ms:N]` so a test can attach a load follower during the first attempt.
+fn prompt_delay(prompt: &str) -> Option<u64> {
+    let start = prompt.find(FAIL_DELAY_MARKER)?;
+    let length = prompt[start..].find(']')? + 1;
+    prompt[start + FAIL_DELAY_MARKER.len()..start + length - 1]
+        .parse()
+        .ok()
 }
 
 /// Fails this prompt when it carries `[fail-times:N]` and fewer than N prompts with the same
