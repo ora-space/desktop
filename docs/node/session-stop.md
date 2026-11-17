@@ -56,13 +56,15 @@ turns an observation into readiness.
 
 Probe cleanup exceeding ten seconds reports `mcp_probe_timeout` once. Its separate, original
 stop-confirmation bound still applies; only at that bound does responsibility become
-`stop_unconfirmed`. Automatic waiting then stops, retaining the slot and leases. Explicit root
-reconciliation wakes retained owners after recording stop proof. Root diagnostics on
+`stop_unconfirmed`. Automatic waiting then stops, retaining the slot and leases. Live completion,
+automatic recovery and explicit root reconciliation wake retained owners after durable stop proof. Root diagnostics on
 `session-stop.sock` accept the newline-delimited request `{"operation":"probe_capacity"}` and
-return total slots, running probes, cleanup_pending, queued intents and available slots. Session
+return total slots, running probes, cleanup_pending, queued intents, available slots and named residues (execution, attempt, state and original bound). Session
 queries expose only anonymous availability and their own members.
 
 Upgrade deployment requirement: Node home and package/workload views must be on supported local
 filesystems. Homes on NFS, 9p or virtiofs are refused by the new stop-evidence checks. Drain sessions
 and move the deployment's owned data to a supported local filesystem before this upgrade; copying
 unconfirmed responsibilities to another host does not establish stop proof.
+
+A probe owner task panic fails the Node closed. Its slot, exact-version leases and durable responsibility remain retained until restart recovery proves cleanup; continuing with a lost owner is not supported. Stop-request and kill_all results are diagnostic only: proof comes from the original lock plus process clues or the configured trusted reboot evidence.

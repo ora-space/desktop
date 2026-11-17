@@ -47,3 +47,7 @@ root 可以向 `session-stop.sock` 发送以换行结尾的 `{"operation":"probe
 升级部署要求：Node home 和包/工作负载视图必须位于支持的本地文件系统。新增停止证据检查会拒绝
 NFS、9p、virtiofs 上的 home；升级前先排空会话，再将部署拥有的数据迁移到受支持的本地文件系统。
 把未确认责任复制到另一台主机不构成停止证明。
+
+正常结束、自动恢复和 root 对账在持久确认后都会唤醒探测 owner。root 的 probe_capacity 还返回具名残留：execution、attempt、state 和原始 bound_at_ms，可直接用于停止对账；会话查询仍只暴露匿名容量。
+
+探测 owner task panic 会使整个 Node 失败退出，保留槽位、精确版本租约和持久责任，由重启恢复证明清理完成；不支持丢失 owner 后继续服务。stop 请求和 kill_all 的结果仅用于诊断，停止证明来自原锁、进程线索或配置允许的可信重启证据。
