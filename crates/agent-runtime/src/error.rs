@@ -39,6 +39,14 @@ pub struct RuntimeError {
 }
 
 impl RuntimeError {
+    /// A target changed during replacement; a new explicit attempt must own any next process.
+    pub(crate) fn mcp_retry_required() -> Self {
+        Self::internal(
+            "MCP target changed during process replacement",
+            std::io::Error::other("explicit retry required"),
+        )
+        .during_mcp()
+    }
     /// Marks a failed MCP delivery boundary without reclassifying ordinary Agent failures.
     pub(crate) fn during_mcp(self) -> Self {
         Self::with_source(

@@ -67,7 +67,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.connections.resume_plugin_agent(&plugin.to_string());
         self.connections.sync_plugin_agents();
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
-        self.connection.ready().await?;
+        if let Err(error) = self.connection.ready().await {
+            self.session_mcp.mcp_failed(&error);
+            return Err(error.during_mcp());
+        }
         Ok(true)
     }
     /// Observes the latest Desired MCP revision without sending ACP frames.
@@ -168,16 +171,30 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Converges this live Session onto the current Snapshot, holding the shared Agent barrier.
     async fn refresh_mcp(&mut self) -> Result<(), RuntimeError> {
-        self.connections
+        let recovered = self
+            .connections
             .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
             .await?;
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         loop {
             let snapshot = self.resolve_mcp_snapshot()?;
-            if self.replace_mcp_process_if_needed(&snapshot).await? {
-                // Restore uses the existing provider ID and resolves the latest coalesced target.
+            if recovered
+                && self
+                    .session_mcp
+                    .mcp_replacement_required(snapshot.revision())
+            {
+                let error = RuntimeError::mcp_retry_required();
+                self.session_mcp.mcp_failed(&error);
+                return Err(error);
+            }
+            if self
+                .session_mcp
+                .mcp_replacement_required(snapshot.revision())
+            {
+                // Attach owns the single replacement and restore. A new target cannot cause a
+                // second replacement in this refresh loop; its notification owns the next retry.
                 self.attach_provider_session(None).await?;
-                continue;
+                return Ok(());
             }
             let revision = snapshot.revision().clone();
             if self.live_mcp.is_current(&revision) {

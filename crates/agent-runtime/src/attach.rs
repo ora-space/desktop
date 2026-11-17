@@ -70,11 +70,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
+        let attaching = self.channel.is_none();
         let setup = match self.channel {
             Some(_) => Vec::new(),
             None => self.attach_provider_session(model).await?,
         };
-        self.ensure_current_mcp().await?;
+        // Node's final host commit checks freshness atomically. Do not turn a just-completed
+        // attach into another process replacement when Desired raced its handshake.
+        if !attaching || !self.session_mcp.preserve_provider_identity() {
+            self.ensure_current_mcp().await?;
+        }
         Ok(setup)
     }
 
@@ -86,12 +91,28 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // Package replacement retires the entire supervisor, not just its process generation.
         // Pin the current supervisor for this attach and its MCP capability checks; the actor
         // and its durable conversation may outlive any number of installed incarnations.
-        self.connections
+        let recovered = self
+            .connections
             .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
             .await?;
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         let snapshot = self.resolve_mcp_snapshot()?;
+        if recovered
+            && self
+                .session_mcp
+                .mcp_replacement_required(snapshot.revision())
+        {
+            let error = RuntimeError::mcp_retry_required();
+            self.session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
         self.replace_mcp_process_if_needed(&snapshot).await?;
+        let latest = self.resolve_mcp_snapshot()?;
+        if self.session_mcp.mcp_replacement_required(latest.revision()) {
+            let error = RuntimeError::mcp_retry_required();
+            self.session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;

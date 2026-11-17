@@ -291,7 +291,7 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
             connection.http_mcp_supported,
         ),
     )?;
-    while session_mcp.mcp_replacement_required(mcp.revision()) {
+    if session_mcp.mcp_replacement_required(mcp.revision()) {
         let plugin = session_mcp
             .plugin_id_for_agent(agent_ref)
             .ok_or_else(crate::support::runtime_unavailable)?;
@@ -309,6 +309,11 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
                 connection.http_mcp_supported,
             ),
         )?;
+        if session_mcp.mcp_replacement_required(mcp.revision()) {
+            let error = RuntimeError::mcp_retry_required();
+            session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
     }
     record_session_mcp_boundary(
         session_mcp,

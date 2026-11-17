@@ -203,10 +203,10 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
         &self,
         agent: &AgentRef,
         setup: &H::Setup,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<bool, RuntimeError> {
         use crate::host::SessionSetup;
         if !setup.preserve_provider_identity() || !is_agent_suspended(&self.suspended, agent) {
-            return Ok(());
+            return Ok(false);
         }
         // Resolve before asking for another process, preserving blocked missing-package targets.
         setup.desired_mcp_revision()?;
@@ -216,8 +216,11 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             .ok_or_else(super::support::runtime_unavailable)?;
         self.resume_plugin_agent(&plugin.to_string());
         self.sync_plugin_agents();
-        self.for_agent(agent)?.ready().await?;
-        Ok(())
+        if let Err(error) = self.for_agent(agent)?.ready().await {
+            setup.mcp_failed(&error);
+            return Err(error.during_mcp());
+        }
+        Ok(true)
     }
 
     /// Reconciles the supervised agents with the packages currently installed.
