@@ -406,6 +406,10 @@ mod default_mcp {
         async fn replace_mcp_process(&self) -> Result<(), RuntimeError> {
             let context = self.replacing.lock().unwrap().clone().unwrap();
             let generation = context.count.fetch_add(1, Ordering::AcqRel) + 2;
+            assert!(
+                context.host.runtime.lock().unwrap().is_none(),
+                "old supervisor must finish identity-based cleanup before installation"
+            );
             context
                 .host
                 .stop_plugin(&PluginId::parse(PLUGIN).unwrap())
