@@ -110,7 +110,16 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         .stop(SessionEnd::agent_failed("ledger_unavailable"))
                         .await;
                 }
-                Err(end) => return self.stop(end).await,
+                Err(end) => {
+                    return match self.queued_end() {
+                        Ok(Some(TurnOutcome::EndRequested {
+                            command_id,
+                            reason,
+                            discarded,
+                        })) => self.end_requested(command_id, reason, discarded).await,
+                        _ => self.stop(end).await,
+                    };
+                }
             }
         }
     }
@@ -134,10 +143,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
             admission::Admitted::Stream(stream) => stream,
             admission::Admitted::Outcome(outcome) => return Ok(outcome),
         };
+        // Business time belongs to the admitted turn, never to queued MCP wait budgets.
+        let _business = admission::BusinessTime::new(&self.blocked);
         let outcome = loop {
-            let queued_deadline = self.expire_queued()?;
             tokio::select! {
-                () = admission::until(queued_deadline) => {},
                 event = stream.recv() => match event {
                     Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
                     Some(Err(error)) => {

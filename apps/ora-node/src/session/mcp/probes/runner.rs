@@ -35,7 +35,32 @@ pub(crate) fn register<L, C, P, R>(
             let control = control.clone();
             Box::pin(async move {
                 if let Some(shared) = shared {
-                    run(shared, execution, checkout, cwd, control, input).await;
+                    let health = control.clone();
+                    let flight = Arc::clone(&input);
+                    let result = tokio::spawn(run(
+                        Arc::clone(&shared),
+                        execution,
+                        checkout,
+                        cwd,
+                        control,
+                        input,
+                    ))
+                    .await;
+                    if result.is_err() {
+                        // A lost owner is fatal to this Node, never an untracked free slot. Recovery
+                        // reconstructs the durable attempt before admitting new probe work.
+                        health.probe_result(
+                            &flight,
+                            SessionMcpHealth::Unknown {
+                                reason: SessionMcpUnknownReason::ContextMissing,
+                            },
+                            true,
+                        );
+                        shared
+                            .failed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        std::future::pending::<()>().await;
+                    }
                 }
             })
         });
@@ -132,8 +157,14 @@ async fn run<L, C, P, R>(
                     .args(server.args)
                     .cwd(cwd)
                     .stderr(ProcessStdio::Null);
+                let mut environment = std::collections::BTreeMap::new();
+                crate::session::process::ModelProcessIsolation::Isolated
+                    .extend_environment(&mut environment);
                 for variable in server.env {
-                    spec = spec.env(variable.name, variable.value);
+                    environment.insert(variable.name, variable.value);
+                }
+                for (name, value) in environment {
+                    spec = spec.env(name, value);
                 }
                 let mut child = spawner.spawn(spec).map_err(|_| ProbeError::SpawnFailed)?;
                 let mut stdin = child.take_stdin().ok_or(ProbeError::SpawnFailed)?;
@@ -170,13 +201,14 @@ async fn run<L, C, P, R>(
     .unwrap_or(Err(ProbeError::Timeout));
     spawner.close();
     let now = stop::now_ms();
+    let bound = now.saturating_add(shared.config.stop.confirmation_timeout_ms as i64);
     if shared
         .ledger
         .change_session_stop(
             &identity.attempt,
             SessionStopChange::Request {
                 at_ms: now,
-                bound_at_ms: now.saturating_add(2000),
+                bound_at_ms: bound,
             },
         )
         .is_err()
@@ -184,11 +216,46 @@ async fn run<L, C, P, R>(
         // A journal outage cannot release the slot or its exact package leases.
         std::future::pending::<()>().await;
     }
-    let health = result.map_or_else(
+    let mut health = result.map_or_else(
         |error| SessionMcpHealth::Unhealthy { code: code(error) },
         |()| SessionMcpHealth::Healthy,
     );
+    let mut timed_out = false;
+    let mut unconfirmed = false;
+    let mut confirmed = false;
     loop {
+        if !timed_out && tokio::time::Instant::now() >= admitted + Duration::from_secs(10) {
+            timed_out = true;
+            health = SessionMcpHealth::Unhealthy {
+                code: ora_node_protocol::SessionMcpProbeErrorCode::McpProbeTimeout,
+            };
+            control.probe_result(&input, health.clone(), true);
+        }
+        // After the D5 bound there is no automatic polling or signal loop. Root reconciliation
+        // wakes owners; only its durable confirmation can release the retained capacity.
+        let notified = shared.probes.1.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if unconfirmed {
+            confirmed = shared
+                .ledger
+                .session_stop_records(Some(&execution))
+                .ok()
+                .is_some_and(|records| {
+                    records.iter().any(|record| {
+                        record.identity.attempt == identity.attempt
+                            && record.state == ora_node_db::SessionStopState::Confirmed
+                    })
+                });
+            if !confirmed {
+                if timed_out {
+                    notified.await;
+                } else {
+                    tokio::select! { () = notified => {}, () = tokio::time::sleep_until(admitted + Duration::from_secs(10)) => {} }
+                }
+                continue;
+            }
+        }
         let proof = stop::files::StopFiles::open(&shared.config.home_directory)
             .ok()
             .and_then(|files| {
@@ -202,7 +269,8 @@ async fn run<L, C, P, R>(
                     .then_some(proof)
                     .flatten()
             });
-        if let Some(proof) = proof
+        if !confirmed
+            && let Some(proof) = proof
             && shared
                 .ledger
                 .change_session_stop(
@@ -214,25 +282,27 @@ async fn run<L, C, P, R>(
                 )
                 .is_ok()
         {
+            confirmed = true;
+        }
+        if confirmed {
             leases.take();
             if super::super::resources::release(shared.as_ref(), &identity).is_ok() {
                 control.probe_result(&input, health, false);
                 return;
             }
         }
-        if tokio::time::Instant::now() >= admitted + Duration::from_secs(10) {
-            let _ = shared
+        if !unconfirmed && !confirmed && stop::now_ms() >= bound {
+            unconfirmed = shared
                 .ledger
-                .change_session_stop(&identity.attempt, SessionStopChange::Unconfirmed);
-            control.probe_result(
-                &input,
-                SessionMcpHealth::Unknown {
-                    reason: SessionMcpUnknownReason::ContextMissing,
-                },
-                true,
-            );
+                .change_session_stop(&identity.attempt, SessionStopChange::Unconfirmed)
+                .is_ok();
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(if timed_out {
+            Duration::from_secs(2)
+        } else {
+            Duration::from_millis(100)
+        })
+        .await;
     }
 }
 

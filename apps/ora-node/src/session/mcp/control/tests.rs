@@ -1,4 +1,25 @@
 use super::*;
+
+#[test]
+fn larger_manual_attempt_joins_active_probe_without_scheduling_another() {
+    let owner = owner();
+    owner.begin();
+    owner.loaded(0);
+    let input = owner.claim_probe().unwrap();
+    assert_eq!(owner.probe(&probe(0, 8)), SessionMcpResult::Accepted);
+    owner.probe_result(&input, SessionMcpHealth::Healthy, false);
+    let member = owner.snapshot(true).members.remove(0);
+    assert_eq!(
+        (
+            member.probe_attempt,
+            member.health,
+            member.queued,
+            member.probe_in_flight
+        ),
+        (8, SessionMcpHealth::Healthy, false, false)
+    );
+    assert!(owner.claim_probe().is_none());
+}
 use ora_plugin_config::SettingValue;
 
 fn member(revision: u64, value: &str) -> SessionMcpUpdateMember {

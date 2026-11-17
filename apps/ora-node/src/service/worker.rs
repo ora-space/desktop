@@ -135,6 +135,10 @@ pub(super) fn run(
         node.home_directory(),
         node.session_stop.clone(),
         node.database.session_journal().map_err(|e| e.to_string())?,
+        agents
+            .as_ref()
+            .map(agents::SessionHost::probe_scheduler)
+            .unwrap_or_default(),
     )
     .map_err(|e| e.to_string())?;
     // Clones come only from the Git Server, which the Node reaches with its git-access identity.

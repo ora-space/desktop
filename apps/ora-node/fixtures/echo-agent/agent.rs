@@ -154,6 +154,9 @@ impl EchoAgent {
             return Ok(());
         };
         if method == AGENT_METHOD_NAMES.initialize {
+            if std::path::Path::new("require-path").exists() && std::env::var_os("PATH").is_none() {
+                return Err("replacement lost ambient PATH".into());
+            }
             let request: InitializeRequest = serde_json::from_value(params)?;
             record_acp_method("initialize");
             let flags: Value = std::fs::read("mcp-capabilities.json")
@@ -175,6 +178,9 @@ impl EchoAgent {
         }
         if method == AGENT_METHOD_NAMES.session_new {
             record_acp_method("session/new");
+            if std::path::Path::new("fail-new").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"provider unavailable"}})).await;
+            }
             self.mcp_verified = verify_mcp_frame(&params);
             let request: NewSessionRequest = serde_json::from_value(params)?;
             let session_id = format!("echo-session-{}", self.sessions.len() + 1);
@@ -190,6 +196,12 @@ impl EchoAgent {
         }
         if method == AGENT_METHOD_NAMES.session_load {
             record_acp_method("session/load");
+            if let Some(delay) = std::fs::read_to_string("load-delay-ms")
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
             let request: agent_client_protocol_schema::v1::LoadSessionRequest =
                 serde_json::from_value(params)?;
             let session_id = request.session_id.to_string();
@@ -412,6 +424,10 @@ async fn acp(output: &mut Stdout, frame: Value) -> Result<(), Box<dyn std::error
 
 /// Appends this process id to the journal in the package root.
 fn record_pid() {
+    // Version discovery may invoke the Deno stand-in outside a package; never litter that cwd.
+    if !std::path::Path::new("orax.toml").is_file() {
+        return;
+    }
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)

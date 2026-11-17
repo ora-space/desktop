@@ -48,9 +48,11 @@ pub(crate) fn handle(
     }
     node.database
         .check_controller_execution(controller, operation, execution)?;
-    node.database
-        .authorize_session_command(execution, &node.identity().incarnation_id)?;
     let record = node.database.find_session(operation, execution)?;
+    if record.is_some() {
+        node.database
+            .authorize_session_command(execution, &node.identity().incarnation_id)?;
+    }
     let mut code = None;
     let mut state = None;
     let result = match record {

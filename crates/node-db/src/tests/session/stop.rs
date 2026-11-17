@@ -209,6 +209,23 @@ fn undrained_v13_upgrade_marks_only_running_agents_legacy_unknown() {
     assert_eq!(records[0].identity.execution, input.execution_id);
     assert_eq!(records[0].identity.host, host);
     assert_eq!(records[0].state, SessionStopState::LegacyUnknown);
+    journal
+        .change_session_stop(
+            &records[0].identity.attempt,
+            SessionStopChange::Request {
+                at_ms: 10,
+                bound_at_ms: 20,
+            },
+        )
+        .unwrap();
+    journal
+        .change_session_stop(&records[0].identity.attempt, SessionStopChange::Unconfirmed)
+        .unwrap();
+    assert_eq!(
+        journal.session_stop_records(None).unwrap()[0].state,
+        SessionStopState::LegacyUnknown,
+        "ordinary stop processing cannot erase the stronger upgrade fence"
+    );
     assert!(
         journal
             .change_session_stop(

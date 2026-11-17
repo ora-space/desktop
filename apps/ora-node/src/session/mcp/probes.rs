@@ -29,13 +29,37 @@ struct State {
     order: VecDeque<ExecutionId>,
     active: HashMap<ExecutionId, usize>,
     retained: usize,
+    owners: HashMap<ExecutionId, Control>,
 }
 
 /// One instance per Node, shared by every session; no session can consume more than two slots.
 #[derive(Clone, Default)]
-pub(crate) struct Scheduler(Arc<Mutex<State>>);
+pub(crate) struct Scheduler(Arc<Mutex<State>>, pub(crate) Arc<tokio::sync::Notify>);
 
 impl Scheduler {
+    /// Root diagnostics include anonymous global counts, including cleanup held after unregister.
+    pub(crate) fn summary(&self) -> crate::session::stop::admin::Reply {
+        let state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let active = state.active.values().sum::<usize>();
+        let cleanup = state.retained
+            + state
+                .owners
+                .values()
+                .map(|control| control.probe_counts().1)
+                .sum::<usize>();
+        let queued = state
+            .entries
+            .values()
+            .map(|entry| entry.control.probe_counts().0)
+            .sum();
+        crate::session::stop::admin::Reply::ProbeCapacity {
+            total: 8,
+            running: active.saturating_sub(cleanup.saturating_sub(state.retained)),
+            cleanup_pending: cleanup,
+            queued,
+            available: 8usize.saturating_sub(active + state.retained),
+        }
+    }
     /// Restored cleanup responsibilities consume capacity before accepting fresh work.
     pub(crate) fn retain_recovered(&self, count: usize) {
         self.0
@@ -104,6 +128,8 @@ impl Scheduler {
                         continue;
                     };
                     let runner = Arc::clone(&entry.runner);
+                    let control = entry.control.clone();
+                    state.owners.insert(execution.clone(), control);
                     *state.active.entry(execution.clone()).or_default() += 1;
                     selected = Some((execution, runner, input));
                     break;
@@ -120,6 +146,9 @@ impl Scheduler {
                     let mut state = owner.0.lock().unwrap_or_else(PoisonError::into_inner);
                     if let Some(active) = state.active.get_mut(&execution) {
                         *active -= 1;
+                        if *active == 0 {
+                            state.owners.remove(&execution);
+                        }
                     }
                 }
                 owner.dispatch();

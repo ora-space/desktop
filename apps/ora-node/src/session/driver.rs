@@ -407,6 +407,7 @@ where
                 placement,
                 leases: mcp_leases,
                 spawner,
+                isolation,
             },
         );
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
@@ -610,29 +611,7 @@ where
         .await
     {
         ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
-        if let Ok(records) = shared.ledger.session_stop_records(Some(execution)) {
-            for record in records
-                .into_iter()
-                .filter(|record| record.state != ora_node_db::SessionStopState::Confirmed)
-            {
-                if shared
-                    .ledger
-                    .change_session_stop(
-                        &record.identity.attempt,
-                        ora_node_db::SessionStopChange::Unconfirmed,
-                    )
-                    .is_err()
-                {
-                    shared
-                        .failed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-            }
-        } else {
-            shared
-                .failed
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
+        // A transport error is not stop evidence; run() still polls the original bound.
     }
     scheduler.shutdown().await;
     if let Some(access) = &mut model_access {

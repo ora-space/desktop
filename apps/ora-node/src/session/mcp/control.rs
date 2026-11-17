@@ -47,6 +47,18 @@ struct State {
 }
 
 impl Control {
+    /// Counts value-free queue and cleanup facts for the Node's root-only diagnostics.
+    pub(super) fn probe_counts(&self) -> (usize, usize) {
+        let state = self.lock();
+        (
+            state.health.iter().filter(|member| member.queued).count(),
+            state
+                .health
+                .iter()
+                .filter(|member| member.cleanup_pending)
+                .count(),
+        )
+    }
     /// Successful host resolution queues at most one automatic observation per member/generation.
     pub(super) fn resolved(&self, generation: u64) {
         let mut state = self.lock();
@@ -146,10 +158,9 @@ impl Control {
         let member = &mut state.health[index];
         member.cleanup_pending = cleanup_pending;
         member.probe_in_flight = cleanup_pending;
-        if member.probe_attempt == input.attempt {
+        // Larger manual counters join this same configuration's in-flight observation.
+        if member.probe_attempt >= input.attempt {
             member.health = health;
-        } else if !cleanup_pending {
-            member.queued = true;
         }
         bump(&mut state);
     }
@@ -198,6 +209,10 @@ impl Control {
         ) {
             return SessionMcpResult::NotConfigured;
         }
+        let coalesced = state
+            .flights
+            .get(&request.plugin_id)
+            .is_some_and(|flight| flight.generation == request.generation);
         let member = &mut state.health[index];
         if request.probe_attempt == member.probe_attempt {
             return SessionMcpResult::Duplicate;
@@ -206,7 +221,7 @@ impl Control {
             return SessionMcpResult::Stale;
         }
         member.probe_attempt = request.probe_attempt;
-        member.queued = true;
+        member.queued = !coalesced;
         bump(&mut state);
         drop(state);
         self.changed.notify_one();
@@ -325,10 +340,17 @@ impl Control {
             members: update.members.clone(),
         });
         state.automatic.clear();
+        let cleanup: Vec<_> = state
+            .health
+            .iter()
+            .filter(|member| member.cleanup_pending)
+            .map(|member| member.plugin_id.clone())
+            .collect();
         state.health = unknown(&update.members);
         let in_flight: Vec<_> = state.flights.keys().cloned().collect();
         for member in &mut state.health {
             member.probe_in_flight = in_flight.contains(&member.plugin_id);
+            member.cleanup_pending = cleanup.contains(&member.plugin_id);
         }
         state.convergence = SessionMcpConvergence::Pending;
         state.failure = None;

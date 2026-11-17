@@ -19,6 +19,7 @@ pub(super) struct Retained<T> {
     pub placement: SessionPlacement,
     pub leases: Vec<T>,
     pub spawner: SessionAttemptSpawner,
+    pub isolation: super::process::ModelProcessIsolation,
 }
 
 /// Wall-clock deadlines survive Node restart and are never extended by subsequent stop requests.
@@ -103,9 +104,9 @@ pub(crate) async fn confirm<L: SessionLedger>(
                 )?;
             } else {
                 pending = true;
-                if wait && record.bound_at_ms.is_some_and(|bound| now_ms() < bound) {
+                if record.bound_at_ms.is_some_and(|bound| now_ms() < bound) {
                     before_bound = true;
-                } else {
+                } else if record.state != SessionStopState::StopUnconfirmed {
                     ledger.change_session_stop(
                         &record.identity.attempt,
                         SessionStopChange::Unconfirmed,

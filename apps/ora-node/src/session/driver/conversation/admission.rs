@@ -4,6 +4,8 @@ use ora_agent_runtime::{RuntimeError, SessionEventStream};
 use ora_node_protocol::{SessionMcpConvergence, SessionTurnFailed, SessionTurnFailureCode};
 use std::sync::atomic::Ordering;
 use tokio::time::Instant;
+#[cfg(test)]
+mod tests;
 
 pub(super) enum Admitted {
     Stream(SessionEventStream<PromptSessionEvent>),
@@ -18,13 +20,47 @@ struct TurnGate {
     deadline: Option<Instant>,
 }
 
+impl TurnGate {
+    /// Final Actor commit and timeout share this lock; a committed turn cannot later time out.
+    fn commit(
+        &mut self,
+        write: impl FnOnce() -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        if self.expired
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(RuntimeError::internal(
+                "MCP admission deadline expired",
+                crate::session::mcp::control::Admission::Pending,
+            ));
+        }
+        write()?;
+        self.committed = true;
+        Ok(())
+    }
+
+    /// Returns whether timeout won against the Actor's final commit.
+    fn expire(&mut self) -> bool {
+        if self.committed {
+            return false;
+        }
+        self.expired = true;
+        true
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("agent readiness unavailable")]
 struct ReadinessUnavailable;
 
 impl<L: SessionLedger> Conversation<'_, L> {
-    /// Queued deadlines keep running while an already admitted turn is using the Agent.
-    pub(super) fn expire_queued(&self) -> Result<Option<Instant>, SessionEnd> {
+    /// Waiting turns share MCP blocking time, excluding a previously admitted turn's business time.
+    fn expire_queued(
+        &self,
+        current: &ora_node_protocol::TurnId,
+    ) -> Result<Option<Instant>, SessionEnd> {
         let commands = self
             .ledger
             .queued_commands(self.execution)
@@ -42,6 +78,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
             let crate::session::SessionCommand::SubmitUserTurn(turn) = command.command else {
                 continue;
             };
+            if &turn.turn_id == current {
+                continue;
+            }
             let deadline = self
                 .blocked
                 .lock()
@@ -107,7 +146,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
     }
 
     /// EndSession is checked before attempts, after wakes, and again inside the durable commit.
-    fn queued_end(&self) -> Result<Option<TurnOutcome>, SessionEnd> {
+    pub(super) fn queued_end(&self) -> Result<Option<TurnOutcome>, SessionEnd> {
         Ok(
             match self
                 .ledger
@@ -144,6 +183,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 return Ok(Admitted::Outcome(end));
             }
             let deadline = self.deadline(turn)?;
+            self.expire_queued(&turn.turn_id)?;
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 self.mirror.set_turn(None);
                 let result = self.ledger.fail_session_turn(
@@ -169,8 +209,19 @@ impl<L: SessionLedger> Conversation<'_, L> {
             let generation = self
                 .control
                 .map(|control| control.snapshot(true).desired.generation);
-            if self.control.is_none() || attempted != generation {
-                attempted = generation;
+            // A newly queued turn supplies one retry; notifications alone never supply retries.
+            let retry = self
+                .ledger
+                .queued_commands(self.execution)
+                .map_err(|_| SessionEnd::agent_failed("ledger_unavailable"))?
+                .last()
+                .map(|command| command.command_id.clone());
+            let key = (generation, retry);
+            let current = self.control.is_some_and(|control| {
+                control.snapshot(true).convergence == SessionMcpConvergence::Current
+            });
+            if self.control.is_none() || attempted.as_ref() != Some(&key) || current {
+                attempted = Some(key);
                 let gate = Arc::new(std::sync::Mutex::new(TurnGate::default()));
                 let attempt = self.attempt_turn(
                     turn,
@@ -196,25 +247,23 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         result = &mut attempt => {
                             match result {
                                 Ok(stream) => { self.blocked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&turn.turn_id); return Ok(Admitted::Stream(stream)); },
-                                Err(error) if self.control.is_some() => {
+                                Err(error) if self.control.is_some() && mcp_wait(&error.0) => {
                                     if error.1 {
                                         if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); }
                                         return Err(SessionEnd::agent_failed("ledger_unavailable"));
                                     }
                                     self.mirror.set_turn(None);
-                                    // Resolver errors already published their more specific safe code.
-                                    if let Some(control) = self.control && control.snapshot(true).convergence != SessionMcpConvergence::Blocked {
-                                        control.failed(ora_node_protocol::SessionMcpFailure { code: ora_node_protocol::SessionMcpErrorCode::McpRefreshFailed, plugin_id: None, setting_id: None, transport: None });
-                                    }
+                                    // Only the resolver/load owner publishes failure. Busy and update
+                                    // races must not clear another request's in-flight generation.
                                     break;
                                 },
-                                Err((error, failed)) => { return Err(if failed { SessionEnd::agent_failed("ledger_unavailable") } else if std::error::Error::source(&error).is_some_and(<dyn std::error::Error + 'static>::is::<ReadinessUnavailable>) { SessionEnd::agent_failed("agent_unavailable") } else { crate::session::mcp::start_failure(&error, self.execution) }); },
+                                Err((error, failed)) => { return Err(if failed { SessionEnd::agent_failed("ledger_unavailable") } else if self.control.is_some() || std::error::Error::source(&error).is_some_and(<dyn std::error::Error + 'static>::is::<ReadinessUnavailable>) { SessionEnd::agent_failed("agent_unavailable") } else { crate::session::mcp::start_failure(&error, self.execution) }); },
                             }
                         },
                         () = changed(self.control) => {},
                         () = until(deadline) => {
                             let mut gate = gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if !gate.committed { gate.expired = true; break; }
+                            if gate.expire() { break; }
                         },
                     }
                 }
@@ -247,9 +296,13 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         false,
                     )
                 })?
-                .map_err(|_error| {
+                .map_err(|error| {
                     (
-                        RuntimeError::internal("agent readiness failed", ReadinessUnavailable),
+                        if mcp_wait(&error) {
+                            error
+                        } else {
+                            RuntimeError::internal("agent readiness failed", ReadinessUnavailable)
+                        },
                         false,
                     )
                 })?;
@@ -296,29 +349,24 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         let mut gate = gate
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if gate.expired
-                            || gate
-                                .deadline
-                                .is_some_and(|deadline| Instant::now() >= deadline)
-                        {
-                            return Err(RuntimeError::internal(
-                                "MCP admission deadline expired",
-                                crate::session::mcp::control::Admission::Pending,
-                            ));
-                        }
-                        if let Some(command) = command {
-                            ledger
-                                .settle_command(&execution, &command, CommandSettlement::Executed)
-                                .map_err(|error| {
-                                    commit_failed.store(true, Ordering::Release);
-                                    RuntimeError::internal(
-                                        "command admission could not commit",
-                                        error,
+                        gate.commit(|| {
+                            if let Some(command) = command {
+                                ledger
+                                    .settle_command(
+                                        &execution,
+                                        &command,
+                                        CommandSettlement::Executed,
                                     )
-                                })?;
-                        }
-                        gate.committed = true;
-                        Ok(())
+                                    .map_err(|error| {
+                                        commit_failed.store(true, Ordering::Release);
+                                        RuntimeError::internal(
+                                            "command admission could not commit",
+                                            error,
+                                        )
+                                    })?;
+                            }
+                            Ok(())
+                        })
                     };
                     match control {
                         Some(control) => control.admit(commit).map_err(|error| {
@@ -330,6 +378,47 @@ impl<L: SessionLedger> Conversation<'_, L> {
             )
             .await;
         result.map_err(|error| (error, failed.load(Ordering::Acquire)))
+    }
+}
+
+/// Only typed MCP failures and an in-flight refresh can keep a turn waiting.
+fn mcp_wait(error: &RuntimeError) -> bool {
+    error.is_mcp_admission()
+        || matches!(error.public_error(), PublicError::SessionBusy(_))
+        || std::error::Error::source(error).is_some_and(|source| {
+            source.is::<crate::session::mcp::NodeMcpFailure>()
+                || source.is::<crate::session::mcp::control::Admission>()
+        })
+}
+
+/// Shifts retained wait origins on every exit path, including cancellation and terminal errors.
+pub(super) struct BusinessTime<'a> {
+    clocks: &'a std::sync::Mutex<std::collections::HashMap<ora_node_protocol::TurnId, Instant>>,
+    started: Instant,
+}
+
+impl<'a> BusinessTime<'a> {
+    pub(super) fn new(
+        clocks: &'a std::sync::Mutex<std::collections::HashMap<ora_node_protocol::TurnId, Instant>>,
+    ) -> Self {
+        Self {
+            clocks,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl Drop for BusinessTime<'_> {
+    fn drop(&mut self) {
+        let elapsed = self.started.elapsed();
+        for first in self
+            .clocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values_mut()
+        {
+            *first += elapsed;
+        }
     }
 }
 

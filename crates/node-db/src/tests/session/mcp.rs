@@ -3,6 +3,62 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn turn_failure_requires_running_and_end_session_wins_before_failure_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )
+    .unwrap();
+    let start = command();
+    db.accept_session(&start).unwrap();
+    let journal = db.session_journal().unwrap();
+    let failure = SessionTurnFailed {
+        turn_id: start.payload.spec.initial_turn.turn_id.clone(),
+        command_id: None,
+        code: SessionTurnFailureCode::McpRefreshWaitTimeout,
+    };
+    assert!(matches!(
+        journal.fail_session_turn(&start.execution_id, failure.clone()),
+        Err(Error::InvalidTransition)
+    ));
+    db.start_session(&start, &NodeIncarnationId::new("first"))
+        .unwrap();
+    let before = db
+        .find_session(&start.operation_id, &start.execution_id)
+        .unwrap()
+        .unwrap()
+        .last_sequence;
+    db.accept_session_command(&SessionCommandInput::EndSession(EndSessionMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: start.operation_id.clone(),
+        execution_id: start.execution_id.clone(),
+        payload: EndSession {
+            node_id: NodeId::new("node"),
+            command_id: CommandId::new("end"),
+            reason: EndSessionReason::UserEnded,
+        },
+    }))
+    .unwrap();
+    assert!(matches!(
+        journal.fail_session_turn(&start.execution_id, failure.clone()),
+        Err(Error::InvalidTransition)
+    ));
+    assert_eq!(
+        db.find_session(&start.operation_id, &start.execution_id)
+            .unwrap()
+            .unwrap()
+            .last_sequence,
+        before
+    );
+    journal.end_session(&start.execution_id, ended()).unwrap();
+    assert!(matches!(
+        journal.fail_session_turn(&start.execution_id, failure),
+        Err(Error::InvalidTransition)
+    ));
+}
+
+#[test]
 fn floor_rejection_is_retryable_and_duplicates_compare_before_current_generation() {
     let dir = tempfile::tempdir().unwrap();
     let mut db = NodeDatabase::open(
@@ -60,6 +116,8 @@ fn failure_settlement_is_durable_idempotent_and_does_not_end_session() {
     let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
     let start = command();
     db.accept_session(&start).unwrap();
+    db.start_session(&start, &NodeIncarnationId::new("first"))
+        .unwrap();
     let input = turn("turn");
     db.accept_session_command(&input).unwrap();
     let journal = db.session_journal().unwrap();

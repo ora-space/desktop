@@ -238,6 +238,10 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
     pub(crate) fn probe_capacity_available(&self) -> bool {
         self.shared.probes.available()
     }
+    /// Shares the diagnostic and explicit-reconciliation boundary with the local admin socket.
+    pub(crate) fn probe_scheduler(&self) -> mcp::probes::Scheduler {
+        self.shared.probes.clone()
+    }
     /// The service must authorize execution and control scope before taking this memory handle.
     pub(crate) fn mcp_control(&self, execution: &ExecutionId) -> Option<mcp::control::Control> {
         self.shared

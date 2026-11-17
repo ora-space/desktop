@@ -16,9 +16,20 @@ const SOCKET: &str = "session-stop.sock";
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
-    Completed { result: SessionStopAuditResult },
+    ProbeCapacity {
+        total: usize,
+        running: usize,
+        cleanup_pending: usize,
+        queued: usize,
+        available: usize,
+    },
+    Completed {
+        result: SessionStopAuditResult,
+    },
     InProgress,
-    Rejected { code: String },
+    Rejected {
+        code: String,
+    },
 }
 
 /// A running listener owns its socket until all admitted audit operations have committed results.
@@ -33,6 +44,7 @@ impl Admin {
         home: &Path,
         config: SessionStopConfig,
         journal: SessionJournal,
+        probes: crate::session::mcp::probes::Scheduler,
     ) -> io::Result<Self> {
         let path = home.join(SOCKET);
         match std::fs::symlink_metadata(&path) {
@@ -78,7 +90,7 @@ impl Admin {
                     Some(_)=pending.join_next(), if !pending.is_empty() => {},
                     accepted=listener.accept(), if pending.len()<8 => {
                         let Ok((stream,_))=accepted else { break; };
-                        let journal=journal.clone(); let files=files.clone(); let config=config.clone();
+                        let journal=journal.clone(); let files=files.clone(); let config=config.clone(); let probes=probes.clone();
                         pending.spawn(async move {
                             // UnixStream::peer_cred reads SO_PEERCRED; the payload has no actor identity.
                             let Ok(peer)=stream.peer_cred() else { return; };
@@ -87,7 +99,8 @@ impl Admin {
                             let mut line=String::new();
                             let read=tokio::time::timeout(Duration::from_secs(2),BufReader::new(read).take(4097).read_line(&mut line)).await;
                             if !matches!(read,Ok(Ok(1..=4096))) || !line.ends_with('\n') { return; }
-                            let reply=match serde_json::from_str::<SessionStopReconcile>(&line) {
+                            let capacity = serde_json::from_str::<serde_json::Value>(&line).ok() == Some(serde_json::json!({"operation":"probe_capacity"}));
+                            let reply=if capacity { probes.summary() } else { match serde_json::from_str::<SessionStopReconcile>(&line) {
                                 Ok(request) => match journal.begin_session_stop_audit(peer.uid(),&request,now_ms()) {
                                     Ok(SessionStopAuditAdmission::Completed(result)) => Reply::Completed{result},
                                     Ok(SessionStopAuditAdmission::InProgress) => Reply::InProgress,
@@ -99,7 +112,8 @@ impl Admin {
                                     Err(_) => rejected("invalid_request"),
                                 },
                                 Err(_) => rejected("invalid_request"),
-                            };
+                            }};
+                            if matches!(reply, Reply::Completed { .. }) { probes.1.notify_waiters(); }
                             if let Ok(mut bytes)=serde_json::to_vec(&reply) {
                                 bytes.push(b'\n');
                                 let _=tokio::time::timeout(Duration::from_secs(2),write.write_all(&bytes)).await;

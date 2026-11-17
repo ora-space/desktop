@@ -56,6 +56,9 @@ impl<G: WriteGuard> SessionJournal<G> {
         let sequence = Sequence::new(sequence);
         let event = match record {
             Record::TurnFailed(payload) => {
+                if current.state != ExecutionState::Running {
+                    return Err(Error::InvalidTransition);
+                }
                 let previous: Option<(String, i64)> = tx.query_row("SELECT failure,sequence FROM session_turn_failures WHERE execution=?1 AND turn_id=?2", params![execution.as_str(), payload.turn_id.as_str()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
                 if let Some((previous, sequence)) = previous {
                     return if serde_json::from_str::<SessionTurnFailed>(&previous)? == payload {

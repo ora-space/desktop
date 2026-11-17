@@ -1,5 +1,57 @@
 use super::*;
 use ora_node_protocol::*;
+use pretty_assertions::assert_eq;
+
+#[tokio::test]
+async fn one_execution_cannot_take_a_third_slot_even_when_node_has_six_free() {
+    let scheduler = Scheduler::default();
+    let owner = control();
+    let (started, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    scheduler.register(ExecutionId::new("only"), owner.clone(), move |input| {
+        started.send(input).unwrap();
+        Box::pin(std::future::pending())
+    });
+    scheduler.dispatch();
+    let first = receive.recv().await.unwrap();
+    let second = receive.recv().await.unwrap();
+    assert!(receive.try_recv().is_err());
+    assert_eq!(
+        owner
+            .snapshot(true)
+            .members
+            .iter()
+            .filter(|m| m.probe_in_flight)
+            .count(),
+        2
+    );
+    owner.probe_result(
+        &first,
+        SessionMcpHealth::Unhealthy {
+            code: SessionMcpProbeErrorCode::McpProbeTimeout,
+        },
+        true,
+    );
+    owner.probe_result(
+        &second,
+        SessionMcpHealth::Unhealthy {
+            code: SessionMcpProbeErrorCode::McpProbeTimeout,
+        },
+        true,
+    );
+    scheduler.dispatch();
+    assert!(receive.try_recv().is_err());
+    assert_eq!(
+        serde_json::to_value(scheduler.summary()).unwrap(),
+        serde_json::json!({
+            "status":"probe_capacity", "total":8,"running":0,"cleanup_pending":2,"queued":2,"available":6
+        })
+    );
+    scheduler.unregister(&ExecutionId::new("only"));
+    assert_eq!(
+        serde_json::to_value(scheduler.summary()).unwrap()["cleanup_pending"],
+        2
+    );
+}
 
 /// Each fixture has more pending work than its per-session allowance.
 fn control() -> Control {

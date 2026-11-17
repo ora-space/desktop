@@ -161,6 +161,9 @@ pub(super) struct SessionProcessAdmission {
 }
 
 impl AgentAttach for SessionPlugin {
+    fn automatic_restarts(&self) -> bool {
+        self.process_admission.is_none()
+    }
     type StopError = PluginLifecycleError;
 
     /// Only the session's own frozen context; the runtime refuses ACP until the adapter confirms it.

@@ -9,6 +9,73 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[tokio::test]
+async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_proof() -> TestResult
+{
+    use ora_node_db::{NodeDatabase, NodeIdentity, SessionStopChange, SessionStopState};
+    use ora_node_protocol::*;
+    let (home, files, identity) = fixture()?;
+    let mut db = NodeDatabase::open(
+        &home.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )?;
+    let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
+        "protocol_version":CURRENT_PROTOCOL_VERSION,"operation_id":"op","execution_id":"session",
+        "payload":{"spec":{"node_id":"node","agent_plugin_id":"official/agent","agent_plugin_version":"1.0.0","checkout_execution_id":"checkout",
+        "git_identity":{"name":"Fixture","email":"fixture@example.test"},"initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"hello"}]}}}
+    }))?;
+    db.accept_session(&input)?;
+    db.start_session(&input, &NodeIncarnationId::new("original"))?;
+    let journal = db.session_journal()?;
+    files.create(&identity.attempt)?;
+    let descriptor = files.hold(&identity.attempt)?;
+    journal.record_session_stop(&identity, now_ms())?;
+    let config = SessionStopConfig {
+        confirmation_timeout_ms: 500,
+        ..Default::default()
+    };
+    request(&journal, &identity.execution, &config)?;
+    let original_bound = journal.session_stop_records(None)?[0].bound_at_ms;
+    assert!(!confirm(&journal, home.path(), &config, &identity.execution, false).await?);
+    assert_eq!(
+        journal.session_stop_records(None)?[0].state,
+        SessionStopState::Stopping
+    );
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(descriptor);
+    });
+    let began = tokio::time::Instant::now();
+    assert!(confirm(&journal, home.path(), &config, &identity.execution, true).await?);
+    assert!(began.elapsed() >= Duration::from_millis(90));
+    release.await?;
+    assert_eq!(
+        journal.session_stop_records(None)?[0].bound_at_ms,
+        original_bound
+    );
+    journal.change_session_stop(&identity.attempt, SessionStopChange::ResourcesReleased)?;
+    Ok(())
+}
+
+#[test]
+fn foreign_or_missing_host_identity_cannot_turn_a_boot_change_into_stop_proof() -> TestResult {
+    let (_home, files, mut identity) = fixture()?;
+    files.create(&identity.attempt)?;
+    identity.host.boot_id = "old-boot".into();
+    identity.host.trusted_host_id = Some("old-host".into());
+    for host in [Some("other-host".into()), None, Some(String::new())] {
+        let current = SessionStopHost {
+            boot_id: "new-boot".into(),
+            trusted_host_id: host,
+        };
+        assert_eq!(
+            files.probe(&identity, &current, false),
+            (StopEvidence::Unknown, None)
+        );
+    }
+    Ok(())
+}
+
 /// Every fixture has an owner-private independent Node home and a value-free attempt identity.
 fn fixture()
 -> Result<(tempfile::TempDir, StopFiles, SessionStopIdentity), Box<dyn std::error::Error>> {

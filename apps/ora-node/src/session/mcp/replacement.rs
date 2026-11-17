@@ -168,8 +168,7 @@ where
         packages,
         ..old.clone()
     };
-    let inner = crate::session::process::ModelProcessIsolation::Isolated
-        .spawner(retained.placement.identity());
+    let inner = retained.isolation.spawner(retained.placement.identity());
     let next = stop::prepare(&shared.ledger, &shared.config.home_directory, next, inner)
         .map_err(|_| blocked())?;
     retained.leases = leases;

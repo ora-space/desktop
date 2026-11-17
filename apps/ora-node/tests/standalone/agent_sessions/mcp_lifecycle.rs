@@ -2,6 +2,56 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use tokio::net::UnixStream;
+#[path = "mcp_lifecycle/cleanup.rs"]
+mod cleanup;
+#[path = "mcp_lifecycle/races.rs"]
+mod races;
+
+#[test]
+fn lifecycle_agent_failure_is_terminal_and_unknown_execution_keeps_connection_open() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server = GitServerFixture::new(fixture.path(), fixture.path().join("main/.git"));
+        let config = configuration(&fixture, &server);
+        let root = prepare(&fixture, &config, &server);
+        fs::write(root.join("fail-new"), b"").unwrap();
+        let mut child = launch(&fixture, &config);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = connect(&fixture).await;
+                send(&mut stream, get()).await;
+                assert_eq!(reply(&mut stream).await.result, SessionMcpResult::NotFound);
+                let mut input = start("hello");
+                input.payload.spec.mcp_lifecycle = true;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(input),
+                )
+                .await;
+                tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                    loop {
+                        match receive(&mut stream).await {
+                            NodeToControllerMessage::AgentSessionEnded(event) => {
+                                let AgentSessionResult::AgentSessionEnded(ended) = event.payload;
+                                assert_eq!(ended.detail.as_deref(), Some("agent_unavailable"));
+                                break;
+                            }
+                            NodeToControllerMessage::SessionTurnFailed(_) => {
+                                panic!("Agent failure is not MCP timeout")
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+            });
+        child.terminate();
+    });
+}
 
 async fn reply(stream: &mut UnixStream) -> SessionMcpReply {
     loop {
@@ -173,6 +223,7 @@ fn version_update_replaces_agent_and_host_probes_reap_real_descendants() {
             GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let root = prepare(&fixture, &config, &server);
+        fs::write(root.join("require-path"), b"").unwrap();
         fs::write(
             root.join("mcp-capabilities.json"),
             r#"{"load":true,"http":true}"#,
@@ -206,6 +257,11 @@ fn version_update_replaces_agent_and_host_probes_reap_real_descendants() {
                 )
                 .await;
                 current_healthy(&mut stream, 0, 0).await;
+                let db = rusqlite::Connection::open(fixture.config().home_directory.join("ora-node.sqlite3")).unwrap();
+                let attempt: String = db.query_row("SELECT attempt FROM session_stop_attempts WHERE json_extract(record,'$.kind')='agent'", [], |row| row.get(0)).unwrap();
+                let lock = fixture.config().home_directory.join("session-attempts").join(format!("{attempt}.lock"));
+                let marker = fs::read(&lock).unwrap();
+                fs::write(&lock, b"missing original proof").unwrap();
                 send(
                     &mut stream,
                     ControllerToNodeMessage::UpdateSessionMcp(UpdateSessionMcpMessage {
@@ -227,6 +283,18 @@ fn version_update_replaces_agent_and_host_probes_reap_real_descendants() {
                 )
                 .await;
                 assert_eq!(reply(&mut stream).await.result, SessionMcpResult::Accepted);
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        let requested: bool = db.query_row("SELECT first_stop_at_ms IS NOT NULL FROM session_stop_attempts WHERE attempt=?1", [&attempt], |row| row.get(0)).unwrap();
+                        if requested { break; }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                }).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                assert_eq!(fs::read_to_string(root.join("echo-agent.pids")).unwrap().lines().count(), 1, "no replacement before affirmative original stop proof");
+                send(&mut stream, get()).await;
+                assert_ne!(reply(&mut stream).await.state.unwrap().convergence, SessionMcpConvergence::Current);
+                fs::write(&lock, marker).unwrap();
                 current_healthy(&mut stream, 1, 0).await;
                 send(
                     &mut stream,
@@ -313,6 +381,7 @@ fn ordered_updates_floor_rejection_and_process_budget_use_the_real_service() {
                         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     }
                 }).await.expect("generation must converge");
+                assert_eq!(fs::read_to_string(root.join("echo-agent.pids")).unwrap().lines().count(), if generation < 9 { 1 } else { 2 }, "exact process boundary at runtime load {generation}");
             }
             let mut turn = turn();
             if let ControllerToNodeMessage::SubmitUserTurn(input) = &mut turn { input.payload.mcp_generation = Some(10); }
