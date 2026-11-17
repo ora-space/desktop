@@ -20,6 +20,7 @@ fn named_turn(id: &str, serial: u32) -> ControllerToNodeMessage {
         operation_id: input.operation_id,
         execution_id: input.execution_id,
         payload: SubmitUserTurn {
+            mcp_generation: None,
             node_id: NodeId::new("test-node"),
             command_id: CommandId::new(format!("turn-command-{id}-{serial}")),
             turn: UserTurn {

@@ -148,6 +148,10 @@ pub(super) fn checkout_refusal(
     command: &StartAgentSessionMessage,
 ) -> Result<Option<SessionRefusal>, Error> {
     let checkout = command.payload.spec.checkout_execution_id.as_str();
+    if command.payload.spec.prior_revision.is_some()
+        && connection.query_row("SELECT EXISTS(SELECT 1 FROM session_stop_attempts WHERE checkout=?1 AND state IN ('stop_unconfirmed','legacy_unknown'))", [checkout], |r| r.get::<_,bool>(0))? {
+        return Ok(Some(SessionRefusal::CheckoutBusy));
+    }
     let (unknown_or_restoring, unfinished): (bool, i64) = connection.query_row(
         "SELECT
             EXISTS(

@@ -1,4 +1,6 @@
 //! One session execution from start to its terminal result.
+mod conversation;
+use conversation::Conversation;
 
 use super::end::SessionEnd;
 use super::host::{
@@ -23,8 +25,7 @@ use ora_contracts::{
 use ora_domain::{AgentRef, PluginId, SessionId};
 use ora_logging::ora_warn;
 use ora_node_protocol::{
-    AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, EndSessionReason, ExecutionId,
-    OperationId, UserTurn,
+    AgentSessionSpec, CommandId, ContentBlock, EndSessionReason, ExecutionId, OperationId, UserTurn,
 };
 use ora_plugin_lifecycle::{GenerationTaps, PluginLifecycle, PluginLifecycleConfig};
 use ora_plugin_manager::PluginContribution;
@@ -55,40 +56,71 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
-    let end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
-    let SessionEnd {
-        reason,
-        detail,
-        mcp_failure,
-        scheduled,
-    } = end;
-    let (plugin_id, setting_id, transport) = mcp_failure.map_or((None, None, None), |failure| {
-        let failure = *failure;
-        (failure.plugin_id, failure.setting_id, failure.transport)
-    });
-    let (scheduled_result, artifact_manifest) = scheduled.map_or((None, None), |declaration| {
-        (declaration.result, declaration.manifest)
-    });
-    let ended = AgentSessionEnded {
-        node: shared.node.clone(),
-        reason,
-        detail: detail.map(str::to_string),
-        plugin_id,
-        setting_id,
-        transport,
-        scheduled_result,
-        artifact_manifest,
-    };
+    let trigger = spec.trigger;
+    let checkout = shared
+        .checkouts
+        .checkout(&spec.checkout_execution_id)
+        .map(|checkout| checkout.path);
+    let mut end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
+    let ended = end.terminal(shared.node.clone());
     if super::model::seal_unstarted_history(&shared.sessions_root(), &execution).is_err() {
         return false;
     }
     if shared.ledger.defer_restore_end(&execution, &ended).is_err() {
         return false;
     }
+    if shared
+        .ledger
+        .defer_session_stop_end(&execution, &ended)
+        .is_err()
+        || super::stop::request(&shared.ledger, &execution, &shared.config.stop).is_err()
+    {
+        return false;
+    }
+    shared.stop_spawning(&execution);
+    match shared.ledger.session_stop_records(Some(&execution)) {
+        Ok(records)
+            if records
+                .iter()
+                .any(|record| record.state == ora_node_db::SessionStopState::StopUnconfirmed) =>
+        {
+            return true;
+        }
+        Ok(_) => {}
+        Err(_) => return false,
+    }
+    match super::stop::confirm(
+        &shared.ledger,
+        &shared.config.home_directory,
+        &shared.config.stop,
+        &execution,
+        true,
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => return true,
+        Err(_) => return false,
+    }
+    if shared.release_resources(&execution).is_err()
+        || super::stop::released(&shared.ledger, &execution).is_err()
+    {
+        return false;
+    }
     if !shared.restorer.confirm_stop(&execution).await {
         // A deliberate handover is not an actor failure and emits no terminal event.
         return true;
     }
+    if let Some(checkout) = checkout {
+        end.scheduled = scheduled::declare(
+            &end,
+            trigger,
+            &shared.sessions_root(),
+            &execution,
+            &checkout,
+        );
+    }
+    let ended = end.terminal(shared.node.clone());
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
             for queued in queued {
@@ -121,7 +153,7 @@ where
 /// version, or whose prior Revision cannot be restored ends without any plugin process having
 /// existed.
 async fn prepare_and_converse<L, C, P, R>(
-    shared: &Shared<L, C, P, R>,
+    shared: &Arc<Shared<L, C, P, R>>,
     operation: &OperationId,
     execution: &ExecutionId,
     mut spec: AgentSessionSpec,
@@ -133,15 +165,12 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
-    // Read before the spec is handed to the conversation: what a scheduled run may declare depends
-    // on how Cloud admitted it, and the conversation consumes the spec by value.
-    let trigger = spec.trigger;
     let Some(cloned) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
         return SessionEnd::agent_failed("checkout_unavailable");
     };
     let checkout = cloned.path.clone();
     // The lease comes first, so the version checked below cannot be replaced before it runs.
-    let _lease = shared.catalog.lease(&spec.agent_plugin_id);
+    let lease = shared.catalog.lease(&spec.agent_plugin_id);
     let Some(package_root) = shared
         .catalog
         .installed(&spec.agent_plugin_id, &spec.agent_plugin_version)
@@ -158,9 +187,33 @@ where
     {
         return SessionEnd::agent_failed(error.code());
     }
-    let (session_setup, _mcp_leases) = match super::mcp::NodeSessionMcp::prepare(
+    let mut packages = vec![ora_node_db::SessionStopPackage {
+        plugin_id: spec.agent_plugin_id.clone(),
+        plugin_version: spec.agent_plugin_version.clone(),
+        view_key: None,
+    }];
+    packages.extend(
+        spec.mcp
+            .iter()
+            .map(|binding| ora_node_db::SessionStopPackage {
+                plugin_id: binding.plugin_id.clone(),
+                plugin_version: binding.plugin_version.clone(),
+                view_key: None,
+            }),
+    );
+    let control = shared
+        .controls
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(execution)
+        .cloned();
+    let (session_setup, mut mcp_leases) = match super::mcp::NodeSessionMcp::prepare(
         &shared.catalog,
-        std::mem::take(&mut spec.mcp),
+        if control.is_some() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut spec.mcp)
+        },
         &checkout,
     ) {
         Ok(prepared) => prepared,
@@ -199,7 +252,7 @@ where
         .await
         .unwrap_or_else(|error| Err(std::io::Error::other(error).into()))
     };
-    let (placement, checkout) = match placement {
+    let (mut placement, checkout) = match placement {
         Ok(prepared) => prepared,
         Err(PlacementError::CheckoutTooDeep) => {
             ora_warn!(execution_id = %execution, "checkout is too deep to hand to the workload user");
@@ -300,7 +353,63 @@ where
     let taps = GenerationTaps::default();
     let isolation =
         super::process::ModelProcessIsolation::for_session(spec.agent_configuration.is_some());
-    let launcher = placement.launcher(&spec.git_identity, &package_root, environment, isolation);
+    for package in &mut packages {
+        package.view_key = placement.view_key();
+    }
+    let identity = ora_node_db::SessionStopIdentity {
+        attempt: super::stop::attempt_id(),
+        execution: execution.clone(),
+        checkout: spec.checkout_execution_id.clone(),
+        node: shared.node.clone(),
+        host: shared.config.stop.host(),
+        kind: ora_node_db::SessionStopKind::Agent,
+        packages,
+    };
+    let spawner = match super::stop::prepare(
+        &shared.ledger,
+        &shared.config.home_directory,
+        identity,
+        isolation.spawner(placement.identity()),
+    ) {
+        Ok(spawner) => spawner,
+        Err(_) => {
+            if let Some(access) = &mut model_access {
+                access.close().await;
+            }
+            return SessionEnd::agent_failed("agent_start_failed");
+        }
+    };
+    let launcher = placement.launcher(
+        &spec.git_identity,
+        &package_root,
+        environment,
+        isolation,
+        spawner.clone(),
+    );
+    let agent_home = model_access.as_ref().map_or_else(
+        || checkout.clone(),
+        |access| {
+            placement.home_directory().map_or_else(
+                || std::path::PathBuf::from(&access.environment["HOME"]),
+                std::path::Path::to_path_buf,
+            )
+        },
+    );
+    placement.retain_for_stop();
+    mcp_leases.push(lease);
+    shared
+        .retained
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            execution.clone(),
+            super::stop::Retained {
+                placement,
+                leases: mcp_leases,
+                spawner,
+                isolation,
+            },
+        );
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
@@ -325,18 +434,81 @@ where
         wake.clone(),
         shared.previews.clone(),
     );
+    let session_setup = if let Some(control) = &control {
+        let shared = Arc::downgrade(shared);
+        let execution = execution.clone();
+        let checkout = checkout.clone();
+        let cache = std::sync::Mutex::new(
+            None::<(ora_node_db::AttemptId, u64, super::mcp::NodeSessionMcp)>,
+        );
+        session_setup.with_lifecycle(control.clone(), move |input| {
+            let mut cached = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let shared = shared
+                .upgrade()
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?;
+            let attempt = shared
+                .retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&execution)
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?
+                .spawner
+                .identity()
+                .attempt;
+            if let Some((cached_attempt, generation, setup)) = &*cached
+                && *generation == input.generation
+                && cached_attempt == &attempt
+            {
+                return Ok(setup.clone());
+            }
+            let (setup, leases) =
+                super::mcp::NodeSessionMcp::prepare_update(&shared.catalog, input, &checkout)?;
+            let mut retained = shared
+                .retained
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let retained = retained
+                .get_mut(&execution)
+                .ok_or_else(|| super::mcp::NodeMcpFailure::plugin("session".into()))?;
+            let setup = setup.in_placement(&retained.placement)?;
+            retained.leases.extend(leases);
+            *cached = Some((attempt, input.generation, setup.clone()));
+            Ok(setup)
+        })
+    } else {
+        session_setup
+    };
+    let session_setup = if control.is_some() {
+        super::mcp::configure(
+            session_setup.with_initial_packages(&spec.mcp),
+            shared,
+            execution,
+            lifecycle.clone(),
+            plugin_id.clone(),
+            checkout.clone(),
+        )
+    } else {
+        session_setup
+    };
     let scheduler = Scheduler::new(shared.config.timezone);
-    let agent_home = model_access.as_ref().map_or_else(
-        || checkout.clone(),
-        |access| {
-            placement.home_directory().map_or_else(
-                || std::path::PathBuf::from(&access.environment["HOME"]),
-                std::path::Path::to_path_buf,
-            )
-        },
-    );
     let manager = AgentRuntimeManager::<NodeRuntimeHost<L>>::new(AgentRuntimeSetup {
         attach: Arc::new(SessionPlugin {
+            process_admission: if control.is_some() {
+                shared
+                    .retained
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(execution)
+                    .map(|retained| super::host::SessionProcessAdmission {
+                        setup: session_setup.clone(),
+                        spawner: retained.spawner.clone(),
+                        last: tokio::sync::Mutex::new(None),
+                    })
+            } else {
+                None
+            },
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
@@ -354,6 +526,15 @@ where
     });
     let end = match manager {
         Ok(manager) => {
+            if let Some(control) = &control {
+                super::mcp::probes::register(
+                    shared,
+                    execution,
+                    &spec.checkout_execution_id,
+                    checkout.clone(),
+                    control.clone(),
+                );
+            }
             let conversation = Conversation {
                 ledger: &shared.ledger,
                 execution,
@@ -361,12 +542,17 @@ where
                 manager: &manager,
                 mirror: &mirror,
                 wake,
+                control: control.as_ref(),
+                started: std::sync::atomic::AtomicBool::new(false),
+                blocked: std::sync::Mutex::new(std::collections::HashMap::new()),
             };
             let mut stopping = shared.stopping.subscribe();
             let mut model_status = model_access.as_ref().map(|access| access.status.clone());
             let agent_ref = AgentRef::for_plugin(&plugin_id);
             let end = tokio::select! {
                 biased;
+                _ = async { if let Some(control) = &control { loop { control.probes.notified().await; shared.probes.dispatch(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
+                _ = async { if let Some(control) = &control { loop { control.refresh.notified().await; manager.notify_mcp_desired_changed(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
                 _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
                 status = async {
                     match &mut model_status {
@@ -392,6 +578,7 @@ where
                 },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
             };
+            shared.probes.unregister(execution);
             // The session leaves the runtime here: its ora-git socket goes before the plugin
             // does, once a request it was still serving has ended.
             if let Some(socket) = ora_git {
@@ -407,29 +594,32 @@ where
             SessionEnd::agent_failed("agent_start_failed")
         }
     };
-    // The plugin's whole process tree is gone once this returns, before the lease is released.
-    if let Err(error) = lifecycle
-        .stop_plugin(StopPluginRequest {
-            plugin_id: plugin_id.to_string(),
-        })
-        .await
+    // The first deadline and terminal intention precede process cleanup; proof is checked by run.
+    if shared
+        .ledger
+        .defer_session_stop_end(execution, &end.terminal(shared.node.clone()))
+        .is_err()
+        || super::stop::request(&shared.ledger, execution, &shared.config.stop).is_err()
     {
-        ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
+        return SessionEnd::agent_failed("ledger_unavailable");
+    }
+    shared.stop_spawning(execution);
+    if let Err(error) = super::stop::await_plugin_stop(
+        &shared.ledger,
+        &shared.config.home_directory,
+        &shared.config.stop,
+        execution,
+        lifecycle.stop_plugin(StopPluginRequest {
+            plugin_id: plugin_id.to_string(),
+        }),
+    )
+    .await
+    {
+        ora_warn!(execution_id = %execution, error = %error, "agent stop proof unavailable");
     }
     scheduler.shutdown().await;
     if let Some(access) = &mut model_access {
         access.close().await;
-    }
-    // The plugin is gone, so nothing reads the package view or writes the session home anymore.
-    drop(placement);
-    // The checkout still holds the Workspace, so a scheduled run declares its business result here,
-    // while Cloud still owns an environment the artifacts can be read from. Neither step writes to
-    // it; a failure to declare never changes why the session ended.
-    let mut end = end;
-    if let Some(declaration) =
-        scheduled::declare(&end, trigger, &shared.sessions_root(), execution, &checkout)
-    {
-        end.scheduled = Some(declaration);
     }
     end
 }
@@ -509,259 +699,5 @@ async fn ended_before_start<L: SessionLedger>(
                 return SessionEnd::agent_failed("ledger_unavailable");
             }
         }
-    }
-}
-
-/// How one running turn stopped.
-enum TurnOutcome {
-    Finished,
-    Failed(&'static str),
-    EndRequested {
-        command_id: CommandId,
-        reason: EndSessionReason,
-        discarded: Vec<CommandId>,
-    },
-    ThreadBroken,
-    LedgerUnavailable,
-}
-
-/// The conversation of one session execution over its composed runtime.
-struct Conversation<'a, L: SessionLedger> {
-    ledger: &'a L,
-    execution: &'a ExecutionId,
-    session_id: SessionId,
-    manager: &'a AgentRuntimeManager<NodeRuntimeHost<L>>,
-    mirror: &'a ThreadMirror<L>,
-    wake: &'a Notify,
-}
-
-impl<L: SessionLedger> Conversation<'_, L> {
-    /// Opens the session, runs the initial turn, then serves queued commands until one ends it.
-    async fn run(
-        &self,
-        agent_ref: &AgentRef,
-        spec: AgentSessionSpec,
-        ready_timeout: std::time::Duration,
-    ) -> SessionEnd {
-        match tokio::time::timeout(ready_timeout, self.manager.wait_for_agent(agent_ref)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                ora_warn!(execution_id = %self.execution, error = %error, "agent did not become ready");
-                return SessionEnd::agent_failed("agent_unavailable");
-            }
-            Err(_) => return SessionEnd::agent_failed("agent_unavailable"),
-        }
-        if let Err(error) = self
-            .manager
-            .start_session_with_id(
-                self.session_id.clone(),
-                StartSessionRequest {
-                    workspace_id: spec.checkout_execution_id.to_string(),
-                    agent_ref: agent_ref.to_string(),
-                    model: None,
-                },
-            )
-            .await
-        {
-            ora_warn!(execution_id = %self.execution, error = %error, "agent session did not start");
-            return super::mcp::start_failure(&error, self.execution);
-        }
-
-        let mut next_turn = Some(spec.initial_turn);
-        loop {
-            if self.mirror.is_broken() {
-                return self
-                    .stop(SessionEnd::agent_failed("thread_unavailable"))
-                    .await;
-            }
-            let turn = match next_turn.take() {
-                Some(turn) => turn,
-                None => match self.ledger.queued_commands(self.execution).map(plan) {
-                    Ok(Plan::Turn { command_id, turn }) => {
-                        if !settle(
-                            self.ledger,
-                            self.execution,
-                            &command_id,
-                            CommandSettlement::Executed,
-                        ) {
-                            return self
-                                .stop(SessionEnd::agent_failed("ledger_unavailable"))
-                                .await;
-                        }
-                        turn
-                    }
-                    Ok(Plan::End {
-                        command_id,
-                        reason,
-                        discarded,
-                    }) => return self.end_requested(command_id, reason, discarded).await,
-                    Ok(Plan::Wait) => {
-                        self.wake.notified().await;
-                        continue;
-                    }
-                    Err(error) => {
-                        ora_warn!(execution_id = %self.execution, error = %error, "session queue unreadable");
-                        return self
-                            .stop(SessionEnd::agent_failed("ledger_unavailable"))
-                            .await;
-                    }
-                },
-            };
-            match self.run_turn(turn).await {
-                Ok(TurnOutcome::Finished) => {}
-                Ok(TurnOutcome::Failed(code)) => {
-                    // A committed EndSession keeps its reason even if its wake-up races the ACP
-                    // result. Never replace a durable cancellation with a provider failure.
-                    return match self.ledger.queued_commands(self.execution).map(plan) {
-                        Ok(Plan::End {
-                            command_id,
-                            reason,
-                            discarded,
-                        }) => self.end_requested(command_id, reason, discarded).await,
-                        Ok(Plan::Turn { .. } | Plan::Wait) => {
-                            self.stop(SessionEnd::agent_failed(code)).await
-                        }
-                        Err(_) => {
-                            self.stop(SessionEnd::agent_failed("ledger_unavailable"))
-                                .await
-                        }
-                    };
-                }
-                Ok(TurnOutcome::EndRequested {
-                    command_id,
-                    reason,
-                    discarded,
-                }) => return self.end_requested(command_id, reason, discarded).await,
-                Ok(TurnOutcome::ThreadBroken) => {
-                    return self
-                        .stop(SessionEnd::agent_failed("thread_unavailable"))
-                        .await;
-                }
-                Ok(TurnOutcome::LedgerUnavailable) => {
-                    return self
-                        .stop(SessionEnd::agent_failed("ledger_unavailable"))
-                        .await;
-                }
-                Err(end) => return self.stop(end).await,
-            }
-        }
-    }
-
-    /// Runs one user turn until the agent completes it or an `EndSession` interrupts it.
-    ///
-    /// Records settled while the turn runs, the cancellation an end causes included, belong to
-    /// it; the attribution is cleared only once the turn can produce nothing more.
-    async fn run_turn(&self, turn: UserTurn) -> Result<TurnOutcome, SessionEnd> {
-        self.mirror.set_turn(Some(turn.turn_id.clone()));
-        let prompt = turn
-            .content
-            .into_iter()
-            .map(|block| match block {
-                ContentBlock::Text { text } => AcpContentBlock::Text(TextContent::new(text)),
-            })
-            .collect();
-        let stream = self
-            .manager
-            .prompt_session_as_message(
-                PromptSessionRequest {
-                    session_id: self.session_id.to_string(),
-                    prompt,
-                    model: None,
-                    record_prompt: None,
-                },
-                MessageId::new(turn.turn_id.as_str()),
-            )
-            .await;
-        let mut stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                self.mirror.set_turn(None);
-                ora_warn!(execution_id = %self.execution, error = %error, "turn was not admitted");
-                return Err(SessionEnd::agent_failed("agent_unavailable"));
-            }
-        };
-        let outcome = loop {
-            tokio::select! {
-                event = stream.recv() => match event {
-                    Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
-                    Some(Err(error)) => {
-                        let code = match error.public_error() {
-                            PublicError::AgentAuthenticationRequired(_) => {
-                                "agent_authentication_required"
-                            }
-                            _ => "agent_turn_failed",
-                        };
-                        break TurnOutcome::Failed(code);
-                    }
-                    None => break TurnOutcome::Failed("agent_stream_closed"),
-                    Some(Ok(_)) => {}
-                },
-                () = self.wake.notified() => {
-                    if self.mirror.is_broken() {
-                        break TurnOutcome::ThreadBroken;
-                    }
-                    match self.ledger.queued_commands(self.execution).map(plan) {
-                        Ok(Plan::End { command_id, reason, discarded }) => {
-                            break TurnOutcome::EndRequested { command_id, reason, discarded };
-                        }
-                        Ok(Plan::Turn { .. } | Plan::Wait) => {}
-                        Err(error) => {
-                            ora_warn!(execution_id = %self.execution, error = %error, "session queue unreadable");
-                            break TurnOutcome::LedgerUnavailable;
-                        }
-                    }
-                }
-            }
-        };
-        match outcome {
-            TurnOutcome::Finished => self.mirror.set_turn(None),
-            // The turn is still running: stopping cancels it and records its end under this turn.
-            TurnOutcome::EndRequested { .. }
-            | TurnOutcome::Failed(_)
-            | TurnOutcome::ThreadBroken
-            | TurnOutcome::LedgerUnavailable => {}
-        }
-        drop(stream);
-        Ok(outcome)
-    }
-
-    /// Ends the session as a command asked: queued turns ahead of it never run.
-    async fn end_requested(
-        &self,
-        command_id: CommandId,
-        reason: EndSessionReason,
-        discarded: Vec<CommandId>,
-    ) -> SessionEnd {
-        for discarded in &discarded {
-            settle(
-                self.ledger,
-                self.execution,
-                discarded,
-                CommandSettlement::Discarded,
-            );
-        }
-        let end = self.stop(SessionEnd::requested(reason)).await;
-        settle(
-            self.ledger,
-            self.execution,
-            &command_id,
-            CommandSettlement::Executed,
-        );
-        end
-    }
-
-    /// Stops the session, cancelling a running turn and closing the provider session.
-    async fn stop(&self, end: SessionEnd) -> SessionEnd {
-        if let Err(error) = self
-            .manager
-            .stop_session(StopSessionRequest {
-                session_id: self.session_id.to_string(),
-            })
-            .await
-        {
-            ora_warn!(execution_id = %self.execution, error = %error, "agent session did not stop cleanly");
-        }
-        self.mirror.set_turn(None);
-        end
     }
 }

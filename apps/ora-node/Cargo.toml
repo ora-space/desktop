@@ -26,7 +26,7 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ora-utils = { workspace = true, features = ["http-reqwest"] }
+ora-utils = { workspace = true, features = ["http-reqwest", "mcp"] }
 agent-client-protocol-schema.workspace = true
 chrono-tz.workspace = true
 chrono = { workspace = true, features = ["serde"] }
@@ -62,5 +62,6 @@ zip.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 futures-util.workspace = true
 tokio-tungstenite = "0.29"

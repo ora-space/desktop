@@ -418,6 +418,12 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 continue;
             }
             NodeToControllerMessage::SessionCommandRejected(reply) if agent_capable => {
+                if reply.payload.reason
+                    == ora_node_protocol::SessionCommandRejection::McpUpdateRequired
+                {
+                    // This command was not accepted. Do not mark its durable dispatch delivered.
+                    continue;
+                }
                 commands
                     .input
                     .try_send(commands::Reply::Command {

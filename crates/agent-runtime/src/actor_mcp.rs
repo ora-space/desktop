@@ -45,6 +45,35 @@ impl<H: AgentRuntimeHost> crate::AgentRuntimeManager<H> {
 }
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
+    /// Only hosts with an exclusive process can ask to rotate it before a load.
+    pub(crate) async fn replace_mcp_process_if_needed(
+        &mut self,
+        snapshot: &SessionMcpSnapshot,
+    ) -> Result<bool, RuntimeError> {
+        if !self
+            .session_mcp
+            .mcp_replacement_required(snapshot.revision())
+        {
+            return Ok(false);
+        }
+        let plugin = self
+            .session_mcp
+            .plugin_id_for_agent(&self.session.agent_ref)
+            .ok_or_else(runtime_unavailable)?;
+        self.connections.suspend_plugin_agent(&plugin.to_string());
+        self.channel = None;
+        self.session_mcp.mcp_detached();
+        self.connections.retire_mcp_agent(&plugin.to_string()).await;
+        self.session_mcp.replace_mcp_process().await?;
+        self.connections.resume_plugin_agent(&plugin.to_string());
+        self.connections.sync_plugin_agents();
+        self.connection = self.connections.for_agent(&self.session.agent_ref)?;
+        if let Err(error) = self.connection.ready().await {
+            self.session_mcp.mcp_failed(&error);
+            return Err(error.during_mcp());
+        }
+        Ok(true)
+    }
     /// Observes the latest Desired MCP revision without sending ACP frames.
     pub(super) fn note_desired_mcp(&mut self) {
         if let Err(error) = self.observe_desired_mcp() {
@@ -69,8 +98,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Idle path: re-read Desired MCP and refresh immediately when the Session is live.
     pub(super) async fn on_idle_mcp_desired_changed(&mut self) {
         match self.observe_desired_mcp() {
-            Ok(true) if self.channel.is_some() => {
-                if let Err(error) = self.refresh_mcp().await {
+            Ok(true) if self.channel.is_some() || self.session_mcp.preserve_provider_identity() => {
+                let result = if self.channel.is_none() {
+                    self.attach_provider_session(None).await.map(drop)
+                } else {
+                    self.refresh_mcp().await
+                };
+                if let Err(error) = result {
                     ora_warn!(
                         session_id = %self.session.id,
                         error = %error,
@@ -138,16 +172,41 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Converges this live Session onto the current Snapshot, holding the shared Agent barrier.
     async fn refresh_mcp(&mut self) -> Result<(), RuntimeError> {
+        let recovered = self
+            .connections
+            .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
+            .await?;
+        self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         loop {
             let snapshot = self.resolve_mcp_snapshot()?;
+            if recovered
+                && self
+                    .session_mcp
+                    .mcp_replacement_required(snapshot.revision())
+            {
+                let error = RuntimeError::mcp_retry_required();
+                self.session_mcp.mcp_failed(&error);
+                return Err(error);
+            }
+            if self
+                .session_mcp
+                .mcp_replacement_required(snapshot.revision())
+            {
+                // Attach owns the single replacement and restore. A new target cannot cause a
+                // second replacement in this refresh loop; its notification owns the next retry.
+                self.attach_provider_session(None).await?;
+                return Ok(());
+            }
             let revision = snapshot.revision().clone();
             if self.live_mcp.is_current(&revision) {
+                self.session_mcp.mcp_loaded(&revision);
                 return Ok(());
             }
             let _barrier = self.acquire_mcp_barrier().await;
             let snapshot = self.resolve_mcp_snapshot()?;
             let revision = snapshot.revision().clone();
             if self.live_mcp.is_current(&revision) {
+                self.session_mcp.mcp_loaded(&revision);
                 return Ok(());
             }
             self.live_mcp = self
@@ -156,6 +215,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 .0;
             match self.reload_provider_mcp(snapshot).await {
                 Ok(()) => {
+                    self.session_mcp.mcp_loaded(&revision);
                     let (state, more) = self
                         .live_mcp
                         .on_event(LiveMcpEvent::RefreshSucceeded(revision));
@@ -165,13 +225,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }
                 }
                 Err(error) => {
+                    self.session_mcp.mcp_failed(&error);
                     self.live_mcp = self
                         .live_mcp
                         .on_event(LiveMcpEvent::RefreshFailed {
                             requested: revision,
                         })
                         .0;
-                    return Err(error);
+                    return Err(error.during_mcp());
                 }
             }
         }
@@ -201,7 +262,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         snapshot: SessionMcpSnapshot,
     ) -> Result<(), RuntimeError> {
         let Some(mut channel) = self.channel.take() else {
-            self.live_mcp = self.live_mcp.on_event(LiveMcpEvent::Detached).0;
+            if self.session_mcp.preserve_provider_identity() {
+                self.session_mcp.mcp_detached();
+            } else {
+                self.live_mcp = self.live_mcp.on_event(LiveMcpEvent::Detached).0;
+            }
             return Err(session_stopped());
         };
         if !snapshot.revision().is_empty() && !channel.connection.load_session_supported {
@@ -370,6 +435,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Marks the Snapshot that was successfully loaded as this Session's Active revision.
     pub(crate) fn record_loaded_mcp(&mut self, snapshot: &SessionMcpSnapshot) {
         let revision = snapshot.revision().clone();
+        self.session_mcp.mcp_loaded(&revision);
         self.live_mcp = self
             .live_mcp
             .on_event(LiveMcpEvent::RefreshStarted(revision.clone()))

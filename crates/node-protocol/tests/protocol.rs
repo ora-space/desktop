@@ -29,3 +29,5 @@ mod worktree;
 
 #[path = "protocol/session_mcp.rs"]
 mod session_mcp;
+#[path = "protocol/session_mcp_lifecycle.rs"]
+mod session_mcp_lifecycle;

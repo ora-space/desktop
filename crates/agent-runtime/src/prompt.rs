@@ -25,6 +25,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             request,
             /*message_id*/ None,
             PromptInactivityPolicy::Timeout,
+            None,
         )
         .await
     }
@@ -38,7 +39,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         inactivity_policy: PromptInactivityPolicy,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, /*message_id*/ None, inactivity_policy)
+        self.send_prompt(request, /*message_id*/ None, inactivity_policy, None)
             .await
     }
 
@@ -51,8 +52,31 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         message_id: MessageId,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, Some(message_id), PromptInactivityPolicy::Timeout)
-            .await
+        self.send_prompt(
+            request,
+            Some(message_id),
+            PromptInactivityPolicy::Timeout,
+            None,
+        )
+        .await
+    }
+
+    /// Commits host admission after ACP/MCP readiness, before recording or sending any prompt.
+    /// A failed commit rejects the send without running the turn. The callback must be short and
+    /// synchronous; it runs on the serialized session actor and is invoked at most once.
+    pub async fn prompt_session_with_admission(
+        &self,
+        request: PromptSessionRequest,
+        message_id: MessageId,
+        commit: impl FnOnce() -> Result<(), RuntimeError> + Send + Sync + 'static,
+    ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
+        self.send_prompt(
+            request,
+            Some(message_id),
+            PromptInactivityPolicy::Timeout,
+            Some(Box::new(commit)),
+        )
+        .await
     }
 
     /// Validates and admits one prompt on its session's actor.
@@ -61,6 +85,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         message_id: Option<MessageId>,
         inactivity_policy: PromptInactivityPolicy,
+        commit_admission: Option<Box<dyn FnOnce() -> Result<(), RuntimeError> + Send + Sync>>,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
         let prompt = request.prompt;
         let record_prompt = RecordedTurn {
@@ -113,6 +138,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 operation_id,
                 prompt,
                 record_prompt,
+                commit_admission,
                 inactivity_policy,
                 model,
                 end_report: end_report.clone(),

@@ -23,6 +23,22 @@ pub(super) struct SessionEnd {
 }
 
 impl SessionEnd {
+    /// Captures the first terminal intention before process cleanup starts.
+    pub(super) fn terminal(
+        &self,
+        node: ora_node_protocol::NodeRuntimeIdentity,
+    ) -> ora_node_protocol::AgentSessionEnded {
+        ora_node_protocol::AgentSessionEnded {
+            node,
+            reason: self.reason,
+            detail: self.detail.map(str::to_owned),
+            plugin_id: self.mcp_failure.as_ref().and_then(|f| f.plugin_id.clone()),
+            setting_id: self.mcp_failure.as_ref().and_then(|f| f.setting_id.clone()),
+            transport: self.mcp_failure.as_ref().and_then(|f| f.transport),
+            scheduled_result: self.scheduled.as_ref().and_then(|s| s.result.clone()),
+            artifact_manifest: self.scheduled.as_ref().and_then(|s| s.manifest.clone()),
+        }
+    }
     /// Ends the session because the agent could not be run or kept running.
     pub(super) fn agent_failed(detail: &'static str) -> Self {
         Self {

@@ -62,7 +62,16 @@ impl AttemptLocks {
     /// The home must be on a local filesystem: advisory locks on network filesystems do not
     /// reliably follow the open file.
     pub(crate) fn open(home: &Path) -> io::Result<Self> {
-        let directory = home.join("git-attempts");
+        Self::open_directory(home.join("git-attempts"))
+    }
+
+    /// Session responsibility uses the same OFD mechanism but never enters the Git scanner.
+    pub(crate) fn open_sessions(home: &Path) -> io::Result<Self> {
+        Self::open_directory(home.join("session-attempts"))
+    }
+
+    /// Keeps both lock families owner-private and independent.
+    fn open_directory(directory: PathBuf) -> io::Result<Self> {
         match fs::DirBuilder::new()
             .mode(/*mode*/ 0o700)
             .create(&directory)

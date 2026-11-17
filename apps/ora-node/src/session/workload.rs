@@ -16,6 +16,7 @@
 //! by name but cannot list or replace them. It lives exactly as long as the session's plugin.
 
 use super::host::{SessionEnvironment, SessionLauncher};
+pub(crate) mod storage;
 use super::process::ModelProcessIsolation;
 use crate::CheckoutHandOver;
 use crate::hand_over::HandOverError;
@@ -78,6 +79,45 @@ pub(super) enum PlacementError {
 }
 
 impl SessionPlacement {
+    /// The attempt spawner applies the same identity to the plugin and its host children.
+    pub(super) fn identity(&self) -> ProcessIdentity {
+        match self {
+            Self::Shared => ProcessIdentity::Inherit,
+            Self::Separate { identity, .. } => *identity,
+        }
+    }
+
+    /// A value-free key identifies the immutable placement to restart recovery.
+    pub(super) fn view_key(&self) -> Option<String> {
+        match self {
+            Self::Shared => None,
+            Self::Separate { directory, .. } => directory
+                .root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned),
+        }
+    }
+
+    /// Once registered, an interrupted stack must leave views for the durable stop owner.
+    pub(super) fn retain_for_stop(&mut self) {
+        if let Self::Separate { directory, .. } = self {
+            directory.remove_on_drop = false;
+        }
+    }
+
+    /// Removes views only after affirmative stop proof; failed removal is retried by recovery.
+    pub(super) fn release(&mut self) -> io::Result<()> {
+        if let Self::Separate { directory, .. } = self {
+            match fs::remove_dir_all(&directory.root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            directory.remove_on_drop = false;
+        }
+        Ok(())
+    }
     /// Prepares the session's directory and hands a checkout left by older Nodes, whose agents
     /// ran as root, back to the workload user. Runs blocking filesystem work, so callers keep it
     /// off the async workers.
@@ -136,6 +176,7 @@ impl SessionPlacement {
         package_root: &Path,
         mut runtime: std::collections::BTreeMap<String, String>,
         isolation: ModelProcessIsolation,
+        spawner: super::stop::spawner::SessionAttemptSpawner,
     ) -> SessionLauncher {
         isolation.extend_environment(&mut runtime);
         let environment = SessionEnvironment::new(git_identity, runtime);
@@ -145,18 +186,18 @@ impl SessionPlacement {
                     PluginRuntimeTimeouts::default(),
                     environment,
                 )
-                .with_spawner(isolation.spawner(ProcessIdentity::Inherit)),
+                .with_spawner(spawner),
                 location: PackageLocation::Installed,
             },
             Self::Separate {
                 directory,
-                identity,
+                identity: _,
             } => PackageViewLauncher {
                 inner: DenoPluginRuntimeLauncher::with_environment_provider(
                     PluginRuntimeTimeouts::default(),
                     environment.with_home(&directory.home),
                 )
-                .with_spawner(isolation.spawner(*identity)),
+                .with_spawner(spawner),
                 location: PackageLocation::View {
                     installed: package_root.to_path_buf(),
                     view: directory.package.clone(),
@@ -177,12 +218,44 @@ impl SessionPlacement {
             Self::Separate { directory, .. } => {
                 let view = directory.root.join(format!(
                     "mcp-{}",
-                    ora_utils::hash::sha256_hex(id.canonical().as_bytes())
+                    ora_utils::hash::sha256_hex(
+                        format!(
+                            "{}:{}",
+                            id.canonical(),
+                            installed
+                                .file_name()
+                                .ok_or_else(|| io::Error::other("missing package version"))?
+                                .to_string_lossy()
+                        )
+                        .as_bytes()
+                    )
                 ));
-                ora_utils::fs::link_tree_no_follow(installed, &view)?;
+                match ora_utils::path::check_directory_without_symlinks(&view) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        ora_utils::fs::hard_link_tree_no_follow(installed, &view)?
+                    }
+                    Err(error) => return Err(error),
+                }
                 Ok(view)
             }
         }
+    }
+
+    /// Removes one obsolete immutable view only after every attempt referring to it stopped.
+    pub(super) fn release_mcp_package(&self, id: &str, version: &str) -> io::Result<()> {
+        if let Self::Separate { directory, .. } = self {
+            let view = directory.root.join(format!(
+                "mcp-{}",
+                ora_utils::hash::sha256_hex(format!("{id}:{version}").as_bytes())
+            ));
+            match fs::remove_dir_all(view) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     /// The private workload home owns CLI state; management-owned Node directories remain closed.
@@ -209,6 +282,7 @@ impl SessionPlacement {
 
 /// One session's directory under the workload directory, removed when dropped.
 pub(super) struct SessionDirectory {
+    remove_on_drop: bool,
     root: PathBuf,
     package: PathBuf,
     home: PathBuf,
@@ -234,13 +308,14 @@ impl SessionDirectory {
             Err(error) => return Err(error),
         }
         let directory = Self {
+            remove_on_drop: true,
             package: root.join("package"),
             home: root.join("home"),
             root,
         };
         // From here on, dropping `directory` removes whatever a failure left behind.
         create_directory(&directory.root, /*mode*/ 0o711)?;
-        ora_utils::fs::link_tree_no_follow(package_root, &directory.package)?;
+        ora_utils::fs::hard_link_tree_no_follow(package_root, &directory.package)?;
         create_directory(&directory.home, /*mode*/ 0o700)?;
         std::os::unix::fs::chown(&directory.home, Some(uid), Some(gid))?;
         Ok(directory)
@@ -251,6 +326,9 @@ impl Drop for SessionDirectory {
     /// Runs once the plugin stopped (or never started): nothing reads the view or the home
     /// anymore. A failure is only logged; the next service start purges the directory anyway.
     fn drop(&mut self) {
+        if !self.remove_on_drop {
+            return;
+        }
         if let Err(error) = fs::remove_dir_all(&self.root) {
             ora_warn!(path = %self.root.display(), error = %error, "session workload directory was not removed");
         }

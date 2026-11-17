@@ -30,6 +30,7 @@ pub(in crate::cloud) fn start(
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 node_id: node.clone(),
                 agent_plugin_id: PluginId::new(spec.agent_plugin_id.clone()),
@@ -176,6 +177,7 @@ pub(super) fn command(
                 operation_id: start.operation_id,
                 execution_id: start.execution_id,
                 payload: SubmitUserTurn {
+                    mcp_generation: None,
                     node_id: node.clone(),
                     command_id: CommandId::new(input.command_id.clone()),
                     turn: turn(submit.turn.as_ref().ok_or(Error::Conflict)?)?,
@@ -430,6 +432,7 @@ mod tests {
                 execution_id: ExecutionId::new("session"),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        mcp_lifecycle: false,
                         mcp: Vec::new(),
                         node_id: NodeId::new("node"),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),

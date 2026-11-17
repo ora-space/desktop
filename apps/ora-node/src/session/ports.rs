@@ -45,6 +45,40 @@ pub enum CommandSettlement {
 pub trait SessionLedger: Clone + Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
 
+    /// Commits one reliable turn failure together with its command settlement.
+    fn fail_session_turn(
+        &self,
+        execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error>;
+
+    /// Registers ownership before any Agent or probe process can be dispatched.
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        at_ms: i64,
+    ) -> Result<(), Self::Error>;
+
+    /// Reads the original identities and deadlines, including responsibilities without an actor.
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error>;
+
+    /// Changes ownership only after the stop owner has gathered the corresponding evidence.
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error>;
+
+    /// Retains the first intended terminal while cleanup is still outstanding.
+    fn defer_session_stop_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error>;
+
     /// Assigns the next sequence to one Thread event and returns once it is durable.
     fn append_thread_event(
         &self,
@@ -117,6 +151,11 @@ pub trait PluginCatalog: Send + Sync + 'static {
 
     /// Takes a use lease on one plugin; install and removal report `plugin_in_use` while it lives.
     fn lease(&self, plugin_id: &PluginId) -> Self::Lease;
+
+    /// Pins an exact MCP version. Catalogs without version coexistence retain their ID fence.
+    fn lease_mcp(&self, plugin_id: &PluginId, _version: &PluginVersion) -> Self::Lease {
+        self.lease(plugin_id)
+    }
 
     /// Returns the package directory of exactly this installed version, if present.
     fn installed(&self, plugin_id: &PluginId, version: &PluginVersion) -> Option<PathBuf>;

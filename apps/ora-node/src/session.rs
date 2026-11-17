@@ -18,8 +18,10 @@ mod process;
 mod queue;
 mod resume;
 mod scheduled;
+pub(crate) mod stop;
 mod thread;
 mod workload;
+pub(crate) use workload::storage::validate as validate_workload_storage;
 
 pub(crate) use model::seal_unstarted_history;
 pub use ports::{
@@ -44,6 +46,7 @@ use tokio::sync::Notify;
 /// Where and with what a Node runs its session executions.
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
+    pub stop: crate::SessionStopConfig,
     /// The Node data directory: agent plugins are installed under its `plugins/` root and session
     /// histories are kept under `sessions/`.
     pub home_directory: PathBuf,
@@ -60,7 +63,7 @@ pub struct SessionConfig {
 }
 
 /// State shared by every session execution of one Node.
-pub(crate) struct Shared<L, C, P, R> {
+pub(crate) struct Shared<L, C, P: PluginCatalog, R> {
     config: SessionConfig,
     node: NodeRuntimeIdentity,
     ledger: L,
@@ -76,9 +79,40 @@ pub(crate) struct Shared<L, C, P, R> {
     finished: Notify,
     failed: std::sync::atomic::AtomicBool,
     previews: preview::PreviewBuffer,
+    retained: Mutex<HashMap<ExecutionId, stop::Retained<P::Lease>>>,
+    controls: Mutex<HashMap<ExecutionId, mcp::control::Control>>,
+    probes: mcp::probes::Scheduler,
 }
 
-impl<L, C, P, R> Shared<L, C, P, R> {
+impl<L, C, P: PluginCatalog, R> Shared<L, C, P, R> {
+    /// Closes every spawn clone before releasing Node's retained OFD copy.
+    fn stop_spawning(&self, execution: &ExecutionId) {
+        if let Some(retained) = self
+            .retained
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+        {
+            retained.spawner.close();
+        }
+    }
+
+    /// Proof precedes view deletion and dropping the exact package leases.
+    fn release_resources(&self, execution: &ExecutionId) -> std::io::Result<()> {
+        // Both live completion and automatic recovery must wake durable probe owners.
+        self.probes.1.notify_waiters();
+        let mut resources = self.retained.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(retained) = resources.get_mut(execution) {
+            retained.placement.release()?;
+            retained.leases.clear();
+        }
+        resources.remove(execution);
+        self.controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(execution);
+        Ok(())
+    }
     /// Session histories live beside the plugin root in the Node data directory.
     fn sessions_root(&self) -> PathBuf {
         self.config.home_directory.join("sessions")
@@ -104,11 +138,11 @@ impl<L, C, P, R> Shared<L, C, P, R> {
 }
 
 /// Runs the Node's Agent session executions.
-pub struct AgentSessions<L, C, P, R> {
+pub struct AgentSessions<L, C, P: PluginCatalog, R> {
     shared: Arc<Shared<L, C, P, R>>,
 }
 
-impl<L, C, P, R> Clone for AgentSessions<L, C, P, R> {
+impl<L, C, P: PluginCatalog, R> Clone for AgentSessions<L, C, P, R> {
     fn clone(&self) -> Self {
         Self {
             shared: Arc::clone(&self.shared),
@@ -133,6 +167,23 @@ where
         catalog: P,
         restorer: R,
     ) -> Self {
+        let probes = mcp::probes::Scheduler::default();
+        let recovered = ledger
+            .session_stop_records(None)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| {
+                        matches!(
+                            record.identity.kind,
+                            ora_node_db::SessionStopKind::StdioProbe
+                                | ora_node_db::SessionStopKind::HttpProbe
+                        ) && !record.resources_released
+                    })
+                    .count()
+            })
+            .unwrap_or(8);
+        probes.retain_recovered(recovered);
         Self {
             shared: Arc::new(Shared {
                 config,
@@ -147,8 +198,36 @@ where
                 finished: Notify::new(),
                 failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
                 previews: preview::PreviewBuffer::default(),
+                retained: Mutex::new(HashMap::new()),
+                controls: Mutex::new(HashMap::new()),
+                probes,
             }),
         }
+    }
+
+    /// Prior-incarnation probes stop consuming permits only after recovery proves them stopped.
+    pub(crate) fn refresh_probe_capacity(&self) {
+        let count = self
+            .shared
+            .ledger
+            .session_stop_records(None)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| {
+                        record.identity.node != self.shared.node
+                            && matches!(
+                                record.identity.kind,
+                                ora_node_db::SessionStopKind::StdioProbe
+                                    | ora_node_db::SessionStopKind::HttpProbe
+                            )
+                            && !record.resources_released
+                    })
+                    .count()
+            })
+            .unwrap_or(8);
+        self.shared.probes.retain_recovered(count);
+        self.shared.probes.dispatch();
     }
 }
 
@@ -156,7 +235,37 @@ where
 /// the whole registration instead of only this capability.
 const ADAPTER_TARGETS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
 
-impl<L, C, P, R> AgentSessions<L, C, P, R> {
+impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
+    /// Capacity is anonymous even when another execution is retaining cleanup responsibility.
+    pub(crate) fn probe_capacity_available(&self) -> bool {
+        self.shared.probes.available()
+    }
+    /// Shares the diagnostic and explicit-reconciliation boundary with the local admin socket.
+    pub(crate) fn probe_scheduler(&self) -> mcp::probes::Scheduler {
+        self.shared.probes.clone()
+    }
+    /// The service must authorize execution and control scope before taking this memory handle.
+    pub(crate) fn mcp_control(&self, execution: &ExecutionId) -> Option<mcp::control::Control> {
+        self.shared
+            .controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+            .cloned()
+    }
+    /// Reconciliation releases resources retained by an actor after its stop deadline expired.
+    pub(crate) fn release_stop_resources(&self, execution: &ExecutionId) -> std::io::Result<()> {
+        self.shared.release_resources(execution)?;
+        if let SessionWorkload::Separate { directory, .. } = &self.shared.config.workload {
+            let view = directory.join(ora_utils::hash::sha256_hex(execution.as_str().as_bytes()));
+            match std::fs::remove_dir_all(view) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
     /// Gives every session an `ora-git` socket or its disabled reason. Composition calls it before
     /// any session starts, while it still holds the only handle.
     pub(crate) fn with_ora_git(mut self, broker: crate::ora_git::Availability) -> Self {
@@ -244,6 +353,13 @@ where
                 return;
             }
             live.insert(execution.clone(), Arc::clone(&wake));
+            if spec.mcp_lifecycle {
+                self.shared
+                    .controls
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(execution.clone(), mcp::control::Control::new(&spec.mcp));
+            }
         }
         let mut completion = Completion {
             shared: Arc::clone(&self.shared),
@@ -315,12 +431,12 @@ where
 }
 
 /// Task cancellation and panic release waiters too; recovery, not a second actor, owns any missing terminal.
-struct Completion<L, C, P, R> {
+struct Completion<L, C, P: PluginCatalog, R> {
     shared: Arc<Shared<L, C, P, R>>,
     execution: ExecutionId,
     committed: bool,
 }
-impl<L, C, P, R> Drop for Completion<L, C, P, R> {
+impl<L, C, P: PluginCatalog, R> Drop for Completion<L, C, P, R> {
     /// Runtime teardown must never leave the blocking service waiting for an aborted actor.
     fn drop(&mut self) {
         if !self.committed {

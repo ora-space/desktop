@@ -39,6 +39,30 @@ pub struct RuntimeError {
 }
 
 impl RuntimeError {
+    /// A target changed during replacement; a new explicit attempt must own any next process.
+    pub(crate) fn mcp_retry_required() -> Self {
+        Self::internal(
+            "MCP target changed during process replacement",
+            std::io::Error::other("explicit retry required"),
+        )
+        .during_mcp()
+    }
+    /// Marks a failed MCP delivery boundary without reclassifying ordinary Agent failures.
+    pub(crate) fn during_mcp(self) -> Self {
+        Self::with_source(
+            self.classification,
+            self.public_error.clone(),
+            "MCP admission failed",
+            McpAdmissionFailure(self),
+        )
+    }
+
+    /// Hosts can wait for MCP convergence while treating unrelated Agent failures as terminal.
+    pub fn is_mcp_admission(&self) -> bool {
+        self.source
+            .as_deref()
+            .is_some_and(<dyn Error + Send + Sync + 'static>::is::<McpAdmissionFailure>)
+    }
     /// Creates a semantic runtime failure that has no lower-level source.
     pub fn new(
         classification: ErrorClassification,
@@ -120,6 +144,10 @@ impl RuntimeError {
         )
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("MCP admission failed")]
+struct McpAdmissionFailure(#[source] RuntimeError);
 
 impl fmt::Display for RuntimeError {
     /// Formats only the semantic context added by the runtime.

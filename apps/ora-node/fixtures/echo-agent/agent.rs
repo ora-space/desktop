@@ -154,6 +154,12 @@ impl EchoAgent {
             return Ok(());
         };
         if method == AGENT_METHOD_NAMES.initialize {
+            if std::path::Path::new("fail-initialize").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"fixture initialize failed"}})).await;
+            }
+            if std::path::Path::new("require-path").exists() && std::env::var_os("PATH").is_none() {
+                return Err("replacement lost ambient PATH".into());
+            }
             let request: InitializeRequest = serde_json::from_value(params)?;
             record_acp_method("initialize");
             let flags: Value = std::fs::read("mcp-capabilities.json")
@@ -175,11 +181,47 @@ impl EchoAgent {
         }
         if method == AGENT_METHOD_NAMES.session_new {
             record_acp_method("session/new");
+            if std::path::Path::new("fail-new").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"provider unavailable"}})).await;
+            }
             self.mcp_verified = verify_mcp_frame(&params);
             let request: NewSessionRequest = serde_json::from_value(params)?;
             let session_id = format!("echo-session-{}", self.sessions.len() + 1);
+            if std::fs::read("mcp-capabilities.json")
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|flags| flags["load"] == true)
+            {
+                std::fs::write(request.cwd.join(".echo-provider-session"), &session_id)?;
+            }
             self.sessions.insert(session_id.clone(), request.cwd);
             return respond(output, id, &NewSessionResponse::new(session_id)).await;
+        }
+        if method == AGENT_METHOD_NAMES.session_load {
+            record_acp_method("session/load");
+            if let Some(delay) = std::fs::read_to_string("load-delay-ms")
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            let request: agent_client_protocol_schema::v1::LoadSessionRequest =
+                serde_json::from_value(params)?;
+            let session_id = request.session_id.to_string();
+            if std::fs::read_to_string(request.cwd.join(".echo-provider-session"))
+                .ok()
+                .as_deref()
+                != Some(&session_id)
+            {
+                return acp(output,json!({"jsonrpc": JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+            }
+            self.sessions.insert(session_id, request.cwd);
+            return respond(
+                output,
+                id,
+                &agent_client_protocol_schema::v1::LoadSessionResponse::new(),
+            )
+            .await;
         }
         if method == AGENT_METHOD_NAMES.session_close {
             let _request: CloseSessionRequest = serde_json::from_value(params)?;
@@ -205,6 +247,18 @@ impl EchoAgent {
         request: PromptRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let session_id = request.session_id.to_string();
+        if let Ok(delay) = std::fs::read_to_string("prompt-delay-ms") {
+            std::fs::remove_file("prompt-delay-ms")?;
+            let until = tokio::time::Instant::now()
+                + std::time::Duration::from_millis(delay.trim().parse()?);
+            while tokio::time::Instant::now() < until {
+                acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"method":"session/update","params":{"sessionId":session_id,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working "}}}})).await?;
+                tokio::time::sleep_until(
+                    until.min(tokio::time::Instant::now() + std::time::Duration::from_secs(10)),
+                )
+                .await;
+            }
+        }
         let text = request
             .prompt
             .iter()
@@ -385,6 +439,10 @@ async fn acp(output: &mut Stdout, frame: Value) -> Result<(), Box<dyn std::error
 
 /// Appends this process id to the journal in the package root.
 fn record_pid() {
+    // Version discovery may invoke the Deno stand-in outside a package; never litter that cwd.
+    if !std::path::Path::new("orax.toml").is_file() {
+        return;
+    }
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)

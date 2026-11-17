@@ -131,6 +131,16 @@ pub(super) fn run(
         NodeCapability::PluginInstall,
         NodeCapability::RuntimeControl,
     ];
+    let stop_admin = crate::session::stop::admin::Admin::start(
+        node.home_directory(),
+        node.session_stop.clone(),
+        node.database.session_journal().map_err(|e| e.to_string())?,
+        agents
+            .as_ref()
+            .map(agents::SessionHost::probe_scheduler)
+            .unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())?;
     // Clones come only from the Git Server, which the Node reaches with its git-access identity.
     if node.git_server().is_some() {
         capabilities.insert(0, NodeCapability::RepositoryClone);
@@ -138,6 +148,7 @@ pub(super) fn run(
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
         capabilities.push(NodeCapability::SessionMcp);
+        capabilities.push(NodeCapability::SessionMcpLifecycle);
         capabilities.push(NodeCapability::SharedCheckoutSessions);
     }
     if agents
@@ -163,6 +174,7 @@ pub(super) fn run(
         capabilities,
     };
     if ready.send(Ok(info)).is_err() {
+        tokio::runtime::Handle::current().block_on(stop_admin.close());
         if let Some(agents) = &agents {
             tokio::runtime::Handle::current().block_on(agents.shutdown());
         }
@@ -256,6 +268,7 @@ pub(super) fn run(
         Ok(())
     };
     let drained = clones.drain(&mut node, drain);
+    tokio::runtime::Handle::current().block_on(stop_admin.close());
     node.shutdown().map_err(|e| e.to_string())?;
     result
         .and(drained)
@@ -307,6 +320,15 @@ fn handle(
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
+        Request::Message(ControllerToNodeMessage::UpdateSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Update(input))
+        }
+        Request::Message(ControllerToNodeMessage::GetSessionMcpState(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Get(input))
+        }
+        Request::Message(ControllerToNodeMessage::ProbeSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Probe(input))
+        }
         Request::Replay(cursors) => Ok(node
             .database
             .controller_events_after(controller, &cursors)?),
@@ -380,6 +402,7 @@ fn handle(
             agents.ok_or(crate::Error::UnsupportedMessage)?;
             agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::SubmitUserTurn(input),
             )
@@ -389,6 +412,7 @@ fn handle(
             let execution = input.execution_id.clone();
             let replies = agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::EndSession(input),
             )?;

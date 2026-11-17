@@ -353,11 +353,30 @@ fn git_command() -> AttemptCommand {
 
 /// Drops what v13 added, so a fixture of any earlier version matches its exact schema.
 fn remove_direct_git_schema(connection: &Connection) {
+    remove_session_stop_schema(connection);
     connection
         .execute_batch(
             "DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;",
         )
         .unwrap();
+}
+
+/// Reconstructs an exact pre-v14 schema; production has no downgrade path.
+fn remove_session_stop_schema(connection: &Connection) {
+    connection.execute_batch("DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+DROP INDEX queued_session_commands;
+ALTER TABLE session_commands RENAME TO new_session_commands;
+CREATE TABLE session_commands (
+    acceptance_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    command_id TEXT NOT NULL CHECK(length(command_id)>0),
+    input TEXT NOT NULL CHECK(json_valid(input)),
+    state TEXT NOT NULL CHECK(state IN ('queued','executed','discarded')),
+    UNIQUE(execution,command_id)
+);
+INSERT INTO session_commands SELECT * FROM new_session_commands;
+DROP TABLE new_session_commands;
+CREATE INDEX queued_session_commands ON session_commands(execution,state,acceptance_order);").unwrap();
 }
 
 /// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.

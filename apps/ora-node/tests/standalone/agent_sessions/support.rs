@@ -18,6 +18,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("test-node"),
@@ -43,6 +44,15 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
 
 /// Writes a deployment config enabling the existing echo fixture as the plugin executable.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
+    launch_with_stop_bound(fixture, clone, 600_000)
+}
+
+/// Exercises the production deadline with a short bound, without rewriting journal timestamps.
+pub(super) fn launch_with_stop_bound(
+    fixture: &Fixture,
+    clone: &CloneConfig,
+    bound_ms: u64,
+) -> ChildGuard {
     // The tests only read while a delivery prepares and pushes; the Node must not take that
     // silence on a busy machine for a dead Controller.
     let path = ipc::write_config(fixture, clone, /*frame_timeout_ms*/ 120_000);
@@ -61,6 +71,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
         ora_git_directory: Some(fixture.path().join("ora-git")),
     });
     config.control.as_mut().unwrap().heartbeat_ms = 20;
+    config.node.session_stop.confirmation_timeout_ms = bound_ms;
     fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     let log = fixture.path().join("agent-service.log");
     let mut child = ChildGuard(
@@ -198,6 +209,7 @@ pub(super) fn turn() -> ControllerToNodeMessage {
         operation_id: start("").operation_id,
         execution_id: ExecutionId::new(EXECUTION),
         payload: SubmitUserTurn {
+            mcp_generation: None,
             node_id: NodeId::new("test-node"),
             command_id: CommandId::new("second-command"),
             turn: UserTurn {

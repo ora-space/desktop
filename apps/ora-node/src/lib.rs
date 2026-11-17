@@ -19,6 +19,8 @@ pub struct RepositoryBinding {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
+    #[serde(default)]
+    pub session_stop: SessionStopConfig,
     pub home_directory: PathBuf,
     pub identity: NodeIdentity,
     pub repositories: Vec<RepositoryBinding>,
@@ -29,9 +31,13 @@ mod git;
 #[cfg(target_os = "linux")]
 mod repository;
 mod resources;
+mod session_stop_config;
 pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, WorktreeGit};
 #[cfg(target_os = "linux")]
 pub use repository::CloneConfig;
+#[cfg(target_os = "linux")]
+pub use session::stop::admin::{Reply as SessionStopAdminReply, client as reconcile_session_stop};
+pub use session_stop_config::SessionStopConfig;
 #[cfg(target_os = "linux")]
 mod git_access;
 #[cfg(target_os = "linux")]
@@ -127,6 +133,8 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
     git: G,
     clock: C,
     state: NodeState,
+    #[cfg(target_os = "linux")]
+    session_stop: SessionStopConfig,
 }
 
 impl Node {
@@ -200,6 +208,7 @@ impl Node {
         )
         .map_err(|e| Error::Configuration(e.to_string()))?;
         Ok(Node {
+            session_stop: node.session_stop,
             repository_config: None,
             #[cfg(target_os = "linux")]
             git_access: None,
@@ -230,6 +239,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         writes: W,
         clock: C,
     ) -> Result<Self, Error> {
+        config.session_stop.validate()?;
         if !config.home_directory.is_absolute() {
             return Err(Error::Configuration(
                 "Node data directory must be an explicit absolute path".into(),
@@ -257,10 +267,14 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         directory
             .create(&config.home_directory)
             .map_err(ora_node_db::Error::from)?;
-        let database = NodeDatabase::open_with_guard(
+        #[cfg(target_os = "linux")]
+        ora_utils::fs::require_local_filesystem(&config.home_directory)
+            .map_err(|error| Error::Configuration(error.to_string()))?;
+        let database = NodeDatabase::open_with_guard_and_host(
             &config.home_directory.join("ora-node.sqlite3"),
             config.identity,
             writes,
+            &config.session_stop.host(),
         )?;
         let identity = NodeRuntimeIdentity {
             node_id: database.node_id().clone(),
@@ -286,6 +300,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             git,
             clock,
             state,
+            #[cfg(target_os = "linux")]
+            session_stop: config.session_stop,
         })
     }
     /// Returns the injected state directory containing ora-node.sqlite3.
@@ -343,6 +359,11 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                             guarantee: attempt.guarantee,
                         })
                     })
+                    .chain(
+                        self.database
+                            .session_journal()?
+                            .session_stop_unconfirmed(&query.execution_id)?,
+                    )
                     .collect(),
                 node: self.identity.clone(),
                 state,

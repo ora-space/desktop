@@ -50,6 +50,12 @@ impl<D: HttpDownload> PluginInstaller<D> {
         self.catalog.clone()
     }
 
+    /// Production installation consults the running Node's retained stop responsibilities.
+    pub(crate) fn with_stop_journal(mut self, journal: ora_node_db::SessionJournal) -> Self {
+        self.catalog.stops = Some(journal);
+        self
+    }
+
     /// Removes only this owner's temporary downloads before replaying interrupted executions.
     /// Must run before any execution or Agent session is started.
     pub fn recover(&self) -> std::io::Result<()> {

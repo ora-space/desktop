@@ -93,6 +93,31 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
 
 各结果族在无标签的 `ExecutionResult` 内使用互不相交的 `kind` 标签；Revision 族被装箱，以保持 `ExecutionState` 较小。
 
+## Session MCP 生命周期契约类型
+
+现用帧枚举包含 `UpdateSessionMcp`、`GetSessionMcpState`、`ProbeSessionMcp` 和 `SessionMcpReply`，
+使用 `SessionMcpMessage<P>` 信封。启动时通过 `mcp_lifecycle: true` 显式启用，默认仍为 false。
+支持 Agent 会话的 Node 声明 `session_mcp_lifecycle`。这些帧带 operation/execution 关联和最多 128 个 UTF-8 字节的 request id，
+没有事件序号或确认。直接 serde 转换后仍须调用 `ValidateMessage`。
+
+更新区分 configured 成员（精确版本、配置 revision 和标量 Settings）与 unavailable 成员（id 和封闭的
+缺插件/设置码），同样要求 canonical ID 排序、最多 16 项及 64 KiB。generation 和 revision 不超过
+`2^53 - 1`；新更新从 1 开始，手动探测可针对启动 generation 0，但 probe attempt 必须非零。输入 Debug
+隐藏值；快照身份类型无法表示 Settings、命令或 header，健康与收敛使用不同的封闭错误码。current 快照
+要求 desired/active 身份完全相同，不存在、未启用、已结束的会话或容量拒绝回复不能带快照。配置 revision
+冲突的 code 放在回复自身，与当前 desired 状态的收敛失败分开。授权、不可变选择集合、
+更新顺序与禁止持久化由接收请求的会话 owner 负责，不由这些结构校验器承担。
+
+通过授权校验后，owner 在回复 Accepted 前发布完整的新 desired generation。选择集合不可增减；
+较旧代际返回 stale，相同重传返回 duplicate，仍被持有的配置 revision 不允许换值。更新和健康观察只保存在内存。
+每条连接最多保留 64 个未回答的生命周期请求，超额返回 `capacity_exceeded`，不解析包或保留输入值。
+
+新生命周期 `SubmitUserTurn` 必须携带 `mcp_generation`，缺失或高于当前 desired 的下限返回
+`mcp_update_required`，不进入持久队列；精确重传比较先于该检查。实际 prompt 准入等待最新代际，
+在与更新共用的边界内提交 Executed。前序已准入轮次的业务执行时间不计入排队轮次的 MCP 预算，更新和重试不重置已累计的阻塞时间。轮次因 MCP 阻塞满 300 秒后发出有序可靠的 `SessionTurnFailed`，
+错误码为 `mcp_refresh_wait_timeout`；排队命令的失败状态与 outbox 事件原子提交。会话继续存活，EndSession 优先。
+见[会话生命周期与宿主探测](session-stop.zh.md)。
+
 ## 身份、状态与确认
 
 身份序列化为不透明字符串；编解码器拒绝空值或只有空白的值，接受的值原样保留。`ControllerId` 和 `NodeId` 是持久的

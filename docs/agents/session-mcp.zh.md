@@ -28,6 +28,10 @@ server 名称是规范插件 id（`<namespace>/<identifier>`），按 id 排序�
 
 MCP 刷新、Skill Effect 变更和 Agent 替换共用一个 Agent Session Barrier，让新 prompt 等到安全点。它们不共享任何 Effect 状态。
 
+共享 revision 还包含宿主显式分配的 generation。现有宿主构造 generation 0；采用有序更新的宿主在解析/发送前
+指定 generation。即便成员身份相同，新 generation 仍须独立收敛成功；旧响应不能让新目标变为 current。
+generation 不含 Settings 摘要。
+
 ## 机密与文件
 
 设置值可以存在于配置存储、短暂的内存快照和发给 Agent 的 ACP 帧中。它们从不进入 Effect 状态、SQLite、Workspace 文件、日志、错误、UI DTO、revision 摘要或 Agent 环境变量。错误只给出插件 id、设置 id、传输方式和稳定的 code。
@@ -50,6 +54,8 @@ setup 成功表示完整列表已交付并被接受，从不表示 Agent 已经�
 - **结果**：`Healthy`；`Unhealthy { code }`，code 为 `mcp_spawn_failed`、`mcp_exited_prematurely`、`mcp_handshake_failed`、`mcp_probe_timeout`、`mcp_tools_unavailable`、`mcp_http_unreachable`、`mcp_http_unauthorized`、`mcp_http_server_error` 之一；或 `Unknown { not_probed | context_missing }`。这组 code 与 setup 错误相互独立。
 
 健康从不改变交付：探测失败不会让 setup 失败，不会移除成员，也从不产生部分列表。探测健康也不等于"已在会话中生效"：Agent 仍然自己去连，所以两者可能朝任一方向不一致。
+
+HTTP 探测不跟随任何跳转，包括同源跳转和会话 DELETE，并忽略系统代理环境变量。配置应指向可直接访问的最终端点；依赖代理或跳转的端点会失败。JSON 和 SSE 响应在流式读取中最多保留 1 MiB；stdio 的所有帧和噪声共用一次握手 1 MiB 的读取预算。超限与跳转只报告稳定的握手或工具失败码，不返回响应文本或 Location。这项传输规则也适用于 Desktop 探测。
 
 展示不含机密：插件卡片在安装和配置状态旁显示健康状态，并提供重新检测；会话显示一个不阻塞的横幅，列出它自己的有效集合中 `Unhealthy` 的成员；`listMcpHealth` 回答这两种视图，`probeMcpHealth` 重新探测；`McpHealthChanged { plugin_id }` 通知客户端重新查询。在 setup 日志之后，一条结构化事件把会话和其成员的身份、code 和探测耗时对应起来。
 

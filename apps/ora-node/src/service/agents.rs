@@ -1,4 +1,5 @@
 //! Production composition and durable admission of Agent sessions.
+pub(super) mod mcp;
 use super::{AgentConfig, ServiceConfig};
 use crate::managed::{AsNode, DirectGit};
 use crate::revision::{DeliveryGit, RevisionRestorer};
@@ -89,7 +90,8 @@ pub(super) async fn reconcile(
             continue;
         }
         let ended = journal
-            .deferred_restore_end(execution)?
+            .session_stop_end(execution)?
+            .or(journal.deferred_restore_end(execution)?)
             .unwrap_or(AgentSessionEnded {
                 node: node.identity().clone(),
                 reason: AgentSessionEndReason::Interrupted,
@@ -115,6 +117,30 @@ pub(super) async fn reconcile(
         if !confirmed {
             continue;
         }
+        if !crate::session::stop::confirm(
+            journal,
+            node.home_directory(),
+            &node.session_stop,
+            execution,
+            false,
+        )
+        .await?
+        {
+            continue;
+        }
+        if let Some(host) = host {
+            host.release_stop_resources(execution)
+                .map_err(ora_node_db::Error::from)?;
+        } else if journal
+            .session_stop_records(Some(execution))?
+            .iter()
+            .any(|r| {
+                !r.resources_released && r.identity.packages.iter().any(|p| p.view_key.is_some())
+            })
+        {
+            continue;
+        }
+        crate::session::stop::released(journal, execution)?;
         if phase.is_some()
             && let Err(detail) = crate::session::seal_unstarted_history(
                 &node.home_directory().join("sessions"),
@@ -129,6 +155,9 @@ pub(super) async fn reconcile(
             continue;
         }
         cleanup_restore(node, journal, &record)?;
+    }
+    if let Some(host) = host {
+        host.refresh_probe_capacity();
     }
     Ok(())
 }
@@ -351,6 +380,10 @@ pub(super) fn open(
         stops,
     } = recovery;
     let journal = node.database.session_journal()?;
+    if let SessionWorkload::Separate { directory, .. } = &workload {
+        crate::session::validate_workload_storage(node.home_directory(), directory)
+            .map_err(|error| crate::Error::Configuration(error.to_string()))?;
+    }
     let ora_git = config
         .and_then(|config| config.ora_git_directory.as_deref())
         .map(|directory| ora_git(node, directory, journal.clone(), shutdown.clone()))
@@ -363,6 +396,7 @@ pub(super) fn open(
                 .map_err(|_| crate::Error::Configuration("invalid Agent timezone".into()))?;
             Ok::<_, crate::Error>(AgentSessions::new(
                 SessionConfig {
+                    stop: node.session_stop.clone(),
                     home_directory: node.home_directory().to_path_buf(),
                     deno_path: config.deno_path.clone(),
                     timezone,
@@ -526,6 +560,7 @@ pub(super) fn start(
 /// Admission does not wake the actor: the transport does that after sending the accepted reply.
 pub(super) fn command(
     node: &mut ManagedNode,
+    host: &SessionHost,
     controller: &ControllerId,
     input: SessionCommandInput,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
@@ -541,7 +576,12 @@ pub(super) fn command(
         node.database
             .authorize_session_command(input.execution_id(), &node.identity().incarnation_id)?;
     }
-    let result = node.database.accept_session_command(&input)?;
+    let desired = host
+        .mcp_control(input.execution_id())
+        .map(|control| control.snapshot(true).desired.generation);
+    let result = node
+        .database
+        .accept_session_command_at_generation(&input, desired)?;
     let operation_id = input.operation_id().clone();
     let execution_id = input.execution_id().clone();
     let command_id = input.command_id().clone();
@@ -562,6 +602,17 @@ pub(super) fn command(
                 payload: SessionCommandRejected {
                     command_id,
                     reason: SessionCommandRejection::SessionEnded,
+                },
+            })
+        }
+        CommandAdmission::McpUpdateRequired => {
+            NodeToControllerMessage::SessionCommandRejected(SessionCommandRejectedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id,
+                execution_id,
+                payload: SessionCommandRejected {
+                    command_id,
+                    reason: SessionCommandRejection::McpUpdateRequired,
                 },
             })
         }

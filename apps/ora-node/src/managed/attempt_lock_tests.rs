@@ -202,6 +202,8 @@ async fn a_leftover_blocks_until_its_command_is_gone() -> TestResult {
     let blocked = locks.leftover_directories();
     command.kill().await?;
     command.wait().await?;
+    // Parallel forks can briefly inherit the parent's CLOEXEC descriptors until exec completes.
+    assert!(eventually(&locks, &attempt, StopEvidence::Stopped).await);
 
     assert_eq!(
         (blocked, locks.leftover_directories(), locks.entries()?),

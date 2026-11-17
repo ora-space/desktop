@@ -68,16 +68,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = cleanup.send(Ok(()));
                             return;
                         }
-                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, inactivity_policy, model, end_report, events, accepted } => {
+                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, commit_admission, inactivity_policy, model, end_report, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             // Admission goes through the same attach as the idle loop's. The
                             // channel is already back, so nothing is opened here; what still has
                             // to hold is that the provider carries the current MCP set.
-                            match self.ensure_attached(model.as_deref()).await {
+                            match self.ensure_attached(model.as_deref()).await.and_then(|setup| {
+                                if accepted.is_closed() { return Err(crate::support::runtime_unavailable()); }
+                                if let Some(commit) = commit_admission { commit()?; }
+                                Ok(setup)
+                            }) {
                                 Ok(setup) => {
-                                    let _ = accepted.send(Ok(()));
-                                    if super::publish_setup(&events, setup) {
+                                    if accepted.send(Ok(())).is_ok() && super::publish_setup(&events, setup) {
                                         self.run_prompt(operation_id, prompt, record_prompt, inactivity_policy, end_report, events).await;
                                         self.refresh_idle_mcp_if_owed().await;
                                     } else {

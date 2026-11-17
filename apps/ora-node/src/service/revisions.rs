@@ -343,9 +343,8 @@ impl Drop for Revisions {
 
 /// Resolves the session, checkout and history a delivery names, all from this Node's ledger.
 ///
-/// The session must have its terminal result and no live actor (ADR D1). The Node cannot yet
-/// prove that an agent plugin's descendants are gone: plugins inherit no attempt lock, and the
-/// session only ends after the plugin's own process tree was stopped (see `session::driver`).
+/// The session must have its terminal result and no remaining Agent/probe stop responsibility.
+/// Inherited OFDs and direct-process clues provide cooperative BestEffort evidence only.
 /// A session refused at checkout admission is not deliverable at all: it never ran, so what the
 /// shared checkout holds is not its work.
 fn inputs(
@@ -376,6 +375,9 @@ fn inputs(
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     }
     let journal = node.database.session_journal()?;
+    if !journal.session_completed(&spec.session_execution_id)? {
+        return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
+    }
     if !journal
         .pending_restore_attempts(&spec.session_execution_id)?
         .is_empty()

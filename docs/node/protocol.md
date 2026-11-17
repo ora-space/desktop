@@ -116,6 +116,42 @@ fact). See [Runtime control](../controller/runtime-control.md).
 Result families use disjoint `kind` tags inside the untagged `ExecutionResult`; the Revision family is
 boxed to keep `ExecutionState` small.
 
+## Session MCP lifecycle contract types
+
+The active frame enums include `UpdateSessionMcp`, `GetSessionMcpState`, `ProbeSessionMcp` and
+`SessionMcpReply`, using `SessionMcpMessage<P>` envelopes. A start opts in with
+`mcp_lifecycle: true`; the default remains false. The Node advertises `session_mcp_lifecycle`
+when Agent sessions are enabled.
+They carry operation/execution correlation and a request id of at most 128 UTF-8 bytes, with no
+event sequence or acknowledgement. Direct serde conversion must be followed by `ValidateMessage`.
+
+Updates distinguish configured members (exact version, configuration revision and scalar Settings)
+from unavailable members (id and a closed missing-plugin/settings code). The same canonical sorted
+16-member and 64 KiB limits apply. Generations and revisions cannot exceed `2^53 - 1`; new updates
+start at 1, while a manual probe can name startup generation 0 but requires a nonzero probe attempt.
+Input Debug redacts values. Snapshot identity types cannot represent Settings, commands or headers;
+health and convergence use separate closed error vocabularies. A current snapshot must have exactly
+matching desired/active identities, and missing/disabled/ended-session replies cannot carry snapshots.
+Capacity refusals also omit snapshots. A configuration-revision conflict reports its code on the
+reply itself, independently of the current desired state's convergence failure.
+Authorization, immutable selection membership, update ordering and persistence exclusion belong to
+the receiving session owner, not these shape validators.
+
+The authenticated owner publishes the complete new desired generation before replying Accepted.
+The immutable selection cannot grow or shrink. Lower generations are stale; identical retransmits
+are duplicates; conflicting values at a retained configuration revision are refused. Updates and
+health observations stay in memory. A connection may retain 64 unanswered lifecycle requests;
+excess requests receive `capacity_exceeded` without resolving packages or retaining their values.
+
+New lifecycle `SubmitUserTurn` commands must carry `mcp_generation`. A missing or future floor
+receives `mcp_update_required` without entering the durable queue. Exact duplicate comparison comes
+first. Actual prompt admission waits for the latest generation and commits Executed inside the
+same boundary as target updates. Earlier admitted turns' business time is excluded from queued
+turns' MCP budgets; updates and retries do not reset elapsed blocking time. A turn blocked on MCP for 300 seconds produces the reliable,
+sequenced `SessionTurnFailed` event with `mcp_refresh_wait_timeout`; queued command failure and
+its outbox event commit atomically. The session stays open, and EndSession takes priority.
+See [Session lifecycle and host probes](session-stop.md).
+
 ## Identities, status and acknowledgement
 
 Identities serialize as opaque strings; the codec rejects empty or whitespace-only values and preserves

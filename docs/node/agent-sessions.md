@@ -111,7 +111,7 @@ construction.
 |---|---|
 | `SessionStore` | `MemorySessionStore`: a Node never resumes a session after restarting |
 | `AgentAttach` | The execution's own one-plugin lifecycle; no Effect consumer (Nodes project no Skills) |
-| `SessionSetup` | `NoSessionMcp`: MCP configuration has no delivery path on a Node |
+| `SessionSetup` | `NodeSessionMcp`: explicit versioned bindings and opt-in generation updates; [lifecycle](session-stop.md) |
 | `RuntimeEvents` | Every history line becomes a Thread event; title and model-catalog events are dropped |
 | `WorkspaceDirectory` | The checkout |
 

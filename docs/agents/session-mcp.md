@@ -52,6 +52,11 @@ meanwhile stays pending. Failure blocks only that Session, and the next prompt r
 using old configuration. Stopped Sessions do not refresh in the background. Changes to plugins
 outside an explicit selection do not change that Session's revision.
 
+The shared revision also carries an explicit host generation. Existing hosts construct generation
+zero; a host using ordered updates supplies the generation before resolving/sending. Even when the
+member identities are unchanged, a newer generation requires its own successful convergence. An old
+response cannot make that newer target current. The generation contains no Settings digest.
+
 MCP refresh, Skill Effect mutation and agent replacement share one Agent Session Barrier so new
 prompts wait for a safe point. They share no Effect state.
 
@@ -106,6 +111,13 @@ Because delivery proves nothing about connection, the Host keeps a third, delive
 Health never changes delivery: a failed probe does not fail setup, does not remove a member and
 never produces a partial list. A healthy probe is not "in effect in the session": the agent still
 connects on its own, so the two can disagree either way.
+
+HTTP probes never follow redirects, including same-origin redirects and session DELETE, and ignore
+system proxy environment variables. Configure the final, directly reachable endpoint; endpoints
+requiring a proxy or redirect will fail. JSON and SSE response bodies are read incrementally up to
+1 MiB; stdio counts all received frames and noise against a 1 MiB handshake budget. Oversized input
+and redirects report only the stable handshake/tools failure code, never response text or Location.
+This transport policy also applies to Desktop probes.
 
 Presentation stays secret-free: the plugin card shows health beside install and configuration
 status with a re-detect action; a Session shows a non-blocking banner listing the `Unhealthy`

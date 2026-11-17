@@ -160,6 +160,7 @@ impl Fixture {
     /// Reuses the same home and registration while generating a new runtime identity each time.
     pub fn config(&self) -> NodeConfig {
         NodeConfig {
+            session_stop: Default::default(),
             home_directory: self.directory.path().join("home"),
             identity: NodeIdentity::Discover,
             repositories: vec![RepositoryBinding {

@@ -24,6 +24,7 @@ fn runtime_ports_use_durable_ledger() {
         execution_id: ExecutionId::new("execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),
@@ -52,6 +53,7 @@ fn runtime_ports_use_durable_ledger() {
             operation_id: input.operation_id.clone(),
             execution_id: input.execution_id.clone(),
             payload: SubmitUserTurn {
+                mcp_generation: None,
                 node_id: NodeId::new("node"),
                 command_id: command_id.clone(),
                 turn: turn.clone(),

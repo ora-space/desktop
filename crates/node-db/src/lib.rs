@@ -15,6 +15,7 @@ mod runtime_control;
 mod scheduled_artifacts;
 mod schema;
 mod session;
+mod session_stop;
 pub use execution::owns;
 pub use model::*;
 pub use process::{AttemptCommand, AttemptEnding, AttemptId, ProcessAttempt, ProcessJournal};
@@ -30,6 +31,12 @@ pub use session::{
     CommandAdmission, MAX_SESSIONS_PER_CHECKOUT, RefusedSession, RestoreAttempt, RestorePhase,
     SessionCommandInput, SessionCommandSettlement, SessionCommandState, SessionExecution,
     SessionJournal, SessionRefusal,
+};
+pub use session_stop::{
+    SessionStopAuditAdmission, SessionStopAuditResult, SessionStopChange, SessionStopHost,
+    SessionStopIdentity, SessionStopKind, SessionStopMode, SessionStopObservation,
+    SessionStopPackage, SessionStopProof, SessionStopReason, SessionStopReconcile,
+    SessionStopRecord, SessionStopState,
 };
 
 use ora_node_protocol::NodeId;
@@ -104,6 +111,16 @@ impl NodeDatabase<DurableWrites> {
 impl<G: WriteGuard> NodeDatabase<G> {
     /// Uses real SQLite with an injectable transaction failure boundary.
     pub fn open_with_guard(path: &Path, identity: NodeIdentity, guard: G) -> Result<Self, Error> {
+        Self::open_with_guard_and_host(path, identity, guard, &SessionStopHost::current_untrusted())
+    }
+
+    /// Deployment-provided host identity is captured during migration, before any Agent starts.
+    pub fn open_with_guard_and_host(
+        path: &Path,
+        identity: NodeIdentity,
+        guard: G,
+        host: &SessionStopHost,
+    ) -> Result<Self, Error> {
         if matches!(&identity, NodeIdentity::Require(id) if id.as_str().trim().is_empty()) {
             return Err(Error::NodeMismatch);
         }
@@ -141,7 +158,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
             })?;
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
-        let node_id = schema::initialize(&mut connection, created, &identity)?;
+        let node_id = schema::initialize(&mut connection, created, &identity, host)?;
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
         connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
         Ok(Self {

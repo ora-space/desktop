@@ -425,7 +425,7 @@ async fn a_resolved_package_command_is_spawnable_by_the_operating_system() {
         result["pid"].as_u64().is_some_and(|pid| pid > 0),
         "expected a real process id, got {result}"
     );
-    host.kill_all().await;
+    host.kill_all().await.expect("child cleanup confirmed");
 }
 
 #[tokio::test]
@@ -695,7 +695,7 @@ async fn kill_all_terminates_every_tracked_process() {
     let second = spawner.last_handle();
     let first = spawner.last_handle();
 
-    host.kill_all().await;
+    host.kill_all().await.expect("child cleanup confirmed");
 
     assert_eq!(
         (
@@ -704,6 +704,14 @@ async fn kill_all_terminates_every_tracked_process() {
         ),
         (true, true)
     );
+    assert!(
+        host.handle(CHILDPROCESS_SPAWN_METHOD, json!({ "command": "late" }))
+            .await
+            .is_err()
+    );
+    host.kill_all()
+        .await
+        .expect("repeated stop stays confirmed");
 }
 
 // ---------------------------------------------------------------------------------------------

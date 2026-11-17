@@ -143,6 +143,7 @@ and event records and the recorded Git attempts; the attempt lock files live bes
 | 11 | `session_restores`, `restore_process_attempts`: restore admission, original identities and stop clocks |
 | 12 | `scheduled_artifact_deliveries`: scheduled-artifact uploads; the terminal-event outbox covers every execution family |
 | 13 | `process_stops`: attempts that stopped without an exit status, exclusive with `process_outcomes` and `process_terminations` |
+| 14 | Agent stop ownership, terminal intent, audit and summary; see [session stop](session-stop.md) |
 
 Every execution family shares `execution_identities`, which prevents key collisions across families.
 Completion commits resource facts, the terminal result and its original event together; status reads

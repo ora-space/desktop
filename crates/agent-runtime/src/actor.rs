@@ -117,6 +117,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     operation_id,
                     prompt,
                     record_prompt,
+                    commit_admission,
                     inactivity_policy,
                     model,
                     end_report,
@@ -127,10 +128,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     // acquired. Admission waits on that: a prompt that cannot reach an agent, or
                     // that cannot be given the MCP set configured right now, has to fail as the
                     // send it was, not as a turn that started and produced nothing.
-                    match self.ensure_attached(model.as_deref()).await {
+                    match self
+                        .ensure_attached(model.as_deref())
+                        .await
+                        .and_then(|setup| {
+                            if accepted.is_closed() {
+                                return Err(runtime_unavailable());
+                            }
+                            if let Some(commit) = commit_admission {
+                                commit()?;
+                            }
+                            Ok(setup)
+                        }) {
                         Ok(setup) => {
-                            let _ = accepted.send(Ok(()));
-                            if publish_setup(&events, setup) {
+                            if accepted.send(Ok(())).is_ok() && publish_setup(&events, setup) {
                                 self.run_prompt(
                                     operation_id,
                                     prompt,
@@ -300,7 +311,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.channel = None;
         self.reported_config_options.clear();
         self.title_acquisition.close();
-        self.live_mcp = LiveMcpState::Inactive;
+        if self.session_mcp.preserve_provider_identity() {
+            self.session_mcp.mcp_detached();
+        } else {
+            self.live_mcp = LiveMcpState::Inactive;
+        }
         self.persist_session_status(SessionStatus::Stopped);
         ora_debug!(session_id = %self.session.id, "session marked stopped");
     }

@@ -101,6 +101,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     /// through the supervisor's own startup and retries and stops at the answer the supervisor
     /// settles on. The wait is unbounded, so callers bound it themselves.
     pub async fn wait_for_agent(&self, agent_ref: &AgentRef) -> Result<(), RuntimeError> {
+        self.inner
+            .connections
+            .recover_mcp_replacement(agent_ref, &self.inner.session_mcp)
+            .await?;
         self.inner.connections.for_agent(agent_ref)?.ready().await
     }
 
@@ -165,6 +169,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 &session_mcp,
             )
             .await?;
+        session_mcp.mcp_loaded(&mcp_revision);
         let mut persisted = false;
         let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
 
@@ -277,15 +282,40 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     cwd: &Path,
     model: Option<&str>,
 ) -> Result<PendingProviderSession<H>, RuntimeError> {
-    let supervisor = connections.for_agent(agent_ref)?;
-    let connection = supervisor.current()?;
-    let mcp = session_mcp.resolve_mcp(
+    let mut supervisor = connections.for_agent(agent_ref)?;
+    let mut connection = supervisor.current()?;
+    let mut mcp = session_mcp.resolve_mcp(
         cwd,
         AgentSessionMcpCapabilities::new(
             connection.load_session_supported,
             connection.http_mcp_supported,
         ),
     )?;
+    if session_mcp.mcp_replacement_required(mcp.revision()) {
+        let plugin = session_mcp
+            .plugin_id_for_agent(agent_ref)
+            .ok_or_else(crate::support::runtime_unavailable)?;
+        connections.suspend_plugin_agent(&plugin.to_string());
+        connections.retire_mcp_agent(&plugin.to_string()).await;
+        session_mcp.replace_mcp_process().await?;
+        connections.resume_plugin_agent(&plugin.to_string());
+        connections.sync_plugin_agents();
+        supervisor = connections.for_agent(agent_ref)?;
+        supervisor.ready().await?;
+        connection = supervisor.current()?;
+        mcp = session_mcp.resolve_mcp(
+            cwd,
+            AgentSessionMcpCapabilities::new(
+                connection.load_session_supported,
+                connection.http_mcp_supported,
+            ),
+        )?;
+        if session_mcp.mcp_replacement_required(mcp.revision()) {
+            let error = RuntimeError::mcp_retry_required();
+            session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
+    }
     record_session_mcp_boundary(
         session_mcp,
         ora_session_id,
@@ -455,6 +485,7 @@ pub fn record_session_mcp_boundary(
     snapshot: &SessionMcpSnapshot,
     cwd: &Path,
 ) {
+    host.mcp_request_started(snapshot.revision());
     log_session_mcp_request(
         session_id,
         agent_ref,

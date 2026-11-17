@@ -1,7 +1,15 @@
 mod agent_session;
 mod session_mcp;
+mod session_mcp_lifecycle;
 pub use session_mcp::{
     MAX_SESSION_MCP_SERVERS, MAX_SESSION_MCP_SETTINGS_BYTES, SessionMcpBinding, SessionMcpTransport,
+};
+pub(crate) use session_mcp_lifecycle::validate_update_members;
+pub use session_mcp_lifecycle::{
+    MAX_SESSION_MCP_COUNTER, SessionMcpConvergence, SessionMcpErrorCode, SessionMcpFailure,
+    SessionMcpHealth, SessionMcpMemberIdentity, SessionMcpMemberState, SessionMcpProbeErrorCode,
+    SessionMcpRevisionIdentity, SessionMcpState, SessionMcpUnavailable, SessionMcpUnknownReason,
+    SessionMcpUpdateMember,
 };
 mod execution;
 mod git_server;

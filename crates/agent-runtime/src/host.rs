@@ -107,6 +107,10 @@ pub struct AgentPluginAttachment {
 /// over it, and asks the host to stop it when a connection generation ends. Which plugins exist is
 /// likewise the host's answer, so a host that serves one agent reports exactly that one.
 pub trait AgentAttach: Send + Sync + 'static {
+    /// Exclusive lifecycle hosts require a fresh turn/target before retrying a failed process.
+    fn automatic_restarts(&self) -> bool {
+        true
+    }
     /// Why the host could not stop a plugin; the runtime only logs it.
     type StopError: Error + Send + Sync + 'static;
 
@@ -151,6 +155,29 @@ pub trait AgentAttach: Send + Sync + 'static {
 /// from `observe_mcp_health`, because the runtime re-reads the Desired revision whenever it is
 /// woken and compares revisions in memory.
 pub trait SessionSetup: Clone + Send + Sync + 'static {
+    /// A host may rotate its exclusively owned process before another MCP-bearing load.
+    fn mcp_replacement_required(&self, _revision: &SessionMcpRevision) -> bool {
+        false
+    }
+    /// Default hosts have no process-local MCP budget.
+    fn replace_mcp_process(&self) -> impl Future<Output = Result<(), RuntimeError>> + Send {
+        async { Ok(()) }
+    }
+    /// Records each MCP-bearing request, including requests whose response later fails.
+    fn mcp_request_started(&self, _revision: &SessionMcpRevision) {}
+    /// Node lifecycle sessions retain provider identity through detach and never rebuild on load failure.
+    fn preserve_provider_identity(&self) -> bool {
+        false
+    }
+
+    /// Reports actual ACP acceptance, independently of the host's connection health observations.
+    fn mcp_loaded(&self, _revision: &SessionMcpRevision) {}
+
+    /// Host state retains the last active identity while marking the current attempt blocked.
+    fn mcp_failed(&self, _error: &RuntimeError) {}
+
+    /// Losing a channel invalidates current delivery without forgetting the provider identity.
+    fn mcp_detached(&self) {}
     /// Creates a session-local view without mutating the shared source.
     fn with_selection(&self, selection: SessionMcpSelection) -> Self;
 
