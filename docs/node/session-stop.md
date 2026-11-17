@@ -1,6 +1,6 @@
 # Agent stop ownership
 
-[中文版](session-stop.zh.md)
+English | [中文](session-stop.zh.md)
 
 Agent launches have separate synced attempt locks under `session-attempts`. The plugin and every
 host-spawned child inherit the attempt descriptor. Synced PID/start-time/boot clues also protect
@@ -47,8 +47,22 @@ Host health is independent of ACP convergence. Resolution queues one automatic p
 attempt numbers coalesce per member. The Node schedules sessions round-robin with eight global
 slots and at most two per session, including retained and recovered cleanup. A permit starts a
 ten-second budget: up to eight seconds for initialize/tools-list and the remainder for cleanup.
-Stdio uses the session's exact package view, checkout and workload identity with an empty inherited
-environment. HTTP uses the Node identity with proxies and redirects disabled. Healthy requires both
+Stdio uses the session's exact package view, checkout and workload identity with only explicit
+settings and non-authoritative process necessities (PATH, LANG, LC_ALL, TMPDIR). HTTP uses the Node
+identity with proxies and redirects disabled. Healthy requires both
 the handshake and confirmed cleanup. Old generation results cannot update current health; unknown
 cleanup keeps its permit, lease and durable stop responsibility. No automatic failure retry or TTL
 turns an observation into readiness.
+
+Probe cleanup exceeding ten seconds reports `mcp_probe_timeout` once. Its separate, original
+stop-confirmation bound still applies; only at that bound does responsibility become
+`stop_unconfirmed`. Automatic waiting then stops, retaining the slot and leases. Explicit root
+reconciliation wakes retained owners after recording stop proof. Root diagnostics on
+`session-stop.sock` accept the newline-delimited request `{"operation":"probe_capacity"}` and
+return total slots, running probes, cleanup_pending, queued intents and available slots. Session
+queries expose only anonymous availability and their own members.
+
+Upgrade deployment requirement: Node home and package/workload views must be on supported local
+filesystems. Homes on NFS, 9p or virtiofs are refused by the new stop-evidence checks. Drain sessions
+and move the deployment's owned data to a supported local filesystem before this upgrade; copying
+unconfirmed responsibilities to another host does not establish stop proof.

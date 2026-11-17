@@ -146,7 +146,8 @@ excess requests receive `capacity_exceeded` without resolving packages or retain
 New lifecycle `SubmitUserTurn` commands must carry `mcp_generation`. A missing or future floor
 receives `mcp_update_required` without entering the durable queue. Exact duplicate comparison comes
 first. Actual prompt admission waits for the latest generation and commits Executed inside the
-same boundary as target updates. A turn blocked on MCP for 300 seconds produces the reliable,
+same boundary as target updates. Earlier admitted turns' business time is excluded from queued
+turns' MCP budgets; updates and retries do not reset elapsed blocking time. A turn blocked on MCP for 300 seconds produces the reliable,
 sequenced `SessionTurnFailed` event with `mcp_refresh_wait_timeout`; queued command failure and
 its outbox event commit atomically. The session stays open, and EndSession takes priority.
 See [Session lifecycle and host probes](session-stop.md).

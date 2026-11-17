@@ -114,7 +114,7 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
 
 新生命周期 `SubmitUserTurn` 必须携带 `mcp_generation`，缺失或高于当前 desired 的下限返回
 `mcp_update_required`，不进入持久队列；精确重传比较先于该检查。实际 prompt 准入等待最新代际，
-在与更新共用的边界内提交 Executed。轮次因 MCP 阻塞满 300 秒后发出有序可靠的 `SessionTurnFailed`，
+在与更新共用的边界内提交 Executed。前序已准入轮次的业务执行时间不计入排队轮次的 MCP 预算，更新和重试不重置已累计的阻塞时间。轮次因 MCP 阻塞满 300 秒后发出有序可靠的 `SessionTurnFailed`，
 错误码为 `mcp_refresh_wait_timeout`；排队命令的失败状态与 outbox 事件原子提交。会话继续存活，EndSession 优先。
 见[会话生命周期与宿主探测](session-stop.zh.md)。
 
