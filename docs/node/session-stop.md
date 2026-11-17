@@ -5,6 +5,8 @@ English | [中文](session-stop.zh.md)
 Agent launches have separate synced attempt locks under `session-attempts`. The plugin and every
 host-spawned child inherit the attempt descriptor. Synced PID/start-time/boot clues also protect
 against a child closing inherited descriptors. Shutdown closes spawn admission before waiting.
+The durable owner drives termination and stop proof concurrently with the plugin lifecycle's
+shutdown acknowledgement, so a slow acknowledgement cannot delay signalling the original groups.
 Signals, timeout and a free lock alone are not stop proof. An unresolved attempt retains package
 leases, workload views and checkout responsibility across restart. Terminal events and revision
 admission wait for confirmation and resource release.
