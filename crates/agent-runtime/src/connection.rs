@@ -198,6 +198,20 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             .remove(&agent_ref);
     }
 
+    /// Retires the suspended owner before making a replacement attachment available to a new one.
+    pub(super) async fn resume_mcp_agent(&self, plugin_id: &str) {
+        if let Ok(plugin) = PluginId::parse(plugin_id)
+            && let Ok(old) = self.for_agent(&AgentRef::for_plugin(&plugin))
+        {
+            // Keep suspension set until the old owner cannot consume the new attachment or
+            // re-suspend the new supervisor after observing its own late process-exit event.
+            let mut retired = old.state.clone();
+            let _ = old.shutdown.send(());
+            while retired.changed().await.is_ok() {}
+        }
+        self.resume_plugin_agent(plugin_id);
+    }
+
     /// Explicit admission may recover a failed host-owned replacement; idle time cannot retry it.
     pub(super) async fn recover_mcp_replacement(
         &self,
@@ -214,7 +228,7 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
         let plugin = setup
             .plugin_id_for_agent(agent)
             .ok_or_else(super::support::runtime_unavailable)?;
-        self.resume_plugin_agent(&plugin.to_string());
+        self.resume_mcp_agent(&plugin.to_string()).await;
         self.sync_plugin_agents();
         if let Err(error) = self.for_agent(agent)?.ready().await {
             setup.mcp_failed(&error);

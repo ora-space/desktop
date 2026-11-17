@@ -64,7 +64,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.channel = None;
         self.session_mcp.mcp_detached();
         self.session_mcp.replace_mcp_process().await?;
-        self.connections.resume_plugin_agent(&plugin.to_string());
+        self.connections.resume_mcp_agent(&plugin.to_string()).await;
         self.connections.sync_plugin_agents();
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         if let Err(error) = self.connection.ready().await {
