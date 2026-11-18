@@ -77,3 +77,25 @@ JSON 总计最多 64 KiB。Node 使用 `ora-plugin-config` 和 `ora-agent-runtim
 Settings 只保留在内存和成功的 ACP 请求中；ledger 输入只保留 MCP 身份、版本和空 Settings。重复 execution
 不能改变运行中的值；改变 Settings 必须新建 execution。Node 重启中断会话，不恢复值。Settings 不进入
 JSONL、Thread、日志、错误或输入 Debug。此交付路径不包含 Node 实时刷新、restore 或 Host 健康探测。
+
+### 宿主 MCP Server
+
+声明 `session_host_mcp_servers` 的 Node 还接受 `AgentSessionSpec.host_mcp_servers`：最多 4 个由 Controller
+提供的 HTTP Server，每项是 `name`（`ora-` 加小写字母、数字和 `-`，5–64 字节，严格递增）、`url` 和
+`headers`。省略和空列表都表示没有。它们不是插件 MCP：不进入 `mcp`、Effective MCP Set、revision、16 项上限、
+`GetSessionMcpState`、刷新、健康探测或 setup 窗口的选择，空 `mcp` 仍不注入插件 MCP。Node 按输入顺序把它们
+附加在该 execution 每一次 ACP setup 的插件 Server 之后：`session/new`、`session/load`、生命周期刷新的 load
+以及替换后 Agent 的 setup。Node 从不连接或探测它们，也没有 stdio 形态。
+
+URL 必须完整匹配决策中的文法（逐字符校验，不用解析再序列化）：明文 `http` 只允许字面 `127.0.0.1` 或
+`[::1]`，其余必须是 `https`；不允许 userinfo、查询、fragment、默认端口、点段或小写的百分号转义。每个
+Server 最多 8 个小写 token 请求头，不能是 HTTP 与 MCP 实现自己的请求头。所有 URL、请求头名称与值合计最多
+8 KiB。`crates/node-protocol/fixtures/host_mcp_servers.json` 是 Controller 同样使用的接受与拒绝样例。
+非法输入是帧校验失败，在受理前关闭控制连接。
+
+非空宿主列表要求 Agent 在 `initialize` 后声明 HTTP MCP。插件检查在先；只有宿主列表需要 HTTP 时，会话在
+`session/new` 之前以 `agent_failed` / `host_mcp_http_capability_missing` 结束，不带任何 Server 名。替换后的
+Agent 经过同样的检查，缺少能力时结束 execution，不在没有宿主 Server 的情况下继续。
+
+URL 与请求头只在内存和 ACP 请求中。ledger 只保留 `host_mcp_server_names`；重复 start 只比较名称，继续使用
+首次受理的值。解码与校验失败只记录错误类别和字段。Node 重启中断会话，不要求 Controller 重发这些值。
