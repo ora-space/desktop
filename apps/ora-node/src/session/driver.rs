@@ -406,7 +406,7 @@ where
             super::stop::Retained {
                 placement,
                 leases: mcp_leases,
-                spawner,
+                spawner: spawner.clone(),
                 isolation,
             },
         );
@@ -495,20 +495,13 @@ where
     let scheduler = Scheduler::new(shared.config.timezone);
     let manager = AgentRuntimeManager::<NodeRuntimeHost<L>>::new(AgentRuntimeSetup {
         attach: Arc::new(SessionPlugin {
-            process_admission: if control.is_some() {
-                shared
-                    .retained
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(execution)
-                    .map(|retained| super::host::SessionProcessAdmission {
-                        setup: session_setup.clone(),
-                        spawner: retained.spawner.clone(),
-                        last: tokio::sync::Mutex::new(None),
-                    })
-            } else {
-                None
-            },
+            process_admission: control
+                .as_ref()
+                .map(|_| super::host::SessionProcessAdmission {
+                    setup: session_setup.clone(),
+                    last: tokio::sync::Mutex::new(None),
+                }),
+            spawner,
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),

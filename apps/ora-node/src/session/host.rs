@@ -150,19 +150,19 @@ pub(super) struct SessionPlugin {
     pub(super) plugin_id: PluginId,
     /// The adapter's live startup input; a restart of the same plugin reapplies the same grant.
     pub(super) model_context: Option<ora_plugin_protocol::AgentModelContext>,
+    pub(super) spawner: super::stop::spawner::SessionAttemptSpawner,
     pub(super) process_admission: Option<SessionProcessAdmission>,
 }
 
 /// Reconnects cannot bypass the same stop-proof boundary used for explicit MCP replacement.
 pub(super) struct SessionProcessAdmission {
     pub setup: super::mcp::NodeSessionMcp,
-    pub spawner: super::stop::spawner::SessionAttemptSpawner,
     pub last: tokio::sync::Mutex<Option<ora_node_db::AttemptId>>,
 }
 
 impl AgentAttach for SessionPlugin {
     fn automatic_restarts(&self) -> bool {
-        self.process_admission.is_none()
+        self.process_admission.is_none() && self.spawner.is_open()
     }
     type StopError = PluginLifecycleError;
 
@@ -192,14 +192,14 @@ impl AgentAttach for SessionPlugin {
         if let Some(admission) = &self.process_admission {
             use ora_agent_runtime::SessionSetup;
             let mut last = admission.last.lock().await;
-            if last.as_ref() == Some(&admission.spawner.identity().attempt) {
+            if last.as_ref() == Some(&self.spawner.identity().attempt) {
                 admission
                     .setup
                     .replace_mcp_process()
                     .await
                     .map_err(|_| ConnectionError::NotReady)?;
             }
-            *last = Some(admission.spawner.identity().attempt);
+            *last = Some(self.spawner.identity().attempt);
         }
         let connection = self
             .lifecycle
