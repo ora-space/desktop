@@ -293,3 +293,108 @@ fn delegation_results_survive_a_late_snapshot_and_reload() {
     // The settled snapshot was written already, so ending the turn must not add another copy.
     assert!(payloads(&assembler.end_turn(StopReason::EndTurn)).is_empty());
 }
+
+#[test]
+fn subagent_update_sources_isolate_messages_tools_and_plans_through_reload() {
+    let mut assembler = HistoryAssembler::new(0);
+    let subagent_meta = |task_id: &str| {
+        json!({
+            "_subagent/update": {
+                "sessionId": "session-main",
+                "taskId": task_id,
+                "toolCallId": format!("parent-{task_id}"),
+                "agentType": "Explore",
+            }
+        })
+    };
+    let first_chunk = update(json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "Part 1 " },
+        "_meta": subagent_meta("task-a"),
+    }));
+    let other_task_chunk = update(json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "Other task" },
+        "_meta": subagent_meta("task-b"),
+    }));
+    let unfinished_tool = update(json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "task-a:tool-1",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "_meta": {
+            "_subagent/update": {
+                "sessionId": "session-main",
+                "taskId": "task-a",
+                "toolCallId": "parent-task-a",
+                "agentType": "Explore",
+            },
+            "codeAgentCLI": { "toolName": "Read" },
+        },
+    }));
+    let mut emitted = assembler.push_update(&first_chunk);
+    // Identical `_subagent/update` attribution merges contiguous text chunks on the same task.
+    emitted.extend(assembler.push_update(&update(json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "Part 2" },
+        "_meta": subagent_meta("task-a"),
+    }))));
+    emitted.extend(assembler.push_update(&other_task_chunk));
+    emitted.extend(assembler.push_update(&unfinished_tool));
+    emitted.extend(assembler.end_turn(StopReason::EndTurn));
+
+    let expected = vec![
+        update(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "Part 1 Part 2" },
+            "_meta": subagent_meta("task-a"),
+        })),
+        other_task_chunk,
+        // Unsettled subagent tools must not be synthesized as completed when the parent turn ends.
+        unfinished_tool,
+    ];
+    assert_eq!(payloads(&emitted), expected);
+    assert_eq!(reload_payloads(&emitted), expected);
+}
+
+#[test]
+fn invalid_or_cleared_subagent_update_sources_settle_as_parent_tools() {
+    for invalid in [
+        Value::Null,
+        json!({}),
+        json!({"sessionId": " ", "taskId": "task-1"}),
+        json!({"sessionId": "main", "taskId": " "}),
+        json!({"sessionId": "main", "taskId": "task-1", "toolCallId": 42}),
+        json!({"sessionId": "main", "taskId": "task-1", "agentType": false}),
+    ] {
+        let mut assembler = HistoryAssembler::new(0);
+        assembler.push_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "tool",
+            "title": "Work",
+            "status": "in_progress",
+            "_meta": {
+                "_subagent/update": {
+                    "sessionId": "main",
+                    "taskId": "task-1",
+                }
+            },
+        })));
+        assembler.push_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "tool",
+            "_meta": { "_subagent/update": invalid },
+        })));
+        let expected = update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "tool",
+            "title": "Work",
+            "status": "completed",
+            "_meta": { "_subagent/update": invalid },
+        }));
+        let records = assembler.end_turn(StopReason::EndTurn);
+        assert_eq!(payloads(&records), vec![expected.clone()]);
+        assert_eq!(reload_payloads(&records), vec![expected]);
+    }
+}
