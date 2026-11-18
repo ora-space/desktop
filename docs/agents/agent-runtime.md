@@ -27,10 +27,10 @@ countdowns. Silence does not establish provider health or a child lifecycle. Onl
 by the host are listed; the current runtime auto-handles permissions, and unsupported question forms
 do not become pending UI requests.
 
-OpenCode child-session projections remain visible, but do not independently reset or pause their
-parent prompt's inactivity window. A child tool retains this exclusion across metadata-free deltas.
-The parent delegate's own in-progress update still pauses its existing timer; explicit Wait and
-cancel/error cleanup remain unchanged.
+OpenCode child-session projections and `_subagent/update` extension projections remain visible,
+but do not independently reset or pause their parent prompt's inactivity window. A child tool
+retains this exclusion across metadata-free deltas. The parent delegate's own in-progress update
+still pauses its existing timer; explicit Wait and cancel/error cleanup remain unchanged.
 
 ## Agents come from plugins
 
@@ -183,18 +183,18 @@ cancelled turn and keeps the actor reusable.
 
 ## Limits
 
-| Bound | Value |
-|---|---|
-| `initialize` | 15 s |
-| Plugin model discovery | 60 s |
-| `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications |
-| Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits |
-| Cancellation settlement grace | 5 s |
-| Connection retry backoff | 250 ms doubling to 30 s |
-| Restart circuit | Opens after more than 3 failures in 1 minute |
-| Session queue depth | 256 items |
-| Structured prompt size | 16 MiB of serialized JSON |
-| Handoff transcript size | Unbounded |
+| Bound                                     | Value                                                                                                 |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `initialize`                              | 15 s                                                                                                  |
+| Plugin model discovery                    | 60 s                                                                                                  |
+| `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications                         |
+| Prompt inactivity windows                 | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits |
+| Cancellation settlement grace             | 5 s                                                                                                   |
+| Connection retry backoff                  | 250 ms doubling to 30 s                                                                               |
+| Restart circuit                           | Opens after more than 3 failures in 1 minute                                                          |
+| Session queue depth                       | 256 items                                                                                             |
+| Structured prompt size                    | 16 MiB of serialized JSON                                                                             |
+| Handoff transcript size                   | Unbounded                                                                                             |
 
 ### Setup inactivity
 
@@ -252,13 +252,13 @@ replacement. The callback is best effort, produces no acknowledgement and does n
 A host composes the runtime through `AgentRuntimeHost`, whose associated types supply five
 interfaces; they are generic parameters, so each host gets its own monomorphized runtime.
 
-| Interface | Runtime needs | Desktop | Node |
-|---|---|---|---|
-| `SessionStore` | Create, read, list and update session rows; soft delete | `SqliteSessionRepository` | `MemorySessionStore` |
-| `AgentAttach` | List agent plugins, attach to a process and its tap, stop it, record its Effect consumer | `PluginApi` | The execution's own one-plugin lifecycle |
-| `SessionSetup` | The Session MCP view, revisions and health observation | Session MCP resolver and MCP health | `NoSessionMcp` |
-| `RuntimeEvents` | Title and model-catalog notifications; every history line written | `AppEventPublisher` | Each line becomes a Thread event |
-| `WorkspaceDirectory` | A Workspace's `cwd` | Workspace repository plus the path base | The execution's checkout |
+| Interface            | Runtime needs                                                                            | Desktop                                 | Node                                     |
+| -------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------- |
+| `SessionStore`       | Create, read, list and update session rows; soft delete                                  | `SqliteSessionRepository`               | `MemorySessionStore`                     |
+| `AgentAttach`        | List agent plugins, attach to a process and its tap, stop it, record its Effect consumer | `PluginApi`                             | The execution's own one-plugin lifecycle |
+| `SessionSetup`       | The Session MCP view, revisions and health observation                                   | Session MCP resolver and MCP health     | `NoSessionMcp`                           |
+| `RuntimeEvents`      | Title and model-catalog notifications; every history line written                        | `AppEventPublisher`                     | Each line becomes a Thread event         |
+| `WorkspaceDirectory` | A Workspace's `cwd`                                                                      | Workspace repository plus the path base | The execution's checkout                 |
 
 Failures leave the crate as `RuntimeError` (classification, typed public error, context, source
 chain); Desktop converts it to `BackendError` and back without loss. The crate must not depend on

@@ -69,18 +69,18 @@ ACP 的 stdout 是按行分隔的 JSON-RPC。连接读取器把帧无界、有�
 
 ## 上限
 
-| 项目 | 取值 |
-|---|---|
-| `initialize` | 15 秒 |
-| 插件模型发现 | 60 秒 |
-| `session/new` / `session/load` 无活动 | 30 秒；交付 MCP server 时为 120 秒；setup 通知会重置 |
-| prompt 无活动窗口 | 45 秒，之后最多三次重试依次为 60、90、120 秒；工具运行和等待权限时暂停 |
-| 取消结算宽限期 | 5 秒 |
-| 连接重试退避 | 250 毫秒，翻倍至 30 秒 |
-| 重启熔断 | 1 分钟内超过 3 次失败时打开 |
-| 会话队列深度 | 256 项 |
-| 结构化 prompt 大小 | 序列化后的 JSON 16 MiB |
-| 交接 transcript 大小 | 不限 |
+| 项目                                  | 取值                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------- |
+| `initialize`                          | 15 秒                                                                  |
+| 插件模型发现                          | 60 秒                                                                  |
+| `session/new` / `session/load` 无活动 | 30 秒；交付 MCP server 时为 120 秒；setup 通知会重置                   |
+| prompt 无活动窗口                     | 45 秒，之后最多三次重试依次为 60、90、120 秒；工具运行和等待权限时暂停 |
+| 取消结算宽限期                        | 5 秒                                                                   |
+| 连接重试退避                          | 250 毫秒，翻倍至 30 秒                                                 |
+| 重启熔断                              | 1 分钟内超过 3 次失败时打开                                            |
+| 会话队列深度                          | 256 项                                                                 |
+| 结构化 prompt 大小                    | 序列化后的 JSON 16 MiB                                                 |
+| 交接 transcript 大小                  | 不限                                                                   |
 
 ### setup 无活动
 
@@ -109,13 +109,13 @@ prompt 是有序的 ACP `ContentBlock`（文本、图片、音频、资源链接
 
 宿主通过 `AgentRuntimeHost` 组装运行时，它的关联类型提供五个接口；它们是泛型参数，所以每个宿主得到自己单态化的运行时。
 
-| 接口 | 运行时需要 | Desktop | Node |
-|---|---|---|---|
-| `SessionStore` | 创建、读取、列出和更新会话行；软删除 | `SqliteSessionRepository` | `MemorySessionStore` |
-| `AgentAttach` | 列出 Agent 插件，附着到进程和 tap，停止进程，记录其 Effect 消费者 | `PluginApi` | 本次执行自己的单插件生命周期 |
-| `SessionSetup` | Session MCP 视图、revision 和健康观测 | Session MCP 解析器和 MCP 健康 | `NoSessionMcp` |
-| `RuntimeEvents` | 标题和模型目录通知；写入的每一行历史 | `AppEventPublisher` | 每一行成为一个 Thread 事件 |
-| `WorkspaceDirectory` | Workspace 的 `cwd` | Workspace 仓储加路径基准 | 本次执行的 checkout |
+| 接口                 | 运行时需要                                                        | Desktop                       | Node                         |
+| -------------------- | ----------------------------------------------------------------- | ----------------------------- | ---------------------------- |
+| `SessionStore`       | 创建、读取、列出和更新会话行；软删除                              | `SqliteSessionRepository`     | `MemorySessionStore`         |
+| `AgentAttach`        | 列出 Agent 插件，附着到进程和 tap，停止进程，记录其 Effect 消费者 | `PluginApi`                   | 本次执行自己的单插件生命周期 |
+| `SessionSetup`       | Session MCP 视图、revision 和健康观测                             | Session MCP 解析器和 MCP 健康 | `NoSessionMcp`               |
+| `RuntimeEvents`      | 标题和模型目录通知；写入的每一行历史                              | `AppEventPublisher`           | 每一行成为一个 Thread 事件   |
+| `WorkspaceDirectory` | Workspace 的 `cwd`                                                | Workspace 仓储加路径基准      | 本次执行的 checkout          |
 
 失败以 `RuntimeError`（分类、类型化公开错误、上下文、错误链）离开 crate；Desktop 把它无损地转换为 `BackendError` 并能转回。crate 不得依赖 `ora-backend`、SQLite 或 Tauri。没有人在场的宿主使用的入口（`wait_for_agent`、`start_session_with_id`、`prompt_session_as_message`）见 [Node Agent 会话](../node/agent-sessions.zh.md)。
 
@@ -128,5 +128,5 @@ Workspace 和工作流对话提供只读运行详情：最近实时收到的内�
 的后续增量中仍归为子工具；历史或尚未观察到来源的工具显示来源未确认。观察时长不是超时倒计时。
 界面只列出宿主实际暴露的请求；当前 runtime 自动处理权限，未支持的问题表单不会伪造为待处理请求。
 
-OpenCode 子会话投影仍会显示，但不单独重置或暂停父 prompt 的无活动窗口；子工具后续省略 metadata
+OpenCode 子会话投影与 `_subagent/update` 扩展投影仍会显示，但不单独重置或暂停父 prompt 的无活动窗口；子工具后续省略 metadata
 的增量仍保持这个边界。父委托工具自身的 in_progress 继续暂停既有计时，显式 Wait 和取消/错误收尾不变。
