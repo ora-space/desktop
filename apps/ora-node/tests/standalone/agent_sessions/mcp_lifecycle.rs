@@ -368,10 +368,27 @@ fn ordered_updates_floor_rejection_and_process_budget_use_the_real_service() {
             }
             send(&mut stream,turn()).await;
             assert!(matches!(receive(&mut stream).await,NodeToControllerMessage::SessionCommandRejected(reply) if reply.payload.reason == SessionCommandRejection::McpUpdateRequired));
+            let original_plugin = plugin(&root);
+            fs::write(root.join("hold-shutdown"), b"").unwrap();
             for generation in 1..=10 {
                 let update = ControllerToNodeMessage::UpdateSessionMcp(UpdateSessionMcpMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: start("").operation_id, execution_id: ExecutionId::new(EXECUTION), payload: UpdateSessionMcp { node_id: NodeId::new("test-node"), request_id: RequestId::new(format!("update-{generation}")), generation, members: vec![] } });
                 send(&mut stream,update.clone()).await;
                 assert_eq!(reply(&mut stream).await.result,SessionMcpResult::Accepted);
+                if generation == 9 {
+                    // The refresh budget forces replace() even when shutdown never returns.
+                    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                        while !original_plugin.has_exited().unwrap() {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    }).await.expect("old plugin must exit before the supervisor shutdown grace expires");
+                    let db = rusqlite::Connection::open(fixture.config().home_directory.join("ora-node.sqlite3")).unwrap();
+                    let requested: bool = db.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM session_stop_attempts WHERE execution=?1 AND first_stop_at_ms IS NOT NULL)",
+                        [EXECUTION], |row| row.get(0),
+                    ).unwrap();
+                    assert!(requested, "the original execution must have a durable stop request");
+                    assert!(!root.join("received-shutdown").exists(), "supervisor shutdown preceded process termination");
+                }
                 send(&mut stream,update).await;
                 assert_eq!(reply(&mut stream).await.result,SessionMcpResult::Duplicate);
                 tokio::time::timeout(std::time::Duration::from_secs(15),async {

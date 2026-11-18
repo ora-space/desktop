@@ -76,7 +76,13 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let method = message.get("method").and_then(Value::as_str);
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         match (method, message.get("id").cloned()) {
-            (Some(SHUTDOWN_METHOD), _) => break,
+            (Some(SHUTDOWN_METHOD), _) => {
+                if std::path::Path::new("hold-shutdown").exists() {
+                    std::fs::write("received-shutdown", b"")?;
+                    std::future::pending::<()>().await;
+                }
+                break;
+            }
             (Some(AGENT_ACP_METHOD), None) => agent.acp_frame(&mut output, params).await?,
             (Some(CHILDPROCESS_EXIT_METHOD), None) => agent.commit_finished(&mut output).await?,
             (Some(method), Some(id)) => {
