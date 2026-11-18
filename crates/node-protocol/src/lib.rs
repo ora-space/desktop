@@ -9,6 +9,10 @@ mod frame;
 mod identity;
 mod message;
 pub use domain::{
+    HostMcpHeaders, HostMcpServer, MAX_HOST_MCP_HEADERS, MAX_HOST_MCP_SERVERS,
+    MAX_HOST_MCP_TOTAL_BYTES, MAX_HOST_MCP_URL_BYTES,
+};
+pub use domain::{
     MAX_SESSION_MCP_COUNTER, SessionMcpConvergence, SessionMcpErrorCode, SessionMcpFailure,
     SessionMcpHealth, SessionMcpMemberIdentity, SessionMcpMemberState, SessionMcpProbeErrorCode,
     SessionMcpRevisionIdentity, SessionMcpState, SessionMcpUnavailable, SessionMcpUnknownReason,

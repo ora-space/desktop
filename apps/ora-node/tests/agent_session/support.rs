@@ -603,6 +603,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
@@ -626,6 +627,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: Some(FrozenAgentConfiguration {

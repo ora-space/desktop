@@ -6,6 +6,9 @@ use thiserror::Error;
 pub enum MessageValidationError {
     #[error("invalid explicit session MCP selection")]
     InvalidSessionMcp,
+    /// Names only the field: a decoder or validator message could echo a URL or header value.
+    #[error("invalid payload.spec.host_mcp_servers")]
+    InvalidHostMcpServers,
     #[error(
         "unconfirmed-stop evidence must retain original identities and an increasing stop bound"
     )]

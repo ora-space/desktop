@@ -119,6 +119,11 @@ pub struct AgentSessionSpec {
     /// Explicit plugin MCP selection; omitted and empty both mean none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp: Vec<super::session_mcp::SessionMcpBinding>,
+    /// Controller-provided HTTP MCP servers attached after the plugin MCP servers on every ACP
+    /// setup; sent only to a Node advertising `session_host_mcp_servers`. Omitted and empty both
+    /// mean none, and they never join the plugin selection above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_mcp_servers: Vec<super::host_mcp::HostMcpServer>,
     pub node_id: NodeId,
     pub agent_plugin_id: PluginId,
     pub agent_plugin_version: PluginVersion,
@@ -166,6 +171,7 @@ impl AgentSessionSpec {
             });
         }
         super::session_mcp::validate_bindings(&self.mcp)?;
+        super::host_mcp::validate_host_servers(&self.host_mcp_servers)?;
         self.git_identity.validate()?;
         if self
             .model_binding_id

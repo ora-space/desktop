@@ -16,6 +16,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("session-execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,

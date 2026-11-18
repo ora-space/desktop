@@ -24,6 +24,7 @@ fn runtime_ports_use_durable_ledger() {
         execution_id: ExecutionId::new("execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
