@@ -85,6 +85,30 @@ impl RollbackPlan {
     }
 }
 
+/// Reports whether one resume keeps the snapshot the run is already pinned to.
+///
+/// A resume that switches to another published snapshot executes that snapshot's graph, which the
+/// switch resolves and validates before it commits; only the graph the resume keeps falls to the
+/// pre-mutation dependency precheck.
+fn keeps_current_snapshot(
+    pool: &RepositoryPool,
+    run_id: &WorkflowRunId,
+    requested_snapshot_id: Option<&str>,
+) -> Result<bool, BackendError> {
+    let Some(requested) = requested_snapshot_id else {
+        return Ok(true);
+    };
+    let run = SqliteWorkflowRunRepository::new(pool.clone())
+        .find_run(run_id)
+        .map_err(|error| BackendError::internal("failed to load workflow run snapshot", error))?
+        .ok_or_else(|| {
+            BackendError::from(ApplicationError::WorkflowRunNotFound {
+                run_id: run_id.to_string(),
+            })
+        })?;
+    Ok(requested == run.snapshot_id.as_ref())
+}
+
 /// Reads the live run and node rows and classifies which rollback modes are available.
 pub(super) fn plan_rollback(
     pool: &RepositoryPool,
@@ -385,10 +409,13 @@ pub(super) fn apply_rollback(
 }
 
 /// Plans and applies rollback, then optionally switches snapshot, then resumes through the engine.
+///
+/// A resume re-executes the graph the run ends up pinned to, so it validates the same dependencies
+/// a start does: a Skill or MCP plugin uninstalled after the run failed cannot be routed around by
+/// resuming instead of restarting. The precheck runs before any worktree mutation.
 pub(super) fn resume_from_failure(
-    pool: &RepositoryPool,
+    dependencies: super::precheck::DependencySources<'_>,
     agent_runtime: &AgentRuntimeManager,
-    skills_root: &Path,
     engine: &ConcreteWorkflowRunControl,
     transitions: &super::transitions::WorkflowRunTransitions,
     request: ResumeWorkflowRunRequest,
@@ -396,6 +423,16 @@ pub(super) fn resume_from_failure(
 ) -> Result<ResumeWorkflowRunResponse, BackendError> {
     let mode = request.rollback.unwrap_or(ResumeRollbackMode::Keep);
     let run_id = WorkflowRunId::new(&request.run_id);
+    let pool = dependencies.pool;
+    let skills_root = dependencies.skills_root;
+    if keeps_current_snapshot(pool, &run_id, request.snapshot_id.as_deref())? {
+        super::precheck::ensure_dependencies_available(
+            dependencies,
+            agent_runtime,
+            &run_id,
+            super::precheck::StartOperation::Resume,
+        )?;
+    }
     // Refuse an incompatible snapshot before any worktree mutation so a stale preview cannot
     // pair checkpoint restore with a graph that will not resume.
     if let Some(snapshot_id) = request.snapshot_id.as_deref() {

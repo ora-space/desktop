@@ -128,6 +128,72 @@ fn skill_roots_from_declaration(
     Ok(Some(SkillDiscoveryRoots::new(first, roots.collect())))
 }
 
+/// Builds the deploy initializer that resolves skills through each Agent plugin's Effect
+/// declaration.
+///
+/// Run creation and every later start/restart must resolve skill bindings through the same
+/// implementation, so a binding the catalog accepted at creation cannot silently resolve
+/// differently when the run is scheduled again.
+pub(super) fn plugin_initializer(
+    skills_root: &Path,
+    pool: &RepositoryPool,
+    plugin_api: &Arc<crate::plugin::PluginApi>,
+) -> Result<
+    SkillRoleWorkspaceInitializer<PluginAwareAgentSkillDeliveryProvider>,
+    ora_application::AgentSkillDeliveryError,
+> {
+    let delivery_provider = PluginAwareAgentSkillDeliveryProvider::new(plugin_api.clone())?;
+    Ok(SkillRoleWorkspaceInitializer::with_delivery_provider(
+        skills_root.to_path_buf(),
+        pool.clone(),
+        delivery_provider,
+    ))
+}
+
+/// Rejects every enabled MCP binding whose plugin is no longer installed.
+///
+/// MCP bindings are plugin installation dependencies: the node's frozen allowlist only becomes a
+/// session selection after a session starts, so without this check an uninstalled MCP plugin keeps
+/// a run startable until the owning node fails. Discovery reads the installed tree directly, the
+/// same catalog session setup resolves a selection against, so the check cannot pass on a cached
+/// snapshot of a package that is already gone. Configuration completeness is not checked here — an
+/// installed but unconfigured MCP is a configuration problem the settings surface owns, and session
+/// setup already refuses to deliver it.
+pub(super) fn validate_mcp_bindings(
+    plugin_api: &crate::plugin::PluginApi,
+    graph: &WorkflowGraph,
+) -> Result<(), StartPrerequisitesError> {
+    let manager = ora_plugin_manager::PluginManager::discover(plugin_api.home_directory());
+    let installed = manager.installed_plugins();
+    for node in graph
+        .execution_scopes()
+        .into_iter()
+        .flat_map(WorkflowGraph::nodes)
+        .filter(|node| node.node_type == NodeType::Agent)
+    {
+        let Some(config) = &node.agent_config else {
+            continue;
+        };
+        for binding in config.mcps.iter().filter(|binding| binding.enabled) {
+            let installed_mcp = installed.iter().any(|plugin| {
+                plugin.id == binding.mcp_id
+                    && matches!(
+                        plugin.contributes,
+                        ora_plugin_manager::PluginContribution::Mcp(_)
+                    )
+            });
+            if !installed_mcp {
+                return Err(StartPrerequisitesError::WorkflowMcpNotFound {
+                    node_id: node.id.clone(),
+                    node_title: node_display_name(node),
+                    mcp_id: binding.mcp_id.canonical(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validates a run workspace's roles and skill bindings at deploy time.
 ///
 /// Roles and skills are deploy hard-dependencies: every agent's role must resolve in the agents

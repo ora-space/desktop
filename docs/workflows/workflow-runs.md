@@ -27,7 +27,7 @@ a running run with such a node as `AwaitingInput` so the sidebar can show that a
 | Operation                                                                                  | Effect                                                               |
 | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
 | `createWorkflowRun`                                                                        | Validate and persist a `Pending` run                                 |
-| `startWorkflowRun`                                                                         | Validate executability and begin scheduling                          |
+| `startWorkflowRun`                                                                         | Validate executability and dependencies, then begin scheduling       |
 | `updateWorkflowRunInput`                                                                   | Fill Start inputs before the run starts                              |
 | `cancelWorkflowRun`, `restartWorkflowRun`                                                  | Cancel; restart from scratch with a fresh root execution             |
 | `previewWorkflowRunResume`, `resumeWorkflowRunFromFailure`                                 | Inspect and perform a resume, see [Resuming](#resuming-a-failed-run) |
@@ -54,8 +54,26 @@ For each Skill-using node, run creation asks an `AgentSkillDeliveryProvider` for
 Workspace-relative discovery roots and freezes a per-node receipt with the Skill id, slash-command
 name and actual package paths. Local Skills resolve through their catalog directory and plugin Skills
 through the immutable package recorded in their row. The current provider returns the shared
-`.agents/skills` root. Execution uses only the frozen receipt, so catalog changes affect new runs
-only.
+`.agents/skills` root. Execution uses only the frozen receipt, so a later catalog change cannot
+silently rewrite the packages an existing run addresses.
+
+Because the receipt is frozen, creation is not the last time the dependencies are read. Every
+operation that begins scheduling — `startWorkflowRun`, `restartWorkflowRun`, and
+`resumeWorkflowRunFromFailure` — re-resolves the frozen graph's declared roles, enabled Skills and
+enabled MCP bindings against the live skills catalog and the installed plugin tree before the first
+node is dispatched. A dependency that was uninstalled or whose package disappeared fails the
+operation with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming both the node (id and
+display title) and the dependency, and the run keeps its previous status. Re-installing the
+dependency makes the same run startable again. An operation the engine would treat as a no-op — a
+start of an already running run, a restart of a running one — is not a scheduling change and still
+answers idempotently. Agent availability is not part of this precheck: the runtime resolves the
+frozen agent identity when it opens the node session and fails closed with `agent_not_installed`.
+
+The boundary for a dependency removed while a run is already executing is the next scheduling
+operation: an in-flight run is not re-checked, because its nodes already hold the receipt they
+started with, and the next start, restart, or resume of that run is what refuses to continue.
+Whether an uninstall should instead be blocked while a workflow references the plugin is a product
+question tracked separately, in the install/uninstall dependency warnings.
 
 ### Events
 

@@ -8,6 +8,7 @@ use super::interactive::{
 };
 #[cfg(feature = "test-support")]
 use super::owner_stream_drop::OwnerStreamDropControl;
+use super::precheck::{DependencySources, StartOperation, ensure_dependencies_available};
 use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
@@ -21,6 +22,8 @@ use ora_logging::{ora_info, ora_warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(test)]
+mod precheck_tests;
 #[cfg(test)]
 mod tests;
 
@@ -53,6 +56,8 @@ pub struct WorkflowRuns {
     sessions_root: PathBuf,
     baselines_root: PathBuf,
     skills_root: PathBuf,
+    /// Live plugin host used to re-resolve Skill and MCP dependencies before scheduling starts.
+    plugin_api: Arc<crate::plugin::PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     engine: Arc<ConcreteWorkflowRunControl>,
     run_locks: Arc<KeyedResourceLocks>,
@@ -80,6 +85,7 @@ impl WorkflowRuns {
             sessions_root: setup.sessions_root,
             baselines_root: setup.baselines_root,
             skills_root: setup.skills_root,
+            plugin_api: setup.plugin_api,
             agent_runtime: setup.agent_runtime,
             engine: setup.engine,
             run_locks: setup.run_locks,
@@ -130,12 +136,35 @@ impl WorkflowRuns {
     }
 
     /// Starts a workflow run against its frozen snapshot graph.
+    ///
+    /// Every declared dependency is re-resolved first, so a Skill or MCP plugin uninstalled after
+    /// the run was created fails the start instead of letting the node run without it.
     pub fn start(
         &self,
         request: StartWorkflowRunRequest,
     ) -> Result<StartWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.precheck_dependencies(&request.run_id, StartOperation::Start)?;
         self.engine.start(request).map_err(BackendError::from)
+    }
+
+    /// Groups the live sources a dependency precheck resolves against.
+    fn dependency_sources(&self) -> DependencySources<'_> {
+        DependencySources::new(&self.pool, &self.skills_root, &self.plugin_api)
+    }
+
+    /// Refuses to begin scheduling when a dependency of the frozen graph is no longer installed.
+    fn precheck_dependencies(
+        &self,
+        run_id: &str,
+        operation: StartOperation,
+    ) -> Result<(), BackendError> {
+        ensure_dependencies_available(
+            self.dependency_sources(),
+            &self.agent_runtime,
+            &ora_domain::WorkflowRunId::new(run_id),
+            operation,
+        )
     }
 
     /// Cancels a running workflow run and stops its live node sessions.
@@ -469,11 +498,15 @@ impl WorkflowRuns {
     }
 
     /// Restarts a finished workflow run.
+    ///
+    /// A restart re-executes the frozen graph, so it re-validates the same dependencies a start
+    /// does and cannot be used to bypass the precheck.
     pub fn restart(
         &self,
         request: RestartWorkflowRunRequest,
     ) -> Result<RestartWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.precheck_dependencies(&request.run_id, StartOperation::Restart)?;
         self.engine.restart(request).map_err(BackendError::from)
     }
 
@@ -484,9 +517,8 @@ impl WorkflowRuns {
     ) -> Result<ResumeWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
         super::rollback::resume_from_failure(
-            &self.pool,
+            self.dependency_sources(),
             &self.agent_runtime,
-            &self.skills_root,
             &self.engine,
             &self.transitions,
             request,

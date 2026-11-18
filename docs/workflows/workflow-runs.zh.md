@@ -19,7 +19,7 @@
 | 操作                                                                                       | 效果                                                |
 | ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
 | `createWorkflowRun`                                                                        | 校验并持久化一个 `Pending` 运行                     |
-| `startWorkflowRun`                                                                         | 校验可执行性并开始调度                              |
+| `startWorkflowRun`                                                                         | 校验可执行性与依赖并开始调度                        |
 | `updateWorkflowRunInput`                                                                   | 在运行开始之前填写 Start 输入                       |
 | `cancelWorkflowRun`、`restartWorkflowRun`                                                  | 取消；以新的根执行从头重新开始                      |
 | `previewWorkflowRunResume`、`resumeWorkflowRunFromFailure`                                 | 预览并执行恢复，见[恢复失败的运行](#恢复失败的运行) |
@@ -34,7 +34,11 @@
 
 创建时从冻结的图编译出运行级的变量池，并把启动文本写入 `{start_id}.input`，默认为快照的 Start 指令。部署界面收集运行名称、指令和已声明的 Start 输入的类型化值。Ora 的显示语言被冻结进运行，所以即使界面语言之后变了，生成的每份交接内容都使用同一种语言。
 
-对每个使用 Skill 的节点，创建运行时向 `AgentSkillDeliveryProvider` 请求经过校验的、相对于 Workspace 的发现根目录，并冻结一份按节点的回执，内容是 Skill id、斜杠命令名和实际的包路径。本地 Skill 通过目录中的目录解析，插件 Skill 通过其行中记录的不可变包解析。当前的 provider 返回共享的 `.agents/skills` 根目录。执行只使用冻结的回执，所以目录的变化只影响新的运行。
+对每个使用 Skill 的节点，创建运行时向 `AgentSkillDeliveryProvider` 请求经过校验的、相对于 Workspace 的发现根目录，并冻结一份按节点的回执，内容是 Skill id、斜杠命令名和实际的包路径。本地 Skill 通过目录中的目录解析，插件 Skill 通过其行中记录的不可变包解析。当前的 provider 返回共享的 `.agents/skills` 根目录。执行只使用冻结的回执，所以之后的目录变化无法悄悄改写已有运行所指向的包。
+
+正因为回执是冻结的，创建并不是最后一次读取依赖。每个开始调度的操作——`startWorkflowRun`、`restartWorkflowRun` 和 `resumeWorkflowRunFromFailure`——都会在派发第一个节点之前，把冻结的图声明的角色、启用的 Skill 和启用的 MCP 绑定重新对照实时的技能目录和已安装插件树解析一遍。依赖被卸载或它的包消失时，操作以 `workflow_skill_not_found` 或 `workflow_mcp_not_found` 失败，错误同时给出节点（id 和显示标题）和缺失的依赖，运行保持原来的状态。重新安装依赖后，同一个运行又能启动。引擎本来就会当作空操作的操作——启动一个已在运行的运行、重启一个仍在运行的运行——不改变调度，仍然幂等返回。Agent 是否可用不在这次预检之内：runtime 在打开节点会话时解析冻结的 agent 身份，并以 `agent_not_installed` 失败关闭。
+
+依赖在运行已经执行期间被卸载时，边界落在下一次开始调度的操作上：进行中的运行不会被重新校验，因为它的节点已经持有启动时的回执，而该运行的下一次启动、重启或恢复会被拒绝。是否应当在工作流仍引用某插件时直接阻止卸载，是一个单独跟进的安装/卸载依赖提示产品问题。
 
 ### 事件
 
