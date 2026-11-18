@@ -163,6 +163,17 @@ pub trait SessionSetup: Clone + Send + Sync + 'static {
     fn replace_mcp_process(&self) -> impl Future<Output = Result<(), RuntimeError>> + Send {
         async { Ok(()) }
     }
+    /// Exclusive process owners may initiate termination before supervisor cleanup. Every host
+    /// must finish retiring the old supervisor before installing a successor.
+    fn replace_after_retirement(
+        &self,
+        retire: impl Future<Output = ()> + Send,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send {
+        async move {
+            retire.await;
+            self.replace_mcp_process().await
+        }
+    }
     /// Records each MCP-bearing request, including requests whose response later fails.
     fn mcp_request_started(&self, _revision: &SessionMcpRevision) {}
     /// Node lifecycle sessions retain provider identity through detach and never rebuild on load failure.

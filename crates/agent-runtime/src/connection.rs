@@ -226,8 +226,9 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
         let plugin = setup
             .plugin_id_for_agent(agent)
             .ok_or_else(super::support::runtime_unavailable)?;
-        self.retire_mcp_agent(&plugin.to_string()).await;
-        setup.replace_mcp_process().await?;
+        setup
+            .replace_after_retirement(self.retire_mcp_agent(&plugin.to_string()))
+            .await?;
         self.resume_plugin_agent(&plugin.to_string());
         self.sync_plugin_agents();
         if let Err(error) = self.for_agent(agent)?.ready().await {
