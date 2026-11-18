@@ -618,3 +618,30 @@ fn retry_attributes_late_tool_deltas_to_the_opening_attempt() {
     assert_eq!(fresh[0].seq, 3);
     assert_eq!(assembler.end_turn(StopReason::EndTurn).len(), 1);
 }
+
+#[test]
+fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
+    for status in [ToolCallStatus::Pending, ToolCallStatus::InProgress] {
+        let tool = ToolCall::new("shared", "deliver").status(status);
+        let record_at = |seq, call| AssembledRecord {
+            seq,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(call)),
+                tool_timing: None,
+            },
+        };
+        let mut assembler = HistoryAssembler::new(0);
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        assert_eq!(assembler.retry_prompt()[0], record_at(0, tool.clone()));
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        assert_eq!(
+            assembler.end_turn(StopReason::EndTurn)[0],
+            record_at(2, tool.clone())
+        );
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        assert_eq!(
+            assembler.end_turn(StopReason::EndTurn)[0],
+            record_at(4, tool.status(ToolCallStatus::Completed))
+        );
+    }
+}

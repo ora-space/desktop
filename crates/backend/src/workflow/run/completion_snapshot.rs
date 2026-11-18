@@ -673,6 +673,78 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_parent_text_in_the_final_attempt_can_satisfy_the_retry_guard() {
+        let mut child = ContentChunk::new(ContentBlock::Text(TextContent::new("child result")));
+        child.meta = Some(agent_client_protocol_schema::v1::Meta::from_iter([(
+            "opencode/child-session".to_owned(),
+            json!({"id":"child","parentID":"parent","depth":1}),
+        )]));
+        let history = history(
+            vec![
+                user(1, "work"),
+                HistoryLine::new("", 2, HistoryRecord::PromptRetried),
+                assistant(3, "  \n "),
+                HistoryLine::new(
+                    "",
+                    4,
+                    HistoryRecord::Update {
+                        update: Box::new(SessionUpdate::AgentMessageChunk(child)),
+                        tool_timing: None,
+                    },
+                ),
+                ended(5, StopReason::EndTurn),
+            ],
+            HistoryIntegrity::Complete,
+        );
+        assert_eq!(
+            super::completion_final_text(&history).as_deref(),
+            Some("  \n ")
+        );
+        let snapshot = derive_completion_snapshot(&history, None, false, TurnOrigin::Human, None);
+        assert!(snapshot.empty_retry_blocker().is_some());
+    }
+
+    #[test]
+    fn a_fresh_signal_on_an_empty_opening_retry_still_requires_first_turn_confirmation() {
+        let key = TurnKey {
+            user_seq: 1,
+            ended_seq: 3,
+        };
+        let h = history(
+            vec![
+                user(1, "start"),
+                HistoryLine::new("", 2, HistoryRecord::PromptRetried),
+                ended(3, StopReason::EndTurn),
+            ],
+            HistoryIntegrity::Complete,
+        );
+        let snapshot = derive_completion_snapshot(&h, None, false, TurnOrigin::Workflow, None)
+            .with_agent_signal_gate(&CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(AgentSignal {
+                    signal_id: "fresh".into(),
+                    requested_at: 1,
+                    turn_key: key,
+                }),
+                confirmation: None,
+                auto_accept: true,
+            });
+        assert_eq!(
+            snapshot.blockers,
+            vec![
+                CompletionBlocker::new(CompletionBlockerKind::TurnUnconfirmed),
+                CompletionBlocker::new(CompletionBlockerKind::AgentConfirmationPending),
+            ]
+        );
+        assert!(
+            !snapshot
+                .warnings
+                .iter()
+                .any(|warning| warning == super::RETRY_NO_RESULT)
+        );
+    }
+
     /// The workflow's opening turn cannot make the step ready on its own: an `EndTurn` only
     /// finishes that reply, and the reply may be a question waiting for the user.
     #[test]

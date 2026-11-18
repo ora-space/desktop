@@ -389,6 +389,7 @@ pub(crate) fn prepare_completion(
         )));
     }
     let derived = derived.with_agent_signal_gate(&meta);
+    // A stale page can submit a stored ready snapshot. Keep the live retry guard through settlement.
     let retry_blocker = derived.empty_retry_blocker();
     // Upgraded snapshots materialize the frozen policy on the first completion attempt even when
     // their turn identity is already complete, so later reads no longer default them to legacy.
