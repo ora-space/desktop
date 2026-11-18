@@ -24,15 +24,18 @@ where
 {
     let weak = Arc::downgrade(shared);
     let execution = execution.clone();
-    setup.with_replacement(move || {
+    setup.with_replacement(move |retire| {
         let shared = weak.upgrade();
         let execution = execution.clone();
         let lifecycle = lifecycle.clone();
         let plugin = plugin.clone();
         let cwd = cwd.clone();
         Box::pin(async move {
-            let shared = shared.ok_or_else(blocked)?;
-            replace(&shared, &execution, &lifecycle, &plugin, &cwd).await
+            let Some(shared) = shared else {
+                retire.await;
+                return Err(blocked());
+            };
+            replace(&shared, &execution, &lifecycle, &plugin, &cwd, retire).await
         })
     })
 }
@@ -44,6 +47,7 @@ async fn replace<L, C, P, R>(
     lifecycle: &SessionLifecycle,
     plugin: &PluginId,
     cwd: &Path,
+    retire: Retire<'_>,
 ) -> Result<SessionMcpRevision, RuntimeError>
 where
     L: SessionLedger,
@@ -51,48 +55,63 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
-    let spawner = shared
-        .retained
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(execution)
-        .ok_or_else(blocked)?
-        .spawner
-        .clone();
-    let old = spawner.identity();
-    let control = shared
-        .controls
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(execution)
-        .cloned()
-        .ok_or_else(blocked)?;
-    let now = stop::now_ms();
-    let bound = shared
-        .ledger
-        .session_stop_records(Some(execution))
-        .map_err(|_| blocked())?
-        .iter()
-        .find(|record| record.identity.attempt == old.attempt)
-        .and_then(|record| record.bound_at_ms)
-        .unwrap_or_else(|| now.saturating_add(shared.config.stop.confirmation_timeout_ms as i64));
-    shared
-        .ledger
-        .change_session_stop(
-            &old.attempt,
-            SessionStopChange::Request {
-                at_ms: now,
-                bound_at_ms: bound,
-            },
-        )
-        .map_err(|_| blocked())?;
+    let prepare_stop = || {
+        let spawner = shared
+            .retained
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+            .ok_or_else(blocked)?
+            .spawner
+            .clone();
+        let old = spawner.identity();
+        let control = shared
+            .controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+            .cloned()
+            .ok_or_else(blocked)?;
+        let now = stop::now_ms();
+        let bound = shared
+            .ledger
+            .session_stop_records(Some(execution))
+            .map_err(|_| blocked())?
+            .iter()
+            .find(|record| record.identity.attempt == old.attempt)
+            .and_then(|record| record.bound_at_ms)
+            .unwrap_or_else(|| {
+                now.saturating_add(shared.config.stop.confirmation_timeout_ms as i64)
+            });
+        shared
+            .ledger
+            .change_session_stop(
+                &old.attempt,
+                SessionStopChange::Request {
+                    at_ms: now,
+                    bound_at_ms: bound,
+                },
+            )
+            .map_err(|_| blocked())?;
+        Ok((spawner, old, control, bound))
+    };
+    let (spawner, old, control, bound) = match prepare_stop() {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            // A suspended supervisor still owns cleanup if recording its stop request fails.
+            retire.await;
+            return Err(error);
+        }
+    };
     let _ = spawner
-        .stop_for_replacement(
-            &shared.config.stop.host(),
-            lifecycle.stop_plugin(ora_contracts::StopPluginRequest {
-                plugin_id: plugin.to_string(),
-            }),
-        )
+        .stop_for_replacement(&shared.config.stop.host(), async {
+            retire.await;
+            lifecycle
+                .stop_plugin(ora_contracts::StopPluginRequest {
+                    plugin_id: plugin.to_string(),
+                })
+                .await
+        })
         .await;
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping

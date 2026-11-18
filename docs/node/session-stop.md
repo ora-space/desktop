@@ -42,7 +42,9 @@ Lifecycle sessions retain their provider session ID and last active MCP revision
 loads or detach. They never rebuild a provider session or replay a transcript to recover an MCP
 failure. The next turn can retry once per generation; there is no periodic refresh retry.
 An MCP package-version change, or the ninth runtime load after the initial setup, replaces only
-this execution's Agent process. The latest target is prepared before replacement; affirmative
+this execution's Agent process. Node records the stop request and signals the original process
+groups before waiting for the old supervisor to retire. Its cleanup completes before a successor
+is installed. The latest target is prepared before replacement; affirmative
 stop proof precedes a new attempt. HOME, checkout, model grant and ora-git context remain attached
 to the execution. New targets coalesce while cleanup is pending.
 

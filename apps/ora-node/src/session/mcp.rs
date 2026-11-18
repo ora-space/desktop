@@ -186,10 +186,10 @@ pub(super) struct NodeSessionMcp {
 
 /// The catalog type stays with the Node composition; the runtime owns only this session resolver.
 type Resolver = dyn Fn(&control::Input) -> Result<NodeSessionMcp, NodeMcpFailure> + Send + Sync;
-type Replacement = dyn Fn() -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<SessionMcpRevision, RuntimeError>> + Send>,
-    > + Send
-    + Sync;
+type Retire<'a> = std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+type Replaced<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Result<SessionMcpRevision, RuntimeError>> + Send + 'a>>;
+type Replacement = dyn for<'a> Fn(Retire<'a>) -> Replaced<'a> + Send + Sync;
 
 impl NodeSessionMcp {
     /// The first process is durably registered against startup package versions before it spawns.
@@ -215,11 +215,7 @@ impl NodeSessionMcp {
     /// Process rotation belongs to the execution owner; runtime policy only requests the boundary.
     pub(super) fn with_replacement(
         mut self,
-        replacement: impl Fn() -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<SessionMcpRevision, RuntimeError>> + Send>,
-        > + Send
-        + Sync
-        + 'static,
+        replacement: impl for<'a> Fn(Retire<'a>) -> Replaced<'a> + Send + Sync + 'static,
     ) -> Self {
         self.replacement = Some(Arc::new(replacement));
         self
@@ -471,9 +467,19 @@ impl SessionSetup for NodeSessionMcp {
     }
 
     async fn replace_mcp_process(&self) -> Result<(), RuntimeError> {
+        self.replace_after_retirement(std::future::ready(())).await
+    }
+
+    async fn replace_after_retirement(
+        &self,
+        retire: impl Future<Output = ()> + Send,
+    ) -> Result<(), RuntimeError> {
         let revision = match &self.replacement {
-            Some(replacement) => Some(replacement().await?),
-            None => None,
+            Some(replacement) => Some(replacement(Box::pin(retire)).await?),
+            None => {
+                retire.await;
+                None
+            }
         };
         *self
             .budget

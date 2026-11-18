@@ -296,8 +296,9 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
             .plugin_id_for_agent(agent_ref)
             .ok_or_else(crate::support::runtime_unavailable)?;
         connections.suspend_plugin_agent(&plugin.to_string());
-        connections.retire_mcp_agent(&plugin.to_string()).await;
-        session_mcp.replace_mcp_process().await?;
+        session_mcp
+            .replace_after_retirement(connections.retire_mcp_agent(&plugin.to_string()))
+            .await?;
         connections.resume_plugin_agent(&plugin.to_string());
         connections.sync_plugin_agents();
         supervisor = connections.for_agent(agent_ref)?;

@@ -1,4 +1,6 @@
 //! Real kernel locks and processes distinguish shutdown requests from stop proof.
+mod replacement;
+
 use super::*;
 use ora_node_db::{SessionStopHost, SessionStopKind, SessionStopProof};
 use ora_node_protocol::{NodeId, NodeIncarnationId, NodeRuntimeIdentity};

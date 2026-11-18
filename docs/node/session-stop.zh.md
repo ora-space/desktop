@@ -30,7 +30,7 @@ Node home 和独立工作负载包视图必须位于支持的本地文件系统�
 
 生命周期会话在 load 失败或断连后保留 provider session ID 和上次 active MCP revision，不通过新建
 provider session 或回放 transcript 修复 MCP 失败。下一轮可对每个 generation 重试一次，不做周期性刷新重试。
-MCP 包版本变化，或首次 setup 后第九次运行期 load，会仅替换本 execution 的 Agent 进程。替换前准备最新目标，
+MCP 包版本变化，或首次 setup 后第九次运行期 load，会仅替换本 execution 的 Agent 进程。Node 先记录停止请求并向原进程组发出终止信号，再等待旧 supervisor 退出。旧 supervisor 完成清理后才安装后继进程。替换前准备最新目标，
 确认旧进程停止后才注册新尝试；HOME、checkout、model grant 和 ora-git 上下文继续属于原 execution。
 等待清理时的新目标合并到最新代际。
 
