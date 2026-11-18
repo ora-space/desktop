@@ -137,7 +137,9 @@ If an automatic retry ends without a usable result from its final attempt, the s
 **Node execution failed**. Normal and automatic completion are blocked, and dependent nodes stay
 idle. Choose **Retry this step** to continue in the same conversation. A successful recovery
 retains the earlier failure in the audit. Confirming a forced completion records the override
-and uses only output from the final attempt.
+in `completion_forced.retry_reason`. The warning is `retry_without_result`, and the failure
+remains in `payload.promptFailures` after recovery. Parking, normal completion, automatic
+acceptance and forced completion all use the same final-attempt output window.
 
 A node may declare 1–32 workspace-relative deliverables in `agentConfig.completion.files`, using paths or the minimal glob set: `*` (within one segment), `**` (across directories) and `?`. Character classes, braces, escaping and negation are rejected; matching is case-sensitive with no Unicode normalization, and directories, gitlinks and symbolic links that escape the workspace never count. A graph declaring `completion` must use `agentConfig.schemaVersion: 4`; version 3 with `completion`, a version above 4, or undefined fields such as `criteria` or `checklist` are rejected by graph parsing instead of being dropped. The inspector writes version 4 when the first file is added and clears the declaration, returning to version 3, when the last file is removed.
 

@@ -88,7 +88,7 @@ setup 按无活动计时，而不是总时长。交付 MCP server 的请求有 1
 
 Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
 
-窗口到期时，运行时发送 `session/cancel`，并在五秒宽限内等待卡住的那个请求的响应。如果响应带着 `stop_reason: cancelled` 到达且还有剩余窗口，就在同一个 provider session 上重发同样的 prompt 内容块，之前先在所属的流上发出 `retrying { retry, maxRetries }` 标记。必须有这个响应作为分界，因为 ACP 更新不带请求 id。缺少分界、其他 stop reason 或次数用尽时，prompt 以 `agent_timed_out` 失败，只隔离这个会话。重试从不关闭会话，也从不重新记录 prompt；卡住之前产生的输出保留，所以 Agent 可能重复自己的话。
+窗口到期时，运行时发送 `session/cancel`，并在五秒宽限内等待卡住的那个请求的响应。如果响应带着 `stop_reason: cancelled` 到达且还有剩余窗口，就在同一个 provider session 上重发同一条用户 prompt，之前先在所属的流上发出 `retrying { retry, maxRetries }` 标记。必须有这个响应作为分界，因为 ACP 更新不带请求 id。缺少分界、其他 stop reason 或次数用尽时，prompt 以 `agent_timed_out` 失败，只隔离这个会话。重发复用会话，一条用户消息只记录一次。运行时在取消排空后写入 `promptRetried` 边界，排空期间的更新归入被放弃的尝试。宿主为新发送刷新尝试指令和完成 token。
 
 `Wait` 仍会在正常响应、provider 错误、连接丢失、溢出、显式取消、所有者清理和关闭时结束，setup 和配置期限也仍然有效。它无法区分健康的隐藏子 Agent 和卡住的 provider，所以用户可能需要手动停止。
 

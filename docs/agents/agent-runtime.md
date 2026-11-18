@@ -214,12 +214,13 @@ hours. There is no absolute prompt limit.
 
 When a window expires the runtime sends `session/cancel` and waits up to the five-second grace for
 the stalled request's response. If it arrived with `stop_reason: cancelled` and the schedule has
-windows left, the same prompt blocks are re-sent on the same provider session, preceded by a
+windows left, the same user prompt is re-sent on the same provider session, preceded by a
 `retrying { retry, maxRetries }` marker on the owning stream. That response fence is required
 because ACP updates carry no request id. A missing fence, another stop reason or an exhausted
 schedule fails the prompt with `agent_timed_out` and isolates only that Session. A retry never closes
-the session and never re-records the prompt; output produced before the stall stays, so an agent may
-repeat itself.
+the session or duplicates the recorded user message. Before resending, it records a
+`promptRetried` boundary after the cancellation drain. Updates from that drain belong to the
+abandoned send. The host refreshes the attempt instruction and completion token for the new send.
 
 `Wait` still ends on normal responses, provider errors, connection loss, overflow, explicit
 cancellation, owner cleanup and shutdown, and setup and configuration deadlines still apply. It
