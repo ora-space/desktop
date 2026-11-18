@@ -74,8 +74,13 @@ clock, without polling the backend.
 
 ### Unfinished tool calls
 
-ACP does not require agents to report a terminal tool status. Only a turn the agent ended on its own
-terms records the calls it left open as completed; every other ending (cancelled, out of tokens,
+After an automatic resend, history records a `PromptRetried` boundary within the same user turn.
+Tool snapshots retain their provider-reported status across this boundary and at the end of the
+retried turn. A late delta keeps the original tool opening’s position. A fresh opening with the
+same ID belongs to the new attempt.
+
+ACP does not require agents to report a terminal tool status. For a turn without a resend, only a
+normal end records unfinished parent calls as completed; every other ending (cancelled, out of tokens,
 refused, or a lost connection, failed prompt, overflowing queue or disconnected client, all recorded
 as cancelled) leaves them unfinished, because they may have been interrupted. The conversation view
 shows such calls as interrupted, and a handoff transcript names their outcome as unreported.

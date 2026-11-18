@@ -133,6 +133,12 @@ card is ready. A confirmation names the `signalId` the user saw; a stale id retu
 and a cancelled run all revoke their attempt tokens, and a restarted Desktop restores the completion
 tool with the persisted session.
 
+If an automatic retry ends without a usable result from its final attempt, the step shows
+**Node execution failed**. Normal and automatic completion are blocked, and dependent nodes stay
+idle. Choose **Retry this step** to continue in the same conversation. A successful recovery
+retains the earlier failure in the audit. Confirming a forced completion records the override
+and uses only output from the final attempt.
+
 A node may declare 1–32 workspace-relative deliverables in `agentConfig.completion.files`, using paths or the minimal glob set: `*` (within one segment), `**` (across directories) and `?`. Character classes, braces, escaping and negation are rejected; matching is case-sensitive with no Unicode normalization, and directories, gitlinks and symbolic links that escape the workspace never count. A graph declaring `completion` must use `agentConfig.schemaVersion: 4`; version 3 with `completion`, a version above 4, or undefined fields such as `criteria` or `checklist` are rejected by graph parsing instead of being dropped. The inspector writes version 4 when the first file is added and clears the declaration, returning to version 3, when the last file is removed.
 
 The file check runs against the live workspace on every completion click and is never written into `payload.completion`: at least one matching regular file must exist, and `mustChange: true` additionally requires one match to differ from the worktree baseline persisted when the node started. Missing and unchanged declarations return `file_missing` / `file_unchanged`, with the original declaration in the blocker's `params.path`; after fixing the workspace the user can retry directly without re-parking, and `force` overrides the blockers while recording them in `completion_forced`. When the baseline is missing or corrupt, existence is still checked and `mustChange` degrades to the `file_check_unavailable` warning, which is visible in the completion projection and survives completion. Existence also falls back to a contained walk of actual workspace files when Git ignores a path or the content snapshot exceeds its budget, and a legacy baseline that recorded a binary file as `null` produces the same warning instead of claiming a change or no change.

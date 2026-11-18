@@ -64,6 +64,8 @@
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。新建或重新保存的交互 Agent 节点默认 `completionSignal: agent`：host 向该节点会话注入 loopback 完成工具，只有 agent 为结算的 attempt 调用它、并且用户确认（或节点配置了 `autoAcceptAgentCompletion`）后节点才完成。本轮没有信号时快照带 `agent_signal_pending`，有信号但未确认时带 `agent_confirmation_pending`，两者与其他 blocker 一起物化进停靠快照。`completionSignal: end_turn` 的遗留图仍按旧规则：只有 `EndTurn` 且没有 blocker 的回合才能正常完成。停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。确认请求携带用户看到的 `signalId`；过期 id 返回 `workflow_node_signal_changed`，不会落到新的回合上。attempt 失败、节点完成和运行取消都会撤销对应的 token；Desktop 重启后完成工具随持久化会话一起恢复。
 
+自动重试的最后一次尝试没有产生可用结果时，步骤显示「节点运行失败」。普通完成与自动完成都会被拦住，后继保持未启动。点击「重试本步」可在原会话继续，恢复后仍保留先前的失败记录。确认强制完成会单独记录覆盖原因，并只采用最终尝试的产出。
+
 节点可以在 `agentConfig.completion.files` 声明 1–32 个 workspace 相对的产出物路径或受限 glob：支持 `*`（不跨 `/`）、`**`（跨目录）和 `?`，不支持字符类、花括号、转义与取反；匹配大小写敏感、不做 Unicode 归一化，目录、gitlink 和逃出 workspace 的符号链接都不算匹配。声明 `completion` 的图必须写 `agentConfig.schemaVersion: 4`；版本 3 携带 `completion`、版本大于 4、或出现 `criteria`、`checklist` 等未定义字段时，图校验直接拒绝，而不是静默丢弃。编辑器在首次添加文件时写入版本 4，移除最后一个文件时清空声明并回到版本 3。
 
 文件检查在每次点击完成时按现场 workspace 执行，不写入 `payload.completion`：每个声明至少要有一个匹配的普通文件存在，`mustChange: true` 还要求至少一个匹配文件相对节点启动时持久化的 worktree 基线发生变化。缺失或未变更分别返回 `file_missing` / `file_unchanged`，blocker 的 `params.path` 是原始声明；补齐或修改文件后可以直接重试，不需要重新停靠；`force` 可以覆盖这些 blocker 并写入 `completion_forced` 审计。基线缺失或损坏时，存在性仍然检查，`mustChange` 无法判定而降级为 `file_check_unavailable` warning，随完成快照投影可见并在完成后保留。Git 忽略的文件或内容快照超出预算时，存在性仍按 workspace 内的实际普通文件判定；旧基线用 `null` 记录、无法证明二进制文件是否变更时，同样只产生这个 warning。
