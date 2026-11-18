@@ -1,5 +1,8 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import { childSessionSource } from "./item-metadata.ts";
+import {
+  childSessionSource,
+  hasChildSessionNamespace,
+} from "./item-metadata.ts";
 
 /** A live observation, never reconstructed from transcript load time or provider health guesses. */
 interface ObservedRunActivity {
@@ -51,7 +54,7 @@ export function observeDiagnostics(
       update.sessionUpdate === "tool_call_update"
     ) {
       // Only an omitted namespace inherits; explicit null/invalid values reset ownership.
-      if (!(record(update._meta) && "opencode/child-session" in update._meta))
+      if (!hasChildSessionNamespace(update._meta))
         child = toolSources?.[update.toolCallId] === "child";
       toolSources = {
         ...toolSources,

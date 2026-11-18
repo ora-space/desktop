@@ -566,3 +566,107 @@ it("keeps an earlier turn's returned delegation after the same child is resumed"
   store.getState().dispose();
   cold.getState().dispose();
 });
+
+it("renders _subagent/update cards with agentType title and outer toolCallId return status across live and cold replay", async () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "main-session",
+      taskId: "task-explore",
+      toolCallId: "parent-agent-call",
+      agentType: "Explore",
+    },
+  };
+  const updates: Extract<PromptSessionEvent, { type: "session_update" }>[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "parent-agent-call",
+        title: "Agent",
+        kind: "think",
+        status: "pending",
+        rawInput: { prompt: "Inspect codebase" },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Scanning directories" },
+        _meta: subagentMeta,
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "task-explore:read-1",
+        title: "Read README",
+        kind: "read",
+        status: "completed",
+        rawOutput: "# Ora",
+        _meta: { ...subagentMeta, codeAgentCLI: { toolName: "Read" } },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "CODEAGENT_SUBAGENT_SUMMARY" },
+        _meta: subagentMeta,
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "parent-agent-call",
+        status: "completed",
+        rawOutput: "Subagent report delivered",
+      },
+    },
+  ];
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "explore" },
+      },
+    },
+    ...updates,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(updates);
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "live", text: "explore" });
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("cold");
+
+  for (const turn of [
+    store.getState().conversations.live!.turns[0]!,
+    cold.getState().conversations.cold!.turns[0]!,
+  ]) {
+    const user = userEvent.setup();
+    const view = render(<ResponseTurn turn={turn} userName="Reader" />);
+    const card = screen.getByRole("region", { name: "Subagent · Explore" });
+    expect(within(card).getByText("Delegation returned")).toBeInTheDocument();
+    await user.click(
+      within(card).getByRole("button", { name: /Subagent · Explore/ }),
+    );
+    expect(
+      within(card).getByText("CODEAGENT_SUBAGENT_SUMMARY"),
+    ).toBeInTheDocument();
+    expect(within(card).getByText("Read README")).toBeInTheDocument();
+    view.unmount();
+  }
+  store.getState().dispose();
+  cold.getState().dispose();
+});

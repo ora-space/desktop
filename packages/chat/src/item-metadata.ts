@@ -37,19 +37,29 @@ export function metadataKey(
   );
 }
 
+const OPENCODE_CHILD_SESSION_KEY = "opencode/child-session";
+const SUBAGENT_UPDATE_KEY = "_subagent/update";
+
 export interface ChildSessionSource {
   id: string;
   parentId: string;
   depth: number;
   title?: string;
+  /** Parent delegation tool call id explicitly reported by `_subagent/update`. */
+  delegationToolCallId?: string;
 }
 
-/** Parses only OpenCode's explicit projection; names, tool prefixes and depth do not infer edges. */
-export function childSessionSource(
-  metadata: unknown,
+/** Reports whether `metadata` carries any recognized child-projection namespace, even when cleared. */
+export function hasChildSessionNamespace(metadata: unknown): boolean {
+  return (
+    object(metadata) &&
+    (OPENCODE_CHILD_SESSION_KEY in metadata || SUBAGENT_UPDATE_KEY in metadata)
+  );
+}
+
+function parseOpenCodeChildSession(
+  child: unknown,
 ): ChildSessionSource | undefined {
-  if (!object(metadata)) return undefined;
-  const child = metadata["opencode/child-session"];
   if (
     !object(child) ||
     typeof child.id !== "string" ||
@@ -69,6 +79,59 @@ export function childSessionSource(
       ? { title: child.title }
       : {}),
   };
+}
+
+function parseSubagentUpdateSource(
+  subagent: unknown,
+): ChildSessionSource | undefined {
+  if (
+    !object(subagent) ||
+    typeof subagent.taskId !== "string" ||
+    !subagent.taskId.trim() ||
+    typeof subagent.sessionId !== "string" ||
+    !subagent.sessionId.trim() ||
+    (subagent.toolCallId !== undefined &&
+      subagent.toolCallId !== null &&
+      typeof subagent.toolCallId !== "string") ||
+    (subagent.agentType !== undefined &&
+      subagent.agentType !== null &&
+      typeof subagent.agentType !== "string")
+  )
+    return undefined;
+  return {
+    id: subagent.taskId,
+    parentId: subagent.sessionId,
+    depth: 1,
+    ...(typeof subagent.agentType === "string" && subagent.agentType.trim()
+      ? { title: subagent.agentType }
+      : {}),
+    ...(typeof subagent.toolCallId === "string" && subagent.toolCallId.trim()
+      ? { delegationToolCallId: subagent.toolCallId }
+      : {}),
+  };
+}
+
+/** Parses explicit OpenCode or `_subagent/update` attribution; names and prefixes never infer edges. */
+export function childSessionSource(
+  metadata: unknown,
+): ChildSessionSource | undefined {
+  if (!object(metadata)) return undefined;
+  const hasOpenCode = OPENCODE_CHILD_SESSION_KEY in metadata;
+  const hasSubagent = SUBAGENT_UPDATE_KEY in metadata;
+  if (hasOpenCode && !hasSubagent)
+    return parseOpenCodeChildSession(metadata[OPENCODE_CHILD_SESSION_KEY]);
+  if (!hasOpenCode && hasSubagent)
+    return parseSubagentUpdateSource(metadata[SUBAGENT_UPDATE_KEY]);
+  if (hasOpenCode && hasSubagent) {
+    const openCode = parseOpenCodeChildSession(
+      metadata[OPENCODE_CHILD_SESSION_KEY],
+    );
+    const subagent = parseSubagentUpdateSource(metadata[SUBAGENT_UPDATE_KEY]);
+    return openCode && subagent && openCode.id === subagent.id
+      ? openCode
+      : undefined;
+  }
+  return undefined;
 }
 
 /** Retains metadata without interpreting or recursively merging unknown provider values. */
@@ -127,4 +190,23 @@ export function delegationResultCompleted(tool: ChatToolCall): boolean {
   if (tool.status !== "completed" || !object(tool.rawOutput)) return false;
   const metadata = tool.rawOutput.metadata;
   return object(metadata) && metadata.status === "completed";
+}
+
+/**
+ * Reports whether a parent tool call linked by `_subagent/update.toolCallId` returned a result.
+ *
+ * Turn-end settlement marks unfinished parent tools as `completed` with no output, so only a
+ * completed call carrying provider output (and not an explicit background status) qualifies.
+ */
+export function delegationToolCallCompleted(tool: ChatToolCall): boolean {
+  if (tool.status !== "completed") return false;
+  if (tool.content.length === 0 && tool.rawOutput === undefined) return false;
+  if (
+    object(tool.rawOutput) &&
+    object(tool.rawOutput.metadata) &&
+    "status" in tool.rawOutput.metadata
+  ) {
+    return tool.rawOutput.metadata.status === "completed";
+  }
+  return true;
 }
