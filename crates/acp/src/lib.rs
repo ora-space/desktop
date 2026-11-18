@@ -19,7 +19,7 @@ mod tests;
 
 pub use client::{AcpClient, PendingSessionRequest};
 pub use error::AcpError;
-pub use events::{AcpInboundEvent, PermissionRequest, SessionResponse};
+pub use events::{AcpInboundEvent, ExtensionNotification, PermissionRequest, SessionResponse};
 pub use peer::AcpPeer;
 pub use trace::SessionTraceRegistration;
 pub use transport::{AcpMessages, AcpTransport};

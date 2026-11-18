@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::error::AcpError;
-use crate::events::AcpInboundEvent;
+use crate::events::{AcpInboundEvent, ExtensionNotification};
 use crate::peer::AcpPeer;
 use crate::transport::{AcpMessages, AcpTransport};
 
@@ -77,7 +77,8 @@ fn response_frame(request_id: &Value, result: Value) -> Value {
 fn expect_update(event: AcpInboundEvent) -> SessionNotification {
     match event {
         AcpInboundEvent::SessionUpdate(update) => update,
-        AcpInboundEvent::PermissionRequest(_)
+        AcpInboundEvent::ExtensionNotification(_)
+        | AcpInboundEvent::PermissionRequest(_)
         | AcpInboundEvent::SessionResponse(_)
         | AcpInboundEvent::Fatal(_) => panic!("expected session update"),
     }
@@ -163,6 +164,7 @@ async fn orders_session_updates_before_the_session_response() {
     let response = match peer.next_event().await.expect("receive response event") {
         AcpInboundEvent::SessionResponse(response) => response,
         AcpInboundEvent::SessionUpdate(_)
+        | AcpInboundEvent::ExtensionNotification(_)
         | AcpInboundEvent::PermissionRequest(_)
         | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
     };
@@ -259,6 +261,7 @@ async fn rejects_a_response_with_an_unknown_id() {
             assert_eq!(message, "unmatched response id 999");
         }
         AcpInboundEvent::SessionUpdate(_)
+        | AcpInboundEvent::ExtensionNotification(_)
         | AcpInboundEvent::PermissionRequest(_)
         | AcpInboundEvent::SessionResponse(_)
         | AcpInboundEvent::Fatal(_) => panic!("expected unmatched response failure"),
@@ -325,4 +328,67 @@ async fn closes_pending_requests_when_the_inbound_stream_ends() {
         request.await.expect("join request"),
         Err(AcpError::StreamClosed)
     ));
+}
+
+/// Verifies `_`-prefixed extension notifications preserve wire order while unknown standard
+/// notifications are ignored.
+#[tokio::test]
+async fn preserves_underscore_extension_notifications_in_wire_order() {
+    let (mut peer, mut link) = spawn_peer();
+    let session_id = SessionId::new("session-1");
+    let (pending, outbound) = start_prompt(&peer, &mut link, &session_id).await;
+
+    link.send(json!({
+        "jsonrpc": "2.0",
+        "method": "future/unrecognized_notification",
+        "params": { "sessionId": "session-1" },
+    }));
+    let ext_params = json!({
+        "sessionId": "session-1",
+        "taskId": "task-42",
+        "agentType": "Explore",
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "exploring" },
+        },
+        "timestamp": 1_730_000_000_000_u64,
+    });
+    link.send(json!({
+        "jsonrpc": "2.0",
+        "method": "_subagent/update",
+        "params": ext_params,
+    }));
+    link.send(update_frame("session-1", "After subagent"));
+    link.send(response_frame(
+        &outbound["id"],
+        json!({ "stopReason": "end_turn" }),
+    ));
+
+    match peer.next_event().await.expect("receive extension event") {
+        AcpInboundEvent::ExtensionNotification(extension) => {
+            assert_eq!(
+                extension,
+                ExtensionNotification {
+                    method: "_subagent/update".to_string(),
+                    params: ext_params,
+                }
+            );
+        }
+        other => panic!("expected extension notification, got {other:?}"),
+    }
+    assert_eq!(
+        expect_update(peer.next_event().await.expect("receive session update")),
+        SessionNotification::new(
+            "session-1",
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("After subagent")),
+        )
+    );
+    let response = match peer.next_event().await.expect("receive session response") {
+        AcpInboundEvent::SessionResponse(response) => response,
+        other => panic!("expected session response, got {other:?}"),
+    };
+    assert_eq!(
+        pending.finish(response).expect("finish session request"),
+        json!({ "stopReason": "end_turn" })
+    );
 }
