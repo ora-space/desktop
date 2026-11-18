@@ -88,6 +88,7 @@ use command::RuntimeCommand;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
+pub use prompt::AttemptInstruction;
 use prompt::RecordedTurn;
 use session_setup::LiveMcpState;
 use support::*;

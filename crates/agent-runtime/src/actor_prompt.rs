@@ -203,7 +203,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             return;
         }
         let agent_session_id = self.provider_session_id().to_string();
-        let request = PromptRequest::new(agent_session_id.clone(), blocks);
+        let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
+        if let Some(instruction) = &record_prompt.attempt_instruction {
+            request.prompt.push(instruction());
+        }
         ora_debug!(session_id = %self.session.id, content_count = content_count, policy = ?inactivity_policy, "session/prompt sent");
         let mut pending = match client
             .start_session_request::<_, PromptResponse>(
@@ -275,12 +278,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &events,
                     &mut liveness,
                     &mut permissions,
-                    &request,
+                    &mut request,
+                    record_prompt.attempt_instruction.as_deref(),
                     &mut saw_output,
                 )
                 .await
                 {
                     StalledPrompt::Resent(resent) => {
+                        tool_timings = ToolTimings::default();
                         pending = resent;
                         continue;
                     }

@@ -55,6 +55,7 @@ struct PendingTool {
 /// here, and the lookups each kind needs stay direct.
 pub struct HistoryAssembler {
     next_seq: u32,
+    retried: bool,
     texts: Vec<PendingText>,
     tools: Vec<PendingTool>,
     plans: Vec<(u32, Plan)>,
@@ -65,6 +66,7 @@ impl HistoryAssembler {
     pub fn new(next_seq: u32) -> Self {
         Self {
             next_seq,
+            retried: false,
             texts: Vec::new(),
             tools: Vec::new(),
             plans: Vec::new(),
@@ -161,13 +163,39 @@ impl HistoryAssembler {
     /// Parent tools may settle here; projected child tools retain their reported
     /// state because the parent ending does not prove child completion.
     pub fn end_turn(&mut self, stop_reason: StopReason) -> Vec<AssembledRecord> {
+        let retried = std::mem::take(&mut self.retried);
+        let mut records = self.flush_attempt(stop_reason, retried);
+        records.push(AssembledRecord {
+            seq: self.take_seq(),
+            record: HistoryRecord::TurnEnded { stop_reason },
+        });
+        records
+    }
+
+    /// Flushes abandoned items before the replacement can reuse message or tool identifiers.
+    pub fn retry_prompt(&mut self) -> Vec<AssembledRecord> {
+        self.retried = true;
+        let mut records = self.flush_attempt(StopReason::Cancelled, true);
+        records.push(AssembledRecord {
+            seq: self.take_seq(),
+            record: HistoryRecord::PromptRetried,
+        });
+        records
+    }
+
+    /// A retry needs the provider's actual tool status to distinguish recovery from an empty end.
+    fn flush_attempt(
+        &mut self,
+        stop_reason: StopReason,
+        preserve_tool_status: bool,
+    ) -> Vec<AssembledRecord> {
         let mut records: Vec<AssembledRecord> = std::mem::take(&mut self.texts)
             .into_iter()
             .map(PendingText::into_record)
             .chain(
                 std::mem::take(&mut self.tools)
                     .into_iter()
-                    .filter_map(|tool| tool.settle_at_turn_end(stop_reason)),
+                    .filter_map(|tool| tool.settle_at_turn_end(stop_reason, preserve_tool_status)),
             )
             .chain(
                 std::mem::take(&mut self.plans)
@@ -182,11 +210,6 @@ impl HistoryAssembler {
             )
             .collect();
         records.sort_by_key(|record| record.seq);
-        let seq = self.take_seq();
-        records.push(AssembledRecord {
-            seq,
-            record: HistoryRecord::TurnEnded { stop_reason },
-        });
         records
     }
 
@@ -424,7 +447,11 @@ impl PendingTool {
     /// success would report an outcome nobody observed.
     ///
     /// A terminal status the provider did report is never reinterpreted.
-    fn settle_at_turn_end(mut self, stop_reason: StopReason) -> Option<AssembledRecord> {
+    fn settle_at_turn_end(
+        mut self,
+        stop_reason: StopReason,
+        preserve_tool_status: bool,
+    ) -> Option<AssembledRecord> {
         let unfinished = matches!(
             self.call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
@@ -432,7 +459,7 @@ impl PendingTool {
         // A projected child may outlive the parent prompt. Only its own terminal update proves
         // completion. Cleared or invalid sources follow the ordinary parent-stream rules.
         let projected = child_source_id(self.call.meta.as_ref()).is_some();
-        if unfinished && !projected && stop_reason == StopReason::EndTurn {
+        if unfinished && !preserve_tool_status && !projected && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
             return Some(tool_record(self.seq, &self.call, self.timing.clone()));
         }

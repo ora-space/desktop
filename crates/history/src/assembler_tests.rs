@@ -555,3 +555,33 @@ fn turn_end_flushes_the_latest_timing_for_an_open_tool() {
     };
     assert_eq!(tool_timing, &Some(finished));
 }
+
+/// Reusing message IDs after a resend must not combine cancelled text with the deliverable.
+#[test]
+fn retry_flushes_text_without_closing_the_user_turn() {
+    let mut assembler = HistoryAssembler::new(0);
+    assembler.push_update(&agent_text("old", Some("m1")));
+    assert_eq!(
+        assembler.retry_prompt(),
+        vec![
+            message_at(0, "old", Some("m1")),
+            AssembledRecord {
+                seq: 1,
+                record: HistoryRecord::PromptRetried
+            },
+        ]
+    );
+    assembler.push_update(&agent_text("new", Some("m1")));
+    assert_eq!(
+        assembler.end_turn(StopReason::EndTurn),
+        vec![
+            message_at(2, "new", Some("m1")),
+            AssembledRecord {
+                seq: 3,
+                record: HistoryRecord::TurnEnded {
+                    stop_reason: StopReason::EndTurn
+                }
+            },
+        ]
+    );
+}

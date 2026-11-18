@@ -40,7 +40,10 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     liveness: &mut PromptLiveness,
     permissions: &mut HashMap<String, (RequestId, Vec<String>)>,
-    request: &PromptRequest,
+    request: &mut PromptRequest,
+    attempt_instruction: Option<
+        &(dyn Fn() -> agent_client_protocol_schema::v1::ContentBlock + Send + Sync),
+    >,
     saw_output: &mut bool,
 ) -> StalledPrompt {
     let snapshot = liveness.snapshot();
@@ -94,6 +97,12 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         return StalledPrompt::Failed(agent_timed_out("agent prompt made no progress"));
     };
     ora_warn!(session_id = %actor.session.id, retry = retry.retry, max_retries = retry.max_retries, "prompt inactive; re-sending prompt");
+    let outcome = actor.recorder.record_retry();
+    let failed = matches!(outcome, super::RecordOutcome::JustFailed { .. });
+    actor.settle_record(outcome);
+    if failed {
+        return StalledPrompt::Failed(super::history_degraded());
+    }
     // The client hears about the retry before the re-sent prompt can produce anything,
     // so it can attribute what follows to the retry. Only the owning stream is told:
     // followers see one continuous turn either way.
@@ -113,6 +122,13 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     // carried one, was settled by the first accepted send and is not owed again. The
     // prompt is also already recorded, so history keeps a single user turn.
     ora_debug!(session_id = %actor.session.id, retry = retry.retry, "session/prompt re-sent");
+    if let Some(instruction) = attempt_instruction
+        && let Some(block) = request.prompt.last_mut()
+    {
+        // Admission appended the host-only block last. Rotate it after the response fence;
+        // otherwise the abandoned send's pending completion could authorize its replacement.
+        *block = instruction();
+    }
     match client
         .start_session_request::<_, PromptResponse>(
             AcpSessionId::new(actor.provider_session_id().to_string()),
