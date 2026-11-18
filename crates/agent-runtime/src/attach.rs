@@ -17,7 +17,7 @@ use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
-use crate::session_setup::{LiveMcpState, SessionMcpSnapshot};
+use crate::session_setup::{LiveMcpState, SessionMcpRevision, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, AvailableCommandsUpdate, ConfigOptionUpdate,
     LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, RequestPermissionOutcome,
@@ -84,9 +84,33 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 
     /// Acquires a provider channel for a session holding none, rebuilding when the old is unusable.
+    ///
+    /// Under the host policy that preserves the provider identity, a failed attach blocks the
+    /// revision it attempted. Desired notifications are broadcast and level-triggered, so a live
+    /// state left pending would turn every repeated observation of that revision into another
+    /// process replacement or `session/load`; only a new revision or the next prompt retries it.
     pub(crate) async fn attach_provider_session(
         &mut self,
         model: Option<&str>,
+    ) -> Result<Vec<SessionUpdate>, RuntimeError> {
+        let mut attempted = None;
+        let result = self
+            .attach_provider_session_for(model, &mut attempted)
+            .await;
+        if result.is_err()
+            && self.session_mcp.preserve_provider_identity()
+            && let Some(desired) = attempted
+        {
+            self.live_mcp = LiveMcpState::Blocked { desired };
+        }
+        result
+    }
+
+    /// Performs one attach, recording in `attempted` the latest revision it tried to deliver.
+    async fn attach_provider_session_for(
+        &mut self,
+        model: Option<&str>,
+        attempted: &mut Option<SessionMcpRevision>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         // Package replacement retires the entire supervisor, not just its process generation.
         // Pin the current supervisor for this attach and its MCP capability checks; the actor
@@ -97,6 +121,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             .await?;
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
         let snapshot = self.resolve_mcp_snapshot()?;
+        *attempted = Some(snapshot.revision().clone());
         if recovered
             && self
                 .session_mcp
@@ -108,6 +133,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         self.replace_mcp_process_if_needed(&snapshot).await?;
         let latest = self.resolve_mcp_snapshot()?;
+        *attempted = Some(latest.revision().clone());
         if self.session_mcp.mcp_replacement_required(latest.revision()) {
             let error = RuntimeError::mcp_retry_required();
             self.session_mcp.mcp_failed(&error);
@@ -121,6 +147,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // agent restored without it would serve the turn against a stale server set. A Snapshot
             // that cannot be resolved fails the send rather than attaching without one.
             let snapshot = self.resolve_mcp_snapshot()?;
+            *attempted = Some(snapshot.revision().clone());
             match self.restore_provider_session(channel, &snapshot).await {
                 Ok(config_options) => {
                     self.load_restoration = LoadRestoration::Restored;
