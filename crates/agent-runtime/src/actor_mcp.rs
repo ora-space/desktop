@@ -64,6 +64,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.channel = None;
         self.session_mcp.mcp_detached();
         self.connections.retire_mcp_agent(&plugin.to_string()).await;
+        // A failure here leaves the live state to `attach_provider_session`, which blocks the
+        // revision it attempted.
         self.session_mcp.replace_mcp_process().await?;
         self.connections.resume_plugin_agent(&plugin.to_string());
         self.connections.sync_plugin_agents();
