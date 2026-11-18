@@ -756,7 +756,8 @@ fn empty_inactivity_retry_blocks_successors_until_a_valid_turn() -> TestResult {
             for _ in 0..2 {
                 let failure = complete(&backend, &run, None, false, None)
                     .await
-                    .unwrap_err();
+                    .err()
+                    .ok_or("an empty retry cannot complete the node")?;
                 assert!(matches!(
                     failure.public_error(),
                     PublicError::WorkflowNodeIncomplete(_)
@@ -787,7 +788,7 @@ fn empty_inactivity_retry_blocks_successors_until_a_valid_turn() -> TestResult {
                 .nodes
                 .iter()
                 .find(|node| node.node_id == "agent")
-                .unwrap();
+                .ok_or("completed run is missing the agent node")?;
             assert_eq!(payload(finished)["promptFailures"], facts["promptFailures"]);
             assert!(facts["promptFailures"].is_object());
         }
@@ -831,7 +832,7 @@ fn forcing_an_empty_retry_records_the_reason_and_discards_abandoned_text() -> Te
             .nodes
             .iter()
             .find(|node| node.node_id == "agent")
-            .unwrap();
+            .ok_or("completed run is missing the agent node")?;
         assert_eq!(node.output, None);
         assert_eq!(
             payload(node)["completion_forced"]["retry_reason"],
