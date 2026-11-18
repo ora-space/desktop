@@ -647,6 +647,7 @@ async fn run_process_generation<A: AgentAttach>(
     routes: &RouteRegistry,
     shutdown: &mut mpsc::UnboundedReceiver<()>,
 ) -> bool {
+    let mut subagent_updates = super::subagent_update::SubagentUpdateTranslator::default();
     loop {
         tokio::select! {
             inbound = process.inbound.recv() => {
@@ -655,9 +656,7 @@ async fn run_process_generation<A: AgentAttach>(
                         let _ = routes.route_event(SessionEvent::Update(update));
                     }
                     Some(AcpInboundEvent::ExtensionNotification(extension)) => {
-                        if let Some(update) =
-                            super::subagent_update::translate_extension_notification(extension)
-                        {
+                        if let Some(update) = subagent_updates.translate(extension) {
                             let _ = routes.route_event(SessionEvent::Update(update));
                         }
                     }

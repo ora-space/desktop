@@ -118,6 +118,7 @@ impl ProcessSpawner for PipeSpawner {
 enum AgentInput {
     Finish(String, StopReason),
     Update(SessionNotification),
+    RawFrame(Value),
     /// Asks the host to approve one tool call, exactly as a provider does mid-turn.
     Permission {
         session_id: String,
@@ -444,6 +445,7 @@ async fn fake_agent(
             input = commands.recv() => match input {
                 Some(AgentInput::Finish(session, reason)) => Some(json!({"jsonrpc":"2.0","id":pending.remove(&session).expect("pending prompt"),"result":PromptResponse::new(reason)})),
                 Some(AgentInput::Update(update)) => Some(json!({"jsonrpc":"2.0","method":"session/update","params":update})),
+                Some(AgentInput::RawFrame(frame)) => Some(frame),
                 Some(AgentInput::Permission { session_id, tool_call }) => Some(json!({
                     "jsonrpc":"2.0",
                     "id": format!("permission-{session_id}"),
@@ -1292,6 +1294,152 @@ fn inactivity_diagnostics_record_the_window_tools_and_cancellation_result() {
             ]),
         ]
     );
+}
+
+/// `_subagent/update` frames flow through the real ACP peer and `run_process_generation` router
+/// in wire order beside `session/update` frames and reach the targeted live session actor.
+#[test]
+fn routes_subagent_update_extensions_in_wire_order_through_process_generation() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("main-session");
+        fixture.add_session("other-session");
+
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("main-session"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        for frame in [
+            json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call_1",
+                        "title": "Agent",
+                        "status": "in_progress",
+                    },
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "_subagent/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "taskId": "task-explore",
+                    "toolCallId": "call_1",
+                    "agentType": "Explore",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call_1",
+                        "title": "Read",
+                        "status": "in_progress",
+                    },
+                    "timestamp": 1001,
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "_subagent/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "taskId": "task-explore",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call_1",
+                        "status": "completed",
+                        "rawOutput": "ok",
+                    },
+                    "timestamp": 1002,
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call_1",
+                        "status": "completed",
+                        "rawOutput": "Subagent summary",
+                    },
+                },
+            }),
+        ] {
+            fixture.agent.send(AgentInput::RawFrame(frame)).unwrap();
+        }
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "main-session".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+
+        let mut observed = Vec::new();
+        while let Some(event) = stream.recv().await {
+            if let Ok(PromptSessionEvent::SessionUpdate { update, .. }) = event {
+                observed.push(update);
+            }
+        }
+        assert_eq!(observed.len(), 4);
+        assert_eq!(
+            observed,
+            vec![
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call_1",
+                    "title": "Agent",
+                    "status": "in_progress",
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "subagent:12:task-explore:call_1",
+                    "title": "Read",
+                    "status": "in_progress",
+                    "_meta": {
+                        "_subagent/update": {
+                            "sessionId": "main-session",
+                            "taskId": "task-explore",
+                            "toolCallId": "call_1",
+                            "agentType": "Explore",
+                        }
+                    },
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "subagent:12:task-explore:call_1",
+                    "status": "completed",
+                    "rawOutput": "ok",
+                    "_meta": {
+                        "_subagent/update": {
+                            "sessionId": "main-session",
+                            "taskId": "task-explore",
+                            "toolCallId": "call_1",
+                            "agentType": "Explore",
+                        }
+                    },
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call_1",
+                    "status": "completed",
+                    "rawOutput": "Subagent summary",
+                }))
+                .unwrap(),
+            ]
+        );
+        fixture.shutdown().await;
+    });
 }
 
 mod review_771_drain_repro {
