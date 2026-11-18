@@ -89,6 +89,8 @@ struct FakeSession {
     model: String,
     title: Option<String>,
     active: bool,
+    /// Holds the first marked send and ends its replacement without any updates.
+    empty_retry_pending: bool,
     /// Loopback URL of the host completion capability delivered beside the plugin servers.
     completion_endpoint: Option<String>,
 }
@@ -166,7 +168,12 @@ impl FakeAcpAgent {
                 .and_then(|request| {
                     let session_id = request.session_id.to_string();
                     let prompt = prompt_text(&request.prompt);
-                    if prompt.contains("[hold-for-cancel]") {
+                    let first_empty_retry = prompt.contains("[fake-empty-retry]")
+                        && self
+                            .sessions
+                            .get(&session_id)
+                            .is_some_and(|session| !session.empty_retry_pending);
+                    if first_empty_retry || prompt.contains("[hold-for-cancel]") {
                         Some((session_id, None))
                     } else {
                         prompt_mode(&prompt).map(|mode| (session_id, Some(mode)))
@@ -236,6 +243,7 @@ impl FakeAcpAgent {
                     model: model.clone(),
                     title: None,
                     active: true,
+                    empty_retry_pending: false,
                     completion_endpoint: completion_endpoint(&request.mcp_servers),
                 },
             );
@@ -262,6 +270,7 @@ impl FakeAcpAgent {
                     model: default_model_id().to_string(),
                     title: None,
                     active: true,
+                    empty_retry_pending: false,
                     completion_endpoint: None,
                 });
             session.cwd = request.cwd;
@@ -344,11 +353,26 @@ impl FakeAcpAgent {
             && let Ok(request) = parse_params::<CancelNotification>(method, params)
             && let Some(id) = self.pending_prompts.remove(&request.session_id.to_string())
         {
-            return vec![json!({
+            let mut frames = Vec::new();
+            if self
+                .sessions
+                .get(request.session_id.0.as_ref())
+                .is_some_and(|session| session.empty_retry_pending)
+            {
+                frames.push(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "method": CLIENT_METHOD_NAMES.session_update,
+                    "params": SessionNotification::new(request.session_id, SessionUpdate::AgentMessageChunk(
+                        ContentChunk::new(ContentBlock::Text(TextContent::new("[Session Error] Request was aborted.")))
+                    )),
+                }));
+            }
+            frames.push(json!({
                 "jsonrpc": JSON_RPC_VERSION,
                 "id": id,
                 "result": PromptResponse::new(StopReason::Cancelled),
-            })];
+            }));
+            return frames;
         }
         Vec::new()
     }
@@ -374,6 +398,16 @@ impl FakeAcpAgent {
 
         let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
+        if prompt.contains("[fake-empty-retry]") {
+            session.empty_retry_pending = !session.empty_retry_pending;
+            if !session.empty_retry_pending {
+                return Ok(AcpCallResult {
+                    notifications: Vec::new(),
+                    result: serde_json::to_value(PromptResponse::new(StopReason::EndTurn))
+                        .map_err(|error| AcpError::invalid_params(method, error))?,
+                });
+            }
+        }
         if let Some(mode) = prompt_mode(&prompt) {
             if mode == PromptMode::Crash {
                 // An abrupt exit of the whole plugin process is a session crash, not a prompt

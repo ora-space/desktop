@@ -40,7 +40,10 @@ import { useCompleteWorkflowNode } from "../../state/data/workflow-runs";
 import { useAgents } from "../../state/hooks/use-agents";
 import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
-import { isAwaitingConfirmation } from "./run-node-completion";
+import {
+  abnormalParkBadge,
+  isAwaitingConfirmation,
+} from "./run-node-completion";
 
 const RUNNING_SESSION_RELOAD_DELAY_MS = 250;
 const NODE_SESSION_CONVERSATION_NAVIGATION = {
@@ -457,7 +460,7 @@ export function RunNodeSessionChat({
           >
             {t(
               completionAbnormal
-                ? "workflowRun.stepCard.abnormalBadge"
+                ? abnormalParkBadge(completion)
                 : completionAwaitingUser
                   ? "workflowRun.stepCard.waitingBadge"
                   : "workflowRun.stepCard.pausedBadge",
@@ -791,7 +794,13 @@ export function RunNodeSessionChat({
                 disabled={actionDisabled}
                 onClick={() => void handleContinue(false)}
               >
-                {t("workflowRun.stepCard.continueStep")}
+                {t(
+                  completionAbnormal &&
+                    abnormalParkBadge(completion) ===
+                      "workflowRun.stepCard.failedAttemptBadge"
+                    ? "workflowRun.stepCard.retryStep"
+                    : "workflowRun.stepCard.continueStep",
+                )}
               </Button>
               <Button
                 type="button"
@@ -1005,6 +1014,9 @@ function completionWarningText(
   warning: string,
   translate: (key: string) => string,
 ): string {
+  if (warning === "retry_without_result") {
+    return translate("workflowRun.stepCard.warning.retry_without_result");
+  }
   if (warning === "empty_output") {
     return translate("workflowRun.stepCard.warning.empty_output");
   }

@@ -579,7 +579,7 @@ describe("RunTheaterActCard conversation", () => {
       { wrapper: createSessionWrapper() },
     );
 
-    expect(screen.getByText("异常停靠")).toBeInTheDocument();
+    expect(screen.getByText("节点运行失败")).toBeInTheDocument();
     expect(screen.queryByText("已暂停")).toBeNull();
     expect(screen.queryByText("等待参与")).toBeNull();
   });

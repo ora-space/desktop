@@ -17,6 +17,16 @@ export function isAwaitingConfirmation(
   return completion?.needsConfirmation === true;
 }
 
+/** Names the recoverable prompt failures that keep this interactive step from advancing. */
+export function abnormalParkBadge(completion: WorkflowNodeCompletion): string {
+  return completion.stopCause === "prompt_timed_out" ||
+    completion.warnings.includes("retry_without_result") ||
+    (completion.stopReason === "cancelled" &&
+      completion.stopCause !== "user_stopped")
+    ? "workflowRun.stepCard.failedAttemptBadge"
+    : "workflowRun.stepCard.abnormalBadge";
+}
+
 /**
  * Direct successor titles for every node in one frozen graph, keyed by node id.
  *

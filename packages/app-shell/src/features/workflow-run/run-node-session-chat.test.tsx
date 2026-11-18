@@ -1176,7 +1176,7 @@ describe("RunNodeSessionChat", () => {
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
     const card = screen.getByTestId("node-step-card");
-    expect(card).toHaveTextContent("异常停靠");
+    expect(card).toHaveTextContent("节点运行失败");
     expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
     expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
     expect(completeSpy).not.toHaveBeenCalled();
@@ -1263,7 +1263,11 @@ describe("RunNodeSessionChat", () => {
       );
 
       const card = screen.getByTestId("node-step-card");
-      expect(within(card).getByText("异常停靠")).toBeInTheDocument();
+      expect(
+        within(card).getByText(
+          stopCause === "prompt_timed_out" ? "节点运行失败" : "异常停靠",
+        ),
+      ).toBeInTheDocument();
       expect(card).toHaveTextContent(reason);
       // An abnormal stop never offers the ordinary completion: only continue or force.
       expect(screen.queryByTestId("complete-ready-node")).toBeNull();
@@ -1273,6 +1277,31 @@ describe("RunNodeSessionChat", () => {
       expect(screen.getByTestId("complete-current-node")).toBeDisabled();
     },
   );
+
+  it("keeps an empty automatic retry on the failed step", () => {
+    renderDock(
+      "awaiting_input",
+      false,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      blockedCompletion("output_missing", false, {
+        turnOrigin: "human",
+        stopReason: "end_turn",
+        parkKind: "abnormal",
+        warnings: ["retry_without_result"],
+      }),
+    );
+    const card = screen.getByTestId("node-step-card");
+    expect(card).toHaveTextContent("节点运行失败");
+    expect(card).toHaveTextContent("自动重试未返回可用结果");
+    expect(
+      within(card).getByRole("button", { name: "重试本步" }),
+    ).toBeEnabled();
+    expect(screen.getByTestId("continue-current-step")).toBeEnabled();
+    expect(screen.getByTestId("complete-current-node")).toBeDisabled();
+  });
 
   it("shows non-blocking warnings from a ready turn", () => {
     renderDock("awaiting_input", false, [], undefined, undefined, undefined, {

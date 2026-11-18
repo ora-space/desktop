@@ -8,8 +8,8 @@ use super::super::completion_snapshot::{
     CompletionBlocker, CompletionBlockerKind, CompletionConfirmation, CompletionMeta,
     CompletionPolicy, CompletionSnapshot, ConfirmationBy, FILE_CHECK_UNAVAILABLE, TurnOrigin,
     completion_final_text, completion_payload, derive_completion_snapshot, forced_completion_audit,
-    has_precise_stop_blocker, output_contract_blocker, parse_completion_snapshot,
-    trailing_assistant_text, unknown_completion_snapshot, with_file_check_warning,
+    has_precise_stop_blocker, parse_completion_snapshot, trailing_assistant_text,
+    unknown_completion_snapshot, with_file_check_warning,
 };
 use super::super::executor::apply_output_contract;
 use super::super::worktree::{
@@ -389,6 +389,7 @@ pub(crate) fn prepare_completion(
         )));
     }
     let derived = derived.with_agent_signal_gate(&meta);
+    let retry_blocker = derived.empty_retry_blocker();
     // Upgraded snapshots materialize the frozen policy on the first completion attempt even when
     // their turn identity is already complete, so later reads no longer default them to legacy.
     if !payload_has_completion_policy(node_run.payload.as_deref()) {
@@ -422,15 +423,8 @@ pub(crate) fn prepare_completion(
     // The effective blocker set joins the persisted snapshot with what this preparation recomputes
     // from the live history: a stored snapshot that looks ready must still not let the completion
     // cross an output-contract blocker the park would have recorded (ADR D2, invariant 4).
-    let mut effective_blockers = snapshot.blockers.clone();
-    if snapshot.turn_key.is_some()
-        && let Some(blocker) = output_contract_blocker(output_contract, raw_output.as_deref())
-        && !effective_blockers
-            .iter()
-            .any(|existing| existing.kind == blocker.kind)
-    {
-        effective_blockers.push(blocker);
-    }
+    let mut effective_blockers =
+        snapshot.live_output_blockers(retry_blocker, output_contract, raw_output.as_deref());
 
     // File blockers join the same list as the turn and output-contract checks.
     effective_blockers.extend(file_check.blockers);
