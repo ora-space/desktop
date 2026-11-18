@@ -176,7 +176,11 @@ export type ContractError =
       "code": "workflow_run_input_invalid";
       "params": WorkflowRunInputInvalidParams;
     }
-    | { "code": "workflow_skill_not_found"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_skill_not_found";
+      "params": WorkflowSkillNotFoundParams;
+    }
+    | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
     | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
     | { "code": "workflow_run_not_restartable"; "params": EmptyErrorParams }
@@ -415,7 +419,11 @@ export type PublicError =
     "code": "workflow_run_input_invalid";
     "params": WorkflowRunInputInvalidParams;
   }
-  | { "code": "workflow_skill_not_found"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_skill_not_found";
+    "params": WorkflowSkillNotFoundParams;
+  }
+  | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
   | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
   | { "code": "workflow_run_not_restartable"; "params": EmptyErrorParams }
@@ -472,6 +480,19 @@ export type SkillFolderConflictParams = { name: string };
  * Carries the user-selected base branch name when Git cannot resolve it.
  */
 export type TaskBaseBranchNotFoundParams = { branchName: string };
+
+/**
+ * Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot
+ * start because the MCP plugin is no longer installed.
+ */
+export type WorkflowMcpNotFoundParams = {
+  nodeId: string;
+  /**
+   * Node label to show; equal to `node_id` when the node carries no title.
+   */
+  nodeTitle: string;
+  mcpId: string;
+};
 
 /**
  * Carries one blocker of a rejected completion with the detail its kind does not encode.
@@ -577,6 +598,22 @@ export type WorkflowNodeTurnKey = { userSeq: number; endedSeq: number };
 export type WorkflowRunInputInvalidParams = {
   variable: string;
   reason: string;
+};
+
+/**
+ * Names the workflow node and the Skill its frozen graph declares, for a run that cannot start.
+ *
+ * A Skill is a deploy dependency: when the plugin that provided it is gone, starting or
+ * restarting the run must fail and tell the operator which node needs which skill back, instead
+ * of running the node without it.
+ */
+export type WorkflowSkillNotFoundParams = {
+  nodeId: string;
+  /**
+   * Node label to show; equal to `node_id` when the node carries no title.
+   */
+  nodeTitle: string;
+  skillId: string;
 };
 
 /**

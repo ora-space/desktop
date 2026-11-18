@@ -3,10 +3,9 @@
 use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, SnapshotIncompatibility, SnapshotSwitchPlan, StartPrerequisitesError,
-    WorkflowGraph, WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowVariablePool,
-    plan_snapshot_switch,
+    ApplicationError, SnapshotIncompatibility, SnapshotSwitchPlan, WorkflowGraph,
+    WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowRunWorkspaceInitializer, WorkflowVariablePool, plan_snapshot_switch,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -117,7 +116,7 @@ pub(super) fn apply_switch(
     })?;
     let receipt = initializer
         .initialize_workspace(&new_graph, workspace_root)
-        .map_err(start_prerequisites_error)?;
+        .map_err(ApplicationError::from_start_prerequisites_error)?;
     let mut payload = parsed_payload(context.run.payload.as_deref());
     payload.skill_materialization = receipt;
     payload.variable_pool = plan.variable_pool;
@@ -183,33 +182,6 @@ pub(super) fn switch_if_requested(
         now,
     )?;
     Ok(true)
-}
-
-fn start_prerequisites_error(error: StartPrerequisitesError) -> ApplicationError {
-    match error {
-        StartPrerequisitesError::WorkflowSkillNotFound { skill_id } => {
-            ApplicationError::WorkflowSkillNotFound { skill_id }
-        }
-        StartPrerequisitesError::WorkflowRoleNotFound { role_id } => {
-            ApplicationError::WorkflowRoleNotFound { role_id }
-        }
-        StartPrerequisitesError::SkillMaterializationError { message } => {
-            ApplicationError::WorkflowRunStartFailed { message }
-        }
-        StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref } => {
-            ApplicationError::WorkflowRunStartFailed {
-                message: format!("agent {agent_ref} does not support workflow-managed skills"),
-            }
-        }
-        StartPrerequisitesError::AgentSkillDeliveryError { agent_ref, message } => {
-            ApplicationError::WorkflowRunStartFailed {
-                message: format!("failed to resolve skill delivery for {agent_ref}: {message}"),
-            }
-        }
-        StartPrerequisitesError::Repository(source) => {
-            ApplicationError::WorkflowRunRepository { source }
-        }
-    }
 }
 
 fn incompatible(reason: &str) -> BackendError {

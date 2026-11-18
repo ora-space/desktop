@@ -40,7 +40,10 @@ export const workflowRunTranslations = {
     "errors.workflow_run_validation": "工作流运行校验失败。",
     "errors.workflow_run_input_invalid":
       "启动变量 {{variable}} 的输入无效：{{reason}}",
-    "errors.workflow_skill_not_found": "该工作流需要的技能不可用。",
+    "errors.workflow_skill_not_found":
+      "节点「{{nodeTitle}}」需要的技能 {{skillId}} 不可用，请重新安装提供该技能的插件后再启动。",
+    "errors.workflow_mcp_not_found":
+      "节点「{{nodeTitle}}」需要的 MCP {{mcpId}} 未安装，请重新安装该插件后再启动。",
     "errors.workflow_role_not_found": "未找到该工作流角色。",
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
     "errors.workflow_run_not_restartable": "该工作流运行无法重新启动。",
@@ -583,7 +586,9 @@ export const workflowRunTranslations = {
     "errors.workflow_run_input_invalid":
       "Invalid input for start variable '{{variable}}': {{reason}}",
     "errors.workflow_skill_not_found":
-      "A skill required by this workflow is unavailable.",
+      "The skill {{skillId}} required by node '{{nodeTitle}}' is unavailable. Reinstall the plugin that provides it, then start the run again.",
+    "errors.workflow_mcp_not_found":
+      "The MCP {{mcpId}} required by node '{{nodeTitle}}' is not installed. Reinstall that plugin, then start the run again.",
     "errors.workflow_role_not_found": "Workflow role not found.",
     "errors.workflow_run_start_failed": "Failed to start the workflow run.",
     "errors.workflow_run_not_restartable":
