@@ -654,6 +654,13 @@ async fn run_process_generation<A: AgentAttach>(
                     Some(AcpInboundEvent::SessionUpdate(update)) => {
                         let _ = routes.route_event(SessionEvent::Update(update));
                     }
+                    Some(AcpInboundEvent::ExtensionNotification(extension)) => {
+                        if let Some(update) =
+                            super::subagent_update::translate_extension_notification(extension)
+                        {
+                            let _ = routes.route_event(SessionEvent::Update(update));
+                        }
+                    }
                     Some(AcpInboundEvent::PermissionRequest(permission)) => {
                         if let Err(orphan) = routes.route_event(SessionEvent::Permission(permission)) {
                             match *orphan {

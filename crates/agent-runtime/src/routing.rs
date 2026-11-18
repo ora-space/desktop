@@ -317,6 +317,7 @@ mod tests {
         match peer.next_event().await.expect("receive response event") {
             AcpInboundEvent::SessionResponse(response) => response,
             AcpInboundEvent::SessionUpdate(_)
+            | AcpInboundEvent::ExtensionNotification(_)
             | AcpInboundEvent::PermissionRequest(_)
             | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
         }

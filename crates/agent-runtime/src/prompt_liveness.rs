@@ -21,8 +21,7 @@ impl Projection {
     /// Classifies metadata with the history crate's source rule, so the timer and the transcript
     /// agree on which sources count as a child (ADR D1).
     fn of(meta: Option<&Meta>) -> Self {
-        let named = meta.is_some_and(|meta| meta.contains_key("opencode/child-session"));
-        if !named {
+        if !ora_history::has_child_source_namespace(meta) {
             return Self::Inherited;
         }
         // The namespace is opaque replacement data: an explicit null or a malformed object

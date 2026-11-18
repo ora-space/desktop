@@ -37,6 +37,7 @@ mod session_setup;
 mod start;
 mod startup;
 mod stream;
+mod subagent_update;
 mod support;
 mod suspend;
 mod title_acquisition;
