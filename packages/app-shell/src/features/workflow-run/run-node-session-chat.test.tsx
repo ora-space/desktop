@@ -1176,7 +1176,7 @@ describe("RunNodeSessionChat", () => {
     const completeSpy = vi.spyOn(client.workflowRun, "completeNode");
 
     const card = screen.getByTestId("node-step-card");
-    expect(card).toHaveTextContent("节点运行失败");
+    expect(card).toHaveTextContent("异常停靠");
     expect(screen.queryByTestId("confirm-agent-completion")).toBeNull();
     expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
     expect(completeSpy).not.toHaveBeenCalled();
@@ -1263,11 +1263,10 @@ describe("RunNodeSessionChat", () => {
       );
 
       const card = screen.getByTestId("node-step-card");
+      expect(within(card).getByText("异常停靠")).toBeInTheDocument();
       expect(
-        within(card).getByText(
-          stopCause === "prompt_timed_out" ? "节点运行失败" : "异常停靠",
-        ),
-      ).toBeInTheDocument();
+        within(card).queryByRole("button", { name: "重试本步" }),
+      ).toBeNull();
       expect(card).toHaveTextContent(reason);
       // An abnormal stop never offers the ordinary completion: only continue or force.
       expect(screen.queryByTestId("complete-ready-node")).toBeNull();
