@@ -4,8 +4,9 @@ English | [中文](subagent-details.zh.md)
 
 The parent conversation can show read-only child-session cards for OpenCode inline projections and
 CodeAgent `_subagent/update` notifications. Expand a card to inspect
-its text, thoughts, plans and tool input/output; nested cards follow the explicit parent relationship.
-Parent replies remain in the ordinary timeline. The original Stop action controls the parent prompt;
+its text, thoughts, plans and tool input/output; OpenCode nested cards follow the explicit parent
+relationship, while `_subagent/update` notifications carry no nested parent chain and flatten as
+`depth: 1` sibling cards. Parent replies remain in the ordinary timeline. The original Stop action controls the parent prompt;
 these cards do not add child cancellation, steering or closing.
 
 Child state is unreported while its parent is still observed, unless a supported report establishes it.
@@ -13,7 +14,7 @@ After a parent completion, failure or cancellation, the card shows **Delegation 
 either (a) the latest OpenCode delegation call in the same parent turn and source stream names this
 child in `rawOutput.metadata.sessionID`, reports ACP `completed`, and carries the provider's `status`
 of `completed`, or (b) `_subagent/update` explicitly linked the group to a parent `toolCallId` whose
-latest call in the parent stream completed with provider output. Every other case shows **Further state unknown (projection stopped)**: an unfinished,
+latest call in the parent stream completed with provider output rather than turn-end settlement. Every other case shows **Further state unknown (projection stopped)**: an unfinished,
 failed, cancelled or background `status=running` delegation, or no associable session id. The latest
 call is chosen by persisted position, so a later turn continuing the same child session never revises
 an earlier turn. Both labels describe a returned foreground result or missing subsequent observations,
