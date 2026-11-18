@@ -103,6 +103,57 @@ fn fixture()
     Ok((home, files, identity))
 }
 
+/// Lifecycle acknowledgement may need process exit; the durable owner must signal first.
+#[tokio::test]
+async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> TestResult {
+    use ora_node_db::{NodeDatabase, NodeIdentity};
+    use ora_node_protocol::*;
+    let (home, files, identity) = fixture()?;
+    let mut db = NodeDatabase::open(
+        &home.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )?;
+    let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
+        "protocol_version":CURRENT_PROTOCOL_VERSION,"operation_id":"op","execution_id":"session",
+        "payload":{"spec":{"node_id":"node","agent_plugin_id":"official/agent","agent_plugin_version":"1.0.0","checkout_execution_id":"checkout",
+        "git_identity":{"name":"Fixture","email":"fixture@example.test"},"initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"hello"}]}}}
+    }))?;
+    db.accept_session(&input)?;
+    db.start_session(&input, &NodeIncarnationId::new("original"))?;
+    let journal = db.session_journal()?;
+    let spawner = prepare(
+        &journal,
+        home.path(),
+        identity.clone(),
+        TokioProcessSpawner::new().without_reaper_registration(),
+    )?;
+    let plugin = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
+    let cli = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
+    let config = SessionStopConfig::default();
+    request(&journal, &identity.execution, &config)?;
+    spawner.close();
+    let confirmed = tokio::time::timeout(
+        Duration::from_secs(2),
+        await_plugin_stop(&journal, home.path(), &config, &identity.execution, async {
+            plugin.wait().await?;
+            cli.wait().await?;
+            Ok::<(), std::io::Error>(())
+        }),
+    )
+    .await??;
+    assert!(confirmed);
+    assert!(plugin.try_wait()?.is_some());
+    assert!(cli.try_wait()?.is_some());
+    assert_eq!(
+        files.probe(&identity, &identity.host, false),
+        (
+            StopEvidence::Stopped,
+            Some(SessionStopProof::LockAndProcesses)
+        )
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_running() -> TestResult {
     let (_home, files, identity) = fixture()?;
