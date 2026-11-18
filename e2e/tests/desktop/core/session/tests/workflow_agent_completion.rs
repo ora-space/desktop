@@ -733,7 +733,12 @@ fn empty_inactivity_retry_blocks_successors_until_a_valid_turn() -> TestResult {
             })
             .await?;
             let session = first.session_id.ok_or("missing agent session")?;
-            say(&backend, &session, "[fake-empty-retry]").await?;
+            let prompt = if policy == "end_turn" {
+                "[fake-empty-retry] [late-child-tool]"
+            } else {
+                "[fake-empty-retry]"
+            };
+            say(&backend, &session, prompt).await?;
             let parked = wait_for_node(&backend, &run, "agent", |node| {
                 payload(node)["completion"]["turnOrigin"] == "human"
             })

@@ -585,3 +585,36 @@ fn retry_flushes_text_without_closing_the_user_turn() {
         ]
     );
 }
+
+#[test]
+fn retry_attributes_late_tool_deltas_to_the_opening_attempt() {
+    let mut assembler = HistoryAssembler::new(0);
+    let old = ToolCall::new("shared", "old tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(old.clone()));
+    assembler.retry_prompt();
+    assembler.retry_prompt();
+
+    // ACP deltas may omit both title and source. Position and metadata come from the opening.
+    let done = tool_status_update("shared", ToolCallStatus::Completed);
+    let late = assembler.push_update(&done);
+    assert_eq!(
+        late,
+        vec![AssembledRecord {
+            seq: 0,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(
+                    old.status(ToolCallStatus::Completed)
+                )),
+                tool_timing: None,
+            },
+        }]
+    );
+
+    // An explicit opening in the replacement attempt legitimately reuses the same ID.
+    assembler.push_update(&SessionUpdate::ToolCall(ToolCall::new(
+        "shared", "new tool",
+    )));
+    let fresh = assembler.push_update(&done);
+    assert_eq!(fresh[0].seq, 3);
+    assert_eq!(assembler.end_turn(StopReason::EndTurn).len(), 1);
+}

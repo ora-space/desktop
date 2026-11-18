@@ -398,11 +398,30 @@ impl FakeAcpAgent {
 
         let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
+        let late_tool = prompt.contains("[late-child-tool]");
+        let mut notifications = Vec::new();
         if prompt.contains("[fake-empty-retry]") {
             session.empty_retry_pending = !session.empty_retry_pending;
+            if late_tool {
+                // The old child finishes after cancellation. Its ACP delta omits ownership.
+                let update = if session.empty_retry_pending {
+                    json!({
+                        "sessionUpdate": "tool_call", "toolCallId": "abandoned",
+                        "title": "Child tool", "status": "pending",
+                        "_meta": {"opencode/child-session": {"id":"child","parentID":"parent","depth":1}}
+                    })
+                } else {
+                    json!({"sessionUpdate":"tool_call_update","toolCallId":"abandoned","status":"completed"})
+                };
+                notifications.push(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "method": CLIENT_METHOD_NAMES.session_update,
+                    "params": {"sessionId": request.session_id, "update": update}
+                }));
+            }
             if !session.empty_retry_pending {
                 return Ok(AcpCallResult {
-                    notifications: Vec::new(),
+                    notifications,
                     result: serde_json::to_value(PromptResponse::new(StopReason::EndTurn))
                         .map_err(|error| AcpError::invalid_params(method, error))?,
                 });
@@ -448,12 +467,13 @@ impl FakeAcpAgent {
                 TextContent::new(response),
             ))),
         );
+        notifications.push(json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "method": CLIENT_METHOD_NAMES.session_update,
+            "params": notification,
+        }));
         Ok(AcpCallResult {
-            notifications: vec![json!({
-                "jsonrpc": JSON_RPC_VERSION,
-                "method": CLIENT_METHOD_NAMES.session_update,
-                "params": notification,
-            })],
+            notifications,
             result: serde_json::to_value(PromptResponse::new(StopReason::EndTurn))
                 .map_err(|error| AcpError::invalid_params(method, error))?,
         })
