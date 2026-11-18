@@ -39,6 +39,7 @@ export function metadataKey(
 
 const OPENCODE_CHILD_SESSION_KEY = "opencode/child-session";
 const SUBAGENT_UPDATE_KEY = "_subagent/update";
+const TURN_END_SETTLED_KEY = "ora/turn-end-settled";
 
 export interface ChildSessionSource {
   id: string;
@@ -157,6 +158,31 @@ export function mergeToolMetadata(
   return object(incoming) ? { ...previous, ...incoming } : previous;
 }
 
+/** Strips Ora's internal turn-end settlement marker and reports it only for replayed history. */
+export function extractToolMetadata(
+  metadata: unknown,
+  trustTurnEndSettled: boolean,
+): {
+  metadata: Record<string, unknown> | undefined;
+  settledByTurnEnd: boolean;
+} {
+  if (!object(metadata)) {
+    return { metadata: undefined, settledByTurnEnd: false };
+  }
+  if (!(TURN_END_SETTLED_KEY in metadata)) {
+    return { metadata, settledByTurnEnd: false };
+  }
+  const settledByTurnEnd =
+    trustTurnEndSettled && metadata[TURN_END_SETTLED_KEY] === true;
+  const rest = Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => key !== TURN_END_SETTLED_KEY),
+  );
+  return {
+    metadata: Object.keys(rest).length > 0 ? rest : undefined,
+    settledByTurnEnd,
+  };
+}
+
 export function withToolMetadata(
   tool: ChatToolCall,
   metadata: unknown,
@@ -199,7 +225,7 @@ export function delegationResultCompleted(tool: ChatToolCall): boolean {
  * completed call carrying provider output (and not an explicit background status) qualifies.
  */
 export function delegationToolCallCompleted(tool: ChatToolCall): boolean {
-  if (tool.status !== "completed") return false;
+  if (tool.status !== "completed" || tool.settledByTurnEnd) return false;
   if (tool.content.length === 0 && tool.rawOutput === undefined) return false;
   if (
     object(tool.rawOutput) &&

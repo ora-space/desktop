@@ -444,6 +444,96 @@ it("settles a child only from the delegation that names it in live, warm and col
   cold.getState().dispose();
 });
 
+it("keeps an in-progress _subagent/update delegation with streamed output unknown across end_turn live and cold replay", async () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "main-session",
+      taskId: "task-unsettled",
+      toolCallId: "parent-agent-call",
+      agentType: "Explore",
+    },
+  };
+  const liveUpdates: Extract<PromptSessionEvent, { type: "session_update" }>[] =
+    [
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "parent-agent-call",
+          title: "Agent",
+          kind: "think",
+          status: "in_progress",
+          content: [
+            { type: "content", content: { type: "text", text: "partial" } },
+          ],
+          rawOutput: "partial output",
+        },
+      },
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "SUBAGENT_PROGRESS" },
+          _meta: subagentMeta,
+        },
+      },
+    ];
+  // Durable history settled the open parent tool at `end_turn` with `ora/turn-end-settled`.
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "explore" },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "parent-agent-call",
+        title: "Agent",
+        kind: "think",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "partial" } },
+        ],
+        rawOutput: "partial output",
+        _meta: { "ora/turn-end-settled": true },
+      },
+    },
+    liveUpdates[1]!,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(liveUpdates);
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "live", text: "explore" });
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  await store.getState().loadSession("live");
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("cold");
+  expect(
+    await childStatusLabels(cold.getState().conversations.cold!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  store.getState().dispose();
+  cold.getState().dispose();
+});
+
 it("keeps a background delegation's child on the projection-stopped wording", async () => {
   const updates = [
     ...delegation("outer-delegate", "worker", "running"),
@@ -488,6 +578,96 @@ it("keeps a background delegation's child on the projection-stopped wording", as
   expect(
     await childStatusLabels(cold.getState().conversations.one!.turns[0]!),
   ).toEqual(["Further state unknown (projection stopped)"]);
+  store.getState().dispose();
+  cold.getState().dispose();
+});
+
+it("keeps an in-progress _subagent/update delegation with streamed output unknown across end_turn live and cold replay", async () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "main-session",
+      taskId: "task-unsettled",
+      toolCallId: "parent-agent-call",
+      agentType: "Explore",
+    },
+  };
+  const liveUpdates: Extract<PromptSessionEvent, { type: "session_update" }>[] =
+    [
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "parent-agent-call",
+          title: "Agent",
+          kind: "think",
+          status: "in_progress",
+          content: [
+            { type: "content", content: { type: "text", text: "partial" } },
+          ],
+          rawOutput: "partial output",
+        },
+      },
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "SUBAGENT_PROGRESS" },
+          _meta: subagentMeta,
+        },
+      },
+    ];
+  // Durable history settled the open parent tool at `end_turn` with `ora/turn-end-settled`.
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "explore" },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "parent-agent-call",
+        title: "Agent",
+        kind: "think",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "partial" } },
+        ],
+        rawOutput: "partial output",
+        _meta: { "ora/turn-end-settled": true },
+      },
+    },
+    liveUpdates[1]!,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(liveUpdates);
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "live", text: "explore" });
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  await store.getState().loadSession("live");
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("cold");
+  expect(
+    await childStatusLabels(cold.getState().conversations.cold!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
   store.getState().dispose();
   cold.getState().dispose();
 });
@@ -563,6 +743,96 @@ it("keeps an earlier turn's returned delegation after the same child is resumed"
   expect(await childStatusLabels(reloaded[1]!)).toEqual([
     "Further state unknown (projection stopped)",
   ]);
+  store.getState().dispose();
+  cold.getState().dispose();
+});
+
+it("keeps an in-progress _subagent/update delegation with streamed output unknown across end_turn live and cold replay", async () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "main-session",
+      taskId: "task-unsettled",
+      toolCallId: "parent-agent-call",
+      agentType: "Explore",
+    },
+  };
+  const liveUpdates: Extract<PromptSessionEvent, { type: "session_update" }>[] =
+    [
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "parent-agent-call",
+          title: "Agent",
+          kind: "think",
+          status: "in_progress",
+          content: [
+            { type: "content", content: { type: "text", text: "partial" } },
+          ],
+          rawOutput: "partial output",
+        },
+      },
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "SUBAGENT_PROGRESS" },
+          _meta: subagentMeta,
+        },
+      },
+    ];
+  // Durable history settled the open parent tool at `end_turn` with `ora/turn-end-settled`.
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "explore" },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "parent-agent-call",
+        title: "Agent",
+        kind: "think",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "partial" } },
+        ],
+        rawOutput: "partial output",
+        _meta: { "ora/turn-end-settled": true },
+      },
+    },
+    liveUpdates[1]!,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(liveUpdates);
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "live", text: "explore" });
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  await store.getState().loadSession("live");
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("cold");
+  expect(
+    await childStatusLabels(cold.getState().conversations.cold!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
   store.getState().dispose();
   cold.getState().dispose();
 });
@@ -667,6 +937,96 @@ it("renders _subagent/update cards with agentType title and outer toolCallId ret
     expect(within(card).getByText("Read README")).toBeInTheDocument();
     view.unmount();
   }
+  store.getState().dispose();
+  cold.getState().dispose();
+});
+
+it("keeps an in-progress _subagent/update delegation with streamed output unknown across end_turn live and cold replay", async () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "main-session",
+      taskId: "task-unsettled",
+      toolCallId: "parent-agent-call",
+      agentType: "Explore",
+    },
+  };
+  const liveUpdates: Extract<PromptSessionEvent, { type: "session_update" }>[] =
+    [
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "parent-agent-call",
+          title: "Agent",
+          kind: "think",
+          status: "in_progress",
+          content: [
+            { type: "content", content: { type: "text", text: "partial" } },
+          ],
+          rawOutput: "partial output",
+        },
+      },
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "SUBAGENT_PROGRESS" },
+          _meta: subagentMeta,
+        },
+      },
+    ];
+  // Durable history settled the open parent tool at `end_turn` with `ora/turn-end-settled`.
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "explore" },
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "parent-agent-call",
+        title: "Agent",
+        kind: "think",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "partial" } },
+        ],
+        rawOutput: "partial output",
+        _meta: { "ora/turn-end-settled": true },
+      },
+    },
+    liveUpdates[1]!,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(liveUpdates);
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "live", text: "explore" });
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  await store.getState().loadSession("live");
+  expect(
+    await childStatusLabels(store.getState().conversations.live!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("cold");
+  expect(
+    await childStatusLabels(cold.getState().conversations.cold!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+
   store.getState().dispose();
   cold.getState().dispose();
 });

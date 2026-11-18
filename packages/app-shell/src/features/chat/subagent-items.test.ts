@@ -186,5 +186,28 @@ describe("delegation result association", () => {
     expect(
       delegationReturned([synthesizedParent], "task-42", "agent-call-1"),
     ).toBe(false);
+
+    // Synthesized turn-end completion with streamed output must not report delegation returned.
+    const impliedParentWithOutput: ChatToolCall = {
+      ...parentCall,
+      settledByTurnEnd: true,
+    };
+    expect(
+      delegationReturned([impliedParentWithOutput], "task-42", "agent-call-1"),
+    ).toBe(false);
+
+    // Explicit `delegationToolCallId` must not be overridden by an unrelated tool with matching `sessionID`.
+    const unrelatedSessionIdMatch = delegation(
+      "other-call",
+      "task-42",
+      "completed",
+    );
+    expect(
+      delegationReturned(
+        [impliedParentWithOutput, unrelatedSessionIdMatch],
+        "task-42",
+        "agent-call-1",
+      ),
+    ).toBe(false);
   });
 });

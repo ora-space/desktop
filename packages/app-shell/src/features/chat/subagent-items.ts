@@ -124,22 +124,16 @@ export function delegationReturned(
   delegationToolCallId?: string,
 ): boolean {
   let latest: ChatToolCall | undefined;
-  let matchedBySessionId = false;
   for (const item of streamItems) {
     if (item.kind !== "toolCall") continue;
-    if (delegationSessionId(item) === childId) {
-      latest = item;
-      matchedBySessionId = true;
-    } else if (
-      delegationToolCallId !== undefined &&
-      item.id === delegationToolCallId
-    ) {
-      latest = item;
-      matchedBySessionId = false;
-    }
+    const matches =
+      delegationToolCallId === undefined
+        ? delegationSessionId(item) === childId
+        : item.id === delegationToolCallId;
+    if (matches) latest = item;
   }
   if (latest === undefined) return false;
-  return matchedBySessionId
+  return delegationToolCallId === undefined
     ? delegationResultCompleted(latest)
     : delegationToolCallCompleted(latest);
 }

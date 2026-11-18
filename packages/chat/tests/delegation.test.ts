@@ -134,6 +134,15 @@ test("parses _subagent/update attribution and validates toolCallId delegation co
     }),
     false,
   );
+  // Turn-end synthesized completion even WITH streamed content/rawOutput does not count.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      rawOutput: "intermediate output",
+      settledByTurnEnd: true,
+    }),
+    false,
+  );
   assert.equal(
     delegationToolCallCompleted({
       ...delegation(undefined, undefined, "failed"),
