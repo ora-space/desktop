@@ -100,6 +100,11 @@ impl LiveMcpState {
                 },
                 false,
             ),
+            // A failed revision is retried only by a new Desired revision or by prompt admission;
+            // a repeated level-triggered observation of the same revision is not a retry input.
+            Self::Blocked { desired: blocked } if *blocked == desired => {
+                (Self::Blocked { desired }, false)
+            }
             Self::Blocked { .. } => (Self::Blocked { desired }, true),
         }
     }
@@ -275,6 +280,39 @@ mod tests {
         assert_eq!(
             state.prompt_admission(&desired),
             LiveMcpPromptAdmission::RefreshFirst { desired }
+        );
+    }
+
+    #[test]
+    fn blocked_session_retries_only_for_a_new_revision() {
+        let members = vec![revision(
+            "ready",
+            Version::new(2, 0, 0),
+            1,
+            SessionMcpTransportKind::Stdio,
+        )];
+        let failed = SessionMcpRevision::for_generation(/*generation*/ 1, members.clone());
+        let blocked = LiveMcpState::Blocked {
+            desired: failed.clone(),
+        };
+
+        // Notifications are level-triggered and broadcast, so the failed revision is observed
+        // again without any new input; that observation must not spawn another attempt.
+        let (state, refresh) = blocked.on_event(LiveMcpEvent::DesiredObserved(failed.clone()));
+        assert_eq!((state.clone(), refresh), (blocked.clone(), false));
+        assert_eq!(
+            state.prompt_admission(&failed),
+            LiveMcpPromptAdmission::RefreshFirst {
+                desired: failed.clone()
+            }
+        );
+
+        // Identical members in a later generation are a new retry input.
+        let retried = SessionMcpRevision::for_generation(/*generation*/ 2, members);
+        let (state, refresh) = blocked.on_event(LiveMcpEvent::DesiredObserved(retried.clone()));
+        assert_eq!(
+            (state, refresh),
+            (LiveMcpState::Blocked { desired: retried }, true)
         );
     }
 
