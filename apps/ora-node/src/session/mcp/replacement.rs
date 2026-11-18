@@ -86,11 +86,13 @@ where
             },
         )
         .map_err(|_| blocked())?;
-    spawner.close();
-    let _ = lifecycle
-        .stop_plugin(ora_contracts::StopPluginRequest {
-            plugin_id: plugin.to_string(),
-        })
+    let _ = spawner
+        .stop_for_replacement(
+            &shared.config.stop.host(),
+            lifecycle.stop_plugin(ora_contracts::StopPluginRequest {
+                plugin_id: plugin.to_string(),
+            }),
+        )
         .await;
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping

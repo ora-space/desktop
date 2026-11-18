@@ -71,6 +71,35 @@ impl SessionAttemptSpawner {
             }))),
         })
     }
+    /// Connection loss can trigger a restart only while the execution admits children.
+    pub(crate) fn is_open(&self) -> bool {
+        self.attempt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .descriptor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// Signal the original groups before waiting for lifecycle cleanup during replacement.
+    pub(in crate::session) async fn stop_for_replacement<T>(
+        &self,
+        host: &ora_node_db::SessionStopHost,
+        cleanup: impl std::future::Future<Output = T>,
+    ) -> T {
+        {
+            let attempt = self.attempt.lock().unwrap_or_else(PoisonError::into_inner);
+            attempt
+                .descriptor
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            attempt.files.terminate(&attempt.identity, host);
+        }
+        cleanup.await
+    }
+
     /// Serializes with spawn, refuses future children, then drops Node's last retained OFD copy.
     pub(crate) fn close(&self) {
         self.attempt

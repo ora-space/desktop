@@ -12,21 +12,9 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_proof() -> TestResult
 {
-    use ora_node_db::{NodeDatabase, NodeIdentity, SessionStopChange, SessionStopState};
-    use ora_node_protocol::*;
+    use ora_node_db::{SessionStopChange, SessionStopState};
     let (home, files, identity) = fixture()?;
-    let mut db = NodeDatabase::open(
-        &home.path().join("db"),
-        NodeIdentity::Require(NodeId::new("node")),
-    )?;
-    let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
-        "protocol_version":CURRENT_PROTOCOL_VERSION,"operation_id":"op","execution_id":"session",
-        "payload":{"spec":{"node_id":"node","agent_plugin_id":"official/agent","agent_plugin_version":"1.0.0","checkout_execution_id":"checkout",
-        "git_identity":{"name":"Fixture","email":"fixture@example.test"},"initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"hello"}]}}}
-    }))?;
-    db.accept_session(&input)?;
-    db.start_session(&input, &NodeIncarnationId::new("original"))?;
-    let journal = db.session_journal()?;
+    let journal = journal(home.path())?;
     files.create(&identity.attempt)?;
     let descriptor = files.hold(&identity.attempt)?;
     journal.record_session_stop(&identity, now_ms())?;
@@ -81,6 +69,51 @@ fn foreign_or_missing_host_identity_cannot_turn_a_boot_change_into_stop_proof() 
     Ok(())
 }
 
+/// Use the production journal so assertions cover the durable proof and original deadline.
+fn journal(home: &Path) -> Result<ora_node_db::SessionJournal, Box<dyn std::error::Error>> {
+    use ora_node_db::{NodeDatabase, NodeIdentity};
+    use ora_node_protocol::*;
+    let mut db = NodeDatabase::open(&home.join("db"), NodeIdentity::Require(NodeId::new("node")))?;
+    let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
+        "protocol_version":CURRENT_PROTOCOL_VERSION,"operation_id":"op","execution_id":"session",
+        "payload":{"spec":{"node_id":"node","agent_plugin_id":"official/agent","agent_plugin_version":"1.0.0","checkout_execution_id":"checkout",
+        "git_identity":{"name":"Fixture","email":"fixture@example.test"},"initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"hello"}]}}}
+    }))?;
+    db.accept_session(&input)?;
+    db.start_session(&input, &NodeIncarnationId::new("original"))?;
+    Ok(db.session_journal()?)
+}
+
+/// A successful lifecycle return cannot confirm an attempt with a live lock holder.
+#[tokio::test]
+async fn successful_cleanup_with_held_lock_leaves_attempt_unconfirmed() -> TestResult {
+    let (home, files, identity) = fixture()?;
+    let journal = journal(home.path())?;
+    files.create(&identity.attempt)?;
+    let _held = files.hold(&identity.attempt)?;
+    journal.record_session_stop(&identity, now_ms())?;
+    let config = SessionStopConfig {
+        confirmation_timeout_ms: 1,
+        ..Default::default()
+    };
+    request(&journal, &identity.execution, &config)?;
+    let [original] = journal.session_stop_records(None)?.try_into().unwrap();
+    assert!(
+        !await_plugin_stop(&journal, home.path(), &config, &identity.execution, async {
+            Ok::<(), std::io::Error>(())
+        })
+        .await?
+    );
+    assert_eq!(
+        journal.session_stop_records(None)?,
+        vec![ora_node_db::SessionStopRecord {
+            state: SessionStopState::StopUnconfirmed,
+            ..original
+        }]
+    );
+    Ok(())
+}
+
 /// Every fixture has an owner-private independent Node home and a value-free attempt identity.
 fn fixture()
 -> Result<(tempfile::TempDir, StopFiles, SessionStopIdentity), Box<dyn std::error::Error>> {
@@ -106,21 +139,8 @@ fn fixture()
 /// Lifecycle acknowledgement may need process exit; the durable owner must signal first.
 #[tokio::test]
 async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> TestResult {
-    use ora_node_db::{NodeDatabase, NodeIdentity};
-    use ora_node_protocol::*;
     let (home, files, identity) = fixture()?;
-    let mut db = NodeDatabase::open(
-        &home.path().join("db"),
-        NodeIdentity::Require(NodeId::new("node")),
-    )?;
-    let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
-        "protocol_version":CURRENT_PROTOCOL_VERSION,"operation_id":"op","execution_id":"session",
-        "payload":{"spec":{"node_id":"node","agent_plugin_id":"official/agent","agent_plugin_version":"1.0.0","checkout_execution_id":"checkout",
-        "git_identity":{"name":"Fixture","email":"fixture@example.test"},"initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"hello"}]}}}
-    }))?;
-    db.accept_session(&input)?;
-    db.start_session(&input, &NodeIncarnationId::new("original"))?;
-    let journal = db.session_journal()?;
+    let journal = journal(home.path())?;
     let spawner = prepare(
         &journal,
         home.path(),
@@ -132,16 +152,36 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
     let config = SessionStopConfig::default();
     request(&journal, &identity.execution, &config)?;
     spawner.close();
+    let [original] = journal.session_stop_records(None)?.try_into().unwrap();
+    let mut lifecycle_finished = false;
     let confirmed = tokio::time::timeout(
-        Duration::from_secs(2),
+        Duration::from_millis(750),
         await_plugin_stop(&journal, home.path(), &config, &identity.execution, async {
             plugin.wait().await?;
             cli.wait().await?;
-            Ok::<(), std::io::Error>(())
+            // Keep lifecycle cleanup pending beyond process exit and durable confirmation.
+            while journal.session_stop_records(None)?[0].state != SessionStopState::Confirmed {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            lifecycle_finished = true;
+            Ok::<(), Box<dyn std::error::Error>>(())
         }),
     )
     .await??;
-    assert!(confirmed);
+    assert!(confirmed && lifecycle_finished);
+    let records = journal.session_stop_records(None)?;
+    let confirmed_at = records[0]
+        .confirmed_at_ms
+        .ok_or("missing confirmation time")?;
+    assert_eq!(
+        records,
+        vec![ora_node_db::SessionStopRecord {
+            state: SessionStopState::Confirmed,
+            proof: Some(SessionStopProof::LockAndProcesses),
+            confirmed_at_ms: Some(confirmed_at),
+            ..original
+        }]
+    );
     assert!(plugin.try_wait()?.is_some());
     assert!(cli.try_wait()?.is_some());
     assert_eq!(
@@ -151,6 +191,32 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
             Some(SessionStopProof::LockAndProcesses)
         )
     );
+    Ok(())
+}
+
+/// Replacement cleanup waits on real children whose original groups must be signalled first.
+#[tokio::test]
+async fn replacement_signals_old_groups_before_lifecycle_cleanup() -> TestResult {
+    let (_home, files, identity) = fixture()?;
+    files.create(&identity.attempt)?;
+    let spawner = SessionAttemptSpawner::new(
+        TokioProcessSpawner::new().without_reaper_registration(),
+        identity.clone(),
+        files,
+    )?;
+    let plugin = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
+    let cli = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
+    assert!(spawner.is_open());
+    tokio::time::timeout(
+        Duration::from_millis(750),
+        spawner.stop_for_replacement(&identity.host, async {
+            assert!(!spawner.is_open());
+            plugin.wait().await?;
+            cli.wait().await?;
+            Ok::<(), std::io::Error>(())
+        }),
+    )
+    .await??;
     Ok(())
 }
 

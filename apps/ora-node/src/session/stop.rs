@@ -38,9 +38,8 @@ pub(super) async fn await_plugin_stop<L: SessionLedger, T, E: std::fmt::Display>
     execution: &ExecutionId,
     stop: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<bool, L::Error> {
-    // The lifecycle's graceful wait must not postpone the durable owner's termination attempt.
-    // A supervisor may kill Node before that wait finishes; session processes deliberately do
-    // not belong to the global reaper. Drive the original clues while awaiting diagnostics.
+    // Signal the original groups immediately. Await lifecycle cleanup for diagnostics before
+    // releasing views, even when the process evidence is already conclusive.
     let (result, confirmed) = tokio::join!(stop, confirm(ledger, home, config, execution, true),);
     if let Err(error) = result {
         ora_logging::ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
