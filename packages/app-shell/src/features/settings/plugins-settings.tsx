@@ -5,6 +5,7 @@ import type {
   AvailablePlugin,
   InstalledPlugin,
   InstallPluginResponse,
+  MarketplaceWorkflowOutcome,
   PackInstallationStatus,
   PackMemberReconciliationState,
   UpdatePluginResponse,
@@ -73,7 +74,10 @@ import {
   WorkflowImportReportDialog,
   type WorkflowImportReportInput,
 } from "./workflow-import-report-dialog";
-import { importedArchiveName } from "./workflow-import-report";
+import {
+  importedArchiveName,
+  marketplaceReportOutcomes,
+} from "./workflow-import-report";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -349,6 +353,13 @@ export function PluginsSettings({
             setReadmePlugin(null);
             onDetailClose?.();
           }}
+          onResolveDependency={(dependency, fix) => {
+            // The marketplace list owns every destination the report links to, so the detail view
+            // steps aside before the list moves to the requested plugin or configuration.
+            setReadmePlugin(null);
+            onDetailClose?.();
+            resolveImportDependency(dependency, fix);
+          }}
         />
       </PluginsScroll>
     );
@@ -541,6 +552,7 @@ export function PluginsSettings({
                         plugin={plugin}
                         installed={installedById.get(plugin.id)}
                         onSelect={setReadmePlugin}
+                        onWorkflowReport={setImportReport}
                       />
                     ))}
                   </div>
@@ -570,6 +582,15 @@ export function PluginsSettings({
           )}
         </div>
       </ScrollArea>
+      {importReport !== null && (
+        // A market install that delivered workflow documents reports them here, with the same
+        // per-workflow dependency rows and install shortcuts as the local import.
+        <WorkflowImportReportDialog
+          input={importReport}
+          onClose={() => setImportReport(null)}
+          onResolve={resolveImportDependency}
+        />
+      )}
     </>
   );
 }
@@ -681,10 +702,13 @@ function AvailablePluginCard({
   plugin,
   installed,
   onSelect,
+  onWorkflowReport,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
   onSelect: (plugin: AvailablePlugin) => void;
+  /** Opens the import report when the package delivered workflow documents. */
+  onWorkflowReport: (input: WorkflowImportReportInput) => void;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -699,13 +723,30 @@ function AvailablePluginCard({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: InstallPluginResponse) =>
+  const succeedInstall = (response: InstallPluginResponse) => {
     showPluginInstallOutcome(
       response.outcome,
       t,
       "settings.plugins.installSuccess",
       response.workflows,
     );
+    reportWorkflowDocuments(response.pluginId, response.workflows);
+  };
+  /**
+   * Opens the same dependency report the local import shows when a market install or upgrade
+   * delivered documents, so both entries answer "can these workflows run here?".
+   *
+   * Only documents that arrived or failed become rows; a package that skipped everything already
+   * handled keeps its one-line toast, the way the manager's explicit retry does.
+   */
+  const reportWorkflowDocuments = (
+    pluginId: string,
+    workflows: readonly MarketplaceWorkflowOutcome[],
+  ) => {
+    const outcomes = marketplaceReportOutcomes(workflows);
+    if (outcomes.length === 0) return;
+    onWorkflowReport({ fileName: pluginId, outcomes });
+  };
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
@@ -720,6 +761,7 @@ function AvailablePluginCard({
     toast.success(t("settings.plugins.updateSuccess"), {
       description: workflowDocumentSummary(response.workflows, t),
     });
+    reportWorkflowDocuments(response.pluginId, response.workflows);
   };
   /** Asks for the Hook execution disclosure before the one action that would run a program. */
   const start = (action: HookExecutionAction) => {

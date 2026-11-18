@@ -45,6 +45,7 @@ import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { workflowDocumentSummary } from "./plugin-install-feedback";
 import { marketplaceReportOutcomes } from "./workflow-import-report";
+import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import {
   WorkflowImportReportDialog,
   type WorkflowImportReportInput,
@@ -250,6 +251,12 @@ function InstalledPluginRow({
     toast.success(t("settings.plugins.updateSuccess"), {
       description: workflowDocumentSummary(response.workflows, t),
     });
+    // An upgrade that added documents gets the same readiness report an install gets, so a
+    // package the user already owns is not the one entry that hides a missing reference.
+    const outcomes = marketplaceReportOutcomes(response.workflows);
+    if (outcomes.length > 0) {
+      setImportReport({ fileName: response.pluginId, outcomes });
+    }
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
@@ -528,6 +535,12 @@ function InstalledPluginRow({
             <AlertDialogDescription>
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
+            {uninstallOpen &&
+              (plugin.kind === "mcp" || plugin.kind === "skill") && (
+                // A Skill or MCP a workflow binds must name that workflow before it leaves, so the
+                // user sees the break instead of discovering it when the run fails.
+                <WorkflowUninstallImpact pluginIds={[plugin.id]} />
+              )}
           </AlertDialogHeader>
           {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">

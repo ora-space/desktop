@@ -12,6 +12,7 @@ import {
 } from "@ora/ui";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
+import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 
 /**
  * Ownership-aware pack uninstall confirmation: the plan's remove/preserve/already-missing
@@ -58,6 +59,11 @@ export function PackUninstallConfirm({
             {t("settings.plugins.packUninstallDescription")}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {open && removable.length > 0 && (
+          // The plan already says which members leave; naming the workflows that bind them turns
+          // a package operation into its consequence for the runs the user already built.
+          <WorkflowUninstallImpact pluginIds={removable} />
+        )}
         <div className="max-h-64 space-y-3 overflow-y-auto text-sm">
           {plan.isLoading && (
             <p className="text-muted-foreground">

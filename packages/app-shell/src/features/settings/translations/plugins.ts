@@ -213,6 +213,15 @@ export const pluginTranslations = {
     "settings.plugins.uninstallDescription":
       "插件进程会先停止，然后移除已安装的代码。",
     "settings.plugins.deleteConfigurationData": "同时删除配置数据（推荐）",
+    "settings.plugins.uninstallDependencyChecking":
+      "正在检查引用该插件的工作流…",
+    "settings.plugins.uninstallDependencyUnknown":
+      "无法读取工作流或插件目录，暂时无法确认卸载影响。",
+    "settings.plugins.uninstallDependencyTitle": "{{count}} 个工作流依赖该插件",
+    "settings.plugins.uninstallDependencyDescription":
+      "卸载后这些工作流会缺依赖，运行到引用该插件的节点时会失败。",
+    "settings.plugins.uninstallDependencyUnreadable":
+      "{{count}} 个工作流的图无法读取，未能确认它们的依赖。",
     "settings.plugins.hook.confirmTitle": "执行“{{name}}”包含的程序？",
     "settings.plugins.hook.executionDisclosure":
       "此插件会执行包内程序，并可能读取或修改用户文件以及 Agent 配置文件。该程序以你的账户权限运行，不在 Ora 的插件沙箱内；确认即表示你授权这次执行。",
@@ -633,6 +642,16 @@ export const pluginTranslations = {
       "The plugin process will stop before installed code is removed.",
     "settings.plugins.deleteConfigurationData":
       "Also delete configuration data (recommended)",
+    "settings.plugins.uninstallDependencyChecking":
+      "Checking the workflows that use this plugin…",
+    "settings.plugins.uninstallDependencyUnknown":
+      "Unable to read the workflows or the plugin catalog, so the uninstall impact can’t be checked right now.",
+    "settings.plugins.uninstallDependencyTitle":
+      "{{count}} workflow(s) depend on this plugin",
+    "settings.plugins.uninstallDependencyDescription":
+      "After uninstalling, these workflows will be missing a dependency and fail at the nodes that use it.",
+    "settings.plugins.uninstallDependencyUnreadable":
+      "The graph of {{count}} workflow(s) could not be read, so their references are unconfirmed.",
     "settings.plugins.hook.confirmTitle":
       "Run the program bundled with {{name}}?",
     "settings.plugins.hook.executionDisclosure":

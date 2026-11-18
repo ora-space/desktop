@@ -4,6 +4,7 @@ import type {
   AvailablePlugin,
   InstalledPlugin,
   InstallPluginResponse,
+  MarketplaceWorkflowOutcome,
   UpdatePluginResponse,
 } from "@ora/contracts";
 import {
@@ -47,16 +48,35 @@ import {
   HookRemovalDisclosure,
   type HookExecutionAction,
 } from "./hook-execution-confirm";
+import {
+  WorkflowImportReportDialog,
+  type WorkflowImportReportInput,
+} from "./workflow-import-report-dialog";
+import { marketplaceReportOutcomes } from "./workflow-import-report";
+import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
+import type {
+  WorkflowDependency,
+  WorkflowDependencyFix,
+} from "../workflow-editor/workflow-transfer";
 
 /** The marketplace detail page: breadcrumb back navigation plus the listing's rendered README. */
 export function PluginReadmeView({
   plugin,
   installed,
   onBack,
+  onResolveDependency,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
   onBack: () => void;
+  /**
+   * Resolves a reported workflow dependency inside this pane. The detail page is a nested view of
+   * the marketplace, so the shared Settings deep link would wait for a later mount.
+   */
+  onResolveDependency: (
+    dependency: WorkflowDependency,
+    fix: WorkflowDependencyFix,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const readme = usePluginReadme(plugin.id);
@@ -89,7 +109,11 @@ export function PluginReadmeView({
             </span>
           </span>
         </span>
-        <PluginDetailAction plugin={plugin} installed={installed} />
+        <PluginDetailAction
+          plugin={plugin}
+          installed={installed}
+          onResolveDependency={onResolveDependency}
+        />
       </header>
 
       {readme.isLoading ? (
@@ -120,9 +144,14 @@ export function PluginReadmeView({
 function PluginDetailAction({
   plugin,
   installed,
+  onResolveDependency,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
+  onResolveDependency: (
+    dependency: WorkflowDependency,
+    fix: WorkflowDependencyFix,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -136,6 +165,8 @@ function PluginDetailAction({
   const [deleteData, setDeleteData] = useState(true);
   const [confirmAction, setConfirmAction] =
     useState<HookExecutionAction | null>(null);
+  const [importReport, setImportReport] =
+    useState<WorkflowImportReportInput | null>(null);
   const uninstalling = mutations.uninstall.isPending;
   const incompatible = plugin.compatibility === "incompatible";
   const isHook = plugin.kind === "hook";
@@ -145,13 +176,29 @@ function PluginDetailAction({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: InstallPluginResponse) =>
+  const succeedInstall = (response: InstallPluginResponse) => {
     showPluginInstallOutcome(
       response.outcome,
       t,
       "settings.plugins.installSuccess",
       response.workflows,
     );
+    reportWorkflowDocuments(response.pluginId, response.workflows);
+  };
+  /**
+   * Opens the dependency report a market install or upgrade delivered documents for.
+   *
+   * The detail page shows the same per-workflow readiness as the local import, so installing from
+   * the README does not leave the user to discover a missing Skill when the run fails.
+   */
+  const reportWorkflowDocuments = (
+    pluginId: string,
+    workflows: readonly MarketplaceWorkflowOutcome[],
+  ) => {
+    const outcomes = marketplaceReportOutcomes(workflows);
+    if (outcomes.length === 0) return;
+    setImportReport({ fileName: pluginId, outcomes });
+  };
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
@@ -161,6 +208,7 @@ function PluginDetailAction({
     toast.success(t("settings.plugins.updateSuccess"), {
       description: workflowDocumentSummary(response.workflows, t),
     });
+    reportWorkflowDocuments(response.pluginId, response.workflows);
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
@@ -299,6 +347,10 @@ function PluginDetailAction({
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {uninstallOpen &&
+            (plugin.kind === "mcp" || plugin.kind === "skill") && (
+              <WorkflowUninstallImpact pluginIds={[plugin.id]} />
+            )}
           {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -333,6 +385,13 @@ function PluginDetailAction({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {importReport !== null && (
+        <WorkflowImportReportDialog
+          input={importReport}
+          onClose={() => setImportReport(null)}
+          onResolve={onResolveDependency}
+        />
+      )}
     </>
   );
 }

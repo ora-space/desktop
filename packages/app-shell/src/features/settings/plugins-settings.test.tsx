@@ -1806,6 +1806,275 @@ it("sends an unavailable Skill to the Skills settings page", async () => {
   act(() => useUiStore.setState({ settingsOpen: false }));
 });
 
+/**
+ * Installs a Workflow package that carries a document the local machine cannot run yet: the
+ * market entry must answer with the same per-workflow dependency report as the local import
+ * (ora-space/circus#1270).
+ */
+it("reports workflow dependencies after a marketplace install", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  // The workflow's own graph is the authority: the missing Skill is named with its node.
+  expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
+    0,
+  );
+  expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByRole("button", { name: /去安装/ })).toBeVisible();
+});
+
+/** An upgrade that delivers documents reports them too, not only a first install. */
+it("reports workflow dependencies after a marketplace update", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+});
+
+/** The detail page is the same install entry, so it reports the same dependency result. */
+it("reports workflow dependencies after installing from the detail page", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.pluginReadmes.set("official/weather", "# Weather");
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+
+  // The fix link resolves in the marketplace list the detail page came from, not a later mount.
+  await user.click(within(report).getByRole("button", { name: /去安装/ }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("textbox", { name: "搜索插件" })).toHaveValue(
+    "release-notes",
+  );
+});
+
+/**
+ * Uninstalling a Skill plugin a workflow binds names that workflow and its nodes before the
+ * removal goes through, instead of letting the run fail later (ora-space/circus#1270).
+ */
+it("names the workflows that depend on a plugin before uninstalling it", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "skill",
+    configuration: { state: "not_declared" },
+  });
+  state.skills.skills.push({
+    id: "skill-release-notes",
+    namespace: "local",
+    name: "release-notes",
+    description: "Writes release notes",
+    source: { kind: "plugin", pluginId: "official/weather" },
+    availability: "available",
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(await within(dialog).findByText(/1 个工作流依赖该插件/)).toBeVisible();
+  expect(within(dialog).getByText("发布流程")).toBeVisible();
+  expect(within(dialog).getByText(/用于：编写发布说明/)).toBeVisible();
+  expect(within(dialog).getByText(/卸载后这些工作流会缺依赖/)).toBeVisible();
+
+  // The warning reports the impact; it does not take the decision away from the user.
+  await user.click(within(dialog).getByRole("button", { name: "卸载" }));
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(0));
+});
+
+/** A plugin no workflow binds keeps the confirmation exactly as short as it was. */
+it("leaves the uninstall confirmation unchanged when no workflow depends on it", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "skill",
+    configuration: { state: "not_declared" },
+  });
+  seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  await waitFor(() =>
+    expect(within(dialog).queryByText(/正在检查引用该插件的工作流/)).toBeNull(),
+  );
+  expect(within(dialog).queryByText(/依赖该插件/)).toBeNull();
+});
+
+/** Composes workflow and Skill catalogs onto a Pack fixture so its documents can be checked. */
+function packClientWithWorkflowPackage() {
+  const { state: plugins } = clientWithPack();
+  const state = {
+    ...plugins,
+    workflows: createWorkflowMemory(),
+    skills: createSkillMemory(),
+  };
+  const client = createTestClient({
+    ...createFixtureHandlers(state),
+    ...workflowHandlers(state.workflows),
+    ...skillHandlers(state.skills),
+  });
+  return { state, client };
+}
+
+/** A Pack install that delivers documents reports them like a single-plugin install. */
+it("reports workflow dependencies after a Pack install", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: CORE_MEMBER_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["python-core-skill"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+});
+
+/** A Pack uninstall names the workflows its removable members still serve. */
+it("names the workflows a Pack uninstall would break", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  state.installedPlugins = [
+    packMember(CORE_MEMBER_ID),
+    packMember(LINT_MEMBER_ID),
+  ];
+  seedInstalledPack(state, [
+    {
+      memberId: CORE_MEMBER_ID,
+      versionAtInstall: "1.0.0",
+      ownership: "managed_by_pack",
+      state: { state: "expected_and_present" },
+    },
+    {
+      memberId: LINT_MEMBER_ID,
+      versionAtInstall: "1.0.0",
+      ownership: "managed_by_pack",
+      state: { state: "expected_and_present" },
+    },
+  ]);
+  state.skills.skills.push({
+    id: "skill-python-core",
+    namespace: "local",
+    name: "python-core-skill",
+    description: "Pack-provided Skill",
+    source: { kind: "plugin", pluginId: CORE_MEMBER_ID },
+    availability: "available",
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["python-core-skill"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /卸载集合包/ }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(await within(dialog).findByText(/1 个工作流依赖该插件/)).toBeVisible();
+  expect(within(dialog).getByText("发布流程")).toBeVisible();
+});
+
 /** A path picker that rejects surfaces an error toast without touching the backend. */
 it("reports a path-picker failure when importing", async () => {
   const user = userEvent.setup();
@@ -2548,9 +2817,9 @@ function workflowInstalled(): InstalledPlugin {
 /**
  * A marketplace install of a Workflow package reports the documents it imported.
  *
- * The install toast is the only feedback the marketplace grid gives, so the import summary has to
- * arrive with it; the workflow library is checked separately and would not tell the user why a
- * document was skipped.
+ * The install toast carries the counts, which is what tells the user why a document was skipped;
+ * the workflow library is checked separately and would not explain it. The per-workflow dependency
+ * report beside that toast is covered by the marketplace install cases above.
  */
 it("reports the workflow documents a marketplace install imported", async () => {
   const user = userEvent.setup();

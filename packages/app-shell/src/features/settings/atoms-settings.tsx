@@ -70,6 +70,7 @@ import {
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
+import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import { invalidateAgents } from "../../state/data/agents";
 import { invalidateSkills } from "../../state/data/skills";
 
@@ -411,6 +412,11 @@ function DeletePluginSkillsDialog({
           <AlertDialogDescription>
             {t("settings.skills.deletePluginDescription")}
           </AlertDialogDescription>
+          {pluginId !== null && (
+            // Plugin-provided Skills cannot be deleted on their own, so the removal has to name
+            // the workflows that would lose the Skill before the user confirms it.
+            <WorkflowUninstallImpact pluginIds={[pluginId]} />
+          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={uninstalling}>
