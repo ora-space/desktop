@@ -219,6 +219,10 @@ where
         Ok(prepared) => prepared,
         Err(failure) => return failure.preflight_end(execution),
     };
+    // Taken out of the spec so the values live only in the session view the runtime asks on
+    // every setup; a repeated start never reaches here, so the first values stay in use.
+    let session_setup = session_setup.with_host_servers(std::mem::take(&mut spec.host_mcp_servers));
+    let host_refused = session_setup.host_refused();
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
@@ -547,6 +551,12 @@ where
                 _ = async { if let Some(control) = &control { loop { control.probes.notified().await; shared.probes.dispatch(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
                 _ = async { if let Some(control) = &control { loop { control.refresh.notified().await; manager.notify_mcp_desired_changed(); } } else { std::future::pending::<()>().await; } } => unreachable!(),
                 _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
+                // A refresh or replacement onto an Agent without HTTP MCP fails off the turn path;
+                // the execution ends instead of continuing without its host servers.
+                () = host_refused.notified() => {
+                    ora_warn!(execution_id = %execution, error_code = super::mcp::host::HOST_MCP_HTTP_CAPABILITY_MISSING, "host MCP servers need an Agent with HTTP MCP");
+                    conversation.stop(SessionEnd::agent_failed(super::mcp::host::HOST_MCP_HTTP_CAPABILITY_MISSING)).await
+                },
                 status = async {
                     match &mut model_status {
                         Some(status) => status.wait_for(|status| *status != ModelAccessStatus::Active).await

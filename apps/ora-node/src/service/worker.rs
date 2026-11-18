@@ -149,6 +149,7 @@ pub(super) fn run(
         capabilities.push(NodeCapability::AgentSession);
         capabilities.push(NodeCapability::SessionMcp);
         capabilities.push(NodeCapability::SessionMcpLifecycle);
+        capabilities.push(NodeCapability::SessionHostMcpServers);
         capabilities.push(NodeCapability::SharedCheckoutSessions);
     }
     if agents

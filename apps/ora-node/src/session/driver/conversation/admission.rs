@@ -257,7 +257,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                                     // races must not clear another request's in-flight generation.
                                     break;
                                 },
-                                Err((error, failed)) => { return Err(if failed { SessionEnd::agent_failed("ledger_unavailable") } else if self.control.is_some() || std::error::Error::source(&error).is_some_and(<dyn std::error::Error + 'static>::is::<ReadinessUnavailable>) { SessionEnd::agent_failed("agent_unavailable") } else { crate::session::mcp::start_failure(&error, self.execution) }); },
+                                Err((error, failed)) => { return Err(if failed { SessionEnd::agent_failed("ledger_unavailable") } else if let Some(end) = crate::session::mcp::host_start_failure(&error, self.execution) { end } else if self.control.is_some() || std::error::Error::source(&error).is_some_and(<dyn std::error::Error + 'static>::is::<ReadinessUnavailable>) { SessionEnd::agent_failed("agent_unavailable") } else { crate::session::mcp::start_failure(&error, self.execution) }); },
                             }
                         },
                         () = changed(self.control) => {},

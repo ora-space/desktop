@@ -1,5 +1,6 @@
 //! Explicit MCP input, with an opt-in memory owner for ordered lifecycle updates.
 pub(crate) mod control;
+pub(in crate::session) mod host;
 pub(crate) mod probes;
 mod replacement;
 mod resources;
@@ -182,6 +183,9 @@ pub(super) struct NodeSessionMcp {
     lifecycle: Option<(control::Control, Arc<Resolver>)>,
     budget: Arc<std::sync::Mutex<(usize, Option<SessionMcpRevision>)>>,
     replacement: Option<Arc<Replacement>>,
+    /// Fixed for the execution; lifecycle resolver views never carry them, because the runtime
+    /// asks the session's own view for host servers on every setup.
+    host: host::HostServers,
 }
 
 /// The catalog type stays with the Node composition; the runtime owns only this session resolver.
@@ -192,6 +196,21 @@ type Replacement = dyn Fn() -> std::pin::Pin<
     + Sync;
 
 impl NodeSessionMcp {
+    /// Attaches the execution's Controller-provided servers to every ACP setup of this view.
+    pub(super) fn with_host_servers(
+        mut self,
+        servers: Vec<ora_node_protocol::HostMcpServer>,
+    ) -> Self {
+        self.host = host::HostServers::new(servers);
+        self
+    }
+
+    /// Completes once an Agent connection of this execution lacked the HTTP MCP its host
+    /// servers need, whether at start, on a refresh or after a replacement.
+    pub(super) fn host_refused(&self) -> Arc<tokio::sync::Notify> {
+        self.host.refused()
+    }
+
     /// The first process is durably registered against startup package versions before it spawns.
     pub(super) fn with_initial_packages(self, bindings: &[SessionMcpBinding]) -> Self {
         let members = bindings
@@ -387,6 +406,7 @@ impl NodeSessionMcp {
             lifecycle: None,
             budget: Arc::new(std::sync::Mutex::new((0, None))),
             replacement: None,
+            host: host::HostServers::default(),
         };
         resolve_session_mcp(
             &setup,
@@ -509,6 +529,10 @@ impl SessionSetup for NodeSessionMcp {
     }
 
     fn mcp_failed(&self, error: &RuntimeError) {
+        // The host gate ends the execution; it is not a plugin MCP failure to publish.
+        if host::is_capability_missing(error) {
+            return;
+        }
         if let Some((control, _)) = &self.lifecycle {
             let failure = std::error::Error::source(error)
                 .and_then(|source| source.downcast_ref::<NodeMcpFailure>())
@@ -538,6 +562,11 @@ impl SessionSetup for NodeSessionMcp {
     fn selection(&self) -> &SessionMcpSelection {
         &self.selection
     }
+    /// Appended after the plugin servers on every `session/new` and `session/load`, including
+    /// refresh loads and the setups of a replacement Agent.
+    fn host_mcp_servers(&self) -> Vec<agent_client_protocol_schema::v1::McpServer> {
+        self.host.servers()
+    }
     /// The input cannot change during the lifetime of this execution.
     fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError> {
         if let Some((control, resolver)) = &self.lifecycle {
@@ -554,15 +583,17 @@ impl SessionSetup for NodeSessionMcp {
         }
         self.revision().map_err(NodeMcpFailure::into_runtime_error)
     }
-    /// Capabilities came from initialize; failure prevents the first session/new request.
+    /// Capabilities came from initialize; failure prevents the first session/new request. The
+    /// plugin checks come first, so a plugin MCP failure keeps its own code and identity, and the
+    /// host gate runs only once the plugin part would have been sent.
     fn resolve_mcp(
         &self,
         cwd: &Path,
         capabilities: AgentSessionMcpCapabilities,
     ) -> Result<SessionMcpSnapshot, RuntimeError> {
-        if let Some((control, resolver)) = &self.lifecycle {
+        let snapshot = if let Some((control, resolver)) = &self.lifecycle {
             let input = control.begin();
-            return resolver(&input)
+            resolver(&input)
                 .and_then(|setup| {
                     control.resolved(input.generation);
                     setup.snapshot(cwd, capabilities)
@@ -570,10 +601,13 @@ impl SessionSetup for NodeSessionMcp {
                 .map_err(|failure| {
                     control.blocked(input.generation, failure.observation());
                     failure.into_runtime_error()
-                });
-        }
-        self.snapshot(cwd, capabilities)
-            .map_err(NodeMcpFailure::into_runtime_error)
+                })?
+        } else {
+            self.snapshot(cwd, capabilities)
+                .map_err(NodeMcpFailure::into_runtime_error)?
+        };
+        self.host.check(capabilities)?;
+        Ok(snapshot)
     }
     /// Node health probing is deliberately outside this delivery contract.
     fn observe_mcp_health(&self, _session_id: &SessionId, _cwd: &Path) {}
@@ -597,6 +631,9 @@ pub(super) fn start_failure(
     error: &RuntimeError,
     execution: &ExecutionId,
 ) -> super::end::SessionEnd {
+    if let Some(end) = host_start_failure(error, execution) {
+        return end;
+    }
     log_start_failure(error, execution);
     std::error::Error::source(error)
         .and_then(|source| source.downcast_ref::<NodeMcpFailure>())
@@ -604,6 +641,21 @@ pub(super) fn start_failure(
             || super::end::SessionEnd::agent_failed("agent_start_failed"),
             NodeMcpFailure::session_end,
         )
+}
+
+/// Ends an execution whose host servers met an Agent without HTTP MCP, naming no server.
+pub(super) fn host_start_failure(
+    error: &RuntimeError,
+    execution: &ExecutionId,
+) -> Option<super::end::SessionEnd> {
+    host::is_capability_missing(error).then(|| {
+        ora_warn!(
+            execution_id = %execution,
+            error_code = host::HOST_MCP_HTTP_CAPABILITY_MISSING,
+            "host MCP servers need an Agent with HTTP MCP"
+        );
+        super::end::SessionEnd::agent_failed(host::HOST_MCP_HTTP_CAPABILITY_MISSING)
+    })
 }
 
 #[cfg(test)]

@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/host_mcp.rs"]
+mod host_mcp;
 #[path = "agent_session/mcp.rs"]
 mod mcp;
 #[path = "agent_session/resume.rs"]

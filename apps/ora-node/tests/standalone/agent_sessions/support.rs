@@ -164,6 +164,7 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
     // restore, which runs delivery Git in session checkouts, needs both.
     for capability in [
         NodeCapability::SessionMcp,
+        NodeCapability::SessionHostMcpServers,
         NodeCapability::SharedCheckoutSessions,
         NodeCapability::RevisionDelivery,
         NodeCapability::RevisionRestore,

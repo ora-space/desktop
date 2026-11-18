@@ -53,7 +53,7 @@ fn lifecycle_agent_failure_is_terminal_and_unknown_execution_keeps_connection_op
     });
 }
 
-async fn reply(stream: &mut UnixStream) -> SessionMcpReply {
+pub(super) async fn reply(stream: &mut UnixStream) -> SessionMcpReply {
     loop {
         match receive(stream).await {
             NodeToControllerMessage::SessionMcpReply(reply) => return reply.payload,
@@ -64,7 +64,7 @@ async fn reply(stream: &mut UnixStream) -> SessionMcpReply {
     }
 }
 
-fn get() -> ControllerToNodeMessage {
+pub(super) fn get() -> ControllerToNodeMessage {
     ControllerToNodeMessage::GetSessionMcpState(GetSessionMcpStateMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: start("").operation_id,
@@ -77,7 +77,7 @@ fn get() -> ControllerToNodeMessage {
 }
 
 /// A real stdio server leaves a descendant so Healthy requires process-group cleanup as well.
-fn install_mcp(fixture: &Fixture, version: &str) {
+pub(super) fn install_mcp(fixture: &Fixture, version: &str) {
     let root = fixture
         .config()
         .home_directory
@@ -102,7 +102,7 @@ for line in sys.stdin:
     fs::set_permissions(executable, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-async fn current_healthy(stream: &mut UnixStream, generation: u64, attempt: u64) {
+pub(super) async fn current_healthy(stream: &mut UnixStream, generation: u64, attempt: u64) {
     tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             send(stream, get()).await;

@@ -18,3 +18,7 @@ Module tests cover their real protocol, recovery, Git or TLS boundary. Cloud dou
 settings). Omitted/empty means none; no automatic discovery occurs. Settings stay in memory and
 the successful ACP `session/new`, never the ledger or history. See [Session MCP](../../docs/agents/session-mcp.md#node-sessions)
 for limits, capability gates, failure codes and package isolation.
+
+`session_host_mcp_servers` advertises `AgentSessionSpec.host_mcp_servers`: Controller-provided HTTP
+servers attached after the plugin servers on every ACP setup, with URLs and headers kept in memory
+and only their names in the ledger. See [Host MCP servers](../../docs/agents/session-mcp.md#host-mcp-servers).
