@@ -70,7 +70,7 @@ over its `agent/acp` notification channel. See
 
 ## Connections and supervision
 
-The private `startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
+The private `manager_startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
 
 The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value. A report carries no model when it is empty, when two selects make the fallback ambiguous, or when the `Model` category is not a select.
 
