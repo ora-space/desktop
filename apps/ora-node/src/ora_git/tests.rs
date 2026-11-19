@@ -279,6 +279,7 @@ fn session_start(node: &NodeId) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("agent-session"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 node_id: node.clone(),

@@ -11,7 +11,7 @@ use std::path::Path;
 const SECRET: &str = "m938-runtime-secret";
 
 /// Installs both MCP shapes without saving any runtime settings on disk.
-fn configure(fixture: &Fixture, load: bool, http: bool) -> Vec<SessionMcpBinding> {
+pub(super) fn configure(fixture: &Fixture, load: bool, http: bool) -> Vec<SessionMcpBinding> {
     std::fs::write(
         fixture.package_root().join("mcp-capabilities.json"),
         json!({"load":load, "http":http}).to_string(),
@@ -65,13 +65,14 @@ fn configure(fixture: &Fixture, load: bool, http: bool) -> Vec<SessionMcpBinding
 }
 
 /// Supplies the same live spec to durable admission and the production SessionHost.
-fn input(mcp: Vec<SessionMcpBinding>) -> StartAgentSessionMessage {
+pub(super) fn input(mcp: Vec<SessionMcpBinding>) -> StartAgentSessionMessage {
     StartAgentSessionMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: OperationId::new(OPERATION),
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp,
                 node_id: NodeId::new("node-1"),

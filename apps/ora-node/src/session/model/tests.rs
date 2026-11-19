@@ -302,6 +302,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
+            host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
             mcp: Vec::new(),
             agent_configuration: None,
@@ -487,6 +488,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     OperationId::new("operation"),
                     execution.clone(),
                     AgentSessionSpec {
+                        host_mcp_servers: Vec::new(),
                         mcp_lifecycle: false,
                         mcp: Vec::new(),
                         workspace_directory: Vec::new(),

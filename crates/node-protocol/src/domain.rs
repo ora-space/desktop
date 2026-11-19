@@ -1,4 +1,9 @@
 mod agent_session;
+mod host_mcp;
+pub use host_mcp::{
+    HostMcpHeaders, HostMcpServer, MAX_HOST_MCP_HEADERS, MAX_HOST_MCP_SERVERS,
+    MAX_HOST_MCP_TOTAL_BYTES, MAX_HOST_MCP_URL_BYTES,
+};
 mod session_mcp;
 mod session_mcp_lifecycle;
 pub use session_mcp::{

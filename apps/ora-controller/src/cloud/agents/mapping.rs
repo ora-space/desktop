@@ -30,6 +30,7 @@ pub(in crate::cloud) fn start(
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 node_id: node.clone(),
@@ -432,6 +433,7 @@ mod tests {
                 execution_id: ExecutionId::new("session"),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        host_mcp_servers: Vec::new(),
                         mcp_lifecycle: false,
                         mcp: Vec::new(),
                         node_id: NodeId::new("node"),

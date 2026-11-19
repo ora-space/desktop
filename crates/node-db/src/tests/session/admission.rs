@@ -45,6 +45,7 @@ fn refusal_identity() -> NodeRuntimeIdentity {
 /// A refused session's durable terminal, shared by the whole-record assertions below.
 fn refused_record(command: &StartAgentSessionMessage, detail: &str) -> SessionExecution {
     SessionExecution {
+        host_mcp_server_names: Vec::new(),
         command: command.clone(),
         state: ExecutionState::Completed(ExecutionResult::AgentSession(
             AgentSessionResult::AgentSessionEnded(AgentSessionEnded {

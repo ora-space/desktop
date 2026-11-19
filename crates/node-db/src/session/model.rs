@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 /// Original session input and retained terminal state, independent of event acknowledgements.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionExecution {
+    /// The input without runtime-only values: MCP settings are empty and there are no host MCP
+    /// servers, whose names alone are kept below.
     pub command: StartAgentSessionMessage,
+    /// Names of the host MCP servers the session started with, in input order. URLs and headers
+    /// are runtime values and never reach the database.
+    pub host_mcp_server_names: Vec<String>,
     pub state: ExecutionState,
     /// Zero before the first event; retained even when all outbox entries are acknowledged.
     pub last_sequence: u64,

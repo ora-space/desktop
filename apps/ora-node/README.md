@@ -17,3 +17,7 @@ Rust Node 是执行程序。Cloud 网络入口要求双向 TLS、固定目标与
 `session_mcp` 声明支持 `AgentSessionSpec.mcp` 显式绑定（插件 id、精确版本、标量 Settings）。省略或空列表表示
 没有插件 MCP，从不自动发现。Settings 只在内存和成功的 ACP `session/new` 中，不进入 ledger 或 history。
 上限、能力门禁、错误码和包隔离见 [Session MCP](../../docs/agents/session-mcp.zh.md#node-会话)。
+
+`session_host_mcp_servers` 声明支持 `AgentSessionSpec.host_mcp_servers`：Controller 提供的 HTTP Server，在每次
+ACP setup 中附加在插件 Server 之后；URL 与请求头只在内存中，ledger 只保留名称。见
+[宿主 MCP Server](../../docs/agents/session-mcp.zh.md#宿主-mcp-server)。

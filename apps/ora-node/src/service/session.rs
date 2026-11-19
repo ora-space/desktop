@@ -234,8 +234,22 @@ async fn receive<R: FrameReceiver>(
     match receiver.recv().await? {
         Some(frame) => decode_controller_frame(&frame)
             .map(Some)
-            .map_err(|error| Failure::local(CloseReason::ProtocolViolation, error)),
+            .map_err(|error| Failure::local(CloseReason::ProtocolViolation, decode_failure(error))),
         None => Ok(None),
+    }
+}
+
+/// Keeps only the failure category: a JSON decoder message can quote a string value, and a start
+/// frame may carry host MCP URLs and headers that must never reach a log or an error chain.
+fn decode_failure(error: FrameError) -> String {
+    match error {
+        FrameError::DecodeJson(source) => {
+            format!(
+                "failed to decode Controller–Node message JSON ({:?})",
+                source.classify()
+            )
+        }
+        other => other.to_string(),
     }
 }
 

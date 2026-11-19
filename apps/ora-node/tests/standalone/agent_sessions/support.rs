@@ -18,6 +18,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
@@ -163,6 +164,7 @@ pub(super) async fn connect(fixture: &Fixture) -> (UnixStream, NodeRuntimeIdenti
     // restore, which runs delivery Git in session checkouts, needs both.
     for capability in [
         NodeCapability::SessionMcp,
+        NodeCapability::SessionHostMcpServers,
         NodeCapability::SharedCheckoutSessions,
         NodeCapability::RevisionDelivery,
         NodeCapability::RevisionRestore,

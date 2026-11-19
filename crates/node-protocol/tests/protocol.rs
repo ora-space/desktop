@@ -6,6 +6,8 @@ mod agent_session;
 mod execution;
 #[path = "protocol/framing.rs"]
 mod framing;
+#[path = "protocol/host_mcp.rs"]
+mod host_mcp;
 #[path = "protocol/plugin.rs"]
 mod plugin;
 #[path = "protocol/repository.rs"]

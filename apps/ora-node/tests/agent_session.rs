@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/host_mcp.rs"]
+mod host_mcp;
 #[path = "agent_session/mcp.rs"]
 mod mcp;
 #[path = "agent_session/resume.rs"]
@@ -124,6 +126,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
             mcp: Vec::new(),
             agent_configuration: None,
@@ -843,6 +846,7 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
             mcp: Vec::new(),
             agent_configuration: None,

@@ -3,6 +3,7 @@ use super::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 mod admission;
+mod host_mcp;
 mod mcp;
 mod recovery;
 mod restore;
@@ -16,6 +17,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("session-execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
@@ -181,6 +183,7 @@ fn exact_ack_and_sequence_survive_reopen() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Completed(ExecutionResult::AgentSession(
                 AgentSessionResult::AgentSessionEnded(ended())
@@ -246,6 +249,7 @@ fn a_scheduled_declaration_is_persisted_with_the_terminal_result() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Completed(ExecutionResult::AgentSession(
                 AgentSessionResult::AgentSessionEnded(ended)
@@ -403,6 +407,7 @@ fn failed_event_rolls_back_all_session_effects() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Running,
             last_sequence: 0

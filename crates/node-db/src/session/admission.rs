@@ -37,16 +37,17 @@ impl SessionRefusal {
 
 /// A start that admission refused, carrying the durable projection of its input.
 ///
-/// Admission is the single owner of that projection: it strips runtime-only MCP Setting values
-/// before reading or writing anything, and hands the projected input out only inside this value.
-/// [`NodeDatabase::refuse_session`] accepts nothing else, so a refused execution can never
-/// persist the raw control frame, and its record compares equal to any retransmission of the
-/// same start whatever Setting values that retransmission carries.
+/// Admission is the single owner of that projection: it strips runtime-only MCP Setting values and
+/// host MCP URLs and headers before reading or writing anything, and hands the projected input out
+/// only inside this value. [`NodeDatabase::refuse_session`] accepts nothing else, so a refused
+/// execution can never persist the raw control frame, and its record compares equal to any
+/// retransmission of the same start whatever runtime values that retransmission carries.
 #[derive(Debug, thiserror::Error)]
 #[error("{refusal}")]
 pub struct RefusedSession {
     pub(super) refusal: SessionRefusal,
     pub(super) command: Box<StartAgentSessionMessage>,
+    pub(super) host_mcp_server_names: Vec<String>,
 }
 
 impl RefusedSession {
@@ -68,11 +69,14 @@ impl<G: WriteGuard> NodeDatabase<G> {
         node: &NodeRuntimeIdentity,
     ) -> Result<SessionExecution, Error> {
         let (command, refusal) = (refused.command.as_ref(), refused.refusal);
+        let host_mcp_server_names = &refused.host_mcp_server_names;
         if node.node_id != self.node_id {
             return Err(Error::NodeMismatch);
         }
         if let Some(record) = self.find_session(&command.operation_id, &command.execution_id)? {
-            return if record.command == *command {
+            return if record.command == *command
+                && record.host_mcp_server_names == *host_mcp_server_names
+            {
                 Ok(record)
             } else {
                 Err(Error::IdentityConflict)
@@ -112,7 +116,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
             "INSERT INTO node_executions(execution,kind,input,state,result,last_sequence) VALUES(?1,'agent_session',?2,'completed',?3,1)",
             params![
                 command.execution_id.as_str(),
-                serde_json::to_string(command)?,
+                super::encode_input(command, host_mcp_server_names)?,
                 serde_json::to_string(&result)?
             ],
         )?;
@@ -133,6 +137,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         tx.commit()?;
         Ok(SessionExecution {
             command: command.clone(),
+            host_mcp_server_names: host_mcp_server_names.clone(),
             state: ExecutionState::Completed(ExecutionResult::AgentSession(result)),
             last_sequence: 1,
         })

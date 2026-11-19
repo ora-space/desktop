@@ -20,6 +20,9 @@ pub enum NodeCapability {
     /// Explicit, exact-version MCP bindings carried in a session start.
     SessionMcp,
     SessionMcpLifecycle,
+    /// Controller-provided HTTP MCP servers carried in a session start and attached to every ACP
+    /// setup of that session.
+    SessionHostMcpServers,
     /// Several independent Agent sessions may share one checkout, subject to restore fencing.
     SharedCheckoutSessions,
     /// Scoped model access through the platform gateway; no direct upstream credentials.
