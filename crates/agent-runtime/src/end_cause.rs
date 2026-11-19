@@ -32,6 +32,9 @@ pub enum PromptEndCause {
 #[derive(Debug, Clone, Default)]
 pub struct PromptEndReport {
     cause: Arc<Mutex<Option<PromptEndCause>>>,
+    /// Set when a turn cancel stopped the prompt after admission but before it was written, so
+    /// the Agent never received this turn.
+    unsent: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PromptEndReport {
@@ -49,6 +52,17 @@ impl PromptEndReport {
         if slot.is_none() {
             *slot = Some(cause);
         }
+    }
+
+    /// Marks a prompt that a turn cancel stopped before it reached the Agent.
+    pub(crate) fn mark_unsent(&self) {
+        self.unsent
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the Agent never received this prompt because a turn cancel stopped it first.
+    pub fn unsent(&self) -> bool {
+        self.unsent.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Returns the recorded cause once the turn has ended.

@@ -419,6 +419,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt)
                 | ActiveInput::Command(RuntimeCommand::TitlePoll { .. }) => {}
+                // A refresh owns the channel's events, so quiet cannot be shown from here.
+                ActiveInput::Command(RuntimeCommand::TakeIdleTurnTraffic { response }) => {
+                    let _ = response.send(true);
+                }
                 ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
                     self.observe_session_update(&update);
                 }

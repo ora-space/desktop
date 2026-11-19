@@ -19,7 +19,7 @@ use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
-use tokio::time::timeout;
+use tokio::time::timeout_at;
 
 /// Whether one provider update is work the user would see or a tool already ran.
 ///
@@ -187,6 +187,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.channel = Some(channel);
             return;
         }
+        if self.turn_cancel.deadline().is_some() && !attempt.skip_record {
+            // Admitted and recorded, but a turn cancel arrived before the write: the Agent never
+            // receives this turn, its end is recorded as cancelled, and the provider session is
+            // untouched, so it stays reusable without any quiescence check.
+            end_report.record(PromptEndCause::UserStopped);
+            end_report.mark_unsent();
+            self.end_turn(StopReason::Cancelled);
+            let _ = events.try_send(Ok(PromptSessionEvent::Completed {
+                stop_reason: StopReason::Cancelled,
+                token_usage: None,
+            }));
+            self.channel = Some(channel);
+            return;
+        }
         let agent_session_id = self.provider_session_id().to_string();
         let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
         if let Some(instruction) = &record_prompt.attempt_instruction {
@@ -276,6 +290,32 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         tool_timings = ToolTimings::default();
                         pending = resent;
                         continue;
+                    }
+                    StalledPrompt::Cancelled { reusable } => {
+                        // A turn cancel merged into the watchdog's stop: the turn ends as the
+                        // user's cancel, never resent, and only an answered cancel keeps the
+                        // provider session.
+                        end_report.record(PromptEndCause::UserStopped);
+                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        followers.finish(StopReason::Cancelled);
+                        if reusable {
+                            self.record_cleanup(operation_id, Ok(()));
+                            if events
+                                .try_send(Ok(PromptSessionEvent::Completed {
+                                    stop_reason: StopReason::Cancelled,
+                                    token_usage: None,
+                                }))
+                                .is_ok()
+                            {
+                                self.channel = Some(channel);
+                            } else {
+                                self.isolate_channel(channel).await;
+                            }
+                        } else {
+                            let _ = events.try_send(Err(RuntimeError::turn_cancel_unanswered()));
+                            self.isolate_channel(channel).await;
+                        }
+                        return;
                     }
                     StalledPrompt::Failed(error) => {
                         // The inactivity schedule gave up: this is a system timeout, never the
@@ -473,7 +513,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);
                             self.load_restoration = LoadRestoration::NotRestored;
-                            let delivered = events.try_send(Err(map_prompt_error(error))).is_ok();
+                            let failure = map_prompt_error(error);
+                            // A request error is the Agent's own answer; a transport failure is not.
+                            let failure = if reusable {
+                                failure.answered()
+                            } else {
+                                failure
+                            };
+                            let delivered = events.try_send(Err(failure)).is_ok();
                             if reusable && delivered {
                                 self.channel = Some(channel);
                             } else {
@@ -546,9 +593,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     } else {
                         PromptEndCause::StreamDropped
                     });
+                    // A turn cancel waits until its own deadline and must report an unanswered
+                    // cancel; the stop button keeps the runtime's short grace.
+                    let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
                     self.cancel(&client, &permissions).await;
-                    let settled = timeout(
-                        CANCELLATION_GRACE,
+                    let settled = timeout_at(
+                        turn_deadline
+                            .unwrap_or_else(|| tokio::time::Instant::now() + CANCELLATION_GRACE),
                         settle_cancelled_prompt(
                             self,
                             &mut channel,
@@ -573,15 +624,27 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         )
                         .await;
                     }
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                    followers.finish(StopReason::Cancelled);
+                    // A turn cancel that met an Agent finishing at the boundary keeps the Agent's
+                    // own stop reason: its caller then knows the cancel did nothing.
+                    let stop_reason = match &settled {
+                        Ok(Some(Ok(response))) if turn_deadline.is_some() => response.stop_reason,
+                        _ => StopReason::Cancelled,
+                    };
+                    self.end_timed_turn(stop_reason, &tool_timings);
+                    followers.finish(stop_reason);
                     let owner_notified = !notify_owner
-                        || events
-                            .try_send(Ok(PromptSessionEvent::Completed {
-                                stop_reason: StopReason::Cancelled,
-                                token_usage: None,
-                            }))
-                            .is_ok();
+                        || if turn_deadline.is_some() && !reusable {
+                            events
+                                .try_send(Err(RuntimeError::turn_cancel_unanswered()))
+                                .is_ok()
+                        } else {
+                            events
+                                .try_send(Ok(PromptSessionEvent::Completed {
+                                    stop_reason,
+                                    token_usage: None,
+                                }))
+                                .is_ok()
+                        };
                     if reusable && owner_notified {
                         self.channel = Some(channel);
                     } else {
@@ -658,6 +721,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }
                 }
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
+                // A running prompt is not quiet; the question is only asked between turns.
+                ActiveInput::Command(RuntimeCommand::TakeIdleTurnTraffic { response }) => {
+                    let _ = response.send(true);
+                }
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();
                 }

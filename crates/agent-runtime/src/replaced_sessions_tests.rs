@@ -46,7 +46,13 @@ fn register_actor(
         .actors
         .write()
         .expect("actor registry")
-        .insert(SessionId::new(session_id), RuntimeActorHandle { commands });
+        .insert(
+            SessionId::new(session_id),
+            RuntimeActorHandle {
+                commands,
+                turn_cancel: Default::default(),
+            },
+        );
     received
 }
 
