@@ -1861,6 +1861,61 @@ it("reports workflow dependencies after a marketplace install", async () => {
   expect(within(report).getByRole("button", { name: /去安装/ })).toBeVisible();
 });
 
+/**
+ * An Agent node may carry an explicit `agentConfig: null`; the backend imports it as-is, so the
+ * report has to read it as "no bindings" instead of dereferencing null and unmounting the whole
+ * app on the first render (ora-space/circus#1281).
+ */
+it("reports a marketplace install whose Agent node has a null agent config", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    JSON.stringify({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: "agent-1",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "编写发布说明",
+            agentConfig: null,
+          },
+        },
+      ],
+      edges: [],
+      annotations: [],
+      globalVariables: [],
+    }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  // A null binding is an empty binding list, not an unreadable graph.
+  expect(
+    within(report).getByText(/没有引用任何 MCP 或 Skill 插件/),
+  ).toBeVisible();
+  expect(within(report).queryByText(/无法读取「发布流程」的图/)).toBeNull();
+});
+
 /** An upgrade that delivers documents reports them too, not only a first install. */
 it("reports workflow dependencies after a marketplace update", async () => {
   const user = userEvent.setup();
