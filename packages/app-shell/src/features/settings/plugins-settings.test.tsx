@@ -2847,6 +2847,47 @@ it("lists surviving imported workflows when uninstalling a workflow plugin from 
 });
 
 /**
+ * A workflow plugin uninstall must never read an unreadable library as "no imported workflows":
+ * the dialog names what stays unknown, keeps the confirmation available, and shows no list.
+ */
+it("warns that retained imported workflows are unknown when the library fails during a workflow plugin uninstall", async () => {
+  const user = userEvent.setup();
+  const { state, handlers, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "workflow",
+    configuration: { state: "not_declared" },
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph(),
+    undefined,
+    "official/weather",
+  );
+  vi.spyOn(handlers, "listWorkflows").mockRejectedValue(
+    new Error("workflow library unavailable"),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(
+      /无法读取工作流库，暂时无法确认会保留哪些已导入的工作流/,
+    ),
+  ).toBeVisible();
+  expect(within(dialog).queryByText(/工作流会保留/)).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
+});
+
+/**
  * Pack uninstall lists surviving workflows from removable workflow members alongside any
  * Skill/MCP dependency warning, while excluding workflows owned by preserved members.
  */

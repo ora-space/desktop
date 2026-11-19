@@ -41,6 +41,16 @@ export type WorkflowUninstallImpactState =
       checking: false;
       impact: null;
       importedWorkflows: null;
+      /**
+       * The dependency impact stays unknown: the plugin/skill catalogs were unreadable, or the
+       * workflow library failed while dependency targets exist.
+       */
+      dependencyImpactUnknown: boolean;
+      /**
+       * The retained-copy list stays unknown: the workflow library failed while the uninstall
+       * includes a workflow plugin, so "no imported workflows" must never be implied.
+       */
+      retentionUnknown: boolean;
     }
   | {
       status: "ready";
@@ -245,6 +255,9 @@ export function useWorkflowUninstallImpact(
       checking: false,
       impact: null,
       importedWorkflows: null,
+      dependencyImpactUnknown:
+        catalogsFailed || (libraryFailed && targets.length > 0),
+      retentionUnknown: libraryFailed && workflowSourceCandidate,
     };
   }
   return {

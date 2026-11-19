@@ -227,6 +227,8 @@ export const pluginTranslations = {
       "已导入的 {{count}} 个工作流会保留",
     "settings.plugins.uninstallImportedDescription":
       "卸载只移除插件包本身，这些工作流会继续留在你的工作流库中，可以照常编辑和运行。",
+    "settings.plugins.uninstallImportedUnknown":
+      "无法读取工作流库，暂时无法确认会保留哪些已导入的工作流；现在卸载会跳过这项检查。",
     "settings.plugins.hook.confirmTitle": "执行“{{name}}”包含的程序？",
     "settings.plugins.hook.executionDisclosure":
       "此插件会执行包内程序，并可能读取或修改用户文件以及 Agent 配置文件。该程序以你的账户权限运行，不在 Ora 的插件沙箱内；确认即表示你授权这次执行。",
@@ -669,6 +671,8 @@ export const pluginTranslations = {
       "{{count}} imported workflows will be kept",
     "settings.plugins.uninstallImportedDescription":
       "Uninstalling only removes the plugin package. These workflows stay in your library and can still be edited and run.",
+    "settings.plugins.uninstallImportedUnknown":
+      "Unable to read the workflow library, so which imported workflows will be kept can’t be confirmed right now. Uninstalling now skips this check.",
     "settings.plugins.hook.confirmTitle":
       "Run the program bundled with {{name}}?",
     "settings.plugins.hook.executionDisclosure":

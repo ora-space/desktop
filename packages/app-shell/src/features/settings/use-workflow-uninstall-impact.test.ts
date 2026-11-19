@@ -113,4 +113,37 @@ describe("useWorkflowUninstallImpact", () => {
     expect(getWorkflow).not.toHaveBeenCalled();
     expect(listSkills).not.toHaveBeenCalled();
   });
+
+  it("fails the check instead of reporting no imports when the workflow library cannot be read", async () => {
+    const workflowPlugin: InstalledPlugin = {
+      ...skillPlugin,
+      id: "official/ora.cdase-workflow",
+      name: "ora.cdase-workflow",
+      displayName: "CDASE Workflow",
+      kind: "workflow",
+    };
+    const client = createTestClient({
+      listWorkflows: async () => {
+        throw new Error("workflow library unavailable");
+      },
+    });
+    const queryClient = createWarmQueryClient();
+    queryClient.setQueryData(pluginKeys.installedPlugins, [workflowPlugin]);
+
+    const { result } = renderHookWithClient(
+      () => useWorkflowUninstallImpact([workflowPlugin.id], true),
+      client,
+      queryClient,
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    expect(result.current.checking).toBe(false);
+    // The unreadable library must be surfaced for the retained-copy list, not silently
+    // treated as an empty set of imported workflows.
+    expect(result.current).toMatchObject({
+      status: "failed",
+      dependencyImpactUnknown: false,
+      retentionUnknown: true,
+    });
+  });
 });

@@ -19,10 +19,21 @@ export function WorkflowUninstallImpact({
   if (state.status === "idle") return null;
 
   if (state.status === "failed") {
+    // A workflow plugin uninstall must never read an unreadable library as "no imported
+    // workflows": the retention notice names exactly what stays unknown.
     return (
-      <p className="text-[12px] text-muted-foreground">
-        {t("settings.plugins.uninstallDependencyUnknown")}
-      </p>
+      <div className="space-y-2.5">
+        {state.dependencyImpactUnknown && (
+          <p className="text-[12px] text-muted-foreground">
+            {t("settings.plugins.uninstallDependencyUnknown")}
+          </p>
+        )}
+        {state.retentionUnknown && (
+          <p className="text-[12px] text-muted-foreground">
+            {t("settings.plugins.uninstallImportedUnknown")}
+          </p>
+        )}
+      </div>
     );
   }
   if (state.status === "checking") {
