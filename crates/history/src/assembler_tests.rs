@@ -670,9 +670,16 @@ fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
             record_at(2, tool.clone())
         );
         assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        let mut settled = tool.status(ToolCallStatus::Completed);
+        settled.meta = Some(
+            serde_json::from_value(serde_json::json!({
+                crate::TURN_END_SETTLED_META_KEY: true
+            }))
+            .unwrap(),
+        );
         assert_eq!(
             assembler.end_turn(StopReason::EndTurn)[0],
-            record_at(4, tool.status(ToolCallStatus::Completed))
+            record_at(4, settled)
         );
     }
 }
