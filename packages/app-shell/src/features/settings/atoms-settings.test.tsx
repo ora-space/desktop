@@ -243,6 +243,7 @@ describe("atom settings content", () => {
   it("names workflows that depend on a plugin Skill before uninstalling from Skills settings", async () => {
     const user = userEvent.setup();
     const pluginId = "official/release-pack";
+    let releaseWorkflow: (() => void) | undefined;
     const workflows = createWorkflowMemory();
     workflows.workflows.push({
       workflow: {
@@ -286,6 +287,15 @@ describe("atom settings content", () => {
 
     renderSettings("skill", (handlers) => {
       Object.assign(handlers, workflowHandlers(workflows));
+      const originalGetWorkflow = handlers.getWorkflow!;
+      vi.spyOn(handlers, "getWorkflow").mockImplementation(
+        (req) =>
+          new Promise((resolve) => {
+            releaseWorkflow = () => {
+              void Promise.resolve(originalGetWorkflow(req)).then(resolve);
+            };
+          }),
+      );
       handlers.listSkills = async () => ({
         skills: [
           {
@@ -332,10 +342,25 @@ describe("atom settings content", () => {
       name: `卸载“${pluginId}”？`,
     });
     expect(
+      await within(dialog).findByText(/正在检查引用该插件的工作流/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "卸载并删除 Skills" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      releaseWorkflow?.();
+      await Promise.resolve();
+    });
+
+    expect(
       await within(dialog).findByText(/1 个工作流依赖该插件/),
     ).toBeVisible();
     expect(within(dialog).getByText("发布流程")).toBeVisible();
     expect(within(dialog).getByText(/用于：编写发布说明/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "卸载并删除 Skills" }),
+    ).toBeEnabled();
   });
 
   it("loads and clears editable Skill content", async () => {
