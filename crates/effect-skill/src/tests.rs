@@ -409,7 +409,7 @@ fn preserved_item_conflict_names_the_conflicting_native_identity() {
     assert_eq!(conditions[0].code.as_str(), "preserved_item_conflict");
     assert_eq!(
         conditions[0].safe_details.message,
-        "A Preserved Item already occupies the required native identity: grilling."
+        "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling"
     );
 }
 

@@ -10,7 +10,7 @@ use pretty_assertions::assert_eq;
 use rusqlite::params;
 
 /// Builds one Consumer declaration whose Skill directory uses the quiesce coordination contract.
-fn quiesce_declaration(stable_key: &str) -> ConsumerDeclaration {
+pub(super) fn quiesce_declaration(stable_key: &str) -> ConsumerDeclaration {
     let mut consumer = declaration(stable_key);
     let contract = CoordinationContract::agent_restart_v1();
     consumer
@@ -634,15 +634,15 @@ fn reserves_before_journaling_and_releases_before_readiness() {
 }
 
 /// Records the external coordination calls and checks the journal boundary.
-struct ReservationProbe {
-    pool: crate::RepositoryPool,
-    should_fail: bool,
-    calls: std::cell::RefCell<Vec<&'static str>>,
+pub(super) struct ReservationProbe {
+    pub(super) pool: crate::RepositoryPool,
+    pub(super) should_fail: bool,
+    pub(super) calls: std::cell::RefCell<Vec<&'static str>>,
 }
 
 impl ReservationProbe {
     /// Counts both completed and unfinished journal attempts.
-    fn journal_count(&self) -> i64 {
+    pub(super) fn journal_count(&self) -> i64 {
         self.pool
             .with_connection(|connection| {
                 connection
